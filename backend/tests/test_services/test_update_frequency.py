@@ -68,8 +68,28 @@ class TestClassifyVersionChange:
     def test_unparseable_returns_unknown(self):
         assert classify_version_change("abc123", "def456") == "unknown"
 
-    def test_one_unparseable_returns_unknown(self):
-        assert classify_version_change("1.0.0", "abc") == "unknown"
+    @pytest.mark.parametrize(
+        ("old", "new"),
+        [
+            ("5.3.10.RELEASE", "5.3.9.RELEASE"),
+            ("33.0.0-jre", "32.1.3-jre"),
+            ("v0.0.0-20220101000000-aaaaaaaaaaaa", "v0.0.0-20210101000000-bbbbbbbbbbbb"),
+            ("1.2.3-1ubuntu1", "1.2.3-1"),
+        ],
+    )
+    def test_a_rollback_outside_pep_440_is_a_downgrade(self, old: str, new: str):
+        assert classify_version_change(old, new) == "downgrade"
+
+    def test_a_respelling_outside_pep_440_is_no_change(self):
+        assert classify_version_change("4.1.100.Final", "4.1.100") == "none"
+
+    def test_a_forward_move_outside_pep_440_stays_unknown(self):
+        assert classify_version_change("5.3.9.RELEASE", "5.3.10.RELEASE") == "unknown"
+
+    def test_commit_hashes_are_not_ordered(self):
+        # Their letters sort at random, so ordering them would book half of all pin bumps as downgrades.
+        old, new = "8f4b7f84864484a7bf31766abe9204da3cbe65b3", "a8eba0b27e820071cde6df949e0beb9ba4906955"
+        assert classify_version_change(old, new) == "unknown"
 
     def test_identical_versions_returns_none(self):
         assert classify_version_change("1.0.0", "1.0.0") == "none"
@@ -675,6 +695,30 @@ class TestIdentityKeying:
         }
         m = await _compute(_two_scans(), deps)
         assert m.total_updates == 0
+
+    @pytest.mark.asyncio
+    async def test_a_duplicate_outside_pep_440_keeps_its_highest_version(self):
+        purl = "pkg:maven/org.springframework/spring-core@{}"
+        older = self._raw_dep("s1", "spring-core", "5.3.9.RELEASE", purl.format("5.3.9.RELEASE"))
+        newer = self._raw_dep("s1", "spring-core", "5.3.10.RELEASE", purl.format("5.3.10.RELEASE"))
+        deps = {"s1": [older, newer], "s2": [{**newer, "scan_id": "s2"}]}
+
+        m = await _compute(_two_scans(), deps)
+
+        assert m.total_updates == 0
+
+    @pytest.mark.asyncio
+    async def test_a_maven_flip_flop_counts_one_update_not_two(self):
+        purl = "pkg:maven/org.springframework/spring-core@{}"
+        versions = ("5.3.10.RELEASE", "5.3.9.RELEASE", "5.3.10.RELEASE")
+        deps = {
+            f"s{i}": [self._raw_dep(f"s{i}", "spring-core", version, purl.format(version))]
+            for i, version in enumerate(versions, start=1)
+        }
+
+        m = await _compute([_make_scan("s1", 0), _make_scan("s2", 10), _make_scan("s3", 20)], deps)
+
+        assert (m.total_updates, m.downgrade_updates, m.unknown_updates) == (1, 1, 1)
 
     @pytest.mark.asyncio
     async def test_pypi_name_variants_are_one_identity(self):

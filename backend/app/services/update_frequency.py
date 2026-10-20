@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from collections import Counter, defaultdict, deque
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -39,6 +40,7 @@ from app.schemas.analytics import (
     UpdateFrequencyMetrics,
 )
 from app.schemas.team import TeamRef
+from app.services.aggregation.versions import parse_version_key
 from app.services.release_history import (
     Observation,
     ReleaseHistoryFetcher,
@@ -63,13 +65,27 @@ def _release_tuple(version: Version) -> tuple[int, int]:
     )
 
 
+# Hex digests order at random, so ranking two commit pins would book half of all pin bumps as downgrades.
+_COMMIT_HASH = re.compile(r"[0-9a-f]{7,64}")
+
+
+def _classify_outside_pep_440(old_version: str, new_version: str) -> UpdateKind | Literal["none"]:
+    """Maven, Debian and Go spellings: ordered for direction only, as their parts name no major, minor or patch."""
+    if _COMMIT_HASH.fullmatch(old_version) or _COMMIT_HASH.fullmatch(new_version):
+        return "unknown"
+    old_key, new_key = parse_version_key(old_version), parse_version_key(new_version)
+    if new_key < old_key:
+        return "downgrade"
+    return "none" if new_key == old_key else "unknown"
+
+
 def classify_version_change(old_version: str, new_version: str) -> UpdateKind | Literal["none"]:
     """Backwards moves are downgrades, so rollbacks never count as activity; pre/post/local changes count as patch."""
     try:
         old_v = Version(old_version)
         new_v = Version(new_version)
     except InvalidVersion:
-        return "unknown"
+        return _classify_outside_pep_440(old_version, new_version)
 
     if old_v == new_v:
         return "none"
@@ -130,7 +146,7 @@ def _resolve_duplicate(candidates: list[dict[str, str]]) -> dict[str, str]:
             continue
     if parseable:
         return max(parseable, key=lambda pair: pair[0])[1]
-    return max(candidates, key=lambda cand: cand["version"])
+    return max(candidates, key=lambda cand: (parse_version_key(cand["version"]), cand["version"]))
 
 
 def fold_scan_deps(deps: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
