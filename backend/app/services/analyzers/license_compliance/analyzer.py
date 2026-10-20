@@ -18,8 +18,9 @@ from .constants import (
 
 
 def classify_license(member: str, license_id: str | None = None) -> LicenseInfo | None:
-    license_info = LICENSE_DATABASE.get(license_id or member.partition(" WITH ")[0])
-    if license_info and " WITH " in member and license_info.category == LicenseCategory.STRONG_COPYLEFT:
+    base = normalizer.license_base(member)
+    license_info = LICENSE_DATABASE.get(license_id or base)
+    if license_info and base != member and license_info.category == LicenseCategory.STRONG_COPYLEFT:
         return replace(
             license_info,
             category=LicenseCategory.WEAK_COPYLEFT,
@@ -85,10 +86,8 @@ class LicenseAnalyzer(Analyzer):
 
         declared = component.get("license") or ""
         or_groups = normalizer.parse_license_expression(declared)
-        # A linking exception such as Classpath lifts the copyleft the pair rules are about.
-        excepted = {member.partition(" WITH ")[0] for group in or_groups for member in group if " WITH " in member}
         if len(or_groups) > 1:
-            selected = self._analyze_or_expression(
+            return self._analyze_or_expression(
                 component,
                 declared,
                 or_groups,
@@ -98,7 +97,6 @@ class LicenseAnalyzer(Analyzer):
                 is_transitive=is_transitive,
                 policy=policy,
             )
-            return [license_id for license_id in selected if license_id not in excepted]
 
         members = or_groups[0] if or_groups else []
         if not members:
@@ -110,11 +108,12 @@ class LicenseAnalyzer(Analyzer):
         raw_expression = declared if len(members) > 1 or " WITH " in members[0] else None
         lic_url = component.get("license_url")
 
+        governing = normalizer.governing_members(members)
         settled: list[str] = []
         unrecognized: list[str] = []
-        for member in members:
-            normalized = member.partition(" WITH ")[0]
-            if normalized not in LICENSE_DATABASE and len(members) == 1:
+        for base, member in governing.items():
+            normalized = base
+            if normalized not in LICENSE_DATABASE and len(governing) == 1:
                 # A lone licence's URL is its own; with several, the one stored URL may belong to another.
                 normalized = normalizer.extract_license_from_url(lic_url) or normalized
             license_info = classify_license(member, normalized)
@@ -123,7 +122,9 @@ class LicenseAnalyzer(Analyzer):
                 unrecognized.append(normalized)
                 continue
 
-            settled.append(normalized)
+            # A linking exception such as Classpath lifts the copyleft the pair rules are about.
+            if member == base:
+                settled.append(normalized)
             self._record_license(component, normalized, license_info, raw_expression, stats, component_licenses)
             issue = evaluator.evaluate_license(component, license_info, policy, lic_url)
             if issue:
@@ -132,7 +133,7 @@ class LicenseAnalyzer(Analyzer):
         if unrecognized:
             # Never filtered by transitivity: the audit control reads presence and would miss unauditable components.
             issues.append(evaluator.create_undeterminable_issue(component, unrecognized))
-        return [license_id for license_id in settled if license_id not in excepted]
+        return settled
 
     @staticmethod
     def _record_license(
@@ -199,16 +200,16 @@ class LicenseAnalyzer(Analyzer):
             self._record_license(component, lic_id, LICENSE_DATABASE[lic_id], spdx_expr, stats, component_licenses)
         for issue in member_issues:
             self._emit_policy_issue(issue, spdx_expr, is_transitive, issues)
-        return selected
+        return [lic_id for lic_id, member in selected.items() if member == lic_id]
 
     @staticmethod
     def _select_or_alternative(
         component: dict[str, Any],
-        readable_groups: list[list[str]],
+        readable_groups: list[dict[str, str]],
         policy: LicensePolicySchema,
-    ) -> tuple[list[str] | None, list[dict[str, Any]]]:
+    ) -> tuple[dict[str, str] | None, list[dict[str, Any]]]:
         """A consumer may take any OR alternative, so the least severe, then least restrictive, one is chosen."""
-        candidates: list[tuple[tuple[int, int], list[str], list[dict[str, Any]]]] = []
+        candidates: list[tuple[tuple[int, int], dict[str, str], list[dict[str, Any]]]] = []
         for and_group in readable_groups:
             verdicts = [evaluator.evaluate_license(component, LICENSE_DATABASE[lic_id], policy) for lic_id in and_group]
             rank = (

@@ -28,7 +28,7 @@ from app.services.analyzers.license_compliance.evaluator import (
     is_acceptable_under_policy,
     should_include_finding,
 )
-from app.services.analyzers.license_compliance.normalizer import normalize_license
+from app.services.analyzers.license_compliance.normalizer import governing_members, normalize_license
 from app.services.sbom_parser import parse_sbom
 
 
@@ -373,7 +373,8 @@ class TestSpdxExpressionEvaluation:
         ],
     )
     def test_an_or_offering_a_permissive_alternative_raises_no_issue(self, or_groups):
-        _, issues = self.analyzer._select_or_alternative(_TEST_PKG, or_groups, LicensePolicySchema())
+        readable = [governing_members(group) for group in or_groups]
+        _, issues = self.analyzer._select_or_alternative(_TEST_PKG, readable, LicensePolicySchema())
         assert issues == []
 
     @pytest.mark.parametrize(
@@ -391,7 +392,8 @@ class TestSpdxExpressionEvaluation:
         ],
     )
     def test_the_selected_alternative_carries_its_verdicts(self, policy, or_groups, expected):
-        _, issues = self.analyzer._select_or_alternative(_TEST_PKG, or_groups, policy)
+        readable = [governing_members(group) for group in or_groups]
+        _, issues = self.analyzer._select_or_alternative(_TEST_PKG, readable, policy)
         assert [(issue["license"], issue["severity"]) for issue in issues] == [
             (lic, sev.value) for lic, sev in expected
         ]
@@ -484,6 +486,26 @@ class TestLicenseException:
         result = await self._analyze("LicenseRef-Fedora-Public-Domain AND (GPL-2.0-only WITH ClassPath-exception-2.0)")
         assert [entry["category"] for entry in result["component_licenses"]] == ["weak_copyleft"]
 
+    @pytest.mark.asyncio
+    async def test_a_bare_licence_beside_its_excepted_form_governs_once(self):
+        result = await self._analyze("GPL-2.0-only WITH Classpath-exception-2.0 AND GPL-2.0-only")
+        assert [(e["license"], e["category"]) for e in result["component_licenses"]] == [
+            ("GPL-2.0-only", "strong_copyleft")
+        ]
+        assert [(i["severity"], i["category"]) for i in result["license_issues"]] == [
+            (Severity.HIGH.value, "strong_copyleft")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_an_unparseable_term_is_not_read_as_the_licence_before_its_with(self):
+        raw = "GPL-2.0-only WITH Classpath-exception-2.0 OR (MIT"
+        result = await self._analyze(raw)
+        assert result["component_licenses"] == []
+        assert result["summary"]["unknown"] == 1
+        [issue] = result["license_issues"]
+        assert issue["category"] == LicenseCategory.UNKNOWN.value
+        assert raw in issue["explanation"]
+
 
 class TestTransitiveDependencySeverity:
     def setup_method(self):
@@ -553,6 +575,10 @@ class TestLicenseCompatibility:
             pytest.param(["GPL-2.0-only AND GPL-3.0-only"], id="one-component-declaring-both"),
             pytest.param(["GPL-2.0-only WITH Classpath-exception-2.0", "Apache-2.0"], id="linking-exception"),
             pytest.param(["GPL-2.0-only WITH Classpath-exception-2.0", "GPL-3.0-only"], id="linking-exception-gpl3"),
+            pytest.param(
+                ["(GPL-2.0-only WITH Classpath-exception-2.0) OR AGPL-3.0-only", "GPL-3.0-only"],
+                id="linking-exception-of-the-chosen-alternative",
+            ),
         ],
     )
     def test_components_that_can_ship_together_raise_no_conflict(self, licences):
@@ -563,6 +589,16 @@ class TestLicenseCompatibility:
         [
             pytest.param(["GPL-2.0 AND GPL-3.0", "CDDL-1.0"], ["CDDL-1.0 / GPL-2.0", "CDDL-1.0 / GPL-3.0"], id="and"),
             pytest.param(["GPL-2.0 OR GPL-3.0", "CDDL-1.0"], ["CDDL-1.0 / GPL-2.0"], id="tied-or-keeps-declared"),
+            pytest.param(
+                ["GPL-2.0-only WITH Classpath-exception-2.0 AND GPL-2.0-only", "GPL-3.0-only"],
+                ["GPL-2.0-only / GPL-3.0-only"],
+                id="bare-licence-beside-its-excepted-form",
+            ),
+            pytest.param(
+                ["(GPL-2.0-only WITH Classpath-exception-2.0 AND AGPL-3.0-only) OR GPL-2.0-only", "GPL-3.0-only"],
+                ["GPL-2.0-only / GPL-3.0-only"],
+                id="exception-of-an-alternative-not-taken",
+            ),
         ],
     )
     def test_the_conflicts_follow_the_settled_licences(self, licences, expected):
@@ -1099,7 +1135,7 @@ class TestPolicyAcceptability:
 class TestPartitionOrGroups:
     def test_a_group_with_an_unreadable_member_is_not_readable(self):
         readable, unreadable = partition_or_groups([[_PERMISSIVE_ID, _UNREADABLE_ALTERNATIVE], [_STRONG_COPYLEFT_ID]])
-        assert readable == [[_STRONG_COPYLEFT_ID]]
+        assert readable == [{_STRONG_COPYLEFT_ID: _STRONG_COPYLEFT_ID}]
         assert unreadable == [_UNREADABLE_ALTERNATIVE]
 
     def test_an_identifier_is_reported_once_across_alternatives(self):
@@ -1107,11 +1143,11 @@ class TestPartitionOrGroups:
         assert readable == []
         assert len(unreadable) == _ONE_FINDING
 
-    def test_the_readable_alternatives_come_back_as_database_ids(self):
+    def test_the_readable_alternatives_come_back_keyed_by_database_id_with_the_bare_form_governing(self):
         readable, _ = partition_or_groups([["GPL-2.0-only WITH Classpath-exception-2.0", "GPL-2.0-only"]])
-        assert readable == [["GPL-2.0-only"]]
+        assert readable == [{"GPL-2.0-only": "GPL-2.0-only"}]
 
     def test_all_readable_leaves_nothing_unreadable(self):
         readable, unreadable = partition_or_groups([[_PERMISSIVE_ID], [_STRONG_COPYLEFT_ID]])
-        assert readable == [[_PERMISSIVE_ID], [_STRONG_COPYLEFT_ID]]
+        assert readable == [{_PERMISSIVE_ID: _PERMISSIVE_ID}, {_STRONG_COPYLEFT_ID: _STRONG_COPYLEFT_ID}]
         assert len(unreadable) == _NO_FINDINGS

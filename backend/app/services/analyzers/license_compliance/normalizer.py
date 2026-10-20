@@ -177,6 +177,24 @@ def _parse_or(tokens: list[str], pos: int, depth: int) -> tuple[_Groups, int]:
     return [list(group) for group in alternatives if group] or [[]], pos
 
 
+def license_base(member: str) -> str:
+    """The licence a parsed 'id WITH exception' member modifies; any other text stays one term."""
+    tokens = _tokens(member) if " WITH " in member else []
+    if len(tokens) == 3 and tokens[1] == "WITH" and _SYNTAX.isdisjoint((tokens[0], tokens[2])):
+        return tokens[0]
+    return member
+
+
+def governing_members(group: list[str]) -> dict[str, str]:
+    """Each licence once, mapped to the member whose terms govern; a bare licence outranks its excepted form."""
+    governing: dict[str, str] = {}
+    for member in group:
+        base = license_base(member)
+        if base == member or base not in governing:
+            governing[base] = member
+    return governing
+
+
 def parse_license_expression(raw: str) -> list[list[str]]:
     """OR-alternatives, each a list of AND-bound normalized ids."""
     tokens = _tokens(raw)
