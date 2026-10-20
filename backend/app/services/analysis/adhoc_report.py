@@ -8,6 +8,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from app.core.constants import get_severity_value
 from app.core.cve import canonical_cves
+from app.models.finding import FindingType
 from app.schemas.adhoc import AdhocAnalyzeResponse
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
@@ -23,6 +24,20 @@ _DERIVED_FIELDS = frozenset({"findings", "dependencies", "recommendations"})
 _FINDING_ROW_CAP = 500
 _RECOMMENDATION_ROW_CAP = 50
 _DESCRIPTION_CHARS = 300
+_NO_KNOWN_FIX = "No known fix"
+_VARIES_BY_ADVISORY = "Varies by advisory"
+
+
+def _fixed_version(finding: dict[str, Any]) -> str:
+    if finding["type"] != FindingType.VULNERABILITY:
+        return ""
+    details = finding["details"]
+    if details.get("fixed_version"):
+        return str(details["fixed_version"])
+    # No single version fixes every advisory, though some advisories name their own fix.
+    if any(entry.get("fixed_version") for entry in details.get("vulnerabilities") or []):
+        return _VARIES_BY_ADVISORY
+    return _NO_KNOWN_FIX
 
 
 def _row(finding: dict[str, Any]) -> dict[str, str | bool]:
@@ -31,6 +46,7 @@ def _row(finding: dict[str, Any]) -> dict[str, str | bool]:
         "severity": finding["severity"],
         "component": finding["component"],
         "version": finding["version"] or "",
+        "fixed_version": _fixed_version(finding),
         "description": finding["description"][:_DESCRIPTION_CHARS] or ", ".join(canonical_cves([finding["details"]])),
         "scanners": ", ".join(finding["scanners"]),
         "waived": finding["waived"],
