@@ -12,7 +12,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
 _OTHER_SWEEPS = (
     "prune_old_audit_entries",
     "sweep_expired_compliance_reports",
-    "_reap_orphan_s3_objects",
+    "reap_orphan_s3_objects",
     "_reap_orphan_callgraphs",
     "reap_orphan_gridfs_files",
 )

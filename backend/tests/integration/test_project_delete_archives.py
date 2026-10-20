@@ -2,9 +2,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.core import housekeeping
 from app.core.constants import ORPHAN_MIN_AGE_HOURS
-from app.core.housekeeping import _reap_orphan_s3_objects
+from app.services import archive
+from app.services.archive import reap_orphan_s3_objects
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
 
@@ -37,13 +37,13 @@ async def test_project_delete_lets_the_reaper_remove_its_archive_bundles(client,
     async def delete_object(key):
         reaped.append(key)
 
-    monkeypatch.setattr(housekeeping, "is_archive_enabled", lambda: True)
-    monkeypatch.setattr(housekeeping, "list_objects", list_objects)
-    monkeypatch.setattr(housekeeping, "delete_object", delete_object)
+    monkeypatch.setattr(archive, "is_archive_enabled", lambda: True)
+    monkeypatch.setattr(archive, "list_objects", list_objects)
+    monkeypatch.setattr(archive, "delete_object", delete_object)
 
     resp = await client.delete(f"/api/v1/projects/{_DELETED_PROJECT}", headers=admin_auth_headers)
     assert resp.status_code == 204
-    await _reap_orphan_s3_objects(db)
+    await reap_orphan_s3_objects(db)
 
     assert reaped == [f"{_DELETED_PROJECT}/scan-archived-1700000000.bundle"]
     assert await db.archive_metadata.distinct("project_id") == [_SURVIVING_PROJECT]

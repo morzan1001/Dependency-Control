@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import re
 from collections import Counter
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine, Iterable
 from datetime import datetime, timedelta, timezone
@@ -14,9 +13,7 @@ from app.core.cache import update_cache_stats
 from app.core.config import settings
 from app.core.constants import (
     ARCHIVE_BATCH_SIZE,
-    ARCHIVE_KEY_PATTERN,
     ORPHAN_MIN_AGE_HOURS,
-    ARCHIVE_RESTORE_LOCK_TEMPLATE,
     HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS,
     HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS,
     HOUSEKEEPING_MAX_SCAN_RETRIES,
@@ -43,13 +40,14 @@ from app.core.metrics import (
     update_archive_stats,
     update_db_stats,
 )
-from app.core.s3 import archive_key_prefix, delete_object, is_archive_enabled, list_objects
+from app.core.s3 import is_archive_enabled
 from app.db.mongodb import get_database
 from app.models.project import Project
 from app.repositories.distributed_locks import DistributedLocksRepository, LockLost, new_lock_holder, run_holding_lock
 from app.repositories.scans import HAS_SBOM_MATCH, ScanRepository, is_usable_build
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.analysis.notifications import notify_analysis_failed
+from app.services.archive import reap_orphan_s3_objects
 from app.services.audit.retention import prune_old_audit_entries
 from app.services.branch_sync import sync_project_branches
 from app.services.compliance.retention import sweep_expired_compliance_reports
@@ -205,97 +203,6 @@ async def check_scheduled_rescans(worker_manager: "AnalysisWorkerManager") -> No
             await _process_project_rescan(project_data, system_settings, db, worker_manager)
         except Exception as e:
             logger.exception("Error processing project %s: %s", sanitize_for_log(project_data.get("name")), e)
-
-
-async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
-    """Drops the metadata of scans restored since archiving, which leaves their S3 object to the orphan reaper."""
-    lock_repo = DistributedLocksRepository(db)
-
-    async def _reap_batch(metas: list[dict[str, Any]]) -> int:
-        restored_at_by_scan = {
-            scan["_id"]: scan["restored_at"]
-            async for scan in db.scans.find(
-                {
-                    "_id": {"$in": [meta["scan_id"] for meta in metas]},
-                    "restored_at": {"$ne": None},
-                    "restore_in_progress": {"$ne": True},
-                },
-                {"restored_at": 1},
-            )
-        }
-        restored = [
-            meta
-            for meta in metas
-            if meta["scan_id"] in restored_at_by_scan and restored_at_by_scan[meta["scan_id"]] > meta["archived_at"]
-        ]
-        if not restored:
-            return 0
-        # Scans first: a restore holds its lock from before it inserts the scan until after a rollback removes it.
-        lock_names = {
-            meta["scan_id"]: ARCHIVE_RESTORE_LOCK_TEMPLATE.format(scan_id=meta["scan_id"]) for meta in restored
-        }
-        held = await lock_repo.held_locks(list(lock_names.values()))
-        stale = [meta for meta in restored if lock_names[meta["scan_id"]] not in held]
-        if not stale:
-            return 0
-        stale_scan_ids = [meta["scan_id"] for meta in stale]
-        try:
-            result = await db.archive_metadata.delete_many({"_id": {"$in": [meta["_id"] for meta in stale]}})
-            count: int = result.deleted_count
-            if count:
-                logger.info(f"Reaped {count} stale archive_metadata entries for restored scans {stale_scan_ids}")
-            return count
-        except Exception as e:
-            logger.warning(f"Failed to delete stale metadata for scans {stale_scan_ids}: {e}")
-            return 0
-
-    cursor = db.archive_metadata.find({}, {"_id": 1, "scan_id": 1, "archived_at": 1})
-    metas = (meta async for meta in cursor if meta.get("scan_id"))
-    return sum([await _reap_batch(batch) async for batch in abatched(metas, batch_size)])
-
-
-async def _reap_orphan_page(db: Any, page: list[dict[str, Any]], bundle_key: re.Pattern[str], cutoff: datetime) -> int:
-    scan_id_by_key = {
-        obj["Key"]: match["scan_id"]
-        for obj in page
-        if (match := bundle_key.fullmatch(obj.get("Key") or "")) and obj.get("LastModified", cutoff) <= cutoff
-    }
-    if not scan_id_by_key:
-        return 0
-    known = {
-        meta.get("s3_key")
-        async for meta in db.archive_metadata.find(
-            {"scan_id": {"$in": sorted(set(scan_id_by_key.values()))}}, {"s3_key": 1}
-        )
-    }
-    deleted = 0
-    for key in sorted(scan_id_by_key.keys() - known):
-        try:
-            await delete_object(key)
-            deleted += 1
-            archive_housekeeping_scans_processed_total.labels(status="orphan_reaped").inc()
-            logger.info("Reaped orphan S3 object: %s", key)
-        except Exception as e:
-            logger.warning("Failed to delete orphan %s: %s", key, e)
-    return deleted
-
-
-async def _reap_orphan_s3_objects(db: Any) -> int:
-    if not is_archive_enabled():
-        return 0
-
-    await _reap_stale_metadata(db)
-
-    prefix = archive_key_prefix()
-    bundle_key = re.compile(re.escape(prefix) + ARCHIVE_KEY_PATTERN)
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=ORPHAN_MIN_AGE_HOURS)
-    deleted = 0
-    try:
-        async for page in list_objects(prefix):
-            deleted += await _reap_orphan_page(db, page, bundle_key, cutoff)
-    except Exception as e:
-        logger.warning("Orphan reaper stopped: %s", e)
-    return deleted
 
 
 async def _delete_expirable(db: Any, scans: dict[str, Any], label: str) -> int:
@@ -522,7 +429,7 @@ async def run_housekeeping(db: Any) -> None:
         ("Housekeeping: release flag reconcile", reconcile_release_flags),
         ("Housekeeping: policy audit retention", prune_old_audit_entries),
         ("Housekeeping: compliance report sweep", sweep_expired_compliance_reports),
-        ("Orphan reaper", _reap_orphan_s3_objects),
+        ("Orphan reaper", reap_orphan_s3_objects),
         ("Callgraph orphan reaper", _reap_orphan_callgraphs),
         ("GridFS orphan reaper", reap_orphan_gridfs_files),
     ):

@@ -480,7 +480,7 @@ async def test_a_restore_whose_metadata_delete_failed_leaves_the_archive_restora
 
     async def another_pod_reaps_stale_metadata_during_the_batch(db_, scan_id):
         if scan_id == "y":
-            await housekeeping._reap_stale_metadata(db_)
+            await archive.reap_stale_metadata(db_)
         return await real_archive_scan(db_, scan_id)
 
     monkeypatch.setattr(archive, "archive_scan", another_pod_reaps_stale_metadata_during_the_batch)

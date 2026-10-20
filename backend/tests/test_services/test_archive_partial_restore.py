@@ -6,11 +6,10 @@ import pytest
 from pymongo.errors import AutoReconnect
 
 from app.core.constants import SCAN_SCOPED_COLLECTIONS
-from app.core.housekeeping import _reap_stale_metadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.distributed_locks import new_lock_holder
-from app.services.archive import RestoreFailed, archive_scan, restore_scan
+from app.services.archive import RestoreFailed, archive_scan, reap_stale_metadata, restore_scan
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.services.archive"
@@ -92,7 +91,7 @@ async def test_reaper_keeps_the_metadata_of_a_restore_that_died_after_its_header
     await _archived_scan(db)
     await _restore_dying_after_the_header(db)
 
-    reaped = await _reap_stale_metadata(db)
+    reaped = await reap_stale_metadata(db)
 
     assert reaped == 0
     assert await _surviving_metadata(db) == [SCAN_ID], "the bundle is the only complete copy of the scan"
@@ -111,7 +110,7 @@ async def test_reaper_drops_the_metadata_of_a_completed_restore_whose_cleanup_fa
     assert scan["restored_at"] > _ARCHIVED_AT
     assert "restore_in_progress" not in scan
 
-    reaped = await _reap_stale_metadata(db)
+    reaped = await reap_stale_metadata(db)
 
     assert reaped == 1
     assert await _surviving_metadata(db) == []
