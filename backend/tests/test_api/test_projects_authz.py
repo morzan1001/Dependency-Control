@@ -136,13 +136,7 @@ class TestDeleteProjectRoutesThroughGate:
             "CryptoPolicyRepository": MagicMock(),
             "ArchiveMetadataRepository": MagicMock(),
         }
-        scan_repo = repos["ScanRepository"]
-
-        async def _empty_iter(*args, **kwargs):
-            return
-            yield  # pragma: no cover
-
-        scan_repo.iterate_raw = _empty_iter
+        repos["ScanRepository"].find_many_raw = AsyncMock(return_value=[])
         repos["WaiverRepository"].delete_many = AsyncMock(return_value=None)
         repos["ReleaseRepository"].delete_many = AsyncMock(return_value=None)
         repos["CallgraphRepository"].delete_by_project = AsyncMock(return_value=None)

@@ -54,6 +54,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404_500,
 )
 from app.core.constants import (
+    ARCHIVE_BATCH_SIZE,
     MAX_PROJECT_TEAMS,
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
@@ -1413,20 +1414,22 @@ async def delete_project(
         project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN, global_permission=Permissions.PROJECT_DELETE
     )
 
-    project_repo = ProjectRepository(db)
+    # First, so ingest stops resolving the project while its data goes and a retry answers 404.
+    await ProjectRepository(db).delete(project_id)
+
     scan_repo = ScanRepository(db)
-    waiver_repo = WaiverRepository(db)
-    callgraph_repo = CallgraphRepository(db)
-    release_repo = ReleaseRepository(db)
+    # Re-read until none is left, which also takes the scans of an ingest that resolved the project before.
+    while scan_ids := [
+        scan["_id"]
+        for scan in await scan_repo.find_many_raw(
+            {"project_id": project_id}, limit=ARCHIVE_BATCH_SIZE, projection={"_id": 1}
+        )
+    ]:
+        await delete_scans_and_related_data(db, scan_ids)
 
-    # Streamed rather than read whole; the shared cascade owns which collections a scan takes with it.
-    scan_ids = [scan["_id"] async for scan in scan_repo.iterate_raw({"project_id": project_id}, {"_id": 1})]
-    await delete_scans_and_related_data(db, scan_ids)
-
-    await waiver_repo.delete_many({"project_id": project_id})
-    await release_repo.delete_many({"project_id": project_id})
-    await callgraph_repo.delete_by_project(project_id)
+    await WaiverRepository(db).delete_many({"project_id": project_id})
+    await ReleaseRepository(db).delete_many({"project_id": project_id})
+    await CallgraphRepository(db).delete_by_project(project_id)
     await ArchiveMetadataRepository(db).delete_many({"project_id": project_id})
     await WebhookRepository(db).delete_many({"project_id": project_id})
     await CryptoPolicyRepository(db).delete_project_policy(project_id)
-    await project_repo.delete(project_id)
