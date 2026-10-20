@@ -24,6 +24,7 @@ from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
+from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.update_frequency import (
     WINDOW_HARD_LIMIT,
     BranchWindowActivity,
@@ -46,6 +47,8 @@ from app.services.update_frequency import (
     measured_summary,
     placeholder_summary,
     rank_summaries,
+    retained_window,
+    retention_horizon,
     select_primary_branch,
     spanned_days,
     walk_fetch_limit,
@@ -171,6 +174,7 @@ async def get_project_update_frequency(
     )
 
     async def _fetch() -> dict[str, Any]:
+        system = await SystemSettingsRepository(db).get()
         metrics = await compute_update_frequency(
             project_id=project_id,
             project_name=project.name,
@@ -181,6 +185,7 @@ async def get_project_update_frequency(
             window_days=window_days,
             release_fetcher=DepsDevReleaseHistoryFetcher(),
             branch=analyzed_branch,
+            retention_days=retention_horizon(system, project.retention_days, project.retention_action),
         )
         return metrics.model_dump()
 
@@ -212,13 +217,23 @@ async def _scoped_projects(
     projects_raw = await ProjectRepository(db).find_many_raw(
         query,
         sort_by="name",
-        projection={"_id": 1, "name": 1, "team_ids": 1, "deleted_branches": 1, "default_branch": 1},
+        projection={
+            "_id": 1,
+            "name": 1,
+            "team_ids": 1,
+            "deleted_branches": 1,
+            "default_branch": 1,
+            "retention_days": 1,
+            "retention_action": 1,
+        },
         limit=len(user_project_ids),
     )
 
     team_names = await resolve_team_names(db, {tid for p in projects_raw for tid in p.get("team_ids") or []})
+    system = await SystemSettingsRepository(db).get()
     for p in projects_raw:
         p["teams"] = team_refs(p.get("team_ids") or [], team_names)
+        p["retention_horizon"] = retention_horizon(system, p.get("retention_days"), p.get("retention_action"))
     return projects_raw
 
 
@@ -307,9 +322,15 @@ def _rollup_summary(
         return placeholder_summary(project, resolved.status, window_days, resolved.branch)
 
     anchor_id = resolved.window[0]["_id"]
-    folded = fold_window(resolved.window, baselines.get(anchor_id), resolved.measured_days or window_days)
+    retained = None if resolved.measured_days else retained_window(window_days, project.get("retention_horizon"))
+    rate_days = resolved.measured_days or retained or window_days
+    folded = fold_window(resolved.window, baselines.get(anchor_id), rate_days)
     metrics = folded.to_metrics(
-        str(project["_id"]), project.get("name", ""), branch=resolved.branch, window_scan_cap=resolved.window_scan_cap
+        str(project["_id"]),
+        project.get("name", ""),
+        branch=resolved.branch,
+        window_scan_cap=resolved.window_scan_cap,
+        retention_days=retained,
     )
     return measured_summary(metrics, project.get("teams") or [], window_days=window_days, data_status=resolved.status)
 

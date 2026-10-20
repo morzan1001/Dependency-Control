@@ -12,6 +12,8 @@ import app.repositories.update_frequency as update_frequency_repository
 import app.services.update_frequency as update_frequency_module
 from app.core.purl import parse_purl
 from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
+from app.core.config import settings
+from app.models.system import SystemSettings
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -22,6 +24,7 @@ from app.schemas.analytics import ProjectUpdateSummary, ScanTimelineEntry, Updat
 from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
     _COMPARISON_CONCURRENCY,
+    DAYS_PER_MONTH,
     READY_COVERAGE_RATIO,
     _build_slowest_packages,
     classify_version_change,
@@ -31,6 +34,7 @@ from app.services.update_frequency import (
     elect_primary_branch,
     load_outdated_entries,
     rank_summaries,
+    retention_horizon,
     select_primary_branch,
     summarise_window,
     window_coverage_status,
@@ -1747,6 +1751,54 @@ class TestTheLiveWalkIsAlwaysFullyCovered:
         row = result.projects[0]
         assert (row.data_status, row.scan_count) == ("ready", 2)
         assert result.partial_projects == 0
+
+
+class TestRetentionHorizon:
+    def test_project_mode_reads_the_projects_retention(self):
+        assert retention_horizon(SystemSettings(), 30, "delete") == 30
+
+    def test_global_mode_overrides_the_projects_retention(self):
+        system = SystemSettings(retention_mode="global", global_retention_days=60, global_retention_action="delete")
+        assert retention_horizon(system, 30, "none") == 60
+
+    @pytest.mark.parametrize(("days", "action"), [(0, "delete"), (30, "none"), (None, None)])
+    def test_retention_that_deletes_nothing_keeps_every_day(self, days, action):
+        assert retention_horizon(SystemSettings(), days, action) is None
+
+    def test_archiving_deletes_only_once_storage_is_configured(self, monkeypatch):
+        assert retention_horizon(SystemSettings(), 30, "archive") is None
+        monkeypatch.setattr(settings, "S3_ENDPOINT_URL", "http://s3.invalid")
+        monkeypatch.setattr(settings, "S3_ACCESS_KEY", "key")
+        assert retention_horizon(SystemSettings(), 30, "archive") == 30
+
+
+class TestRetentionCappedRate:
+    @staticmethod
+    async def _one_update(window_days: int, retention_days: int | None) -> UpdateFrequencyMetrics:
+        scans = [_scan_days_ago("s1", 60), _scan_days_ago("s2", 30)]
+        deps = {"s1": [_make_dep("s1", "pkg-a", "1.0.0")], "s2": [_make_dep("s2", "pkg-a", "1.0.1")]}
+        return await _compute(scans, deps, window_days=window_days, retention_days=retention_days)
+
+    @pytest.mark.asyncio
+    async def test_a_window_past_retention_divides_by_the_days_retention_keeps(self):
+        m = await self._one_update(window_days=365, retention_days=90)
+
+        assert (m.updates_per_month, m.retention_days) == (round(1 / (90 / DAYS_PER_MONTH), 2), 90)
+
+    @pytest.mark.asyncio
+    async def test_a_window_retention_covers_divides_by_the_window_and_names_no_horizon(self):
+        m = await self._one_update(window_days=90, retention_days=90)
+
+        assert (m.updates_per_month, m.retention_days) == (round(1 / (90 / DAYS_PER_MONTH), 2), None)
+
+    @pytest.mark.asyncio
+    async def test_the_scan_count_view_has_no_rate_to_cap(self):
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {"s1": [_make_dep("s1", "pkg-a", "1.0.0")], "s2": [_make_dep("s2", "pkg-a", "1.0.1")]}
+
+        m = await _compute(scans, deps, retention_days=90)
+
+        assert (m.updates_per_month, m.retention_days) == (None, None)
 
 
 class TestWindowCutoff:

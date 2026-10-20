@@ -361,6 +361,8 @@ class UpdateFrequencyMetrics(BaseModel):
 
     # Set when the branch exceeds what either read path follows, None for a whole window; scan_count counts bars.
     window_scan_cap: int | None = None
+    # Set when retention keeps fewer days than the window, which the monthly rate then divides by instead.
+    retention_days: int | None = None
     # Packages still outdated in the newest measured scan, counted before slowest_packages was cut.
     outdated_backlog: int = 0
 
@@ -393,6 +395,8 @@ class ProjectUpdateSummary(BaseModel):
     last_scan_date: str | None = None
     # Set when the branch exceeds what either read path follows; the rate stays comparable, divided by the stretch read.
     window_scan_cap: int | None = None
+    # Set when retention keeps fewer days than the window, which the monthly rate then divides by instead.
+    retention_days: int | None = None
 
 
 class UpdateFrequencyComparison(BaseModel):

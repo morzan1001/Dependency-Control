@@ -19,7 +19,12 @@ from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import WINDOW_HARD_LIMIT, BranchWindowActivity
 from app.schemas.analytics import UpdateFrequencyComparison, UpdateFrequencyMetrics
-from app.services.update_frequency import compute_update_frequency, elect_primary_branch, window_cutoff
+from app.services.update_frequency import (
+    DAYS_PER_MONTH,
+    compute_update_frequency,
+    elect_primary_branch,
+    window_cutoff,
+)
 from app.services.update_frequency_fold import window_bars
 from app.services.update_frequency_rollup import record_scan_update_delta
 from tests.helpers.update_frequency import rollup_metrics
@@ -842,6 +847,43 @@ class TestComparisonRowDifferential:
         # Three of four forward updates are patches; no other field carries 0.75, so a swapped tier shows.
         assert (live.projects[0].patch_ratio, rolled.projects[0].patch_ratio) == (0.75, 0.75)
         assert (live.projects[0].total_updates, live.projects[0].update_coverage_pct) == (4, 100.0)
+
+
+class TestRetentionHorizon:
+    @pytest.mark.asyncio
+    async def test_both_read_paths_divide_a_window_past_retention_by_the_days_it_keeps(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {"a": "1.0.0", "b": "1.0.0"}, ("a",))
+        await _seed_scan(db, "s2", _days_ago(50), {"a": "1.0.1", "b": "1.1.0"}, ())
+        await _build_ledger(db)
+        await _seed_projects(db, [PROJECT])
+        await db.projects.update_one({"_id": PROJECT}, {"$set": {"retention_days": 90, "retention_action": "delete"}})
+
+        live = UpdateFrequencyComparison(**await _compute_comparison(db, [PROJECT], None, window_days=365))
+        rolled = UpdateFrequencyComparison(
+            **await _compute_comparison_from_rollup(db, [PROJECT], None, window_days=365)
+        )
+
+        assert live.projects[0].model_dump() == rolled.projects[0].model_dump()
+        row = rolled.projects[0]
+        assert (row.window_days, row.retention_days) == (365, 90)
+        assert row.updates_per_month == round(2 / (90 / DAYS_PER_MONTH), 2)
+
+    @pytest.mark.asyncio
+    async def test_a_project_that_keeps_its_scans_divides_by_the_whole_window(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {"a": "1.0.0"}, ())
+        await _seed_scan(db, "s2", _days_ago(50), {"a": "1.0.1"}, ())
+        await _build_ledger(db)
+        await _seed_projects(db, [PROJECT])
+        await db.projects.update_one({"_id": PROJECT}, {"$set": {"retention_days": 90, "retention_action": "none"}})
+
+        rolled = UpdateFrequencyComparison(
+            **await _compute_comparison_from_rollup(db, [PROJECT], None, window_days=365)
+        )
+
+        row = rolled.projects[0]
+        assert (row.retention_days, row.updates_per_month) == (None, round(1 / (365 / DAYS_PER_MONTH), 2))
 
 
 class TestScopeAndTeams:

@@ -39,6 +39,7 @@ const mockedFrequency = analyticsApi.getUpdateFrequency as ReturnType<typeof vi.
 
 // The cap the backend reports; the component only renders the number it is given.
 const WINDOW_SCAN_CAP = 1000;
+const RETENTION_DAYS = 90;
 
 // A window holding far more version changes than the list can show.
 const TOTAL_UPDATES = 240;
@@ -84,6 +85,7 @@ const metrics: UpdateFrequencyMetrics = {
   upstream_days_since_latest_release_median: null,
   adoption_latency_days_median: null,
   window_scan_cap: null,
+  retention_days: null,
   outdated_backlog: 0,
   dominant_ecosystem: "npm",
   scan_timeline: [],
@@ -147,12 +149,22 @@ describe("UpdateFrequency", () => {
     expect(await screen.findByText(new RegExp(`newest ${WINDOW_SCAN_CAP} scans`))).toBeInTheDocument();
   });
 
+  it("says so when the window reaches past the history retention keeps", async () => {
+    mockedFrequency.mockResolvedValue({ ...metrics, retention_days: RETENTION_DAYS });
+    renderFrequency();
+
+    expect(
+      await screen.findByText(new RegExp(`Retention keeps ${RETENTION_DAYS} days of scans`)),
+    ).toBeInTheDocument();
+  });
+
   it("says nothing when the whole window was read", async () => {
     mockedFrequency.mockResolvedValue(metrics);
     renderFrequency();
 
     await screen.findByText("Update Timeline");
     expect(screen.queryByText(/newest \d+ scans/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Retention keeps/)).not.toBeInTheDocument();
   });
 
   it("says how many of the window's version changes the recent list shows", async () => {

@@ -176,6 +176,26 @@ function CappedBadge({ cap, windowDays }: Readonly<{ cap: number; windowDays: nu
   )
 }
 
+function retainedHint(retentionDays: number, windowDays: number): string {
+  return (
+    `Retention deletes this project's scans after ${retentionDays} days, so the row covers only those days ` +
+    `of the last ${windowDays}. The monthly rate divides by those ${retentionDays} days, so it stays comparable.`
+  )
+}
+
+function RetainedBadge({ retentionDays, windowDays }: Readonly<{ retentionDays: number; windowDays: number }>) {
+  return (
+    <Badge
+      variant="outline"
+      className="gap-1 whitespace-nowrap font-normal bg-amber-500/10 text-amber-600 border-amber-500/20"
+      title={retainedHint(retentionDays, windowDays)}
+    >
+      <Info className="h-3 w-3" />
+      Retention {retentionDays} days
+    </Badge>
+  )
+}
+
 function unmeasuredNote(data: Comparison): string | null {
   const parts = [
     data.partial_projects > 0 && `${data.partial_projects} on a partial window`,
@@ -469,6 +489,9 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                       {project.data_status === 'partial' && <PartialBadge scanCount={project.scan_count} />}
                       {project.window_scan_cap !== null && (
                         <CappedBadge cap={project.window_scan_cap} windowDays={project.window_days} />
+                      )}
+                      {project.retention_days !== null && (
+                        <RetainedBadge retentionDays={project.retention_days} windowDays={project.window_days} />
                       )}
                     </span>
                   </TableCell>

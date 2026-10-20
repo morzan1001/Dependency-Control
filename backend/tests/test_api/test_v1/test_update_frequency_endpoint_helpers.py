@@ -182,6 +182,7 @@ def _user(user_id: str) -> User:
 def _fake_db() -> MagicMock:
     db = MagicMock()
     db.scans.count_documents = AsyncMock(return_value=7)
+    db.system_settings.find_one = AsyncMock(return_value=None)
     return db
 
 
@@ -494,6 +495,24 @@ class TestProjectEndpointCaching:
             await _view(db)
 
         assert live.await_args.kwargs["branch"] == "main"
+
+    @pytest.mark.asyncio
+    async def test_the_walk_gets_the_retention_the_system_applies_to_the_project(self):
+        db = await _scanned_db()
+        await db.system_settings.insert_one(
+            {
+                "_id": "current",
+                "retention_mode": "global",
+                "global_retention_days": 30,
+                "global_retention_action": "delete",
+            }
+        )
+        live = AsyncMock(return_value=_metrics("live"))
+
+        with _project_patched(FakeCache(), live):
+            await _view(db, window_days=365)
+
+        assert live.await_args.kwargs["retention_days"] == 30
 
     @pytest.mark.asyncio
     async def test_a_branch_named_auto_is_not_the_default_view(self):

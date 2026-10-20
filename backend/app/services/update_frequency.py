@@ -16,11 +16,16 @@ from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.constants import (
     COUNTED_UPDATE_KINDS,
     RECENT_UPDATES_LIMIT,
+    RETENTION_ACTION_ARCHIVE,
+    RETENTION_ACTION_DELETE,
+    SETTINGS_MODE_GLOBAL,
     SLOWEST_PACKAGES_LIMIT,
     UPDATE_SAMPLE_RANK,
     UpdateKind,
 )
 from app.core.purl import package_identity, parse_purl
+from app.core.s3 import is_archive_enabled
+from app.models.system import SystemSettings
 from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -348,6 +353,21 @@ def window_cutoff(window_days: int | None) -> datetime | None:
     return datetime.now(tz=timezone.utc) - timedelta(days=window_days)
 
 
+def retention_horizon(system: SystemSettings, project_days: int | None, project_action: str | None) -> int | None:
+    """Days of scans retention keeps, None where it deletes none; the head and released scans outlive it."""
+    if system.retention_mode == SETTINGS_MODE_GLOBAL:
+        days, action = system.global_retention_days, system.global_retention_action
+    else:
+        days, action = project_days or 0, project_action or RETENTION_ACTION_DELETE
+    deletes = action == RETENTION_ACTION_DELETE or (action == RETENTION_ACTION_ARCHIVE and is_archive_enabled())
+    return days if days > 0 and deletes else None
+
+
+def retained_window(window_days: int, horizon: int | None) -> int | None:
+    """The horizon when it is shorter than the window: no scan older than it is left to count, so the rate stops there."""
+    return horizon if horizon is not None and horizon < window_days else None
+
+
 def updates_per_month(total_updates: int, window_days: int | None) -> float | None:
     """Per calendar window, not scan span, so CI cadence cannot skew the ranking's primary sort key."""
     if window_days is None:
@@ -392,6 +412,7 @@ class FoldedWindow:
         recent_updates: Sequence[DependencyUpdateEvent] = (),
         upstream: UpstreamCadenceMetrics | None = None,
         window_scan_cap: int | None = None,
+        retention_days: int | None = None,
         outdated_backlog: int = 0,
     ) -> UpdateFrequencyMetrics:
         return UpdateFrequencyMetrics(
@@ -419,6 +440,7 @@ class FoldedWindow:
             trend_detail=self.trend_detail,
             dominant_ecosystem=self.dominant_ecosystem,
             window_scan_cap=window_scan_cap,
+            retention_days=retention_days,
             outdated_backlog=outdated_backlog,
             scan_timeline=self.scan_timeline,
             slowest_packages=list(slowest_packages),
@@ -742,6 +764,7 @@ async def compute_update_frequency(
     max_scans: int = 20,
     window_days: int | None = None,
     release_fetcher: ReleaseHistoryFetcher | None = None,
+    retention_days: int | None = None,
 ) -> UpdateFrequencyMetrics:
     """One branch only, since other branches' differences are no updates; only window_days yields a monthly rate."""
     if branch is None:
@@ -811,11 +834,12 @@ async def compute_update_frequency(
         latest_outdated or set(),
         _final_versions_by_name(prev_deps),
     )
+    retained = None if truncated or window_days is None else retained_window(window_days, retention_days)
     # Past the cap the rate divides by the stretch the walk folded, not by a window it only partly saw.
     rate_days = (
         spanned_days(datetime.fromisoformat(bars[0].date), datetime.fromisoformat(bars[-1].date))
         if truncated
-        else window_days
+        else retained or window_days
     )
     folded = summarise_window(
         bars,
@@ -833,6 +857,7 @@ async def compute_update_frequency(
         recent_updates=state.recent_events(),
         upstream=upstream,
         window_scan_cap=WINDOW_HARD_LIMIT if truncated else None,
+        retention_days=retained,
         outdated_backlog=outdated_backlog,
     )
 
@@ -905,6 +930,7 @@ def measured_summary(
         total_outdated=metrics.total_outdated_detected,
         last_scan_date=metrics.last_scan_date,
         window_scan_cap=metrics.window_scan_cap,
+        retention_days=metrics.retention_days,
     )
 
 
@@ -979,6 +1005,7 @@ async def compute_update_frequency_comparison(
                     analysis_repo=analysis_repo,
                     window_days=window_days,
                     branch=primary,
+                    retention_days=project.get("retention_horizon"),
                 )
             except Exception:
                 logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)

@@ -59,6 +59,7 @@ const mockedComparison = analyticsApi.getUpdateFrequencyComparison as ReturnType
 
 // The cap the backend reports; the table only renders the number it is given.
 const WINDOW_SCAN_CAP = 1000;
+const RETENTION_DAYS = 90;
 
 const makeProject = (idx: number): ProjectUpdateSummary => ({
   project_id: `p${idx}`,
@@ -77,6 +78,7 @@ const makeProject = (idx: number): ProjectUpdateSummary => ({
   last_scan_date: "2026-08-01T00:00:00Z",
   data_status: "ready",
   window_scan_cap: null,
+  retention_days: null,
 });
 
 const makeUnmeasured = (
@@ -98,6 +100,7 @@ const makeUnmeasured = (
   last_scan_date: null,
   data_status: status,
   window_scan_cap: null,
+  retention_days: null,
 });
 
 const makePartial = (name: string): ProjectUpdateSummary => ({
@@ -401,6 +404,28 @@ describe("UpdateFrequencyComparison", () => {
     clickLoad();
 
     expect(await screen.findByText(`Newest ${WINDOW_SCAN_CAP} scans`)).toBeInTheDocument();
+  });
+
+  it("marks a row whose window reaches past the history retention keeps", async () => {
+    const retained = { ...makeProject(1), window_days: 365, retention_days: RETENTION_DAYS };
+    mockedComparison.mockResolvedValue(makeComparison(0, { projects: [retained] }));
+    renderComparison();
+    clickLoad();
+
+    const badge = await screen.findByText(`Retention ${RETENTION_DAYS} days`);
+    expect(badge.closest("[title]")).toHaveAttribute(
+      "title",
+      expect.stringContaining(`divides by those ${RETENTION_DAYS} days`),
+    );
+  });
+
+  it("marks no row whose window retention covers", async () => {
+    mockedComparison.mockResolvedValue(makeComparison(0, { projects: [makeProject(1)] }));
+    renderComparison();
+    clickLoad();
+
+    await screen.findByText("project-1");
+    expect(screen.queryByText(/^Retention \d+ days$/)).not.toBeInTheDocument();
   });
 });
 

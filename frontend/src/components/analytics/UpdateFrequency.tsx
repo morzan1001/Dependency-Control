@@ -73,6 +73,14 @@ function windowCapNotice(cap: number, windowDays?: number): string {
   )
 }
 
+function retentionNotice(retentionDays: number, windowDays?: number): string {
+  const scope = windowDays ? `the last ${windowDays} days` : 'the requested window'
+  return (
+    `Retention keeps ${retentionDays} days of scans, so the monthly rate divides by those ` +
+    `${retentionDays} days, not by all of ${scope}.`
+  )
+}
+
 function SummaryCards({ data, windowDays }: Readonly<{ data: UpdateFrequencyMetrics; windowDays?: number }>) {
   const trend = TREND_CONFIG[data.trend_direction] ?? TREND_CONFIG.unknown
   const TrendIcon = trend.icon
@@ -474,6 +482,13 @@ export function UpdateFrequency() {
             <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{windowCapNotice(data.window_scan_cap, windowDays)}</span>
+            </div>
+          )}
+
+          {data.retention_days !== null && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{retentionNotice(data.retention_days, windowDays)}</span>
             </div>
           )}
 
