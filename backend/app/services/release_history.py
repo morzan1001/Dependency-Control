@@ -75,16 +75,16 @@ def compute_adoption_latencies(
     history: ReleaseHistory,
     observations: Sequence[Observation],
 ) -> list[int]:
-    published = {
-        (system, name, release.version): release.published_at
-        for (system, name), releases in history.items()
-        for release in releases
-    }
-    return [
-        (scan_date - published[(system, name, version)]).days
-        for system, name, version, scan_date in observations
-        if (system, name, version) in published
-    ]
+    """Indexes only the observed packages, as a fetched history carries every canary a registry ever published."""
+    published: dict[tuple[str, str], dict[str, datetime]] = {}
+    latencies: list[int] = []
+    for system, name, version, scan_date in observations:
+        package = (system, name)
+        if package not in published:
+            published[package] = {release.version: release.published_at for release in history.get(package, ())}
+        if (released := published[package].get(version)) is not None:
+            latencies.append((scan_date - released).days)
+    return latencies
 
 
 def aggregate_upstream_metrics(
