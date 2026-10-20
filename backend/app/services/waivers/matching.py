@@ -131,7 +131,7 @@ def roll_up_advisories(record: dict[str, Any]) -> None:
     entries = details.get("vulnerabilities") or []
     if not entries:
         return
-    # A fully waived document keeps the severity and threat intel of its advisories, so dropping the waiver restores them.
+    # A fully waived document keeps its advisories' severity and threat intel, so dropping the waiver restores them.
     live = [entry for entry in entries if not entry.get("waived")] or entries
     severity = max((entry.get("severity") for entry in live), key=get_severity_value)
     if severity:
