@@ -88,6 +88,10 @@ def _one_typo_apart(name: str, popular: str) -> bool:
     return False
 
 
+def _looks_mistyped(name: str, popular: str, similarity_threshold: float) -> bool:
+    return difflib.SequenceMatcher(None, name, popular).ratio() > similarity_threshold or _one_typo_apart(name, popular)
+
+
 def _severity_for_ratio(ratio: float, critical_at: float, high_at: float) -> str:
     if ratio > critical_at:
         return Severity.CRITICAL.value
@@ -222,13 +226,22 @@ class TyposquattingAnalyzer(Analyzer):
         if full_name in known or name in known:
             return None
 
+        # Longest first, so the cut falls after the whole prefix a popular name shares.
+        family_prefixes = [name[: i + 1] for i in reversed(range(len(name))) if name[i] == "-"]
         matcher = difflib.SequenceMatcher(None, b=name)
         best_ratio, best_popular = 0.0, None
         for popular in top:
             if abs(len(name) - len(popular)) > 2:
                 continue
-            # One typo in a five-letter name scores 0.8, so such a pair need not reach the threshold.
-            floor = best_ratio if _one_typo_apart(name, popular) else max(best_ratio, similarity_threshold)
+            if family_prefixes and popular.startswith(family_prefixes[-1]):
+                cut = len(next(prefix for prefix in family_prefixes if popular.startswith(prefix)))
+                # mypy-boto3-ecr is no typo of mypy-boto3-ec2: siblings differ by design after their shared prefix.
+                if not _looks_mistyped(name[cut:], popular[cut:], similarity_threshold):
+                    continue
+                floor = best_ratio
+            else:
+                # One typo in a five-letter name scores 0.8, so such a pair need not reach the threshold.
+                floor = best_ratio if _one_typo_apart(name, popular) else max(best_ratio, similarity_threshold)
             # Both quick ratios bound ratio() from above in either orientation; ratio() itself is not symmetric.
             matcher.set_seq1(popular)
             if matcher.real_quick_ratio() <= floor or matcher.quick_ratio() <= floor:

@@ -425,6 +425,51 @@ class TestOneTypoInAShortName:
         assert [issue["component"] for issue in result["typosquatting_issues"]] == ["chakl"]
 
 
+class TestAFamilySiblingIsJudgedAfterTheSharedPrefix:
+    """An unranked name sharing a ranked name's prefix up to a hyphen is judged only on what follows it."""
+
+    _CORPUS: ClassVar[dict[str, list[str]]] = {
+        "pypi": [
+            "mypy-boto3-ec2",
+            "apache-airflow-providers-amazon",
+            "apache-airflow-providers-google",
+            "apache-airflow-providers-common-io",
+        ]
+    }
+
+    async def _issues(self, *names):
+        analyzer = TyposquattingAnalyzer()
+        with patch.object(analyzer, "_ensure_popular_packages", new=AsyncMock(return_value=self._CORPUS)):
+            result = await analyze_cyclonedx(analyzer, [_pypi(name) for name in names])
+        return {
+            issue["component"]: (issue["imitated_package"], issue["severity"])
+            for issue in result["typosquatting_issues"]
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_sibling_for_another_service_is_not_flagged(self):
+        """As whole names they score 0.93 against mypy-boto3-ec2 and 0.85 against apache-airflow-providers-common-io."""
+        assert await self._issues("mypy-boto3-ecr", "apache-airflow-providers-anomalo") == {}
+
+    @pytest.mark.asyncio
+    async def test_a_typo_after_the_shared_prefix_is_flagged_with_the_whole_names_similarity(self):
+        issues = await self._issues(
+            "apache-airflow-providers-amazom", "apache-airflow-providers-googel", "apache-airflow-providers-commom-io"
+        )
+
+        assert issues == {
+            "apache-airflow-providers-amazom": ("apache-airflow-providers-amazon", "CRITICAL"),
+            "apache-airflow-providers-googel": ("apache-airflow-providers-google", "CRITICAL"),
+            "apache-airflow-providers-commom-io": ("apache-airflow-providers-common-io", "CRITICAL"),
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_typo_inside_the_family_prefix_is_flagged(self):
+        issues = await self._issues("apache-airflow-providres-amazon")
+
+        assert issues == {"apache-airflow-providres-amazon": ("apache-airflow-providers-amazon", "CRITICAL")}
+
+
 class TestTheEcosystemComesFromThePurl:
     """The purl's registry is the ecosystem rule every analyzer shares, so a generic purl names none."""
 
