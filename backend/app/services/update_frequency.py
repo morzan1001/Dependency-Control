@@ -238,7 +238,8 @@ def version_changes(
         if prev is None or prev["version"] == curr["version"]:
             continue
         kind = classify_version_change(prev["version"], curr["version"])
-        if kind != "none":  # "none" is one PEP 440 identity spelled twice, e.g. v1.0.0 vs 1.0.0
+        # "none": one version spelled twice, e.g. v1.0.0 vs 1.0.0 or 4.1.100.Final vs 4.1.100
+        if kind != "none":
             yield identity, prev, curr, kind
 
 
