@@ -4,7 +4,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 from app.api.deps import _CiClaim, _GitLabCi, _ownership_stages
 from app.api.v1.endpoints.projects import update_project
@@ -182,11 +182,10 @@ async def _assert_two_concurrent_saves_cannot_both_take_the_last_admin(db) -> No
     with (
         patch("app.api.v1.endpoints.projects.check_project_access", AsyncMock(return_value=project)),
         patch("app.api.v1.endpoints.projects.deps.get_system_settings", AsyncMock(return_value=settings)),
-        patch("app.api.v1.endpoints.projects._audit_license_policy_change", AsyncMock()),
     ):
         outcomes = await asyncio.gather(
-            update_project("p-race", ProjectUpdate(team_ids=["t-b"]), actor, db),
-            update_project("p-race", ProjectUpdate(team_ids=["t-a"]), actor, db),
+            update_project("p-race", ProjectUpdate(team_ids=["t-b"]), actor, db, BackgroundTasks()),
+            update_project("p-race", ProjectUpdate(team_ids=["t-a"]), actor, db, BackgroundTasks()),
             return_exceptions=True,
         )
 

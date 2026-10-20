@@ -2,7 +2,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 from app.models.project import Project, ProjectMember, Scan
 from app.models.user import User
@@ -268,6 +268,7 @@ class TestProjectLimitCountsOnlyProjectsTheUserAdmins:
                 ),
                 db=db,
                 settings=SystemSettings(project_limit_per_user=self._LIMIT),
+                background_tasks=BackgroundTasks(),
             )
         )
 
@@ -303,6 +304,7 @@ class TestCreateProjectStoresWhatTheDialogChose:
         from tests.mocks.fake_mongo import FakeDatabase
 
         db = db or FakeDatabase()
+        background_tasks = BackgroundTasks()
         response = asyncio.run(
             create_project(
                 project_in=project_in,
@@ -311,8 +313,10 @@ class TestCreateProjectStoresWhatTheDialogChose:
                 ),
                 db=db,
                 settings=settings or SystemSettings(),
+                background_tasks=background_tasks,
             )
         )
+        asyncio.run(background_tasks())
         return db, db.projects._docs[response.project_id]
 
     @pytest.mark.parametrize("action", ["archive", "none"])
@@ -636,6 +640,7 @@ class TestAnalyzerNamesAreCheckedWhereTheyEnter:
                     current_user=User(id="c", username="c", email="c@test.com", permissions=["project:create"]),
                     db=db,
                     settings=SystemSettings(),
+                    background_tasks=BackgroundTasks(),
                 )
             )
 
@@ -656,7 +661,7 @@ class TestAnalyzerNamesAreCheckedWhereTheyEnter:
             patch(f"{MODULE}.check_project_access", AsyncMock(return_value=project)),
             pytest.raises(HTTPException) as exc,
         ):
-            await update_project("proj-1", ProjectUpdate(active_analyzers=["osv "]), user, db)
+            await update_project("proj-1", ProjectUpdate(active_analyzers=["osv "]), user, db, BackgroundTasks())
 
         assert exc.value.status_code == 422
         assert (await db.projects.find_one({"_id": "proj-1"}))["active_analyzers"] == project.active_analyzers
@@ -672,7 +677,9 @@ class TestAnalyzerNamesAreCheckedWhereTheyEnter:
         db = await TestWritesReadTheProjectBackOnce._seeded_db(project)
 
         with patch(f"{MODULE}.check_project_access", AsyncMock(return_value=project)):
-            await update_project("proj-1", ProjectUpdate(active_analyzers=["osv", "cbomkit"]), user, db)
+            await update_project(
+                "proj-1", ProjectUpdate(active_analyzers=["osv", "cbomkit"]), user, db, BackgroundTasks()
+            )
         config = await get_project_config(Project.model_validate(await db.projects.find_one({"_id": "proj-1"})))
 
         assert config.active_analyzers == ["osv", "cbomkit"]
@@ -696,3 +703,53 @@ def test_the_scan_findings_table_ranks_severity_like_every_other_surface():
     ranks = {branch["case"]["$eq"][1]: branch["then"] for branch in switch["branches"]}
 
     assert {severity: ranks.get(severity, switch["default"]) for severity in SEVERITY_ORDER} == SEVERITY_ORDER
+
+
+_INTERNAL_ONLY_POLICY = {"license_compliance": {"distribution_model": "internal_only"}}
+
+
+class TestTheLicensePolicyAuditRunsAfterTheResponse:
+    """The audit notifies members inline, so awaiting it would hold the request through SMTP and chat delivery."""
+
+    @pytest.mark.asyncio
+    async def test_an_update_queues_the_audit_instead_of_awaiting_it(self):
+        from app.api.v1.endpoints.projects import update_project
+        from app.schemas.project import ProjectUpdate
+
+        user = _make_admin_user()
+        project = _make_project(admin_id=user.id)
+        db = await TestWritesReadTheProjectBackOnce._seeded_db(project)
+        background_tasks = BackgroundTasks()
+
+        with (
+            patch(f"{MODULE}.check_project_access", AsyncMock(return_value=project)),
+            patch(f"{MODULE}.record_license_policy_change", AsyncMock()) as record,
+        ):
+            await update_project(
+                "proj-1", ProjectUpdate(analyzer_settings=_INTERNAL_ONLY_POLICY), user, db, background_tasks
+            )
+            record.assert_not_awaited()
+            await background_tasks()
+
+        assert record.await_args.kwargs["new_policy"]["distribution_model"] == "internal_only"
+
+    @pytest.mark.asyncio
+    async def test_a_create_queues_the_audit_instead_of_awaiting_it(self):
+        from app.api.v1.endpoints.projects import create_project
+        from app.models.system import SystemSettings
+        from app.schemas.project import ProjectCreate
+        from tests.mocks.fake_mongo import FakeDatabase
+
+        background_tasks = BackgroundTasks()
+        with patch(f"{MODULE}.record_license_policy_change", AsyncMock()) as record:
+            await create_project(
+                ProjectCreate(name="New", analyzer_settings=_INTERNAL_ONLY_POLICY),
+                _make_admin_user(),
+                FakeDatabase(),
+                SystemSettings(),
+                background_tasks,
+            )
+            record.assert_not_awaited()
+            await background_tasks()
+
+        assert record.await_args.kwargs["new_policy"]["distribution_model"] == "internal_only"

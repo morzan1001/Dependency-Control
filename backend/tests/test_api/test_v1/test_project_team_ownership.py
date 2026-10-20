@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 from app.api.v1.endpoints.projects import _MSG_LAST_ADMIN_OWNER, update_project
 from app.core.constants import MAX_PROJECT_TEAMS
@@ -53,9 +53,8 @@ async def _put(db, project, user, **body):
     with (
         patch(f"{MODULE}.check_project_access", AsyncMock(return_value=project)),
         patch(f"{MODULE}.deps.get_system_settings", AsyncMock(return_value=settings)),
-        patch(f"{MODULE}._audit_license_policy_change", AsyncMock()),
     ):
-        return await update_project("p-1", ProjectUpdate(**body), user, db)
+        return await update_project("p-1", ProjectUpdate(**body), user, db, BackgroundTasks())
 
 
 async def _stored(db) -> dict:

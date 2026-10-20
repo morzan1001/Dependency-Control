@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from pydantic import ValidationError
 
 from app.api.v1.endpoints import projects
@@ -54,8 +54,9 @@ def _stored(db) -> dict:
 class TestCreateProjectTeamGrant:
     @staticmethod
     async def _create(db, user, team_id):
-        with patch("app.api.v1.endpoints.projects._audit_license_policy_change", AsyncMock()):
-            return await projects.create_project(ProjectCreate(name="new", team_id=team_id), user, db, SystemSettings())
+        return await projects.create_project(
+            ProjectCreate(name="new", team_id=team_id), user, db, SystemSettings(), BackgroundTasks()
+        )
 
     @pytest.mark.asyncio
     async def test_a_write_superuser_may_hand_it_to_a_team_they_are_not_in(self):

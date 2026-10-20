@@ -248,6 +248,7 @@ async def create_project(
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.PROJECT_CREATE))],
     db: DatabaseDep,
     settings: Annotated[SystemSettings, Depends(deps.get_system_settings)],
+    background_tasks: BackgroundTasks,
 ) -> ProjectApiKeyResponse:
     """Create a new project and return the initial API Key, which is only returned once."""
     reject_unknown_analyzers(project_in.active_analyzers)
@@ -292,7 +293,7 @@ async def create_project(
     project_data["api_key_hash"] = api_key_hash
 
     await project_repo.create_raw(project_data)
-    await _audit_license_policy_change(db, project_id, None, project, current_user)
+    background_tasks.add_task(_audit_license_policy_change, db, project_id, None, project, current_user)
 
     return ProjectApiKeyResponse(project_id=project_id, api_key=api_key)
 
@@ -551,6 +552,7 @@ async def update_project(
     project_in: ProjectUpdate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
+    background_tasks: BackgroundTasks,
 ) -> Project:
     """Update project details (name, owning teams, active analyzers). Requires 'admin' role."""
     project_repo = ProjectRepository(db)
@@ -598,7 +600,7 @@ async def update_project(
     if updated_project.default_branch != project.default_branch:
         await ScanRepository(db).sync_project_head(project_id)
         updated_project = await _reload_project(project_repo, project_id)
-    await _audit_license_policy_change(db, project_id, project, updated_project, current_user)
+    background_tasks.add_task(_audit_license_policy_change, db, project_id, project, updated_project, current_user)
     return updated_project
 
 
