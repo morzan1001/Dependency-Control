@@ -376,7 +376,7 @@ def _aggregate_crypto_rules(
 
 async def _enrich_vulnerabilities(
     records: list[dict[str, Any]], vulnerabilities: list[dict[str, Any]], report: AnalyzerReport, db: Database
-) -> tuple[dict[str, Any], dict[str, VulnerabilityEnrichment]]:
+) -> dict[str, VulnerabilityEnrichment]:
     threat_intel: dict[str, VulnerabilityEnrichment] = {}
     sends = sends_ids(vulnerabilities)
     try:
@@ -395,7 +395,7 @@ async def _enrich_vulnerabilities(
         else:
             report.skipped[_ENRICHMENT] = _NO_ENRICHABLE_IDS
     refresh_vulnerability_info(records)
-    return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
+    return threat_intel
 
 
 def _prepare_posted_callgraph(payload: dict[str, Any]) -> CallgraphMinimal:
@@ -421,7 +421,7 @@ def _run_reachability(
     callgraph_payload: dict[str, Any] | None,
     languages: ComponentLanguages,
     report: AnalyzerReport,
-) -> dict[str, Any] | None:
+) -> CallgraphMinimal | None:
     if callgraph_payload is None:
         report.skipped[_REACHABILITY] = _NO_CALLGRAPH
         return None
@@ -435,7 +435,7 @@ def _run_reachability(
 
     enrich_findings_with_reachability(vulnerabilities, [callgraph], languages)
     _record_ran(report, _REACHABILITY)
-    return dict(build_reachability_summary(vulnerabilities, [callgraph]))
+    return callgraph
 
 
 def _apply_vulnerability_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:
@@ -506,15 +506,13 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     # Same dict objects as records, so every stage's in-place enrichment reaches the response.
     vulnerabilities = [record for record in records if record["type"] == FindingType.VULNERABILITY]
 
-    epss_kev_summary, threat_intel = await _enrich_vulnerabilities(records, vulnerabilities, report, db)
+    threat_intel = await _enrich_vulnerabilities(records, vulnerabilities, report, db)
 
     # One row per package across every posted SBOM, the invariant a stored scan's inventory holds.
     merged, _ = merge_duplicate_dependencies([dep for pi in parsed_inputs for dep in pi.parsed.dependencies])
     components = [dep.model_dump() for dep in merged]
     languages = component_language_map(components)
-    reachability_summary = await asyncio.to_thread(
-        _run_reachability, vulnerabilities, request.callgraph, languages, report
-    )
+    callgraph = await asyncio.to_thread(_run_reachability, vulnerabilities, request.callgraph, languages, report)
 
     waived_count = 0
     waivers_applied: WaiversApplied = "none"
@@ -524,8 +522,9 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         waived_count = apply_global_waivers_in_memory(records, await WaiverRepository(db).find_active_global())
         waivers_applied = "global"
 
-    # After the waivers, so an accepted risk neither scores nor generates work to do.
+    # After the waivers, so an accepted risk neither scores, counts in a summary nor generates work to do.
     stats = compute_stats(records, languages)
+    live_vulnerabilities = [record for record in vulnerabilities if not record.get("waived")]
     recommendations = await asyncio.to_thread(
         generate_recommendations,
         findings=[record for record in records if not record.get("waived")],
@@ -545,8 +544,8 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         findings=records,
         stats=stats,
         dependencies=aggregator.get_dependency_enrichments(),
-        epss_kev_summary=epss_kev_summary,
-        reachability_summary=reachability_summary,
+        epss_kev_summary=dict(build_epss_kev_summary(live_vulnerabilities)),
+        reachability_summary=dict(build_reachability_summary(live_vulnerabilities, [callgraph])) if callgraph else None,
         recommendations=[recommendation.to_dict() for recommendation in recommendations],
         analyzers=report,
         waivers_applied=waivers_applied,
