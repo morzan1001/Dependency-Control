@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Annotated, Any
 
@@ -249,10 +250,11 @@ async def _probe_team_access(
         )
 
     # Team sync acts on every organisation of the token, so one unreadable organisation fails the test.
-    probes = [(name, await github_service.count_org_teams(name)) for name in org_names]
+    counts = await asyncio.gather(*(github_service.count_org_teams(name) for name in org_names))
+    probes = list(zip(org_names, counts, strict=True))
     unreadable = [name for name, count in probes if count is None]
     if unreadable:
-        # Exhaustion mid-loop makes every later organisation look unreadable, so naming any could accuse a readable one.
+        # Exhaustion during the probes makes some organisations look unreadable, so naming any could accuse one.
         return await _refused_probe(github_service, instance, "team access could not be checked") or _failed_test(
             instance,
             "OIDC endpoint reachable, but the token cannot read teams in "

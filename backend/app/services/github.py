@@ -388,8 +388,18 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
 
     async def count_org_teams(self, org: str) -> int | None:
         """Uncached: a connection test must see the token as it is now, not five minutes ago."""
-        teams = await self._api_get_paginated(f"/orgs/{org}/teams")
-        return None if teams is None else len(teams)
+        endpoint = f"/orgs/{org}/teams"
+        async with request_gate(self.instance_id):
+            response = await self._api_get(endpoint, params={"per_page": 1})
+        if response is None or not self._ok(endpoint, response):
+            return None
+        # One team per page, so the last page's number is the count.
+        last = urllib.parse.urlsplit(response.links.get("last", {}).get("url", ""))
+        page = urllib.parse.parse_qs(last.query).get("page", [""])[0]
+        if page.isdigit():
+            return int(page)
+        teams = response.json()
+        return len(teams) if isinstance(teams, list) else None
 
     async def get_team_members(self, org: str, team_slug: str, team_id: int) -> list[dict[str, Any]] | None:
         """Cached on the numeric id because the slug is renameable."""
