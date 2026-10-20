@@ -17,9 +17,10 @@ vi.mock("@/hooks/queries/use-teams", () => ({
 
 // Radix Select isn't driveable in jsdom (pointer capture); use a native select.
 vi.mock("../WindowSelect", () => ({
-  WindowSelect: ({ value, onChange }: { value: number | undefined; onChange: (v: number) => void }) => (
+  WindowSelect: ({ value, onChange, label }: { value: number | undefined; onChange: (v: number) => void; label: string }) => (
     <select
       data-testid="window-select"
+      aria-label={label}
       value={String(value)}
       onChange={(e) => onChange(Number(e.target.value))}
     >
@@ -402,10 +403,11 @@ describe("UpdateFrequencyComparison accessible names", () => {
     mockedComparison.mockResolvedValue(makeComparison(3));
   });
 
-  it("names its team and metric dropdowns, which have no visible label", async () => {
+  it("names its team, time window and metric dropdowns, which have no visible label", async () => {
     renderComparison();
 
     expect(screen.getByRole("combobox", { name: "Team" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Comparison time window" })).toBeInTheDocument();
     clickLoad();
     expect(await screen.findByRole("combobox", { name: "Comparison metric" })).toBeInTheDocument();
   });

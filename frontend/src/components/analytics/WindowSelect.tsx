@@ -17,10 +17,12 @@ const SCANS_OPTION = { value: 'scans', label: 'Last 20 scans' }
 export function WindowSelect({
   value,
   onChange,
+  label,
   allowScans = true,
 }: Readonly<{
   value: number | undefined
   onChange: (v: number | undefined) => void
+  label: string
   allowScans?: boolean
 }>) {
   const options = allowScans ? [...CALENDAR_OPTIONS, SCANS_OPTION] : CALENDAR_OPTIONS
@@ -29,7 +31,7 @@ export function WindowSelect({
       value={value === undefined ? 'scans' : String(value)}
       onValueChange={(v) => onChange(v === 'scans' ? undefined : Number(v))}
     >
-      <SelectTrigger className="w-[180px]" aria-label="Time window">
+      <SelectTrigger className="w-[180px]" aria-label={label}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

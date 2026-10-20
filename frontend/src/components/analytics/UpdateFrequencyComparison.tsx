@@ -530,7 +530,7 @@ export function UpdateFrequencyComparison() {
                 ))}
               </SelectContent>
             </Select>
-            <WindowSelect value={windowDays} onChange={setWindowDays} allowScans={false} />
+            <WindowSelect value={windowDays} onChange={setWindowDays} label="Comparison time window" allowScans={false} />
             <Button
               variant="outline"
               disabled={isFetching}
