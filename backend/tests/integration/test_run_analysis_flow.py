@@ -110,6 +110,22 @@ async def test_a_re_analysis_purges_the_row_of_an_analyzer_the_project_no_longer
     assert await db.analysis_results.count_documents({"scan_id": "other-scan"}) == 1
 
 
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_re_analysis_keeps_the_rows_its_analyzers_wrote_and_purges_the_dated_older_ones(
+    db, notified, monkeypatch, stored_sbom
+):
+    serve_analyzer(monkeypatch, "maintainer_risk", _SettingsProbe())
+    scan_id = await _seed_scan(db)
+    await db.analysis_results.insert_one(
+        {"scan_id": scan_id, "analyzer_name": "typosquatting", "result": {"marker": "stale"}, "created_at": _T0}
+    )
+
+    await analyse_scan(db, scan_id, [stored_sbom], ["maintainer_risk"], worker_id=_WORKER)
+
+    assert await db.analysis_results.distinct("analyzer_name", {"scan_id": scan_id}) == ["maintainer_risk"]
+
+
 @pytest.mark.asyncio
 async def test_a_scan_that_is_not_finalized_is_not_notified(db, notified, monkeypatch):
     async def _rescheduled(*args, **kwargs):
@@ -447,8 +463,7 @@ async def test_a_re_analysis_whose_sbom_fails_to_stream_keeps_the_earlier_findin
 
     assert await analyse_scan(db, scan_id, [stored_sbom], [], worker_id=_WORKER) == status
 
-    assert [f["_id"] async for f in db.findings.find({"scan_id": scan_id})] == ["f1"]
-    assert await db.dependencies.count_documents({"scan_id": scan_id}) == 1
+    await _assert_the_earlier_analysis_is_intact(db, scan_id)
     assert notified == []
 
 

@@ -907,13 +907,10 @@ async def run_analysis(
     aggregator = ResultAggregator()
     fs = AsyncIOMotorGridFSBucket(db)
     load_start = datetime.now(timezone.utc)
-    # Checked before the first delete, so an SBOM that is gone leaves the stored analysis intact.
+    # Checked before any write, so an SBOM that is gone leaves the stored analysis intact.
     stored_ids = await _stored_sbom_ids(fs, sboms, aggregator)
     if None in stored_ids and scan_doc.completed_at is not None:
         return await _keep_previous_analysis(ctx, load_start)
-
-    result_repo = AnalysisResultRepository(db)
-    await result_repo.delete_many({"scan_id": scan_id, "analyzer_name": {"$in": list(_ENGINE_RESULT_NAMES)}})
 
     if scan_doc.is_rescan:
         analysis_rescan_operations_total.inc()
@@ -935,7 +932,7 @@ async def run_analysis(
     ):
         del payload, aggregator
         logger.error(
-            "Scan %s: %d/%d SBOMs failed to load and %d failed to parse; persisting nothing",
+            "Scan %s: %d/%d SBOMs failed to load and %d failed to parse; storing no findings or dependencies",
             scan_id,
             sbom_load_failures,
             len(stored_ids),
@@ -954,6 +951,12 @@ async def run_analysis(
             *_failed_analyzer_names(analyzer_outcomes),
         )
         return await _conclude(ctx, verdict, load_start, aggregation_start_time)
+
+    result_repo = AnalysisResultRepository(db)
+    # Deferred past the unusable check so a kept analysis keeps its rows; this run's rows postdate load_start.
+    await result_repo.delete_older_writes(
+        {"scan_id": scan_id, "analyzer_name": {"$in": list(_ENGINE_RESULT_NAMES)}}, load_start
+    )
 
     if scan_doc.scan_type == SCAN_TYPE_CBOM or any(p is not None and p.crypto_assets for p in payload):
         outcomes.extend(await _run_crypto_analyzers(ctx, aggregator))
