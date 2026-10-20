@@ -173,3 +173,18 @@ def test_purl_less_components_of_different_types_sharing_a_name_are_different_pa
     col._docs = {d["_id"]: d for d in docs}
 
     assert _run(col, ["s1", "s2"]) == []
+
+
+def test_packages_on_as_many_versions_are_listed_by_name_whatever_its_case():
+    col = FakeCollection()
+    docs = []
+    for path in ("github.com/Masterminds/semver", "github.com/google/uuid", "github.com/Azure/go-autorest"):
+        for index, (scan, project) in enumerate([("s1", "p1"), ("s2", "p2")]):
+            docs.append(_dep(f"{path}-{scan}", scan, project, path, f"1.{index}.0", f"pkg:golang/{path}@1.{index}.0"))
+    col._docs = {d["_id"]: d for d in docs}
+
+    assert [r["name"] for r in _run(col, ["s1", "s2"])] == [
+        "github.com/Azure/go-autorest",
+        "github.com/google/uuid",
+        "github.com/Masterminds/semver",
+    ]

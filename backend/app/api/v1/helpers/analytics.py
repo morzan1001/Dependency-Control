@@ -5,6 +5,7 @@ from typing import Annotated, Any
 from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.core.constants import (
     BLAST_RADIUS_THRESHOLD,
     CROSS_PROJECT_MIN_OCCURRENCES,
@@ -375,7 +376,7 @@ def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> li
             }
         },
         {MONGO_MATCH: {"version_count": {"$gt": 1}, "project_count": {"$gte": min_projects}}},
-        {"$sort": {"version_count": -1, "name": 1}},
+        *case_insensitive_sort([("version_count", -1), ("name", 1)], {"name"}),
     ]
 
 
