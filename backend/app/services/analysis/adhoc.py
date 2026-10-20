@@ -105,10 +105,11 @@ _UNCACHED_FANOUT = (
     "off by default: this path caches nothing keyed on the posted packages, so every run re-queries "
     "the upstream registry for each package it recognises"
 )
+_CLI_SCANNER = "off by default: runs a CLI scanner process, which takes minutes on large SBOMs"
 
 ADHOC_SKIP_REASONS: dict[str, str] = {
-    "trivy": "off by default: CLI scanner, may run up to 300 s",
-    "grype": "off by default: CLI scanner, may run up to 600 s",
+    "trivy": _CLI_SCANNER,
+    "grype": _CLI_SCANNER,
     "deps_dev": _UNCACHED_FANOUT,
     "outdated_packages": _UNCACHED_FANOUT,
     "hash_verification": _UNCACHED_FANOUT,

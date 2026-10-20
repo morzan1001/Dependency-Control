@@ -1,11 +1,6 @@
 from app.schemas.adhoc import AnalyzerReport
-from app.services.analysis.adhoc import (
-    ADHOC_DEFAULT_ANALYZERS,
-    ADHOC_SKIP_REASONS,
-    resolve_adhoc_analyzers,
-)
+from app.services.analysis.adhoc import ADHOC_DEFAULT_ANALYZERS, resolve_adhoc_analyzers
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories
-from tests.helpers.analyzers import build_analyzer
 
 _OSV = "osv"
 _LICENSE = "license_compliance"
@@ -16,6 +11,7 @@ _ENRICHMENT = "epss_kev"
 _UNKNOWN_NAME = "not_a_scanner"
 _UNKNOWN_REASON = "unknown analyzer"
 _NOT_REQUESTED = "not requested"
+_CLI_SCANNER_REASON = "off by default: runs a CLI scanner process, which takes minutes on large SBOMs"
 _UNCACHED_FANOUT_MARKER = "caches nothing keyed on the posted packages"
 _TYPOSQUATTING_MARKER = "top-packages list"
 _CRYPTO_STAGE = "crypto_rules"
@@ -53,14 +49,12 @@ def test_every_registered_analyzer_is_either_selected_or_given_a_reason():
     assert not set(selected) & set(report.skipped)
 
 
-def test_cli_scanners_are_off_by_default_and_quote_their_real_timeout():
+def test_cli_scanners_are_off_by_default_without_quoting_a_bound_their_retries_exceed():
     report = AnalyzerReport()
 
     resolve_adhoc_analyzers(None, report)
 
-    for name in (_TRIVY, _GRYPE):
-        assert report.skipped[name] == ADHOC_SKIP_REASONS[name]
-        assert str(build_analyzer(name).cli_timeout) in report.skipped[name]
+    assert report.skipped[_TRIVY] == report.skipped[_GRYPE] == _CLI_SCANNER_REASON
 
 
 def test_registry_fanout_analyzers_are_off_by_default_with_an_uncached_reason():
