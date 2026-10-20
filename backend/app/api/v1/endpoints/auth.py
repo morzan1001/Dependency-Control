@@ -1,6 +1,8 @@
+import asyncio
 import hmac
 import logging
 import secrets
+import time
 from collections.abc import Awaitable
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -657,9 +659,6 @@ async def forgot_password(
 ) -> ForgotPasswordResponse:
     """Request a password reset email; every address gets one constant-time answer, so none can be enumerated."""
     await _check_rate_limit(f"forgot_pw:{_client_host(request)}", max_attempts=3, window_seconds=600)
-    import asyncio
-    import time
-
     start_time = time.monotonic()
 
     generic_response = ForgotPasswordResponse(
