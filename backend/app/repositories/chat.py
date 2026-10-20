@@ -9,6 +9,8 @@ from pymongo import ReturnDocument
 _CONV_COL = "chat_conversations"
 _MSG_COL = "chat_messages"
 
+DEFAULT_CONVERSATION_TITLE = "New Conversation"
+
 
 class ChatRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
@@ -16,7 +18,7 @@ class ChatRepository:
         self.conversations = db[_CONV_COL]
         self.messages = db[_MSG_COL]
 
-    async def create_conversation(self, user_id: str, title: str = "New Conversation") -> dict[str, Any]:
+    async def create_conversation(self, user_id: str, title: str) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
         doc = {
             "_id": str(uuid.uuid4()),
@@ -47,9 +49,9 @@ class ChatRepository:
             return True
         return False
 
-    async def update_conversation_title(self, conversation_id: str, user_id: str, title: str) -> None:
+    async def replace_default_title(self, conversation_id: str, user_id: str, title: str) -> None:
         await self.conversations.update_one(
-            {"_id": conversation_id, "user_id": user_id},
+            {"_id": conversation_id, "user_id": user_id, "title": DEFAULT_CONVERSATION_TITLE},
             {"$set": {"title": title, "updated_at": datetime.now(timezone.utc)}},
         )
 

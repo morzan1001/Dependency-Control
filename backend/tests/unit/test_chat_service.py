@@ -77,7 +77,7 @@ def _make_service() -> ChatService:
     service.repo.get_conversation = AsyncMock(
         side_effect=AssertionError("the title must follow the write, not a read-back")
     )
-    service.repo.update_conversation_title = AsyncMock()
+    service.repo.replace_default_title = AsyncMock()
     service.repo.get_recent_messages = AsyncMock(return_value=[])
     service.repo.create_conversation = AsyncMock(
         return_value={"_id": "conv-new", "user_id": "user-1", "title": "New", "message_count": 0}
@@ -135,8 +135,8 @@ async def test_send_message_auto_titles_first_message():
     async for _ in service.send_message("conv-1", user, "my very first question", max_tool_rounds=20):
         pass
 
-    service.repo.update_conversation_title.assert_awaited_once()
-    args = service.repo.update_conversation_title.await_args
+    service.repo.replace_default_title.assert_awaited_once()
+    args = service.repo.replace_default_title.await_args
     assert args.args[0] == "conv-1"
     assert args.args[1] == "user-1"
     assert "first question" in args.args[2]
@@ -160,7 +160,7 @@ async def test_a_later_message_does_not_retitle_the_conversation():
     async for _ in service.send_message("conv-1", user, "a follow-up question", max_tool_rounds=20):
         pass
 
-    service.repo.update_conversation_title.assert_not_awaited()
+    service.repo.replace_default_title.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -297,7 +297,7 @@ async def test_a_turn_for_a_deleted_conversation_ends_before_the_model_runs():
 
     assert events == ['data: {"type": "error", "message": "Conversation not found"}\n\n']
     assert service.repo.add_message.await_count == 1
-    service.repo.update_conversation_title.assert_not_awaited()
+    service.repo.replace_default_title.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -598,3 +598,24 @@ async def test_a_fallback_after_streamed_text_opens_a_new_paragraph():
     fallback = json.loads(events[-2].removeprefix("data: "))
     assert fallback["type"] == "token"
     assert fallback["content"].startswith("\n\n_I gathered data from 1 tool call(s)")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("given", "kept"),
+    [("Release triage", "Release triage"), (None, "my very first question")],
+    ids=["named", "untitled"],
+)
+async def test_the_first_message_titles_only_a_conversation_created_without_a_title(db, given, kept):
+    service = ChatService(db)
+    service.tools = MagicMock()
+    service.tools.get_available_tool_definitions = MagicMock(return_value=[])
+    service.ollama = MagicMock()
+    service.ollama.chat_stream = MagicMock(return_value=_async_gen([{"type": "token", "content": "ok"}, _DONE]))
+    user = _make_user()
+    conv = await service.create_conversation(user, title=given)
+
+    async for _ in service.send_message(conv["_id"], user, "my very first question", max_tool_rounds=20):
+        pass
+
+    assert (await service.repo.get_conversation(conv["_id"], str(user.id)))["title"] == kept
