@@ -534,3 +534,35 @@ def test_scorecard_correlation_counts_a_cve_on_two_installed_versions_once():
     assert rec.description.startswith("Found 1 critical/high vulnerabilities")
     assert rec.impact["high"] == rec.impact["total"] == 1
     assert [p["version"] for p in rec.action["packages"]] == ["5.7.1", "7.3.5"]
+
+
+class TestCorrelateScorecardCountsOnlyUnfixedVulnerabilities:
+    def test_an_advisory_with_a_recorded_fix_is_left_to_the_update_cards(self):
+        log4j = stored_vulnerability(
+            "log4j-core",
+            "2.14.0",
+            [
+                {"id": "CVE-2021-44228", "severity": "CRITICAL", "fixed_version": "2.15.0"},
+                {"id": "CVE-2021-45105", "severity": "HIGH"},
+            ],
+        )
+
+        [rec] = correlate_scorecard_with_vulnerabilities(
+            [log4j], [_quality_finding(component="log4j-core", critical_issues=["Maintained"])]
+        )
+
+        assert rec.description.startswith("Found 1 critical/high vulnerabilities")
+        assert (rec.impact["critical"], rec.impact["high"], rec.impact["total"]) == (0, 1, 1)
+        assert rec.action["packages"][0]["cves"] == ["CVE-2021-45105"]
+
+    def test_a_package_whose_critical_and_high_advisories_all_name_a_fix_gets_no_card(self):
+        fixed = stored_vulnerability(
+            "lodash", "4.17.20", [{"id": "CVE-2021-23337", "severity": "HIGH", "fixed_version": "4.17.21"}]
+        )
+
+        assert (
+            correlate_scorecard_with_vulnerabilities(
+                [fixed], [_quality_finding(component="lodash", critical_issues=["Maintained"])]
+            )
+            == []
+        )

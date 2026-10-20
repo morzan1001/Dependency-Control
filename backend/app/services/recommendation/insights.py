@@ -16,6 +16,7 @@ from app.services.recommendation.common import (
     cve_severities,
     get_attr,
     live_advisories,
+    names_fix,
     package_label,
     recommend,
     sampled,
@@ -65,7 +66,8 @@ def correlate_scorecard_with_vulnerabilities(
 
         score = scorecard["overall_score"]
         is_unmaintained = scorecard["has_maintenance_issues"]
-        severities = cve_severities(live_advisories(get_attr(vf, "details")))
+        # A fixable advisory belongs to the update cards; this card claims what may never receive a fix.
+        severities = cve_severities(a for a in live_advisories(get_attr(vf, "details")) if not names_fix(a))
         risky = {cve: severity for cve, severity in severities.items() if severity in ("CRITICAL", "HIGH")}
 
         # A score exists only where deps_dev flagged it under the project's own threshold.
