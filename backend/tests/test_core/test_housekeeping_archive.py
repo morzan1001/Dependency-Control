@@ -104,6 +104,21 @@ class TestArchiveScansAndDelete:
 
         assert mock_archive.call_count == 100
 
+    @pytest.mark.asyncio
+    async def test_the_failure_warning_names_the_first_twenty_scans(self, caplog):
+        scan_ids = [f"scan-{i:02d}" for i in range(25)]
+
+        with (
+            patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=None),
+            caplog.at_level(logging.WARNING, logger=MODULE),
+        ):
+            await _archive_scans_and_delete(await _store_with(*scan_ids), scan_ids, "test")
+
+        (warning,) = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+        assert all(scan_id in warning for scan_id in scan_ids[:20])
+        assert not any(scan_id in warning for scan_id in scan_ids[20:])
+        assert "25 scan(s)" in warning
+
 
 class TestHandleRetentionAction:
     def test_delete_action_calls_delete(self):

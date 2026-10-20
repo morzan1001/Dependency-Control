@@ -850,8 +850,7 @@ class TestPinEmitsAuditLog:
 
         assert result.pinned is True
 
-        audit_records = [r for r in caplog.records if r.message == "archive.pin"]
-        assert len(audit_records) == 1
-        rec = audit_records[0]
-        assert getattr(rec, "scan_id", None) == "scan-1"
-        assert getattr(rec, "project_id", None) == "proj-1"
+        (audit,) = [r.getMessage() for r in caplog.records if r.getMessage().startswith("archive.pin ")]
+        assert "scan_id=scan-1" in audit
+        assert "project_id=proj-1" in audit
+        assert f"user_id={admin_user.id}" in audit

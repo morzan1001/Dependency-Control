@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import zlib
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -257,6 +258,28 @@ async def test_archive_scan_aborts_s3_on_failure(archive_env):
     assert result is None
     assert len(archive_env.aborted_uploads) >= 1
     RepoCls.return_value.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_archive_logs_its_scan_and_the_error(archive_env, caplog):
+    archive_env.fail_next_upload_part = True
+    big_findings = [{"_id": f"f{i}", "scan_id": "scan-1", "severity": "LOW", "blob": "x" * 1000} for i in range(20000)]
+    db = _make_mock_db(scan_doc=_make_scan_doc(), findings=big_findings)
+
+    with _patch_repos()(), caplog.at_level(logging.ERROR, logger=MODULE):
+        assert await archive_scan(db, "scan-1") is None
+
+    (record,) = caplog.records
+    assert "scan-1" in record.getMessage()
+    assert "simulated S3 error on upload_part" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_restore_without_metadata_logs_its_scan(archive_env, caplog):
+    with _patch_repos()(), caplog.at_level(logging.ERROR, logger=MODULE):
+        await restore_scan(_make_mock_db(), "scan-1")
+
+    assert [record.getMessage() for record in caplog.records] == ["No archive metadata for scan scan-1"]
 
 
 @pytest.mark.asyncio

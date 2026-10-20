@@ -15,6 +15,7 @@ from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500
 from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.constants import PROJECT_ROLE_ADMIN
+from app.core.log_utils import sanitize_for_log
 from app.core.metrics import (
     ArchiveFailureReason,
     archive_failures_total,
@@ -146,13 +147,11 @@ async def restore_archive(
         raise HTTPException(status_code=500, detail="Failed to restore archive")
 
     logger.info(
-        "archive.restore",
-        extra={
-            "user_id": current_user.id,
-            "scan_id": scan_id,
-            "project_id": project_id,
-            "collections_restored": result.collections_restored,
-        },
+        "archive.restore user_id=%s scan_id=%s project_id=%s collections_restored=%s",
+        current_user.id,
+        sanitize_for_log(scan_id),
+        sanitize_for_log(project_id),
+        ",".join(result.collections_restored),
     )
     return result
 
@@ -175,13 +174,11 @@ async def download_archive(
     metadata = await _archive_for_project(db, project_id, scan_id)
 
     logger.info(
-        "archive.download.initiated",
-        extra={
-            "user_id": current_user.id,
-            "scan_id": scan_id,
-            "project_id": project_id,
-            "s3_key": metadata.s3_key,
-        },
+        "archive.download.initiated user_id=%s scan_id=%s project_id=%s s3_key=%s",
+        current_user.id,
+        sanitize_for_log(scan_id),
+        sanitize_for_log(project_id),
+        sanitize_for_log(metadata.s3_key),
     )
 
     start_time = time.monotonic()
@@ -191,12 +188,10 @@ async def download_archive(
             async for chunk in stream_bundle_for_download(metadata):
                 yield chunk
             logger.info(
-                "archive.download.completed",
-                extra={
-                    "scan_id": scan_id,
-                    "project_id": project_id,
-                    "s3_key": metadata.s3_key,
-                },
+                "archive.download.completed scan_id=%s project_id=%s s3_key=%s",
+                sanitize_for_log(scan_id),
+                sanitize_for_log(project_id),
+                sanitize_for_log(metadata.s3_key),
             )
             duration = time.monotonic() - start_time
             archive_operations_total.labels(operation="download", status="success").inc()
@@ -226,8 +221,11 @@ async def _set_pinned(
     if not result.matched_count:
         raise HTTPException(status_code=404, detail="Scan not found")
     logger.info(
+        "%s user_id=%s scan_id=%s project_id=%s",
         "archive.pin" if pinned else "archive.unpin",
-        extra={"user_id": current_user.id, "scan_id": scan_id, "project_id": project_id},
+        current_user.id,
+        sanitize_for_log(scan_id),
+        sanitize_for_log(project_id),
     )
     return ScanPinResponse(scan_id=scan_id, pinned=pinned)
 

@@ -66,6 +66,7 @@ logger = logging.getLogger(__name__)
 _RETENTION_LOCK_NAME = "retention"
 _RETENTION_LOCK_TTL_SECONDS = 600
 _EXPIRABLE = {"pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES}, "status": {"$nin": SCAN_ACTIVE_STATUSES}}
+_LOGGED_FAILED_IDS = 20
 
 
 async def _referenced_scan_ids(db: Any, scan_ids: list[str]) -> set[str]:
@@ -311,7 +312,12 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) ->
         archive_housekeeping_scans_processed_total.labels(status="archived" if metadata else "failed").inc()
 
     if failed_ids:
-        logger.warning(f"{label}: {len(failed_ids)} scan(s) failed to archive and will NOT be deleted.")
+        logger.warning(
+            "%s: %d scan(s) failed to archive and will NOT be deleted, among them %s",
+            label,
+            len(failed_ids),
+            ", ".join(failed_ids[:_LOGGED_FAILED_IDS]),
+        )
         archive_housekeeping_batch_total.labels(status="partial_failure").inc()
     else:
         archive_housekeeping_batch_total.labels(status="success").inc()
