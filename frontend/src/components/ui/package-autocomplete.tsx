@@ -9,6 +9,7 @@ import { useClickOutside } from '@/hooks/use-click-outside'
 import { DEBOUNCE_DELAY_MS } from '@/lib/constants'
 
 interface PackageAutocompleteProps {
+  id?: string
   value: string
   onValueChange: (value: string) => void
   placeholder?: string
@@ -16,6 +17,7 @@ interface PackageAutocompleteProps {
 }
 
 export function PackageAutocomplete({
+  id,
   value,
   onValueChange,
   placeholder = "Search packages...",
@@ -54,6 +56,7 @@ export function PackageAutocomplete({
   return (
     <div className="relative w-full" ref={containerRef}>
       <Input
+        id={id}
         value={inputValue}
         onChange={handleInputChange}
         onFocus={() => setOpen(true)}

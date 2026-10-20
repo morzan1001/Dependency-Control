@@ -202,7 +202,7 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
                     onValueChange={(value) => updateMemberMutation.mutate({ userId: member.user_id, role: value })}
                     disabled={!canManageMembers || !!member.inherited_from}
                   >
-                    <SelectTrigger className="w-[120px]">
+                    <SelectTrigger className="w-[120px]" aria-label={`${member.username || 'Unknown'}: Role`}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

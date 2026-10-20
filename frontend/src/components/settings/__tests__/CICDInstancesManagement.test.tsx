@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { expectEveryFieldNamed } from '@/test/form-field'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -600,5 +601,21 @@ describe('CICDInstancesManagement outcomes', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to test connection', { description: 'Network Error' }))
     const row = screen.getByRole('row', { name: /GitHub\.com/ })
     await waitFor(() => expect(within(row).getByRole('button', { name: 'Test' })).toBeEnabled())
+  })
+})
+
+describe('CICDInstancesManagement accessible names', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseGitLabInstances.mockReturnValue({ data: { items: [] }, isLoading: false })
+    mockUseGitHubInstances.mockReturnValue(githubInstance())
+  })
+
+  it('names every field of the new instance form', () => {
+    renderManagement()
+    fireEvent.click(screen.getByRole('button', { name: 'Add Instance' }))
+
+    expectEveryFieldNamed()
+    expect(within(screen.getByRole('dialog')).getByRole('combobox', { name: 'Provider Type *' })).toBeInTheDocument()
   })
 })

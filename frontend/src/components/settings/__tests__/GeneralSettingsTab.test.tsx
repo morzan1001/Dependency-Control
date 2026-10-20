@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import { expectEveryFieldNamed } from '@/test/form-field'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SystemSettings } from '@/types/system'
@@ -51,5 +52,17 @@ describe('GeneralSettingsTab', () => {
     fireEvent.change(screen.getByLabelText('Interval (Hours)'), { target: { value: '' } })
 
     expect(handleInputChange).toHaveBeenCalledWith('global_rescan_interval', 24)
+  })
+})
+
+describe('GeneralSettingsTab accessible names', () => {
+  it('links every mode label to its dropdown', () => {
+    renderTab({})
+
+    expectEveryFieldNamed()
+    for (const name of ['Retention Mode', 'Re-scan Mode', 'Crypto Policy Mode']) {
+      expect(screen.getByRole('combobox', { name })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('group', { name: 'Default Analyzers for Auto-Created Projects' })).toBeInTheDocument()
   })
 })

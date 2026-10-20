@@ -106,9 +106,37 @@ describe("ReportDetailDrawer", () => {
     };
     withClient(<ReportDetailDrawer report={withheld} onClose={() => {}} />);
 
-    const label = screen.getByText("not_evaluated");
+    const label = screen.getByText("Not Evaluated");
     expect(label).toBeInTheDocument();
     expect(label.className).toMatch(/amber/);
+  });
+
+  it("names each count the way the generated report labels it, never by its raw key", () => {
+    const counted: ComplianceReportMeta = {
+      ...sampleReport,
+      summary: { passed: 5, failed: 1, waived: 2, not_applicable: 3, not_evaluated: 0, total: 11 },
+    };
+    withClient(<ReportDetailDrawer report={counted} onClose={() => {}} />);
+
+    for (const label of ["Passed", "Failed", "Waived", "N/A", "Not Evaluated", "Total Controls"]) {
+      expect(screen.getByText(label, { selector: "dt" })).toBeInTheDocument();
+    }
+    expect(screen.queryByText("not_applicable")).not.toBeInTheDocument();
+    expect(screen.queryByText("not_evaluated")).not.toBeInTheDocument();
+  });
+
+  it("names the project or team the report covers, as the report list does", () => {
+    withClient(
+      <ReportDetailDrawer report={{ ...sampleReport, scope: "project", scope_id: "p1", scope_name: "shared-lib" }} onClose={() => {}} />,
+    );
+
+    expect(screen.getByText("project: shared-lib")).toBeInTheDocument();
+  });
+
+  it("names a scope without a project or team by its kind", () => {
+    withClient(<ReportDetailDrawer report={sampleReport} onClose={() => {}} />);
+
+    expect(screen.getByText("user")).toBeInTheDocument();
   });
 
   it("renders a Delete report button and opens confirmation dialog", async () => {

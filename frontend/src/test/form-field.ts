@@ -7,3 +7,12 @@ export function expectFieldLabel(text: string) {
   expect(label).toHaveClass('font-medium')
   expect(label.parentElement).toHaveClass('grid', 'gap-2')
 }
+
+const FIELD_ROLES = ['combobox', 'textbox', 'switch', 'checkbox', 'radiogroup', 'spinbutton'] as const
+
+// Without a name a screen reader announces a bare "combobox" or "edit text"; a placeholder does not count.
+export function expectEveryFieldNamed() {
+  const fields = FIELD_ROLES.flatMap((role) => screen.queryAllByRole(role))
+  expect(fields.length).toBeGreaterThan(0)
+  for (const field of fields) expect(field, field.outerHTML.slice(0, 160)).toHaveAccessibleName()
+}

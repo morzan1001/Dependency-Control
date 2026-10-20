@@ -450,14 +450,14 @@ function InstanceForm({
     <div className="space-y-4">
       {showTypeSelector && (
         <div className="grid gap-2">
-          <Label>Provider Type *</Label>
+          <Label htmlFor="ci-type">Provider Type *</Label>
           <Select
             value={formData.type}
             onValueChange={(value: InstanceType) =>
               setFormData((prev) => ({ ...emptyFormData, type: value, is_active: prev.is_active }))
             }
           >
-            <SelectTrigger>
+            <SelectTrigger id="ci-type">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

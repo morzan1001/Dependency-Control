@@ -71,12 +71,12 @@ export function GeneralSettingsTab({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-2">
-            <Label>Retention Mode</Label>
+            <Label htmlFor="retention-mode">Retention Mode</Label>
             <Select 
               value={formData.retention_mode || 'project'} 
               onValueChange={(value) => handleInputChange('retention_mode', value)}
             >
-              <SelectTrigger>
+              <SelectTrigger id="retention-mode">
                 <SelectValue placeholder="Select mode" />
               </SelectTrigger>
               <SelectContent>
@@ -136,12 +136,12 @@ export function GeneralSettingsTab({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-2">
-            <Label>Re-scan Mode</Label>
+            <Label htmlFor="rescan-mode">Re-scan Mode</Label>
             <Select 
               value={formData.rescan_mode || 'project'} 
               onValueChange={(value) => handleInputChange('rescan_mode', value)}
             >
-              <SelectTrigger>
+              <SelectTrigger id="rescan-mode">
                 <SelectValue placeholder="Select mode" />
               </SelectTrigger>
               <SelectContent>
@@ -179,12 +179,12 @@ export function GeneralSettingsTab({
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-2">
-            <Label>Crypto Policy Mode</Label>
+            <Label htmlFor="crypto-policy-mode">Crypto Policy Mode</Label>
             <Select
               value={formData.crypto_policy_mode || 'project'}
               onValueChange={(value) => handleInputChange('crypto_policy_mode', value)}
             >
-              <SelectTrigger>
+              <SelectTrigger id="crypto-policy-mode">
                 <SelectValue placeholder="Select mode" />
               </SelectTrigger>
               <SelectContent>
@@ -206,7 +206,7 @@ export function GeneralSettingsTab({
 
       <Card>
         <CardHeader>
-          <CardTitle>Default Analyzers for Auto-Created Projects</CardTitle>
+          <CardTitle id="default-analyzers-title">Default Analyzers for Auto-Created Projects</CardTitle>
           <CardDescription>
             Select which analyzers are enabled by default when projects are automatically created via CI/CD pipeline (OIDC).
           </CardDescription>
@@ -214,6 +214,7 @@ export function GeneralSettingsTab({
         <CardContent className="space-y-4">
           <AnalyzerChecklist
             idPrefix="default-analyzer"
+            labelledBy="default-analyzers-title"
             selected={analyzers}
             onToggle={(analyzerId) => handleInputChange('default_active_analyzers', toggle(analyzers, analyzerId))}
             className="max-h-[400px]"

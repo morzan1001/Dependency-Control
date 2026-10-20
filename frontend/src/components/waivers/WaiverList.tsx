@@ -106,6 +106,7 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
                     </Label>
                     <div className="w-full sm:w-[250px]">
                         <Input
+                            aria-label="Search waivers"
                             placeholder="Search waivers..."
                             value={searchInput}
                             onChange={(e) => setSearchInput(e.target.value)}

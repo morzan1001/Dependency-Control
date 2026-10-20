@@ -38,10 +38,9 @@ export function FindingTypeBadge({ type }: Readonly<{ type: string }>) {
     <Badge
       variant={key === 'system_warning' ? 'destructive' : 'outline'}
       className={`${getFindingTypeBadgeClass(type)} inline-flex max-w-full items-center gap-1.5`}
-      title={label}
     >
       {Icon && <Icon className="h-3 w-3 shrink-0" />}
-      <span className={known ? 'truncate' : 'truncate capitalize'}>{label}</span>
+      <span className={known ? 'wrap-anywhere' : 'wrap-anywhere capitalize'}>{label}</span>
     </Badge>
   )
 }

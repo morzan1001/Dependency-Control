@@ -132,3 +132,15 @@ describe('ProjectCombobox namesakes', () => {
     expect(screen.queryByText('Payments')).not.toBeInTheDocument()
   })
 })
+
+describe('ProjectCombobox accessible names', () => {
+  it('names its search box once open', () => {
+    vi.mocked(useProjects).mockReturnValue(asListResult(mkListResponse([])))
+    vi.mocked(useProject).mockReturnValue(asDetailResult(undefined))
+    render(<ProjectCombobox value="" onValueChange={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Project' }))
+
+    expect(screen.getByRole('textbox', { name: 'Search projects' })).toBeInTheDocument()
+  })
+})

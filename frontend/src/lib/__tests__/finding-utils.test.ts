@@ -192,7 +192,7 @@ describe('getSeverityBgColor', () => {
     ['medium', 'bg-severity-medium', 'text-severity-medium-foreground'],
     ['LOW', 'bg-severity-low', 'text-severity-low-foreground'],
     ['INFO', 'bg-severity-info', 'text-severity-info-foreground'],
-    ['NEGLIGIBLE', 'bg-severity-unknown', 'text-severity-unknown-foreground'],
+    ['NEGLIGIBLE', 'bg-severity-negligible', 'text-severity-negligible-foreground'],
     ['UNKNOWN', 'bg-severity-unknown', 'text-severity-unknown-foreground'],
   ])('pairs the %s background with the text colour designed for it', (severity, background, foreground) => {
     expect(getSeverityBgColor(severity).split(' ')).toEqual(expect.arrayContaining([background, foreground]))

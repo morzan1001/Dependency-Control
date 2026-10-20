@@ -131,7 +131,7 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
               setPage(1)
             }}
           >
-            <SelectTrigger className="w-full sm:w-[200px]">
+            <SelectTrigger className="w-full sm:w-[200px]" aria-label="Branch">
               <SelectValue placeholder="Filter by branch" />
             </SelectTrigger>
             <SelectContent>

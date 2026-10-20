@@ -192,10 +192,10 @@ describe("FindingsTable Type column", () => {
     });
   });
 
-  it("fits the widest type badge, so only a long crypto label truncates", async () => {
+  it("fits the widest type badge and wraps a long crypto label on its words instead of cutting it off", async () => {
     renderWithProviders(<FindingsTable scanId="s1" projectId="p1" />);
 
-    expect(await screen.findByText("Certificate expired")).toHaveClass("truncate");
+    expect(await screen.findByText("Certificate expired")).not.toHaveClass("truncate");
     expect(screen.getByRole("columnheader", { name: "Type" })).toHaveClass("w-[160px]");
   });
 });
@@ -210,11 +210,27 @@ describe("FindingsTable Scanner column", () => {
     });
   });
 
-  it("fits the longest analyzer name and breaks a longer crypto scanner name anywhere, like a long branch name", async () => {
+  it("fits the longest analyzer name and breaks a longer crypto scanner name only after its underscores", async () => {
     renderWithProviders(<FindingsTable scanId="s1" projectId="p1" />);
 
-    expect(await screen.findByText("crypto_cert_validity_too_long")).toHaveClass("wrap-anywhere");
+    const cell = await screen.findByText("crypto_cert_validity_too_long");
+    expect(cell.innerHTML).toBe("crypto_<wbr>cert_<wbr>validity_<wbr>too_<wbr>long");
     expect(screen.getByRole("columnheader", { name: "Scanner" })).toHaveClass("w-[170px]");
+  });
+
+  it("separates several scanners with a comma and still names a finding without one", async () => {
+    getFindingsMock.mockResolvedValue({
+      ...emptyEnvelope,
+      items: [
+        { id: "CVE-1", type: "vulnerability", severity: "HIGH", component: "lodash", version: "4.17.20", scanners: ["trivy", "deps_dev"] },
+        { id: "CVE-2", type: "vulnerability", severity: "LOW", component: "left-pad", version: "1.0.0", scanners: [] },
+      ],
+      total: 2,
+    });
+    renderWithProviders(<FindingsTable scanId="s1" projectId="p1" />);
+
+    expect(await screen.findByText("trivy, deps_dev")).toBeInTheDocument();
+    expect(screen.getByText("Unknown")).toBeInTheDocument();
   });
 });
 

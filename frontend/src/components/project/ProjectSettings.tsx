@@ -542,9 +542,10 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                 )}
 
                 <div className="grid gap-2">
-                    <Label>Active Analyzers</Label>
+                    <Label id="settings-analyzers-label">Active Analyzers</Label>
                     <AnalyzerChecklist
                         idPrefix="settings-analyzer"
+                        labelledBy="settings-analyzers-label"
                         selected={form.active_analyzers}
                         onToggle={(analyzerId) => set({ active_analyzers: toggle(form.active_analyzers, analyzerId) })}
                         className="max-h-[300px]"
@@ -601,12 +602,13 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
             {isAdmin && (
                 <div className="flex flex-row items-center justify-between rounded-lg border p-4">
                     <div className="space-y-0.5">
-                        <Label className="text-base">Enforce Notification Settings</Label>
+                        <Label htmlFor="enforce-notification-settings" className="text-base">Enforce Notification Settings</Label>
                         <div className="text-sm text-muted-foreground">
                             If enabled, these settings will be applied to all project members. Members will not be able to change them.
                         </div>
                     </div>
                     <Switch
+                        id="enforce-notification-settings"
                         checked={enforceNotificationSettings}
                         onCheckedChange={setEnforceNotificationSettings}
                     />

@@ -138,7 +138,7 @@ export function CreateProjectDialog({
                 value={form.team_id || "none"}
                 onValueChange={(team_id) => set({ team_id })}
               >
-                <SelectTrigger>
+                <SelectTrigger id="team">
                   <SelectValue placeholder="Select a team" />
                 </SelectTrigger>
                 <SelectContent>
@@ -160,9 +160,10 @@ export function CreateProjectDialog({
             />
 
             <div className="space-y-3 pt-2">
-              <Label>Active Analyzers</Label>
+              <Label id="create-analyzers-label">Active Analyzers</Label>
               <AnalyzerChecklist
                 idPrefix="create-analyzer"
+                labelledBy="create-analyzers-label"
                 selected={analyzers}
                 onToggle={(id) => set({ pickedAnalyzers: toggle(analyzers, id) })}
                 className="max-h-[300px]"

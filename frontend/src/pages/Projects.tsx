@@ -12,8 +12,9 @@ import { Link } from 'react-router-dom';
 import { Project } from '@/types/project';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AVAILABLE_ANALYZERS, PROJECT_GRID_PAGE_SIZE } from '@/lib/constants';
-import { formatDate } from '@/lib/utils';
+import { formatDate, sharedNames } from '@/lib/utils';
 import { CreateProjectDialog } from '@/components/project/CreateProjectDialog';
+import { ProjectOwner } from '@/components/project/ProjectOwner';
 import {
   Select,
   SelectContent,
@@ -42,6 +43,7 @@ export default function ProjectsPage() {
   );
 
   const projects = projectsData?.items || [];
+  const namesakes = sharedNames(projects);
   const totalPages = projectsData?.pages || 0;
 
   if (isLoadingProjects) {
@@ -71,6 +73,7 @@ export default function ProjectsPage() {
 
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           <Input
+            aria-label="Search projects"
             placeholder="Search projects..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -78,7 +81,7 @@ export default function ProjectsPage() {
           />
           {teams.length > 1 && (
             <Select value={teamFilter || "all"} onValueChange={(v) => { setTeamFilter(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectTrigger className="w-full sm:w-[180px]" aria-label="Team">
                 <SelectValue placeholder="All Teams" />
               </SelectTrigger>
               <SelectContent>
@@ -90,7 +93,7 @@ export default function ProjectsPage() {
             </Select>
           )}
           <Select value={sortBy} onValueChange={(v) => { setSortBy(v); setPage(1); }}>
-            <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectTrigger className="w-full sm:w-[180px]" aria-label="Sort by">
               <SelectValue placeholder="Sort by" />
             </SelectTrigger>
             <SelectContent>
@@ -124,9 +127,12 @@ export default function ProjectsPage() {
           <Link key={project.id} to={`/projects/${project.id}`} className="block min-w-0">
             <Card className="hover:bg-muted/50 transition-colors cursor-pointer h-full">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium truncate pr-4">
-                  {project.name}
-                </CardTitle>
+                <div className="flex min-w-0 items-center gap-2 pr-4">
+                  <CardTitle className="text-sm font-medium truncate">
+                    {project.name}
+                  </CardTitle>
+                  {namesakes.has(project.name) && <ProjectOwner project={project} />}
+                </div>
                 <FolderGit2 className="h-4 w-4 text-muted-foreground flex-shrink-0" />
               </CardHeader>
               <CardContent>

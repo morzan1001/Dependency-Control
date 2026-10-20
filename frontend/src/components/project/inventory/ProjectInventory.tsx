@@ -44,7 +44,7 @@ export function ProjectInventory({ projectId, defaultBranch }: Readonly<ProjectI
           )}
         </div>
         <Select value={branch} onValueChange={setSelectedBranch}>
-          <SelectTrigger className="w-[220px]">
+          <SelectTrigger className="w-[220px]" aria-label="Branch">
             <GitBranch className="mr-2 h-4 w-4 text-muted-foreground" />
             <SelectValue placeholder="Select branch" />
           </SelectTrigger>
@@ -99,10 +99,8 @@ export function ProjectInventory({ projectId, defaultBranch }: Readonly<ProjectI
         <>
           <InventoryStatCards stats={stats} isLoading={isLoading} />
           <ComponentsTable projectId={projectId} branch={branch} />
-          <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
-            <LicensesTable projectId={projectId} branch={branch} />
-            <CryptoTable projectId={projectId} branch={branch} cbomEvaluated={stats?.cbom_evaluated} />
-          </div>
+          <LicensesTable projectId={projectId} branch={branch} />
+          <CryptoTable projectId={projectId} branch={branch} cbomEvaluated={stats?.cbom_evaluated} />
         </>
       )}
     </div>

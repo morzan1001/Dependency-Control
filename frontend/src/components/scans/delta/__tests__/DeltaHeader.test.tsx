@@ -1,4 +1,5 @@
 // Force a non-UTC timezone so date parsing is exercised in local time.
+
 process.env.TZ = 'America/New_York'
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
@@ -350,3 +351,13 @@ describe('DeltaHeader on a narrow screen', () => {
     expect(screen.getByText('From').parentElement).toHaveClass('min-w-0')
   })
 })
+
+describe("DeltaHeader accessible names", () => {
+  it("names each scan dropdown by the side it picks", async () => {
+    mockScanSources();
+    renderHeader();
+
+    expect(await screen.findByRole("combobox", { name: "From" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "To" })).toBeInTheDocument();
+  });
+});

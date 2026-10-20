@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import { expectEveryFieldNamed } from '@/test/form-field'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { Waiver } from '@/types/waiver'
@@ -45,5 +46,16 @@ describe('EditWaiverDialog failure', () => {
     render(<EditWaiverDialog waiver={EXPIRED} open onOpenChange={() => undefined} />)
 
     expect(mockUseUpdateWaiver).toHaveBeenCalledWith({ errorTitle: 'Failed to update waiver' })
+  })
+})
+
+describe('EditWaiverDialog accessible names', () => {
+  it('links every label to its field', () => {
+    render(<EditWaiverDialog waiver={EXPIRED} open onOpenChange={() => undefined} />)
+
+    expectEveryFieldNamed()
+    expect(screen.getByRole('textbox', { name: 'Reason' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Status' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Expiration Date (Optional)')).toHaveAttribute('type', 'date')
   })
 })

@@ -108,7 +108,7 @@ function HotspotsSection() {
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-sm text-muted-foreground">Group by</span>
         <Select value={groupBy} onValueChange={(v) => setGroupBy(v as GroupingDimension)}>
-          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-48" aria-label="Group by"><SelectValue /></SelectTrigger>
           <SelectContent>
             {GROUPINGS.map((g) => <SelectItem key={g} value={g}>{GROUPING_LABELS[g]}</SelectItem>)}
           </SelectContent>
@@ -141,7 +141,7 @@ function TrendsSection() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <Select value={metric} onValueChange={(v) => setMetric(v as TrendMetric)}>
-          <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-64" aria-label="Trend metric"><SelectValue /></SelectTrigger>
           <SelectContent>
             {TREND_METRICS.map((m) => <SelectItem key={m} value={m}>{TREND_METRIC_LABELS[m]}</SelectItem>)}
           </SelectContent>

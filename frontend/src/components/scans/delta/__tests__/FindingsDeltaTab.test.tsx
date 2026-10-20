@@ -66,7 +66,7 @@ describe("FindingsDeltaTab", () => {
     renderTab();
 
     const table = await screen.findByRole("table");
-    expect(await within(table).findByText("Vulnerability")).toHaveClass("truncate");
+    expect(await within(table).findByText("Vulnerability")).toHaveClass("wrap-anywhere");
     expect(within(table).queryByText("vulnerability")).not.toBeInTheDocument();
     expect(within(table).getByRole("columnheader", { name: "Type" })).toHaveClass("w-[160px]");
   });

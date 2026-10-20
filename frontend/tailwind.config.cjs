@@ -82,6 +82,10 @@ module.exports = {
             DEFAULT: "hsl(var(--severity-low))",
             foreground: "hsl(var(--severity-low-foreground))",
           },
+          negligible: {
+            DEFAULT: "hsl(var(--severity-negligible))",
+            foreground: "hsl(var(--severity-negligible-foreground))",
+          },
           info: {
             DEFAULT: "hsl(var(--severity-info))",
             foreground: "hsl(var(--severity-info-foreground))",

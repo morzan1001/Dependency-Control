@@ -216,3 +216,13 @@ describe('UsersPage - sorting', () => {
     expect(invitationsEmail).not.toHaveClass('cursor-pointer')
   })
 })
+
+describe('UsersPage accessible names', () => {
+  it('names its search box, which has no visible label', () => {
+    mockUseUsers.mockReturnValue({ data: [], isLoading: false, error: null })
+    mockUsePendingInvitations.mockReturnValue({ data: [], isLoading: false })
+    render(<UsersPage />)
+
+    expect(screen.getByRole('textbox', { name: 'Search users' })).toBeInTheDocument()
+  })
+})

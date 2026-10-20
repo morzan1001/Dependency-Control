@@ -102,17 +102,18 @@ export function CreateGlobalWaiverDialog({ open, onOpenChange }: Readonly<Create
                 <form onSubmit={handleSubmit} className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                            <Label>Finding ID</Label>
+                            <Label htmlFor="global-waiver-finding-id">Finding ID</Label>
                             <Input
+                                id="global-waiver-finding-id"
                                 placeholder="e.g. CVE-2023-1234"
                                 value={findingId}
                                 onChange={(e) => setFindingId(e.target.value)}
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label>Finding Type</Label>
+                            <Label htmlFor="global-waiver-finding-type">Finding Type</Label>
                             <Select value={findingType} onValueChange={(v) => setFindingType(v as FindingType | '')}>
-                                <SelectTrigger>
+                                <SelectTrigger id="global-waiver-finding-type">
                                     <SelectValue placeholder="Any" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -126,16 +127,18 @@ export function CreateGlobalWaiverDialog({ open, onOpenChange }: Readonly<Create
 
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                            <Label>Package Name</Label>
+                            <Label htmlFor="global-waiver-package-name">Package Name</Label>
                             <Input
+                                id="global-waiver-package-name"
                                 placeholder="e.g. lodash"
                                 value={packageName}
                                 onChange={(e) => setPackageName(e.target.value)}
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label>Package Version</Label>
+                            <Label htmlFor="global-waiver-package-version">Package Version</Label>
                             <Input
+                                id="global-waiver-package-version"
                                 placeholder="e.g. 4.17.21"
                                 value={packageVersion}
                                 onChange={(e) => setPackageVersion(e.target.value)}
@@ -145,9 +148,9 @@ export function CreateGlobalWaiverDialog({ open, onOpenChange }: Readonly<Create
 
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                            <Label>Scope</Label>
+                            <Label htmlFor="global-waiver-scope">Scope</Label>
                             <Select value={scope} onValueChange={(v) => setScope(v as WaiverScope)}>
-                                <SelectTrigger>
+                                <SelectTrigger id="global-waiver-scope">
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -158,9 +161,9 @@ export function CreateGlobalWaiverDialog({ open, onOpenChange }: Readonly<Create
                             </Select>
                         </div>
                         <div className="space-y-2">
-                            <Label>Status</Label>
+                            <Label htmlFor="global-waiver-status">Status</Label>
                             <Select value={status} onValueChange={(v) => setStatus(v as WaiverStatus)}>
-                                <SelectTrigger>
+                                <SelectTrigger id="global-waiver-status">
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -173,8 +176,9 @@ export function CreateGlobalWaiverDialog({ open, onOpenChange }: Readonly<Create
 
                     {scope !== 'finding' && (
                         <div className="space-y-2">
-                            <Label>Rule ID</Label>
+                            <Label htmlFor="global-waiver-rule-id">Rule ID</Label>
                             <Input
+                                id="global-waiver-rule-id"
                                 placeholder="e.g. javascript_lang_insufficiently_random_values"
                                 value={ruleId}
                                 onChange={(e) => setRuleId(e.target.value)}
@@ -183,8 +187,9 @@ export function CreateGlobalWaiverDialog({ open, onOpenChange }: Readonly<Create
                     )}
 
                     <div className="space-y-2">
-                        <Label>Reason</Label>
+                        <Label htmlFor="global-waiver-reason">Reason</Label>
                         <Textarea
+                            id="global-waiver-reason"
                             className="min-h-[80px]"
                             placeholder="Why is this finding being waived globally?"
                             value={reason}
@@ -194,8 +199,9 @@ export function CreateGlobalWaiverDialog({ open, onOpenChange }: Readonly<Create
                     </div>
 
                     <div className="space-y-2 flex flex-col">
-                        <Label>Expiration Date (Optional)</Label>
+                        <Label htmlFor="global-waiver-expiration">Expiration Date (Optional)</Label>
                         <Input
+                            id="global-waiver-expiration"
                             type="date"
                             value={date}
                             onChange={(e) => setDate(e.target.value)}

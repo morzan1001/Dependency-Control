@@ -47,7 +47,7 @@ export function getFindingTypeBadgeClass(type: string): string {
   return CRYPTO_FINDING_TYPES.some((crypto) => crypto.value === key) ? CRYPTO_BADGE_CLASSES : ''
 }
 
-export function getSeverityBgColor(severity: string): string {
+function severityFill(severity: string): string {
   switch (severity?.toUpperCase()) {
     case 'CRITICAL':
       return 'bg-severity-critical hover:bg-severity-critical text-severity-critical-foreground'
@@ -57,11 +57,18 @@ export function getSeverityBgColor(severity: string): string {
       return 'bg-severity-medium hover:bg-severity-medium text-severity-medium-foreground'
     case 'LOW':
       return 'bg-severity-low hover:bg-severity-low text-severity-low-foreground'
+    case 'NEGLIGIBLE':
+      return 'bg-severity-negligible hover:bg-severity-negligible text-severity-negligible-foreground'
     case 'INFO':
       return 'bg-severity-info hover:bg-severity-info text-severity-info-foreground'
     default:
       return 'bg-severity-unknown hover:bg-severity-unknown text-severity-unknown-foreground'
   }
+}
+
+export function getSeverityBgColor(severity: string): string {
+  // The dark unknown fill equals the muted row highlight, so every pill keeps an outline there.
+  return `${severityFill(severity)} dark:border-foreground/40`
 }
 
 export function getSeverityBadgeVariant(severity: string): 'destructive' | 'default' | 'secondary' | 'outline' {

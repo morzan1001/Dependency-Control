@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { expectEveryFieldNamed } from '@/test/form-field'
 import { toast } from 'sonner'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -213,5 +214,15 @@ describe('CreateProjectDialog name check', () => {
     expect(screen.getByLabelText('Project Name').parentElement).toContainElement(screen.getByText(TAKEN))
     expect(screen.getByLabelText('Project Name')).toHaveAccessibleDescription(TAKEN)
     expect(mockUseProjectNameTaken).toHaveBeenLastCalledWith('svc')
+  })
+})
+
+describe('CreateProjectDialog accessible names', () => {
+  it('links the team label to its dropdown', () => {
+    render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+
+    expectEveryFieldNamed()
+    expect(screen.getByRole('combobox', { name: 'Team (Optional)' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Active Analyzers' })).toBeInTheDocument()
   })
 })

@@ -47,7 +47,7 @@ export function DependencyStats({ onSelectDependency }: Readonly<DependencyStats
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={selectedType || "all"} onValueChange={(v) => setSelectedType(v === "all" ? undefined : v)}>
-            <SelectTrigger className="w-[150px]">
+            <SelectTrigger className="w-[150px]" aria-label="Package type">
               <SelectValue placeholder="All types" />
             </SelectTrigger>
             <SelectContent>
@@ -58,7 +58,7 @@ export function DependencyStats({ onSelectDependency }: Readonly<DependencyStats
             </SelectContent>
           </Select>
           <Select value={limit.toString()} onValueChange={(v) => setLimit(Number.parseInt(v))}>
-            <SelectTrigger className="w-[100px]">
+            <SelectTrigger className="w-[100px]" aria-label="Dependencies shown">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

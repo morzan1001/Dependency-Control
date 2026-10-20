@@ -64,7 +64,7 @@ function ScanSide({ label, scanId, options, onSelect, side }: {
     <div className="min-w-0 flex-1 space-y-2">
       <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
       <Select value={scanId} onValueChange={onSelect}>
-        <SelectTrigger><SelectValue /></SelectTrigger>
+        <SelectTrigger aria-label={label}><SelectValue /></SelectTrigger>
         <SelectContent>
           {scan && !currentInOptions && (
             <SelectItem value={scanId}><ScanLabel scan={scan} /></SelectItem>

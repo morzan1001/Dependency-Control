@@ -102,6 +102,7 @@ export default function TeamsPage() {
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           <form onSubmit={(e) => e.preventDefault()} className="contents">
             <Input
+              aria-label="Search teams"
               placeholder="Search teams..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -109,7 +110,7 @@ export default function TeamsPage() {
             />
           </form>
           <Select value={sortBy} onValueChange={setSortBy}>
-            <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectTrigger className="w-full sm:w-[180px]" aria-label="Sort by">
               <SelectValue placeholder="Sort by" />
             </SelectTrigger>
             <SelectContent>

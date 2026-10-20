@@ -55,8 +55,9 @@ function EditWaiverForm({ waiver, onClose }: Readonly<{ waiver: Waiver; onClose:
     return (
         <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-                <Label>Reason</Label>
+                <Label htmlFor="edit-waiver-reason">Reason</Label>
                 <Textarea
+                    id="edit-waiver-reason"
                     className="min-h-[100px]"
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
@@ -65,9 +66,9 @@ function EditWaiverForm({ waiver, onClose }: Readonly<{ waiver: Waiver; onClose:
             </div>
 
             <div className="space-y-2">
-                <Label>Status</Label>
+                <Label htmlFor="edit-waiver-status">Status</Label>
                 <Select value={status} onValueChange={(v) => setStatus(v as WaiverStatus)}>
-                    <SelectTrigger>
+                    <SelectTrigger id="edit-waiver-status">
                         <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -78,8 +79,9 @@ function EditWaiverForm({ waiver, onClose }: Readonly<{ waiver: Waiver; onClose:
             </div>
 
             <div className="space-y-2 flex flex-col">
-                <Label>Expiration Date (Optional)</Label>
+                <Label htmlFor="edit-waiver-expiration">Expiration Date (Optional)</Label>
                 <Input
+                    id="edit-waiver-expiration"
                     type="date"
                     value={date}
                     onChange={(e) => setDate(e.target.value)}

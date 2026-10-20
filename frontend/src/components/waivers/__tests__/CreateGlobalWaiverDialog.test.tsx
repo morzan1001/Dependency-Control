@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
+import { expectEveryFieldNamed } from '@/test/form-field'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CreateGlobalWaiverDialog } from '../CreateGlobalWaiverDialog'
@@ -76,5 +77,20 @@ describe('CreateGlobalWaiverDialog failure', () => {
     render(<CreateGlobalWaiverDialog open onOpenChange={() => {}} />)
 
     expect(mockUseCreateWaiver).toHaveBeenCalledWith({ errorTitle: 'Failed to create global waiver' })
+  })
+})
+
+describe('CreateGlobalWaiverDialog accessible names', () => {
+  it('names every field by its label rather than its example placeholder', () => {
+    render(<CreateGlobalWaiverDialog open onOpenChange={() => {}} />)
+
+    expectEveryFieldNamed()
+    for (const name of ['Finding ID', 'Package Name', 'Package Version', 'Reason']) {
+      expect(screen.getByRole('textbox', { name })).toBeInTheDocument()
+    }
+    for (const name of ['Finding Type', 'Scope', 'Status']) {
+      expect(screen.getByRole('combobox', { name })).toBeInTheDocument()
+    }
+    expect(screen.getByLabelText('Expiration Date (Optional)')).toHaveAttribute('type', 'date')
   })
 })

@@ -4,13 +4,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import Dashboard from '../Dashboard'
 import type { Project } from '@/types/project'
 
-const { useProjectsMock, navigateMock, useRecentScansMock } = vi.hoisted(() => ({
+const { useProjectsMock, useProjectMock, navigateMock, useRecentScansMock } = vi.hoisted(() => ({
   useProjectsMock: vi.fn(),
+  useProjectMock: vi.fn((_id: string) => ({ data: undefined as Project | undefined })),
   navigateMock: vi.fn(),
   useRecentScansMock: vi.fn(() => ({ data: [] as unknown[], isLoading: false })),
 }))
 
-vi.mock('@/hooks/queries/use-projects', () => ({ useProjects: (...args: unknown[]) => useProjectsMock(...args) }))
+vi.mock('@/hooks/queries/use-projects', () => ({
+  useProjects: (...args: unknown[]) => useProjectsMock(...args),
+  useProject: (id: string) => useProjectMock(id),
+}))
 vi.mock('@/hooks/queries/use-analytics', () => ({
   useDashboardStats: () => ({ data: undefined, isLoading: false }),
 }))
@@ -83,6 +87,39 @@ describe('Dashboard recent activity', () => {
     expect(run.parentElement).toHaveClass('flex-wrap')
     expect(row).toHaveClass('gap-4')
     expect(row.lastElementChild).toHaveClass('shrink-0')
+  })
+})
+
+describe('Dashboard recent activity namesakes', () => {
+  const scan = (id: string, projectId: string, projectName: string) => ({
+    id, project_id: projectId, project_name: projectName, branch: 'main', status: 'completed', created_at: '2026-10-13T13:31:00Z',
+  })
+  const owners: Record<string, Project> = {
+    p1: { id: 'p1', name: 'shared-lib', teams: [{ id: 't1', name: 'Payments' }] },
+    p2: { id: 'p2', name: 'shared-lib', teams: [], github_repository_path: 'org/shared-lib' },
+  }
+
+  it('names the owner of each project whose name another project in the list shares, as the project picker does', () => {
+    useProjectMock.mockImplementation((id: string) => ({ data: owners[id] }))
+    useRecentScansMock.mockReturnValue({
+      data: [scan('s1', 'p1', 'shared-lib'), scan('s2', 'p2', 'shared-lib'), scan('s3', 'p3', 'checkout')],
+      isLoading: false,
+    })
+    renderDashboard([])
+
+    expect(screen.getByText('Payments')).toBeInTheDocument()
+    expect(screen.getByText('org/shared-lib')).toBeInTheDocument()
+    expect(useProjectMock).not.toHaveBeenCalledWith('p3')
+  })
+
+  it('looks no owner up for two runs of the same project', () => {
+    useRecentScansMock.mockReturnValue({
+      data: [scan('s1', 'p1', 'shared-lib'), scan('s2', 'p1', 'shared-lib')],
+      isLoading: false,
+    })
+    renderDashboard([])
+
+    expect(useProjectMock).not.toHaveBeenCalled()
   })
 })
 

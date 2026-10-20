@@ -13,9 +13,10 @@ import { downloadServerFile } from "@/lib/download";
 import { Permissions } from "@/lib/permissions";
 import { formatDateTime } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
+import { ReportScope } from "./ReportScope";
 import type { ComplianceReportMeta, ControlStatus } from "@/types/compliance";
 
-interface Props { report: ComplianceReportMeta | null; onClose: () => void; }
+interface Props { report: ComplianceReportMeta | null; namesake?: boolean; onClose: () => void; }
 
 function CoverageNotice({ report }: { readonly report: ComplianceReportMeta }) {
   const plan = report.coverage?.plan_items;
@@ -30,8 +31,19 @@ function CoverageNotice({ report }: { readonly report: ComplianceReportMeta }) {
 
 const WITHHELD_KEY: ControlStatus = "not_evaluated";
 
-function SummaryRow({ label, value }: { readonly label: string; readonly value: number | undefined }) {
-  const withheld = label === WITHHELD_KEY && (value ?? 0) > 0;
+// As the generated report's summary cards name them.
+const SUMMARY_LABEL: Record<keyof ComplianceReportMeta["summary"], string> = {
+  passed: "Passed",
+  failed: "Failed",
+  waived: "Waived",
+  not_applicable: "N/A",
+  not_evaluated: "Not Evaluated",
+  total: "Total Controls",
+};
+
+function SummaryRow({ statusKey, value }: { readonly statusKey: string; readonly value: number | undefined }) {
+  const label = SUMMARY_LABEL[statusKey as keyof typeof SUMMARY_LABEL] ?? statusKey;
+  const withheld = statusKey === WITHHELD_KEY && (value ?? 0) > 0;
   const tone = withheld ? "text-amber-700 dark:text-amber-300 font-medium" : "";
   return (
     <div className="contents">
@@ -41,7 +53,7 @@ function SummaryRow({ label, value }: { readonly label: string; readonly value: 
   );
 }
 
-export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
+export function ReportDetailDrawer({ report, namesake = false, onClose }: Readonly<Props>) {
   const qc = useQueryClient();
   const confirm = useDialogState();
   const { hasPermission } = useAuth();
@@ -80,6 +92,9 @@ export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
                 <div>
                   Status: <ReportStatusBadge status={report.status} />
                 </div>
+                <div>
+                  Scope: <ReportScope report={report} namesake={namesake} />
+                </div>
                 <div className="text-muted-foreground">
                   Requested {formatDateTime(report.requested_at)} by {report.requested_by_name ?? report.requested_by}
                 </div>
@@ -97,7 +112,7 @@ export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
                 {Object.keys(report.summary || {}).length > 0 && (
                   <dl className="mt-3 grid grid-cols-2 gap-y-1">
                     {Object.entries(report.summary).map(([k, v]) => (
-                      <SummaryRow key={k} label={k} value={v} />
+                      <SummaryRow key={k} statusKey={k} value={v} />
                     ))}
                   </dl>
                 )}

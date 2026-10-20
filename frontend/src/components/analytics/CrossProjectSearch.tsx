@@ -125,6 +125,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
+            aria-label="Search packages"
             placeholder="Search for a package name (e.g., react, lodash, requests)..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -146,8 +147,9 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
             
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
               <div className="space-y-2">
-                <Label>Version</Label>
+                <Label htmlFor="dependency-search-version">Version</Label>
                 <Input
+                  id="dependency-search-version"
                   placeholder="e.g., 1.0.0"
                   value={version}
                   onChange={(e) => setVersion(e.target.value)}
@@ -155,9 +157,9 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
               </div>
 
               <div className="space-y-2">
-                <Label>Package Type</Label>
+                <Label htmlFor="dependency-search-type">Package Type</Label>
                 <Select value={selectedType} onValueChange={setSelectedType}>
-                  <SelectTrigger>
+                  <SelectTrigger id="dependency-search-type">
                     <SelectValue placeholder="All types" />
                   </SelectTrigger>
                   <SelectContent>
@@ -170,9 +172,9 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
               </div>
 
               <div className="space-y-2">
-                <Label>Source</Label>
+                <Label htmlFor="dependency-search-source">Source</Label>
                 <Select value={selectedSourceType} onValueChange={setSelectedSourceType}>
-                  <SelectTrigger>
+                  <SelectTrigger id="dependency-search-source">
                     <SelectValue placeholder="All sources" />
                   </SelectTrigger>
                   <SelectContent>
@@ -193,12 +195,12 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
               </div>
 
               <div className="space-y-2">
-                <Label>Vulnerability Status</Label>
+                <Label htmlFor="dependency-search-vulnerable">Vulnerability Status</Label>
                 <Select 
                   value={hasVulnerabilities} 
                   onValueChange={setHasVulnerabilities}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger id="dependency-search-vulnerable">
                     <SelectValue placeholder="All" />
                   </SelectTrigger>
                   <SelectContent>
@@ -210,8 +212,8 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
               </div>
 
               <div className="space-y-2">
-                <Label>Projects</Label>
-                <ProjectCombobox value={selectedProject} onValueChange={setSelectedProject} />
+                <Label htmlFor="dependency-search-project">Projects</Label>
+                <ProjectCombobox id="dependency-search-project" value={selectedProject} onValueChange={setSelectedProject} />
               </div>
             </div>
           </div>

@@ -51,6 +51,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
+          aria-label="Message"
           placeholder="Ask about your security data…"
           disabled={disabled}
           rows={1}

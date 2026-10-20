@@ -114,7 +114,7 @@ export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMember
                           }}
                           disabled={!canEditRole || updateMemberMutation.isPending}
                         >
-                          <SelectTrigger className="w-[120px]">
+                          <SelectTrigger className="w-[120px]" aria-label={`${member.username || 'Unknown'}: Role`}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>

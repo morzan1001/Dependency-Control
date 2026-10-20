@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 
 import { CryptoPolicyEditor } from "../CryptoPolicyEditor";
 import type { CryptoRule } from "@/types/cryptoPolicy";
-import { expectFieldLabel } from "@/test/form-field";
+import { expectEveryFieldNamed, expectFieldLabel } from "@/test/form-field";
 
 function systemRule(): CryptoRule {
   return {
@@ -260,5 +260,22 @@ describe("CryptoPolicyEditor rules table width", () => {
     fireEvent.change(screen.getByDisplayValue("Block RC4"), { target: { value: "Block\nRC4 \n now" } });
 
     expect(screen.getByDisplayValue("Block RC4 now")).toBeInTheDocument();
+  });
+});
+
+describe("CryptoPolicyEditor accessible names", () => {
+  it("names its filters and every field of a rule row by the rule and its column, like the notification matrix", () => {
+    const sys = systemRule();
+    render(<CryptoPolicyEditor initialRules={[sys]} systemRules={[sys]} onSave={vi.fn()} />);
+
+    expectEveryFieldNamed();
+    expect(screen.getByRole("combobox", { name: "Source" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Status" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "sys-rc4: Enabled" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "sys-rc4: Rule" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "sys-rc4: Finding type" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "sys-rc4: Severity" })).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "sys-rc4: Min key size" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "sys-rc4: Name patterns" })).toBeInTheDocument();
   });
 });

@@ -72,6 +72,7 @@ describe("HotspotTable", () => {
     const cell = (await screen.findByText("RSA")).closest("tr")!.querySelectorAll("td")[3];
     expect(cell.textContent).toBe("C:1N:2I:3U:1");
     expect(screen.getByText("I:3")).toHaveClass("bg-severity-info");
+    expect(screen.getByText("N:2")).toHaveClass("bg-severity-negligible", "text-severity-negligible-foreground");
   });
 
   it("says the hotspots failed to load instead of reporting none", async () => {
