@@ -8,10 +8,9 @@ from app.core.init_db import create_indexes
 from app.models.project import Project, Scan
 from app.repositories.findings import FindingRepository
 from app.services.analysis import engine
-from app.services.analysis.engine import run_analysis
 from app.services.analysis.runner import AnalyzerOutcome, OutcomeStatus
 from app.services.crypto_policy.seeder import seed_crypto_policies
-from tests.helpers.analyzers import serve_analyzer
+from tests.helpers.analyzers import analyse_scan, serve_analyzer
 from tests.helpers.sboms import sbom_ref, store_sbom
 
 _PROJECT_ID = "test-project-id"
@@ -130,7 +129,7 @@ async def test_w12_failed_analyzer_marks_scan_completed_with_errors(db, _stored_
     scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["boom"], db, worker_id=_WORKER)
+        await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], ["boom"], worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
@@ -151,7 +150,7 @@ async def test_w12_cli_error_result_marks_scan_completed_with_errors(db, _stored
     scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["grype"], db, worker_id=_WORKER)
+        await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], ["grype"], worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
@@ -177,7 +176,7 @@ async def test_w12_error_shaped_external_result_marks_scan_completed_with_errors
     )
 
     assert (
-        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], [], db, worker_id=_WORKER)
+        await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], [], worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
@@ -221,7 +220,7 @@ async def test_a_two_sbom_run_announces_each_analyzer_once_with_its_worst_outcom
     refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     scan_id = await _seed_scan(db, refs)
 
-    assert await run_analysis(scan_id, refs, ["osv"], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    assert await analyse_scan(db, scan_id, refs, ["osv"], worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     assert announced == [["osv: Partial (7 component(s) were not scanned)"]]
 
@@ -242,7 +241,7 @@ async def test_enrichment_failure_is_recorded_on_the_scan(db, _stored_sboms, mon
     scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["grype", "epss_kev"], db, worker_id=_WORKER)
+        await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], ["grype", "epss_kev"], worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED
     )
 
@@ -261,7 +260,7 @@ async def test_a_clean_scan_records_no_enrichment_failures(db, _stored_sboms, mo
     scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["grype", "epss_kev"], db, worker_id=_WORKER)
+        await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], ["grype", "epss_kev"], worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED
     )
 
@@ -277,7 +276,7 @@ async def test_w12_scan_with_errors_still_becomes_project_latest(db, _stored_sbo
     scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["boom"], db, worker_id=_WORKER)
+        await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], ["boom"], worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
@@ -293,7 +292,7 @@ async def test_w15_partial_analyzer_result_marks_scan_completed_with_errors(db, 
     scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["osv"], db, worker_id=_WORKER)
+        await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], ["osv"], worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
@@ -323,7 +322,7 @@ async def test_a_crypto_evaluator_failing_with_an_empty_message_still_counts_as_
     await _seed_project(db)
     scan_id = await _seed_scan(db, sbom_refs=[], scan_type="cbom")
 
-    assert await run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    assert await analyse_scan(db, scan_id, [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["failed_analyzers"] == ["crypto_weak_key"]
@@ -344,7 +343,7 @@ async def test_k9_partial_gridfs_failure_marks_scan_completed_with_errors(db, _s
     refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     scan_id = await _seed_scan(db, refs)
 
-    assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    assert await analyse_scan(db, scan_id, refs, [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["status"] == "completed_with_errors"
@@ -361,7 +360,7 @@ async def test_k9_all_gridfs_failures_still_mark_scan_failed(db, _stored_sboms, 
     await _seed_project(db)
     scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
-    assert await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_FAILED
+    assert await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], [], worker_id=_WORKER) == SCAN_STATUS_FAILED
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["status"] == "failed"
@@ -380,7 +379,7 @@ async def test_k8_partial_findings_persistence_is_surfaced(db, _stored_sboms, mo
     scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], ["stub"], db, worker_id=_WORKER)
+        await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], ["stub"], worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
@@ -404,7 +403,7 @@ async def test_k10_sast_only_scan_does_not_replace_project_latest(db, _no_gridfs
     await db.scans.insert_one(previous.model_dump(by_alias=True))
     scan_id = await _seed_scan(db, sbom_refs=[])
 
-    assert await run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["status"] == "completed"
@@ -419,7 +418,7 @@ async def test_k10_sast_only_scan_becomes_latest_when_project_has_none(db, _no_g
     await _seed_project(db, latest_scan_id=None)
     scan_id = await _seed_scan(db, sbom_refs=[])
 
-    assert await run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     project = await db.projects.find_one({"_id": _PROJECT_ID})
     assert project["latest_scan_id"] == scan_id, "SAST-only projects must still get a latest scan"

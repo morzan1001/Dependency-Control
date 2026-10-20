@@ -13,7 +13,7 @@ from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.services.analysis import engine
 from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.crypto_policy.seeder import load_seed_rules
-from tests.helpers.analyzers import bundled_iana_catalog, process_sbom_document, run_context
+from tests.helpers.analyzers import analyse_scan, bundled_iana_catalog, process_sbom_document, run_context
 from tests.helpers.cbom import content_ref, fixture_component
 from tests.helpers.sboms import store_sbom
 
@@ -119,7 +119,7 @@ async def _analyze(db, sboms: list[dict]) -> tuple[str, str | None]:
     refs = [await store_sbom(db, sbom) for sbom in sboms]
     scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True))
-    return scan.id, await engine.run_analysis(scan.id, refs, [], db, worker_id=_WORKER)
+    return scan.id, await analyse_scan(db, scan.id, refs, [], worker_id=_WORKER)
 
 
 @pytest.mark.asyncio

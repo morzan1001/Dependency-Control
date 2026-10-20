@@ -15,12 +15,12 @@ from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import (
     _aggregate_external_results,
     _carry_over_external_results,
-    run_analysis,
 )
 from app.services.analysis.stats import build_epss_kev_summary
 from app.services.analyzers.outdated import OutdatedAnalyzer
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
 from tests.helpers.analyzers import (
+    analyse_scan,
     analyze_cyclonedx,
     build_analyzer,
     process_sbom_document,
@@ -139,7 +139,7 @@ async def _analyze_sbom_of_a_new_scan(db, components: list[dict[str, Any]]) -> s
     ref = await store_sbom(db, {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components})
     scan = Scan(project_id="p", branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True))
-    assert await run_analysis(scan.id, [ref], ["outdated_packages"], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan.id, [ref], ["outdated_packages"], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
     return scan.id
 
 

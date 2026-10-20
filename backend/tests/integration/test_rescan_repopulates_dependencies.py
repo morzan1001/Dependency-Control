@@ -6,7 +6,7 @@ from app.core.init_db import create_indexes
 from app.models.dependency import Dependency
 from app.models.project import Scan
 from app.services.analysis import engine
-from app.services.analysis.engine import run_analysis
+from tests.helpers.analyzers import analyse_scan
 from tests.helpers.sboms import sbom_ref, store_sbom
 
 pytestmark = pytest.mark.live_mongo
@@ -100,7 +100,7 @@ async def test_rescan_repopulates_dependencies_for_new_scan_id(db, _stored_sboms
     scan_id = await _seed_rescan(db, [sbom_ref(_FILE_ID_A)])
     await _seed_stored_dependency(db, _ORIGINAL_SCAN_ID, "requests", "2.31.0", "pkg:pypi/requests@2.31.0")
 
-    completed = await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], [], db, worker_id=_WORKER)
+    completed = await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], [], worker_id=_WORKER)
 
     assert completed == SCAN_STATUS_COMPLETED
     docs = await _dependency_docs(db, scan_id)
@@ -119,9 +119,9 @@ async def test_rescan_repopulates_dependencies_for_new_scan_id(db, _stored_sboms
 async def test_rerunning_the_same_rescan_does_not_duplicate_dependencies(db, _stored_sboms):
     scan_id = await _seed_rescan(db, [sbom_ref(_FILE_ID_A)])
 
-    assert await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
     await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "processing"}})
-    assert await run_analysis(scan_id, [sbom_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     docs = await _dependency_docs(db, scan_id)
     assert len(docs) == 3, f"a retried run must replace, not append, got {len(docs)}"
@@ -132,7 +132,7 @@ async def test_multi_sbom_run_deletes_once_and_keeps_all_sboms_dependencies(db, 
     refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     scan_id = await _seed_rescan(db, refs)
 
-    assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, refs, [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     docs = await _dependency_docs(db, scan_id)
     names = {d["name"] for d in docs}
@@ -155,7 +155,7 @@ async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _stored_
     for name, version, purl in ingest_stored:
         await _seed_stored_dependency(db, scan.id, name, version, purl)
 
-    assert await run_analysis(scan.id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    assert await analyse_scan(db, scan.id, refs, [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     docs = await _dependency_docs(db, scan.id)
     assert {(d["name"], d["version"]) for d in docs} == {(n, v) for n, v, _ in ingest_stored}, (
@@ -172,7 +172,7 @@ async def test_an_unparsable_sbom_keeps_the_stored_dependencies_and_flags_the_sc
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     await _seed_stored_dependency(db, scan.id, "flask", "3.0.0", "pkg:pypi/flask@3.0.0")
 
-    assert await run_analysis(scan.id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    assert await analyse_scan(db, scan.id, refs, [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     assert [d["name"] for d in await _dependency_docs(db, scan.id)] == ["flask"]
     assert "1 of 2 SBOMs failed to parse" in (await db.scans.find_one({"_id": scan.id}))["error"]
@@ -187,7 +187,7 @@ async def test_a_rescan_with_an_unparsable_sbom_fails_and_leaves_the_lineage_on_
     )
     scan_id = await _seed_rescan(db, refs)
 
-    assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_FAILED
+    assert await analyse_scan(db, scan_id, refs, [], worker_id=_WORKER) == SCAN_STATUS_FAILED
 
     assert (await db.scans.find_one({"_id": _ORIGINAL_SCAN_ID}))["latest_rescan_id"] == "earlier"
     assert (await db.scans.find_one({"_id": scan_id}))["error"] == "SBOM could not be loaded or parsed for analysis"
@@ -202,7 +202,7 @@ async def test_a_rescan_with_an_unreadable_sbom_fails_and_leaves_the_lineage_on_
     await db.scans.insert_one({"_id": _ORIGINAL_SCAN_ID, "project_id": _PROJECT_ID, "status": "completed"})
     scan_id = await _seed_rescan(db, refs)
 
-    assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_FAILED
+    assert await analyse_scan(db, scan_id, refs, [], worker_id=_WORKER) == SCAN_STATUS_FAILED
 
     assert (await db.scans.find_one({"_id": _ORIGINAL_SCAN_ID})).get("latest_rescan_id") is None
 
@@ -224,7 +224,7 @@ async def test_ingest_prestored_dependencies_are_not_double_stored(db, _stored_s
     ]:
         await _seed_stored_dependency(db, scan.id, name, version, purl)
 
-    assert await run_analysis(scan.id, [sbom_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan.id, [sbom_ref(_FILE_ID_A)], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     docs = await _dependency_docs(db, scan.id)
     assert len(docs) == 3, f"ingest-stored deps must not be stored a second time, got {len(docs)}"
@@ -271,7 +271,7 @@ async def test_cross_sbom_duplicate_is_merged_by_the_analysis_run(db):
     refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     scan_id = await _seed_rescan(db, refs)
 
-    assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, refs, [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     docs = await _dependency_docs(db, scan_id)
     assert len(docs) == 1

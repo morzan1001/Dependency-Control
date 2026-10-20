@@ -16,7 +16,7 @@ from app.services.analysis import engine
 from app.services.analysis.registry import CRYPTO_ANALYZERS, crypto_evaluators
 from app.services.notifications import notification_service
 from app.services.webhooks import webhook_service
-from tests.helpers.analyzers import serve_analyzer
+from tests.helpers.analyzers import analyse_scan, serve_analyzer
 from tests.helpers.sboms import store_sbom
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
@@ -87,7 +87,7 @@ async def _run(
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     for name, result in (external or {}).items():
         await db.analysis_results.insert_one({"scan_id": scan.id, "analyzer_name": name, "result": result})
-    await engine.run_analysis(scan.id, refs, analyzers, db, worker_id=_WORKER)
+    await analyse_scan(db, scan.id, refs, analyzers, worker_id=_WORKER)
     return scan.id
 
 

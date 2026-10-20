@@ -173,16 +173,14 @@ async def _get_github_instance_token(db: Database) -> str | None:
     return None
 
 
-async def _run_context(
-    scan: Scan, db: Database, worker_id: str, sbom_generation: int | None, active_analyzers: list[str]
-) -> _RunContext:
+async def _run_context(scan: Scan, db: Database, worker_id: str, sbom_generation: int | None) -> _RunContext | None:
+    project = await ProjectRepository(db).get_by_id(scan.project_id)
+    if project is None:
+        return None
     system_settings = await SystemSettingsRepository(db).get()
     github_token = system_settings.github_token or await _get_github_instance_token(db)
-    project = await ProjectRepository(db).get_by_id(scan.project_id)
-    settings_for = build_settings_resolver(
-        system_settings, project.analyzer_settings if project else None, github_token
-    )
-    return _RunContext(scan, db, worker_id, sbom_generation, active_analyzers, github_token, settings_for)
+    settings_for = build_settings_resolver(system_settings, project.analyzer_settings, github_token)
+    return _RunContext(scan, db, worker_id, sbom_generation, project.active_analyzers, github_token, settings_for)
 
 
 async def _carry_over_external_results(scan_id: str, scan_doc: Scan, db: Database) -> None:
@@ -887,7 +885,6 @@ async def _still_claimed(ctx: _RunContext) -> bool:
 async def run_analysis(
     scan_id: str,
     sboms: list[dict[str, Any]],
-    active_analyzers: list[str],
     db: Database,
     *,
     worker_id: str,
@@ -897,11 +894,17 @@ async def run_analysis(
     logger.info(f"Starting analysis for scan {scan_id}")
     aggregation_start_time = time.time()
 
-    scan_doc = await ScanRepository(db).get_by_id(scan_id)
+    scan_repo = ScanRepository(db)
+    scan_doc = await scan_repo.get_by_id(scan_id)
     if not scan_doc:
         logger.error(f"Scan {scan_id} not found")
         return None
-    ctx = await _run_context(scan_doc, db, worker_id, sbom_generation, active_analyzers)
+    ctx = await _run_context(scan_doc, db, worker_id, sbom_generation)
+    if ctx is None:
+        logger.error(f"Project for scan {scan_id} not found")
+        # No failure notice: it is addressed through the project, which is gone.
+        failed = await scan_repo.mark_failed(scan_id, "Project not found", worker_id=worker_id)
+        return SCAN_STATUS_FAILED if failed else None
 
     aggregator = ResultAggregator()
     fs = AsyncIOMotorGridFSBucket(db)

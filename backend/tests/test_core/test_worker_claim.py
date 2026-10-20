@@ -163,19 +163,14 @@ async def test_a_long_analysis_keeps_renewing_its_claim():
     assert leases[1] > leases[0]
 
 
-def _durations() -> float:
-    return REGISTRY.get_sample_value("worker_job_duration_seconds_count") or 0.0
-
-
 @pytest.mark.asyncio
-async def test_an_error_looking_up_the_project_fails_the_scan_and_releases_the_job():
+async def test_an_analysis_error_fails_the_scan_and_releases_the_job():
     db = FakeDatabase()
     await _pending_scan(db)
-    db.projects.find_one = AsyncMock(side_effect=RuntimeError("primary stepped down"))
     manager = AnalysisWorkerManager(num_workers=1)
     failed_before = _jobs("failed")
 
-    await _drain_one_job(db, "scan-1", manager=manager)
+    await _drain_one_job(db, "scan-1", AsyncMock(side_effect=RuntimeError("primary stepped down")), manager=manager)
 
     stored = await db.scans.find_one({"_id": "scan-1"})
     assert (stored["status"], stored["error"]) == (SCAN_STATUS_FAILED, "primary stepped down")
@@ -197,24 +192,26 @@ async def test_a_failure_write_that_fails_too_still_releases_the_job():
 
 
 @pytest.mark.asyncio
-async def test_a_scan_whose_project_is_gone_counts_as_a_failed_job():
+async def test_a_scan_cancelled_at_shutdown_is_logged_as_finished(caplog):
     db = FakeDatabase()
-    await db.scans.insert_one({"_id": "scan-1", "project_id": "gone", "status": "pending", "sbom_refs": []})
-    failed_before, durations_before = _jobs("failed"), _durations()
+    await _pending_scan(db)
+    manager = AnalysisWorkerManager(num_workers=1)
+    started = asyncio.Event()
 
-    await _drain_one_job(db, "scan-1")
+    async def _outlives_the_grace_period(**_kwargs):
+        started.set()
+        await asyncio.Event().wait()
 
-    assert (await db.scans.find_one({"_id": "scan-1"}))["status"] == SCAN_STATUS_FAILED
-    assert (_jobs("failed") - failed_before, _durations() - durations_before) == (1, 1)
-
-
-@pytest.mark.asyncio
-async def test_a_scan_whose_project_is_gone_is_logged_as_finished(caplog):
-    db = FakeDatabase()
-    await db.scans.insert_one({"_id": "scan-1", "project_id": "gone", "status": "pending", "sbom_refs": []})
-
-    with caplog.at_level(logging.INFO, logger="app.core.worker"):
-        await _drain_one_job(db, "scan-1")
+    with (
+        caplog.at_level(logging.INFO, logger="app.core.worker"),
+        patch("app.core.worker.get_database", AsyncMock(return_value=db)),
+        patch("app.core.worker.run_analysis", _outlives_the_grace_period),
+        patch("app.core.worker.DEFAULT_SHUTDOWN_TIMEOUT_SECONDS", 0.01),
+    ):
+        manager.queue.put_nowait("scan-1")
+        manager.workers.append(asyncio.create_task(manager.worker("worker-1")))
+        await asyncio.wait_for(started.wait(), timeout=5)
+        await asyncio.wait_for(manager.stop(), timeout=5)
 
     assert f"Worker {INSTANCE_ID}/worker-1 finished scan scan-1" in caplog.messages
 

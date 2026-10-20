@@ -11,11 +11,11 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.trufflehog import TruffleHogIngest
 from app.services.analysis import engine
-from app.services.analysis.engine import run_analysis
 from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.rescan import RESCAN_SOURCE_PROJECTION, build_rescan
 from app.services.scan_manager import ScanManager
+from tests.helpers.analyzers import analyse_scan
 from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, store_cbom
 from tests.helpers.sboms import sbom_ref, store_sbom
 
@@ -87,7 +87,7 @@ async def _seed_lineage(db) -> tuple[str, str]:
 async def _rescan_and_list(db) -> list[str]:
     original_id, rescan_id = await _seed_lineage(db)
     assert (
-        await run_analysis(rescan_id, [sbom_ref(_FILE_ID)], _NO_ANALYZERS, db, worker_id=_WORKER)
+        await analyse_scan(db, rescan_id, [sbom_ref(_FILE_ID)], _NO_ANALYZERS, worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED
     )
 
@@ -125,12 +125,12 @@ async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], lis
     await db.scans.insert_one(original.model_dump(by_alias=True))
     await _ingest_assets(db, original.id)
     await process_findings_ingest(manager, "trufflehog", trufflehog)
-    assert await run_analysis(original.id, [], _NO_ANALYZERS, db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, original.id, [], _NO_ANALYZERS, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     source = await db.scans.find_one({"_id": original.id}, RESCAN_SOURCE_PROJECTION)
     rescan = build_rescan(source).model_copy(update={"status": "processing", "worker_id": _WORKER})
     await db.scans.insert_one(rescan.model_dump(by_alias=True))
-    assert await run_analysis(rescan.id, [], _NO_ANALYZERS, db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, rescan.id, [], _NO_ANALYZERS, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     rows = await db.analysis_results.find({"scan_id": rescan.id}).to_list(None)
     return sorted(row["analyzer_name"] for row in rows), announced[-1]

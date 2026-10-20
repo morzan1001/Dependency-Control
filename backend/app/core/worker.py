@@ -243,16 +243,9 @@ class AnalysisWorkerManager:
             _keep_claim(partial(scan_repo.renew_claim, scan_id, worker_id), f"scan {scan_id}")
         )
         try:
-            project = await db.projects.find_one({"_id": scan["project_id"]})
-            if not project:
-                logger.error(f"Project for scan {scan_id} not found, skipping.")
-                await _fail_scan(db, scan, "Project not found", started, worker_id=worker_id)
-                return
-
             outcome = await run_analysis(
                 scan_id=scan_id,
                 sboms=scan.get("sbom_refs", []),
-                active_analyzers=project.get("active_analyzers", []),
                 db=db,
                 worker_id=worker_id,
                 sbom_generation=scan.get("sbom_generation"),

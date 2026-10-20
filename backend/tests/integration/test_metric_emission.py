@@ -16,7 +16,7 @@ from app.models.project import Scan
 from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine
 from app.services.analysis.runner import AnalyzerInput
-from tests.helpers.analyzers import run_context, serve_analyzer
+from tests.helpers.analyzers import analyse_scan, run_context, serve_analyzer
 from tests.mocks.fake_mongo import FakeDatabase
 
 _WORKER = "pod-a/worker-0"
@@ -270,6 +270,6 @@ async def test_a_rescan_run_counts_the_rescan_and_its_aggregation_time(db, monke
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     moved = _deltas([("analysis_rescan_operations_total", {}), ("analysis_aggregation_duration_seconds_count", {})])
 
-    assert await engine.run_analysis(scan.id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan.id, [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert moved() == [1, 1]
