@@ -565,6 +565,53 @@ class TestAHangingRedisCannotStallTheLockedPath:
         assert health["status"] == "unhealthy"
 
 
+_BATCH_BOUND = 0.4
+_BATCH_KEYS = 2
+_BATCH = {f"k{i}": i for i in range(5)}
+
+
+class TestABatchLargerThanOneRoundTrip:
+    @pytest.fixture(autouse=True)
+    def small_round_trips(self, monkeypatch):
+        monkeypatch.setattr(cache_module, "REDIS_OPERATION_TIMEOUT_SECONDS", _BATCH_BOUND)
+        monkeypatch.setattr(cache_module, "_KEYS_PER_ROUND_TRIP", _BATCH_KEYS)
+
+    @pytest.mark.asyncio
+    async def test_a_read_slower_than_one_bound_in_total_still_returns_every_key(self, fake_cache, monkeypatch):
+        await fake_cache.mset(_BATCH, _TTL)
+        real_mget = fake_cache._client.mget
+
+        async def mget_taking_a_quarter_bound_per_key(keys):
+            await asyncio.sleep(len(keys) * _BATCH_BOUND / 4)
+            return await real_mget(keys)
+
+        monkeypatch.setattr(fake_cache._client, "mget", mget_taking_a_quarter_bound_per_key)
+
+        assert (await fake_cache.mget(list(_BATCH)), fake_cache._available) == (_BATCH, True)
+
+    @pytest.mark.asyncio
+    async def test_a_write_goes_out_in_bounded_round_trips_without_a_transaction(self, fake_cache, monkeypatch):
+        sent: list[tuple[bool, int]] = []
+        real_pipeline = fake_cache._client.pipeline
+
+        def recording_pipeline(*args, **kwargs):
+            pipe = real_pipeline(*args, **kwargs)
+            real_execute = pipe.execute
+
+            async def execute(*a, **kw):
+                sent.append((pipe.is_transaction, len(pipe.command_stack)))
+                return await real_execute(*a, **kw)
+
+            pipe.execute = execute
+            return pipe
+
+        monkeypatch.setattr(fake_cache._client, "pipeline", recording_pipeline)
+
+        assert await fake_cache.mset(_BATCH, _TTL) is True
+        assert sent == [(False, 2), (False, 2), (False, 1)]
+        assert await fake_cache.mget(list(_BATCH)) == _BATCH
+
+
 class TestFetchFailuresReachTheCaller:
     @pytest.mark.asyncio
     async def test_a_redis_failure_on_the_lock_still_raises_the_fetch_error(self, fake_cache, monkeypatch):

@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
+from itertools import batched
 from types import TracebackType
 from typing import Any, TypeVar, cast
 
@@ -32,6 +33,8 @@ T = TypeVar("T")
 
 REDIS_CONNECTION_LOST_MSG = "Redis connection lost, disabling cache temporarily"
 REDIS_OPERATION_TIMEOUT_SECONDS = 5.0
+# Each round trip has its own timeout, so a large batch cannot outlast one and pause the cache.
+_KEYS_PER_ROUND_TRIP = 500
 _LOCK_POLL_INTERVAL_SECONDS = 0.1
 # The wait outlasts a 30 s upstream fetch and the lock the wait, so peers wait for the holder instead of re-fetching.
 STAMPEDE_LOCK_TTL_SECONDS = 60
@@ -311,10 +314,12 @@ class CacheService:
 
         with _CacheOp(self, "mget"):
             client = await self.get_client()
-            values = await asyncio.wait_for(
-                client.mget([self._make_key(k) for k in keys]),
-                timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
-            )
+            values: list[Any] = []
+            for batch in batched(keys, _KEYS_PER_ROUND_TRIP, strict=False):
+                values += await asyncio.wait_for(
+                    client.mget([self._make_key(k) for k in batch]),
+                    timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+                )
             result: dict[str, Any] = dict.fromkeys(keys)
             for key, value in zip(keys, values, strict=True):
                 if value:
@@ -332,10 +337,11 @@ class CacheService:
 
         with _CacheOp(self, "mset"):
             client = await self.get_client()
-            pipe = client.pipeline()
-            for key, value in mapping.items():
-                pipe.set(self._make_key(key), json.dumps(value, default=str), ex=ttl_seconds)
-            await asyncio.wait_for(pipe.execute(), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
+            for batch in batched(mapping.items(), _KEYS_PER_ROUND_TRIP, strict=False):
+                pipe = client.pipeline(transaction=False)
+                for key, value in batch:
+                    pipe.set(self._make_key(key), json.dumps(value, default=str), ex=ttl_seconds)
+                await asyncio.wait_for(pipe.execute(), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
             return True
         return False
 
