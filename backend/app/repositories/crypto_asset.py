@@ -5,6 +5,7 @@ from typing import Any
 
 from pymongo import UpdateOne
 
+from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.base import BaseRepository
@@ -26,6 +27,9 @@ def scan_query(
     if name_search:
         query["name"] = {"$regex": re.escape(name_search), "$options": "i"}
     return query
+
+
+SCAN_ORDER = case_insensitive_sort([("name", 1), ("bom_ref", 1)], {"name"})
 
 
 class CryptoAssetRepository(BaseRepository[CryptoAsset]):
@@ -90,8 +94,7 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
     ) -> list[CryptoAsset]:
         """``limit`` applies as given, so a short list means the scan itself is short."""
         query = scan_query(project_id, scan_id, asset_type, primitive, name_search)
-        cursor = self.collection.find(query).sort([("name", 1), ("bom_ref", 1)]).skip(skip).limit(limit)
-        docs = await cursor.to_list(length=limit)
+        docs = await self.aggregate([{"$match": query}, *SCAN_ORDER, {"$skip": skip}, {"$limit": limit}])
         return [CryptoAsset.model_validate(d) for d in docs]
 
     async def get(self, project_id: str, asset_id: str) -> CryptoAsset | None:

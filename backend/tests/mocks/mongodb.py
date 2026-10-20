@@ -48,6 +48,9 @@ def create_mock_collection(**method_returns):
             self.index += 1
             return item
 
+        async def to_list(self, length=None):
+            return self.items[:length]
+
     agg_cursor = AsyncIteratorMock(method_returns.get("aggregate", []))
     collection.aggregate = MagicMock(return_value=agg_cursor)
 
