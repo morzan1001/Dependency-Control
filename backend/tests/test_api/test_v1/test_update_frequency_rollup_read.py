@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from app.api.v1.endpoints.analytics import update_frequency as endpoint
+from app.services import update_frequency as walk
 from app.api.v1.endpoints.analytics.update_frequency import (
     _compute_comparison,
     _compute_comparison_from_rollup,
@@ -119,9 +120,7 @@ async def _elected(db: FakeDatabase, project: dict[str, Any]) -> str | None:
     )
 
 
-async def _live(
-    db: FakeDatabase, project: dict[str, Any] | None = None, hard_limit: int = WINDOW_HARD_LIMIT
-) -> UpdateFrequencyMetrics:
+async def _live(db: FakeDatabase, project: dict[str, Any] | None = None) -> UpdateFrequencyMetrics:
     project = project or _project()
     branch = await _elected(db, project)
     return await compute_update_frequency(
@@ -132,7 +131,6 @@ async def _live(
         analysis_repo=AnalysisResultRepository(db),
         branch=branch,
         window_days=WINDOW_DAYS,
-        hard_limit=hard_limit,
     )
 
 
@@ -772,9 +770,8 @@ async def _seed_storm(db: FakeDatabase, commits: int, retries: int) -> None:
 class TestWindowCap:
     @staticmethod
     async def _both(db: FakeDatabase, cap: int) -> tuple[UpdateFrequencyMetrics, UpdateFrequencyMetrics | None]:
-        live = await _live(db, hard_limit=cap)
-        with patch.object(endpoint, "WINDOW_HARD_LIMIT", cap):
-            return live, await _rollup(db)
+        with patch.object(endpoint, "WINDOW_HARD_LIMIT", cap), patch.object(walk, "WINDOW_HARD_LIMIT", cap):
+            return await _live(db), await _rollup(db)
 
     @pytest.mark.asyncio
     async def test_both_paths_fold_the_same_newest_documents_when_the_cap_bites(self):

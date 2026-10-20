@@ -8,7 +8,7 @@ from app.schemas.analytics import ScanTimelineEntry
 from app.schemas.team import TeamRef
 from app.services.release_history import UpstreamCadenceMetrics
 from app.services.update_frequency import DAYS_PER_MONTH, compute_trend, dominant_ecosystem
-from app.services.update_frequency import FoldedWindow
+from app.services.update_frequency import FoldedWindow, measured_summary
 from app.services.update_frequency_fold import (
     commit_coverage,
     fold_window,
@@ -691,7 +691,7 @@ class TestModelConstruction:
 
     def test_to_summary(self) -> None:
         teams = [TeamRef(id="team-1", name="Platform")]
-        summary = _fold_golden().to_summary("p1", "Project One", teams, branch="main", window_days=90)
+        summary = measured_summary(_fold_golden().to_metrics("p1", "Project One", branch="main"), teams, window_days=90)
         assert summary.project_id == "p1"
         assert summary.project_name == "Project One"
         assert summary.teams == teams
@@ -709,14 +709,14 @@ class TestModelConstruction:
 
     def test_summary_keeps_unmeasured_coverage_none(self) -> None:
         deltas = _chain([_delta("s0", 0), _delta("s1", 10, patch=1)])
-        summary = _fold(deltas).to_summary("p1", "Project One", window_days=90)
+        summary = measured_summary(_fold(deltas).to_metrics("p1", "Project One"), [], window_days=90)
         assert summary.update_coverage_pct is None
         assert summary.teams == []
 
     def test_a_partial_row_carries_the_folded_numbers_under_the_caveat(self) -> None:
         # The fold sums what it was given; only the caller knows the window held more.
         folded = _fold_golden()
-        summary = folded.to_summary("p1", "Project One", window_days=90, data_status="partial")
+        summary = measured_summary(folded.to_metrics("p1", "Project One"), [], window_days=90, data_status="partial")
         assert summary.data_status == "partial"
         assert (summary.scan_count, summary.total_updates) == (folded.scan_count, folded.total_updates)
         assert summary.updates_per_month == folded.updates_per_month

@@ -20,10 +20,12 @@ from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import BranchWindowActivity
 from app.schemas.analytics import ScanTimelineEntry, UpdateFrequencyMetrics
+from app.services import update_frequency as update_frequency_module
 from app.services.update_frequency import (
     compute_update_frequency,
     elect_primary_branch,
     fold_runs_into_bars,
+    measured_summary,
     same_commit_runs,
     window_cutoff,
 )
@@ -581,10 +583,8 @@ class TestCappedRate:
 
         assert resolved.window_scan_cap == len(deltas)
         assert folded.to_metrics(PROJECT, "Project One", window_scan_cap=resolved.window_scan_cap).window_scan_cap
-        summary = folded.to_summary(
-            PROJECT, "Project One", window_days=WINDOW_DAYS, window_scan_cap=resolved.window_scan_cap
-        )
-        assert summary.window_scan_cap == len(deltas)
+        metrics = folded.to_metrics(PROJECT, "Project One", window_scan_cap=resolved.window_scan_cap)
+        assert measured_summary(metrics, [], window_days=WINDOW_DAYS).window_scan_cap == len(deltas)
 
     @pytest.mark.asyncio
     async def test_a_fold_that_read_the_whole_window_names_no_cap(self):
@@ -601,10 +601,11 @@ class TestCappedRate:
 
 class TestWindowCapCutsMidRun:
     @pytest.mark.asyncio
-    async def test_both_paths_derive_the_same_bars_from_the_same_newest_documents(self):
+    async def test_both_paths_derive_the_same_bars_from_the_same_newest_documents(self, monkeypatch):
         """A cap landing inside a run must not leave the two paths on different bars."""
         db = FakeDatabase()
         hard_limit = 8
+        monkeypatch.setattr(update_frequency_module, "WINDOW_HARD_LIMIT", hard_limit)
         for index in range(12):
             await _seed_scan(
                 db,
@@ -623,7 +624,6 @@ class TestWindowCapCutsMidRun:
             analysis_repo=AnalysisResultRepository(db),
             branch=BRANCH,
             window_days=WINDOW_DAYS,
-            hard_limit=hard_limit,
         )
         window = select_window((await _deltas(db))[-hard_limit:])
 

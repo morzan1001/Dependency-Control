@@ -42,6 +42,7 @@ from app.services.update_frequency import (
     compute_update_frequency,
     compute_update_frequency_comparison,
     elect_primary_branch,
+    measured_summary,
     placeholder_summary,
     rank_summaries,
     select_primary_branch,
@@ -288,15 +289,10 @@ def _rollup_summary(
 
     anchor_id = resolved.window[0]["_id"]
     folded = fold_window(resolved.window, baselines.get(anchor_id), resolved.measured_days or window_days)
-    return folded.to_summary(
-        str(project["_id"]),
-        project.get("name", ""),
-        project.get("teams") or [],
-        branch=resolved.branch,
-        window_days=window_days,
-        data_status=resolved.status,
-        window_scan_cap=resolved.window_scan_cap,
+    metrics = folded.to_metrics(
+        str(project["_id"]), project.get("name", ""), branch=resolved.branch, window_scan_cap=resolved.window_scan_cap
     )
+    return measured_summary(metrics, project.get("teams") or [], window_days=window_days, data_status=resolved.status)
 
 
 async def _compute_comparison_from_rollup(

@@ -6,12 +6,18 @@ from app.core.constants import SCAN_STATUS_COMPLETED
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
+from app.services import update_frequency as update_frequency_module
 from app.services.update_frequency import DAYS_PER_MONTH, compute_update_frequency
 
 pytestmark = [pytest.mark.live_mongo, pytest.mark.asyncio]
 
 _PROJECT_ID = "uf-project"
 _HARD_LIMIT = 10
+
+
+@pytest.fixture(autouse=True)
+def _small_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(update_frequency_module, "WINDOW_HARD_LIMIT", _HARD_LIMIT)
 
 
 async def _insert_scans(db, ages_in_days: list[int]) -> None:
@@ -51,7 +57,6 @@ async def _metrics(db, *, window_days: int | None, max_scans: int = 20):
         branch="main",
         max_scans=max_scans,
         window_days=window_days,
-        hard_limit=_HARD_LIMIT,
     )
 
 

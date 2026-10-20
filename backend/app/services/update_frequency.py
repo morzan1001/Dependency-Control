@@ -433,36 +433,6 @@ class FoldedWindow:
             adoption_latency_days_median=(upstream.adoption_latency_days_median if upstream else None),
         )
 
-    def to_summary(
-        self,
-        project_id: str,
-        project_name: str,
-        teams: list[TeamRef] | None = None,
-        *,
-        branch: str | None = None,
-        window_days: int,
-        data_status: Literal["ready", "partial"] = "ready",
-        window_scan_cap: int | None = None,
-    ) -> ProjectUpdateSummary:
-        """data_status comes from window_coverage_status: the fold knows what it summed, not what the window held."""
-        return ProjectUpdateSummary(
-            project_id=project_id,
-            project_name=project_name,
-            teams=teams or [],
-            data_status=data_status,
-            branch=branch,
-            window_days=window_days,
-            scan_count=self.scan_count,
-            updates_per_month=self.updates_per_month,
-            update_coverage_pct=self.update_coverage_pct,
-            patch_ratio=self.granularity_ratio.get("patch", 0.0),
-            trend_direction=self.trend_direction,
-            total_updates=self.total_updates,
-            total_outdated=self.total_outdated_detected,
-            last_scan_date=self.last_scan_date,
-            window_scan_cap=window_scan_cap,
-        )
-
 
 def summarise_window(
     bars: list[ScanTimelineEntry],
@@ -731,10 +701,9 @@ async def _load_completed_scans(
     branch: str,
     max_scans: int,
     since: datetime | None,
-    hard_limit: int,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """With since set, the calendar window (capped by hard_limit) applies and max_scans is ignored."""
-    fetch_limit = hard_limit if since is not None else min(hard_limit, max_scans * _BAR_FETCH_HEADROOM)
+    """With since set, the calendar window (capped by WINDOW_HARD_LIMIT) applies and max_scans is ignored."""
+    fetch_limit = WINDOW_HARD_LIMIT if since is not None else min(WINDOW_HARD_LIMIT, max_scans * _BAR_FETCH_HEADROOM)
     # Filtered in the query so the limit counts only usable scans, even when the newest ones failed.
     docs = await scan_repo.find_many_raw(
         {**usable_scan_match(since), "project_id": project_id, "branch": branch},
@@ -769,16 +738,13 @@ async def compute_update_frequency(
     max_scans: int = 20,
     window_days: int | None = None,
     release_fetcher: ReleaseHistoryFetcher | None = None,
-    hard_limit: int = WINDOW_HARD_LIMIT,
 ) -> UpdateFrequencyMetrics:
     """One branch only, since other branches' differences are no updates; only window_days yields a monthly rate."""
     if branch is None:
         return short_window([]).to_metrics(project_id, project_name)
     since = window_cutoff(window_days)
 
-    completed_scans, truncated = await _load_completed_scans(
-        scan_repo, project_id, branch, max_scans, since, hard_limit
-    )
+    completed_scans, truncated = await _load_completed_scans(scan_repo, project_id, branch, max_scans, since)
 
     state = _AccumulatorState()
 
@@ -862,7 +828,7 @@ async def compute_update_frequency(
         slowest_packages=slowest_packages,
         recent_updates=state.recent_events(),
         upstream=upstream,
-        window_scan_cap=hard_limit if truncated else None,
+        window_scan_cap=WINDOW_HARD_LIMIT if truncated else None,
         outdated_backlog=outdated_backlog,
     )
 
@@ -897,21 +863,44 @@ async def _maybe_fetch_upstream_cadence(
     return aggregate_upstream_metrics(history, observations=observations)
 
 
-def _project_key(project: dict[str, Any]) -> str:
-    return str(project.get("_id") or project.get("id", ""))
-
-
 def placeholder_summary(
     project: dict[str, Any], status: UpdateDataStatus, window_days: int, branch: str | None = None
 ) -> ProjectUpdateSummary:
     """A row without numbers, naming the branch it looked at, so every project stays accounted for once."""
     return ProjectUpdateSummary(
-        project_id=_project_key(project),
+        project_id=str(project["_id"]),
         project_name=project.get("name", ""),
         teams=project.get("teams") or [],
         data_status=status,
         branch=branch,
         window_days=window_days,
+    )
+
+
+def measured_summary(
+    metrics: UpdateFrequencyMetrics,
+    teams: list[TeamRef],
+    *,
+    window_days: int,
+    data_status: Literal["ready", "partial"] = "ready",
+) -> ProjectUpdateSummary:
+    """data_status comes from window_coverage_status: the fold knows what it summed, not what the window held."""
+    return ProjectUpdateSummary(
+        project_id=metrics.project_id,
+        project_name=metrics.project_name,
+        teams=teams,
+        data_status=data_status,
+        branch=metrics.branch,
+        window_days=window_days,
+        scan_count=metrics.scan_count,
+        updates_per_month=metrics.updates_per_month,
+        update_coverage_pct=metrics.update_coverage_pct,
+        patch_ratio=metrics.granularity_ratio.get("patch", 0.0),
+        trend_direction=metrics.trend_direction,
+        total_updates=metrics.total_updates,
+        total_outdated=metrics.total_outdated_detected,
+        last_scan_date=metrics.last_scan_date,
+        window_scan_cap=metrics.window_scan_cap,
     )
 
 
@@ -966,12 +955,10 @@ async def compute_update_frequency_comparison(
     semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
     since = window_cutoff(window_days)
 
-    activity = await window_scans_by_branch(scan_repo, [_project_key(p) for p in projects], since)
+    activity = await window_scans_by_branch(scan_repo, [str(p["_id"]) for p in projects], since)
 
     async def _compute_single(project: dict[str, Any]) -> ProjectUpdateSummary:
-        project_id = _project_key(project)
-        project_name = project.get("name", "")
-        teams = project.get("teams") or []
+        project_id = str(project["_id"])
 
         branches = activity.get(project_id, {})
         primary = select_primary_branch(branches, project.get("default_branch"), project.get("deleted_branches"))
@@ -982,7 +969,7 @@ async def compute_update_frequency_comparison(
             try:
                 metrics = await compute_update_frequency(
                     project_id=project_id,
-                    project_name=project_name,
+                    project_name=project.get("name", ""),
                     scan_repo=scan_repo,
                     dep_repo=dep_repo,
                     analysis_repo=analysis_repo,
@@ -996,24 +983,8 @@ async def compute_update_frequency_comparison(
             if metrics.scan_count < 2:
                 return placeholder_summary(project, "insufficient_data", window_days, primary)
 
-            return ProjectUpdateSummary(
-                project_id=metrics.project_id,
-                project_name=metrics.project_name,
-                teams=teams,
-                # The walk reads the very scans coverage is measured against, so it cannot lag like the delta ledger.
-                data_status="ready",
-                branch=metrics.branch,
-                window_days=window_days,
-                scan_count=metrics.scan_count,
-                updates_per_month=metrics.updates_per_month,
-                update_coverage_pct=metrics.update_coverage_pct,
-                patch_ratio=metrics.granularity_ratio.get("patch", 0),
-                trend_direction=metrics.trend_direction,
-                total_updates=metrics.total_updates,
-                total_outdated=metrics.total_outdated_detected,
-                last_scan_date=metrics.last_scan_date,
-                window_scan_cap=metrics.window_scan_cap,
-            )
+            # The walk reads the very scans coverage is measured against, so it cannot lag like the delta ledger.
+            return measured_summary(metrics, project.get("teams") or [], window_days=window_days)
 
     results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)
     summaries = [

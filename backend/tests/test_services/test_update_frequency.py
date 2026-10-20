@@ -1018,7 +1018,7 @@ class TestAggregationAccuracy:
             "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
             "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
         }
-        return await _compute(scans, deps, window_days=window_days, hard_limit=10)
+        return await _compute(scans, deps, window_days=window_days)
 
     @pytest.mark.asyncio
     async def test_the_monthly_rate_measures_the_window_not_the_scan_cadence(self):
@@ -1327,22 +1327,24 @@ class TestStreamingOrchestrator:
         assert m.scan_count == 30, "the calendar window should trump max_scans when it contains more scans"
 
     @pytest.mark.asyncio
-    async def test_hard_limit_caps_runaway_queries(self):
+    async def test_hard_limit_caps_runaway_queries(self, monkeypatch):
         # 2500 scans inside the window, so only the hard_limit cap stops a whole-collection load.
+        monkeypatch.setattr(update_frequency_module, "WINDOW_HARD_LIMIT", 100)
         scans = _recent_scans(2500)
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(2500)}
 
-        m = await _compute(scans, deps, max_scans=5, window_days=3000, hard_limit=100)
+        m = await _compute(scans, deps, max_scans=5, window_days=3000)
         assert m.scan_count == 100
         # And the response says so: every number above covers 100 of the branch's 2500 scans.
         assert m.window_scan_cap == 100
 
     @pytest.mark.asyncio
-    async def test_a_window_read_whole_names_no_cap(self):
+    async def test_a_window_read_whole_names_no_cap(self, monkeypatch):
+        monkeypatch.setattr(update_frequency_module, "WINDOW_HARD_LIMIT", 100)
         scans = _recent_scans(30)
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(30)}
 
-        m = await _compute(scans, deps, max_scans=5, window_days=3000, hard_limit=100)
+        m = await _compute(scans, deps, max_scans=5, window_days=3000)
 
         assert m.window_scan_cap is None
 
