@@ -393,7 +393,8 @@ class ScanRepository:
             _, scope = _head_scope(project)
             scan_id = (await self._head_scan_ids({project_id: scope._replace(pointer=None)})).get(project_id)
             doc = await self.collection.find_one({"_id": scan_id}, _HEAD_STATS_PROJECTION) if scan_id else None
-            head, stats = (doc["_id"], doc.get("stats")) if doc else (None, None)
+            head: str | None = doc["_id"] if doc else None
+            stats = doc.get("stats") if doc else None
             # A pointer moved in between belongs to a writer that saw newer scans, so the head is derived again.
             written = await self.db.projects.update_one(
                 {"_id": project_id, "latest_scan_id": scope.pointer},
