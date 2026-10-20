@@ -5,6 +5,7 @@ import httpx
 import pytest
 from typing_extensions import Self
 
+from app.core.cache import CacheTTL
 from app.services.analyzers.outdated import OutdatedAnalyzer
 
 _API = "https://api.deps.dev/v3alpha/systems"
@@ -72,7 +73,7 @@ class TestMultipleVersionsOfSamePackage:
     @pytest.mark.asyncio
     async def test_both_versions_classified_from_shared_latest_warm_cache(self, fake_cache, monkeypatch) -> None:
         # The latest-version cache is a single package-level key; the older copy must still surface a card.
-        await fake_cache.set("latest3:npm:lodash", {"default": "4.17.20", "stable": "4.17.20"})
+        await fake_cache.set("latest3:npm:lodash", {"default": "4.17.20", "stable": "4.17.20"}, CacheTTL.LATEST_VERSION)
         client = _serve(monkeypatch, fake_cache, {})
 
         result = await OutdatedAnalyzer().analyze(

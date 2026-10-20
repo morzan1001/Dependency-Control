@@ -4,7 +4,7 @@ from typing import Any, Self
 import httpx
 import pytest
 
-from app.core.cache import CacheKeys
+from app.core.cache import CacheKeys, CacheTTL
 from app.core.constants import ANALYZER_BATCH_SIZES, NPM_REGISTRY_URL
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
@@ -204,7 +204,9 @@ async def test_a_component_without_a_version_makes_no_registry_request(monkeypat
 async def test_all_registry_hashes_are_read_from_the_cache_in_one_batch(monkeypatch, fake_cache):
     numpy_key = CacheKeys.package_hash("pypi", "numpy", "1.26.4")
     left_pad_key = CacheKeys.package_hash("npm", "left-pad", "1.0.0")
-    await fake_cache.mset({numpy_key: {"sha256": [_SDIST_SHA256]}, left_pad_key: {"sha1": "e" * 40}})
+    await fake_cache.mset(
+        {numpy_key: {"sha256": [_SDIST_SHA256]}, left_pad_key: {"sha1": "e" * 40}}, CacheTTL.PACKAGE_HASH
+    )
     mget_calls = []
     read_many = fake_cache.mget
 

@@ -10,6 +10,8 @@ from prometheus_client import REGISTRY
 
 from app.core.cache import CacheKeys, CacheService, CacheTTL, scope_digest, suppress_cache_writes
 
+_TTL = 60
+
 
 class TestCacheTTLValues:
     def test_popular_packages_is_positive_int(self):
@@ -300,7 +302,7 @@ class TestStampedeNegativeCaching:
 class TestGetManyOrFetch:
     @pytest.mark.asyncio
     async def test_hits_come_from_one_read_and_only_a_miss_is_fetched_and_cached(self, fake_cache, monkeypatch):
-        await fake_cache.set("k:hit", {"v": 1})
+        await fake_cache.set("k:hit", {"v": 1}, _TTL)
         reads: list[list[str]] = []
         read_many = fake_cache.mget
 
@@ -358,20 +360,20 @@ class TestSuppressCacheWrites:
     @pytest.mark.asyncio
     async def test_set_writes_nothing_and_reports_failure(self, fake_cache):
         with suppress_cache_writes():
-            assert await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE) is False
+            assert await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE, _TTL) is False
 
         assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0
 
     @pytest.mark.asyncio
     async def test_mset_writes_nothing(self, fake_cache):
         with suppress_cache_writes():
-            assert await fake_cache.mset({_SUPPRESSED_KEY: _SUPPRESSED_VALUE}) is False
+            assert await fake_cache.mset({_SUPPRESSED_KEY: _SUPPRESSED_VALUE}, _TTL) is False
 
         assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0
 
     @pytest.mark.asyncio
     async def test_reads_still_hit_the_shared_cache(self, fake_cache):
-        await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE)
+        await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE, _TTL)
 
         with suppress_cache_writes():
             assert await fake_cache.get(_SEEDED_KEY) == _SEEDED_VALUE
@@ -388,7 +390,7 @@ class TestSuppressCacheWrites:
             return _SUPPRESSED_VALUE
 
         with suppress_cache_writes():
-            result = await fake_cache.get_or_fetch_with_lock(_SUPPRESSED_KEY, fetch)
+            result = await fake_cache.get_or_fetch_with_lock(_SUPPRESSED_KEY, fetch, _TTL)
 
         assert result == _SUPPRESSED_VALUE
         assert fetched == [_SUPPRESSED_KEY]
@@ -396,7 +398,7 @@ class TestSuppressCacheWrites:
 
     @pytest.mark.asyncio
     async def test_a_cached_value_is_served_without_refetching(self, fake_cache):
-        await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE)
+        await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE, _TTL)
         fetched = []
 
         async def fetch():
@@ -404,7 +406,7 @@ class TestSuppressCacheWrites:
             return ["other"]
 
         with suppress_cache_writes():
-            result = await fake_cache.get_or_fetch_with_lock(_SEEDED_KEY, fetch)
+            result = await fake_cache.get_or_fetch_with_lock(_SEEDED_KEY, fetch, _TTL)
 
         assert result == _SEEDED_VALUE
         assert fetched == []
@@ -412,9 +414,9 @@ class TestSuppressCacheWrites:
     @pytest.mark.asyncio
     async def test_suppression_ends_with_the_block(self, fake_cache):
         with suppress_cache_writes():
-            await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE)
+            await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE, _TTL)
 
-        assert await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE) is True
+        assert await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE, _TTL) is True
         assert await fake_cache.get(_SUPPRESSED_KEY) == _SUPPRESSED_VALUE
 
     @pytest.mark.asyncio
@@ -426,11 +428,11 @@ class TestSuppressCacheWrites:
             with suppress_cache_writes():
                 started.set()
                 await release.wait()
-                await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE)
+                await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE, _TTL)
 
         task = asyncio.create_task(suppressed())
         await started.wait()
-        assert await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE) is True
+        assert await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE, _TTL) is True
         release.set()
         await task
 
@@ -470,7 +472,7 @@ class TestFetchFailuresReachTheCaller:
             raise RuntimeError("upstream answered 503")
 
         with pytest.raises(RuntimeError, match="503"):
-            await fake_cache.get_or_fetch_with_lock("deps:npm:a:1.0.0", fetch, reraise_fetch_errors=True)
+            await fake_cache.get_or_fetch_with_lock("deps:npm:a:1.0.0", fetch, _TTL, reraise_fetch_errors=True)
         assert calls == ["fetch"]
 
     @pytest.mark.asyncio
@@ -484,7 +486,7 @@ class TestFetchFailuresReachTheCaller:
             raise RuntimeError("upstream answered 503")
 
         with pytest.raises(RuntimeError, match="503"):
-            await fake_cache.get_or_fetch_with_lock(key, fetch, max_wait_seconds=0.3, reraise_fetch_errors=True)
+            await fake_cache.get_or_fetch_with_lock(key, fetch, _TTL, max_wait_seconds=0.3, reraise_fetch_errors=True)
         assert calls == ["fetch"]
 
 
@@ -522,9 +524,9 @@ class TestAtomicPrimitives:
 
 _OPERATIONS = {
     "get": (lambda c: c.get("k"), None),
-    "set": (lambda c: c.set("k", 1), False),
+    "set": (lambda c: c.set("k", 1, _TTL), False),
     "mget": (lambda c: c.mget(["k", "j"]), {"k": None, "j": None}),
-    "mset": (lambda c: c.mset({"k": 1}), False),
+    "mset": (lambda c: c.mset({"k": 1}, _TTL), False),
     "incr": (lambda c: c.incr("n", 60), None),
     "pop": (lambda c: c.pop("k"), None),
     "eval": (lambda c: c.eval("return 1", "k"), None),
@@ -574,7 +576,7 @@ class TestFailuresFallBackToTheDefault:
     @pytest.mark.asyncio
     async def test_a_corrupt_entry_reads_as_absent(self, fake_cache):
         await fake_cache._client.set(fake_cache._make_key("bad"), "{not json")
-        await fake_cache.set("good", 1)
+        await fake_cache.set("good", 1, _TTL)
 
         assert await fake_cache.get("bad") is None
         assert await fake_cache.mget(["bad", "good"]) == {"bad": None, "good": 1}
@@ -586,7 +588,7 @@ class TestFailuresFallBackToTheDefault:
         circular: list = []
         circular.append(circular)
 
-        assert await fake_cache.set("k", circular) is False
-        assert await fake_cache.mset({"k": circular}) is False
+        assert await fake_cache.set("k", circular, _TTL) is False
+        assert await fake_cache.mset({"k": circular}, _TTL) is False
         assert await fake_cache._client.exists(fake_cache._make_key("k")) == 0
         assert fake_cache._available is True

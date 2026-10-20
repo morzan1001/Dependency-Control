@@ -286,12 +286,9 @@ class CacheService:
             cache_misses_total.inc()
         return None
 
-    async def set(self, key: str, value: Any, ttl_seconds: int | None = None) -> bool:
+    async def set(self, key: str, value: Any, ttl_seconds: int) -> bool:
         if _writes_suppressed.get() or not await self._ensure_available():
             return False
-
-        if ttl_seconds is None:
-            ttl_seconds = settings.CACHE_DEFAULT_TTL_HOURS * 3600
 
         with _CacheOp(self, "set"):
             client = await self.get_client()
@@ -325,12 +322,9 @@ class CacheService:
             return result
         return dict.fromkeys(keys)
 
-    async def mset(self, mapping: dict[str, Any], ttl_seconds: int | None = None) -> bool:
+    async def mset(self, mapping: dict[str, Any], ttl_seconds: int) -> bool:
         if _writes_suppressed.get() or not mapping or not await self._ensure_available():
             return False
-
-        if ttl_seconds is None:
-            ttl_seconds = settings.CACHE_DEFAULT_TTL_HOURS * 3600
 
         with _CacheOp(self, "mset"):
             client = await self.get_client()
@@ -381,7 +375,7 @@ class CacheService:
         self,
         key: str,
         fetch_fn: Callable[[], Any],
-        ttl_seconds: int | None = None,
+        ttl_seconds: int,
         lock_ttl_seconds: int = 30,
         max_wait_seconds: float = 5.0,
         reraise_fetch_errors: bool = False,

@@ -32,7 +32,7 @@ def _deltas(series: list[tuple[str, dict[str, str]]]):
 
 @pytest.mark.asyncio
 async def test_cache_get_counts_a_stored_key_as_a_hit_and_an_absent_key_as_a_miss(fake_cache):
-    await fake_cache.set("present", 1)
+    await fake_cache.set("present", 1, 60)
     await fake_cache._client.set(fake_cache._make_key("corrupt"), "{not json")
     moved = _deltas([("cache_hits_total", {}), ("cache_misses_total", {})])
     await fake_cache.get("present")
@@ -43,7 +43,7 @@ async def test_cache_get_counts_a_stored_key_as_a_hit_and_an_absent_key_as_a_mis
 
 @pytest.mark.asyncio
 async def test_cache_mget_counts_each_requested_key_as_a_hit_or_a_miss(fake_cache):
-    await fake_cache.set("present", 1)
+    await fake_cache.set("present", 1, 60)
     await fake_cache._client.set(fake_cache._make_key("corrupt"), "{not json")
     moved = _deltas([("cache_hits_total", {}), ("cache_misses_total", {})])
     await fake_cache.mget(["present", "present", "corrupt", "absent"])
@@ -55,9 +55,9 @@ async def test_cache_mget_counts_each_requested_key_as_a_hit_or_a_miss(fake_cach
     "operation, call",
     [
         ("get", lambda c: c.get("k")),
-        ("set", lambda c: c.set("k", 1)),
+        ("set", lambda c: c.set("k", 1, 60)),
         ("mget", lambda c: c.mget(["k"])),
-        ("mset", lambda c: c.mset({"k": 1})),
+        ("mset", lambda c: c.mset({"k": 1}, 60)),
         ("incr", lambda c: c.incr("n", 60)),
         ("pop", lambda c: c.pop("k")),
     ],

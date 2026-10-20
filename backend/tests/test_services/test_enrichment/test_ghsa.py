@@ -150,7 +150,9 @@ async def test_a_secondary_limit_stops_every_lookup_for_its_retry_after(fake_cac
 @pytest.mark.asyncio
 async def test_each_ghsa_id_reads_its_own_cached_advisory(fake_cache, monkeypatch):
     serve_enrichment(monkeypatch, fake_cache, Upstreams(advisories={_LOG4SHELL: _LOG4SHELL_CVE}))
-    await fake_cache.set(CacheKeys.ghsa(_OTHER), GHSAData(ghsa_id=_OTHER, cve_id="CVE-2022-22965").model_dump())
+    await fake_cache.set(
+        CacheKeys.ghsa(_OTHER), GHSAData(ghsa_id=_OTHER, cve_id="CVE-2022-22965").model_dump(), CacheTTL.GHSA_DATA
+    )
 
     result = await _resolve(_LOG4SHELL, _LOG4SHELL, _OTHER)
 

@@ -70,7 +70,7 @@ async def test_uncached_batches_are_fetched_side_by_side(fake_cache, monkeypatch
 async def test_each_cve_reads_its_own_cached_epss_score(fake_cache, monkeypatch):
     seen = serve_enrichment(monkeypatch, fake_cache, Upstreams())
     cached = EPSSData(cve=_SCORED, epss_score=0.9, percentile=50.0, date="2026-09-01")
-    await fake_cache.set(CacheKeys.epss(_SCORED), cached.model_dump())
+    await fake_cache.set(CacheKeys.epss(_SCORED), cached.model_dump(), CacheTTL.EPSS_SCORE)
 
     scores, _ = await _load(_UNSCORED, _UNSCORED, _SCORED)
 

@@ -11,7 +11,6 @@ class Settings(BaseSettings):
 
     REDIS_URL: str = "redis://localhost:6379/0"
     CACHE_PREFIX: str = "dc:"
-    CACHE_DEFAULT_TTL_HOURS: int = 24
 
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
