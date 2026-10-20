@@ -12,7 +12,7 @@ from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION, ScanOutdate
 from app.repositories.base import BaseRepository
 from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository, bounded_gather
 
-_NEIGHBOUR_PROJECTION = {"_id": 1, "scan_created_at": 1, "prev_scan_id": 1, "dep_count": 1}
+_NEIGHBOUR_PROJECTION = {"_id": 1, "scan_created_at": 1, "commit_hash": 1, "prev_scan_id": 1, "dep_count": 1}
 
 # Everything the pure fold needs for a comparison row.
 _WINDOW_PROJECTION = {

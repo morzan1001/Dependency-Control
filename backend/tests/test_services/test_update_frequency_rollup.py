@@ -482,6 +482,7 @@ class TestPredecessorSelection:
         assert demoted is not None
         assert "dependencies changed" in demoted["error"]
         assert demoted["dep_count"] == 0
+        assert demoted["commit_hash"] == "commit-s2"
         assert await db.scan_outdated_sets.find_one({"_id": "s2"}) is None
 
     @pytest.mark.asyncio

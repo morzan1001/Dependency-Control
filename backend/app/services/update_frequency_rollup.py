@@ -2,7 +2,7 @@
 
 import logging
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -93,7 +93,7 @@ async def _compute_and_persist(db: Any, scan: _ScanRef) -> ScanUpdateDelta | Non
     except Exception as exc:
         logger.exception("Update-frequency delta failed for scan %s", scan.scan_id)
         update_frequency_delta_writes_total.labels(result="error").inc()
-        await _record_failure(db, scan, exc)
+        await _save_error_delta(db, scan, f"{type(exc).__name__}: {exc}")
         return None
 
     update_frequency_delta_writes_total.labels(result="ok").inc()
@@ -163,16 +163,10 @@ async def _resolve_predecessor(db: Any, scan: _ScanRef) -> tuple[dict[str, Any] 
             len(prev_deps),
             prev.get("dep_count"),
         )
-        await repo.save(
-            ScanUpdateDelta(
-                id=prev["_id"],
-                project_id=scan.project_id,
-                branch=scan.branch,
-                scan_created_at=prev["scan_created_at"],
-                error=_STALE_DEPENDENCIES_ERROR,
-            )
+        demoted = replace(
+            scan, scan_id=prev["_id"], created_at=prev["scan_created_at"], commit_hash=prev.get("commit_hash")
         )
-        await ScanOutdatedSetRepository(db).delete(prev["_id"])
+        await _save_error_delta(db, demoted, _STALE_DEPENDENCIES_ERROR)
     return None, {}
 
 
@@ -235,7 +229,7 @@ async def _persist(db: Any, delta: ScanUpdateDelta, outdated: set[str] | None) -
     )
 
 
-async def _record_failure(db: Any, scan: _ScanRef, exc: Exception) -> None:
+async def _save_error_delta(db: Any, scan: _ScanRef, error: str) -> None:
     """Keeps count(deltas) == count(usable scans); an outdated set must not survive next to an error document."""
     await ScanUpdateDeltaRepository(db).save(
         ScanUpdateDelta(
@@ -244,7 +238,7 @@ async def _record_failure(db: Any, scan: _ScanRef, exc: Exception) -> None:
             branch=scan.branch,
             scan_created_at=scan.created_at,
             commit_hash=scan.commit_hash,
-            error=f"{type(exc).__name__}: {exc}"[:_ERROR_MESSAGE_CAP],
+            error=error[:_ERROR_MESSAGE_CAP],
         )
     )
     await ScanOutdatedSetRepository(db).delete(scan.scan_id)
