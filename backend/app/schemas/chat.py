@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class ConversationCreate(BaseModel):
@@ -15,8 +15,6 @@ class ConversationResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     message_count: int
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class ConversationListResponse(BaseModel):
@@ -42,8 +40,6 @@ class MessageResponse(BaseModel):
     content: str
     tool_calls: list[ToolCallResponse]
     created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class ConversationDetailResponse(BaseModel):
