@@ -47,7 +47,7 @@ from app.repositories.distributed_locks import DistributedLocksRepository, LockL
 from app.repositories.scans import HAS_SBOM_MATCH, ScanRepository, is_usable_build
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.analysis.notifications import notify_analysis_failed
-from app.services.archive import reap_orphan_s3_objects
+from app.services.archive import reap_orphan_s3_objects, reap_stale_metadata
 from app.services.audit.retention import prune_old_audit_entries
 from app.services.branch_sync import sync_project_branches
 from app.services.compliance.retention import sweep_expired_compliance_reports
@@ -429,6 +429,7 @@ async def run_housekeeping(db: Any) -> None:
         ("Housekeeping: release flag reconcile", reconcile_release_flags),
         ("Housekeeping: policy audit retention", prune_old_audit_entries),
         ("Housekeeping: compliance report sweep", sweep_expired_compliance_reports),
+        ("Stale archive metadata reaper", reap_stale_metadata),
         ("Orphan reaper", reap_orphan_s3_objects),
         ("Callgraph orphan reaper", _reap_orphan_callgraphs),
         ("GridFS orphan reaper", reap_orphan_gridfs_files),

@@ -288,22 +288,15 @@ async def test_reap_stale_metadata_reads_scans_and_locks_once_per_batch():
 
 
 @pytest.mark.asyncio
-async def test_reap_orphan_runs_stale_metadata_pass_first(monkeypatch):
-    monkeypatch.setattr(f"{MODULE}.is_archive_enabled", lambda: True)
+async def test_the_orphan_reaper_keeps_the_bundle_of_metadata_it_leaves_to_the_stale_metadata_step(monkeypatch):
+    """A failed stale-metadata step leaves its rows in place, which must keep their bundles out of the sweep."""
+    db = FakeDatabase()
+    bundle = "proj-1/scan-restored-1700000000.bundle"
+    await db.scans.insert_one({"_id": "scan-restored", "restored_at": _ARCHIVED_AT + timedelta(hours=1)})
+    await _seed_bundle_metadata(db, "scan-restored", bundle)
+    await db.archive_metadata.update_one({"scan_id": "scan-restored"}, {"$set": {"archived_at": _ARCHIVED_AT}})
 
-    call_order: list[str] = []
+    reaped, deleted, _ = await _reap_listing(monkeypatch, db, [(bundle, _OLD)])
 
-    async def fake_stale_reap(_db):
-        call_order.append("stale_metadata")
-        return 0
-
-    async def fake_list(*_a, **_kw):
-        call_order.append("list_objects")
-        yield []
-
-    monkeypatch.setattr(f"{MODULE}.reap_stale_metadata", fake_stale_reap)
-    monkeypatch.setattr(f"{MODULE}.list_objects", fake_list)
-
-    await reap_orphan_s3_objects(FakeDatabase())
-
-    assert call_order == ["stale_metadata", "list_objects"]
+    assert (reaped, deleted) == (0, [])
+    assert await _surviving_metadata(db) == ["scan-restored"]

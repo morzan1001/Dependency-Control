@@ -879,8 +879,6 @@ async def reap_orphan_s3_objects(db: Any) -> int:
     if not is_archive_enabled():
         return 0
 
-    await reap_stale_metadata(db)
-
     prefix = archive_key_prefix()
     bundle_key = re.compile(re.escape(prefix) + ARCHIVE_KEY_PATTERN)
     cutoff = datetime.now(timezone.utc) - timedelta(hours=ORPHAN_MIN_AGE_HOURS)
