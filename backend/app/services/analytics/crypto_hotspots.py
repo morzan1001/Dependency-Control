@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
@@ -172,22 +173,33 @@ class CryptoHotspotService:
             )
 
         group_field = "$severity" if group_by == "severity" else "$details.weakness_tags"
-        pipeline: list[dict[str, Any]] = [
+        severity_pipeline: list[dict[str, Any]] = [
             *pre_stages,
             {
                 "$group": {
                     "_id": {"key": group_field, "severity": "$severity"},
                     "finding_count": {"$sum": 1},
-                    "bom_refs": {"$addToSet": {"scan_id": "$scan_id", "bom_ref": "$details.bom_ref"}},
                     "project_ids": {"$addToSet": "$project_id"},
                     "first_seen": {"$min": "$scan_created_at"},
                     "last_seen": {"$max": "$scan_created_at"},
                 }
             },
         ]
+        # Refs derive from asset content and repeat across scans, so an asset is its (scan, ref) pair.
+        asset_pipeline: list[dict[str, Any]] = [
+            *pre_stages,
+            {"$match": {"details.bom_ref": {"$nin": [None, ""]}}},
+            {"$group": {"_id": {"key": group_field, "scan_id": "$scan_id", "bom_ref": "$details.bom_ref"}}},
+            {"$group": {"_id": "$_id.key", "asset_count": {"$sum": 1}}},
+        ]
+        severity_rows, asset_rows = await asyncio.gather(
+            self.db.findings.aggregate(severity_pipeline).to_list(None),
+            self.db.findings.aggregate(asset_pipeline).to_list(None),
+        )
+        asset_counts = {row["_id"]: row["asset_count"] for row in asset_rows}
 
         accum: dict[str, dict[str, Any]] = {}
-        async for row in self.db.findings.aggregate(pipeline):
+        for row in severity_rows:
             key = row["_id"].get("key")
             if not key:
                 continue
@@ -196,7 +208,6 @@ class CryptoHotspotService:
                 key,
                 {
                     "finding_count": 0,
-                    "bom_refs": set(),
                     "project_ids": set(),
                     "severity_mix": {},
                     "first_seen": None,
@@ -204,7 +215,6 @@ class CryptoHotspotService:
                 },
             )
             entry["finding_count"] += row["finding_count"]
-            entry["bom_refs"].update((b["scan_id"], b["bom_ref"]) for b in row["bom_refs"] if b.get("bom_ref"))
             entry["project_ids"].update(row["project_ids"])
             entry["severity_mix"][sev] = entry["severity_mix"].get(sev, 0) + row["finding_count"]
             for field, pick in (("first_seen", min), ("last_seen", max)):
@@ -218,7 +228,7 @@ class CryptoHotspotService:
             HotspotEntry(
                 key=str(key),
                 grouping_dimension=group_by,
-                asset_count=len(data["bom_refs"]),
+                asset_count=asset_counts.get(key, 0),
                 finding_count=data["finding_count"],
                 severity_mix=data["severity_mix"],
                 locations=[],

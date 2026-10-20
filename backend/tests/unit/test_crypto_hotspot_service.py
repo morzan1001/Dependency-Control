@@ -289,6 +289,22 @@ async def test_a_finding_dimension_counts_each_scans_asset_where_two_projects_sh
 
 
 @pytest.mark.asyncio
+async def test_a_finding_without_a_ref_counts_as_a_finding_but_names_no_asset(db):
+    for f in [
+        _crypto_finding("f1", project_id="pr", scan_id="sr", bom_ref="r1"),
+        _crypto_finding("f2", project_id="pr", scan_id="sr", bom_ref=""),
+        _crypto_finding("f3", project_id="pr", scan_id="sr"),
+    ]:
+        await db.findings.insert_one(f)
+    resolved = ResolvedScope(scope="project", scope_id="pr", project_ids=["pr"])
+
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="severity", scan_id="sr")
+
+    [entry] = result.items
+    assert (entry.key, entry.finding_count, entry.asset_count) == ("HIGH", 3, 1)
+
+
+@pytest.mark.asyncio
 async def test_a_weakness_tag_row_spans_every_severity_it_was_seen_at(db):
     base = datetime(2026, 9, 1, tzinfo=timezone.utc)
     for index, (severity, day) in enumerate((("HIGH", 3), ("LOW", 1), ("HIGH", 7))):
