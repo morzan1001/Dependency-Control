@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 # HEAD carries no error body, so S3 names a missing bucket by status alone; S3-compatible stores spell it out.
 _MISSING_BUCKET_CODES = frozenset({"404", "NoSuchBucket", "NotFound"})
+_DOWNLOAD_CHUNK_BYTES = 65536
 
 
 @functools.cache
@@ -39,9 +40,8 @@ async def get_s3_client() -> AsyncGenerator[Any, None]:
             request_checksum_calculation="when_required",
             response_checksum_validation="when_required",
         ),
+        "endpoint_url": settings.S3_ENDPOINT_URL,
     }
-    if settings.S3_ENDPOINT_URL:
-        kwargs["endpoint_url"] = settings.S3_ENDPOINT_URL
     async with session.create_client("s3", **kwargs) as client:
         yield client
 
@@ -56,8 +56,6 @@ def archive_key_prefix() -> str:
 
 
 async def ensure_bucket_exists() -> None:
-    if not is_archive_enabled():
-        return
     async with get_s3_client() as s3:
         try:
             await s3.head_bucket(Bucket=settings.S3_BUCKET_NAME)
@@ -69,15 +67,8 @@ async def ensure_bucket_exists() -> None:
             await s3.create_bucket(Bucket=settings.S3_BUCKET_NAME)
 
 
-async def upload_stream(
-    key: str,
-    source: AsyncIterator[bytes],
-    *,
-    content_type: str = "application/octet-stream",
-    bucket: str | None = None,
-    part_size: int = S3_MULTIPART_PART_SIZE,
-) -> int:
-    b = _bucket(bucket)
+async def upload_stream(key: str, source: AsyncIterator[bytes], *, content_type: str) -> int:
+    b = settings.S3_BUCKET_NAME
     async with get_s3_client() as s3:
         init = await s3.create_multipart_upload(Bucket=b, Key=key, ContentType=content_type)
         upload_id = init["UploadId"]
@@ -91,9 +82,9 @@ async def upload_stream(
                 if not chunk:
                     continue
                 buffer.extend(chunk)
-                while len(buffer) >= part_size:
-                    part = bytes(buffer[:part_size])
-                    del buffer[:part_size]
+                while len(buffer) >= S3_MULTIPART_PART_SIZE:
+                    part = bytes(buffer[:S3_MULTIPART_PART_SIZE])
+                    del buffer[:S3_MULTIPART_PART_SIZE]
                     resp = await s3.upload_part(
                         Bucket=b, Key=key, UploadId=upload_id, PartNumber=part_number, Body=part
                     )
@@ -125,11 +116,11 @@ async def upload_stream(
             raise
 
 
-async def download_stream(key: str, *, bucket: str | None = None, chunk_size: int = 65536) -> AsyncIterator[bytes]:
+async def download_stream(key: str, *, bucket: str | None = None) -> AsyncIterator[bytes]:
     async with get_s3_client() as s3:
         response = await s3.get_object(Bucket=_bucket(bucket), Key=key)
         async with response["Body"] as stream:
-            async for chunk in stream.iter_chunks(chunk_size):
+            async for chunk in stream.iter_chunks(_DOWNLOAD_CHUNK_BYTES):
                 yield chunk
 
 
@@ -138,9 +129,9 @@ async def delete_object(key: str, *, bucket: str | None = None) -> None:
         await s3.delete_object(Bucket=_bucket(bucket), Key=key)
 
 
-async def list_objects(prefix: str = "", *, bucket: str | None = None) -> AsyncIterator[list[dict[str, Any]]]:
+async def list_objects(prefix: str) -> AsyncIterator[list[dict[str, Any]]]:
     """One listing page, at most 1000 objects, at a time."""
-    kwargs: dict[str, Any] = {"Bucket": _bucket(bucket), "Prefix": prefix}
+    kwargs: dict[str, Any] = {"Bucket": settings.S3_BUCKET_NAME, "Prefix": prefix}
     async with get_s3_client() as s3:
         while True:
             response = await s3.list_objects_v2(**kwargs)

@@ -44,6 +44,7 @@ class TestGetS3Client:
             mock_settings.S3_ENDPOINT_URL = "https://storage.googleapis.com"
             asyncio.run(run())
 
+        assert captured["endpoint_url"] == "https://storage.googleapis.com"
         config = captured.get("config")
         assert config is not None
         assert config.request_checksum_calculation == "when_required"
@@ -77,10 +78,6 @@ class TestIsArchiveEnabled:
 
 
 class TestEnsureBucketExists:
-    def test_skips_when_not_enabled(self):
-        with patch(f"{MODULE}.is_archive_enabled", return_value=False):
-            asyncio.run(ensure_bucket_exists())
-
     def test_does_not_create_if_bucket_exists(self):
         mock_s3 = AsyncMock()
         mock_s3.head_bucket = AsyncMock()  # no exception means the bucket exists
@@ -90,7 +87,6 @@ class TestEnsureBucketExists:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
             patch(f"{MODULE}.get_s3_client", return_value=mock_ctx),
             patch(f"{MODULE}.settings") as mock_settings,
         ):
@@ -111,7 +107,6 @@ class TestEnsureBucketExists:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
             patch(f"{MODULE}.get_s3_client", return_value=mock_ctx),
             patch(f"{MODULE}.settings") as mock_settings,
         ):
