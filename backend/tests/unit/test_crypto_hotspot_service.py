@@ -8,8 +8,8 @@ from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.analytics.crypto_hotspots import (
+    _HEATMAP_COLUMNS,
     _LOCATION_SAMPLE_ASSETS,
-    _LOCATIONS_PER_ENTRY,
     CryptoHotspotService,
 )
 from app.services.analytics.scopes import ResolvedScope
@@ -176,6 +176,26 @@ async def test_a_weakness_tag_lookup_counts_only_the_findings_carrying_that_tag(
 
     [entry] = result.items
     assert (entry.key, entry.finding_count, entry.asset_count) == ("weak-hash", 2, 2)
+
+
+@pytest.mark.asyncio
+async def test_an_entry_counts_every_project_but_names_only_the_heatmap_columns(db):
+    projects = [f"p{i:02d}" for i in range(_HEATMAP_COLUMNS + 5)]
+    for index, project_id in enumerate(projects):
+        assets = [_asset("md5", "MD5", project_id=project_id, scan_id="s")]
+        if index >= len(projects) - 3:
+            assets.append(_asset("aes", "AES", project_id=project_id, scan_id="s"))
+        await CryptoAssetRepository(db).bulk_upsert(project_id, "s", assets)
+    resolved = ResolvedScope(scope="user", scope_id=None, project_ids=projects)
+
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", scan_id="s")
+
+    by_key = {e.key: e for e in result.items}
+    shared_by_both = projects[-3:]
+    assert (by_key["MD5"].project_count, len(by_key["MD5"].project_ids)) == (len(projects), _HEATMAP_COLUMNS)
+    assert by_key["MD5"].project_ids[:3] == shared_by_both
+    assert (by_key["AES"].project_count, by_key["AES"].project_ids) == (3, shared_by_both)
+    assert result.projects_total == len(projects)
 
 
 @pytest.mark.asyncio
@@ -497,7 +517,7 @@ async def test_the_listed_locations_are_distinct_so_the_display_cap_bounds_colum
 
     locations = result.items[0].locations
     assert len(locations) == len(set(locations))
-    assert len(locations) <= _LOCATIONS_PER_ENTRY
+    assert len(locations) <= _HEATMAP_COLUMNS
 
 
 @pytest.mark.asyncio

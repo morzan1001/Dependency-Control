@@ -24,7 +24,9 @@ export interface HotspotEntry {
   locations: string[];
   // False means a location absent from the list is unknown rather than known not to hold the key.
   locations_complete: boolean;
+  // Only the projects among the response's heatmap columns; project_count counts every project.
   project_ids: string[];
+  project_count: number;
   first_seen: string;
   last_seen: string;
 }
@@ -35,6 +37,7 @@ export interface HotspotResponse {
   grouping_dimension: GroupingDimension;
   items: HotspotEntry[];
   total: number;
+  projects_total: number;
   generated_at: string;
 }
 

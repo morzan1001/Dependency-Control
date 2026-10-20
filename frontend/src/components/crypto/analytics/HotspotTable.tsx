@@ -56,7 +56,7 @@ export function HotspotTable({ scope, scopeId, groupBy }: Readonly<Props>) {
                     breakdown={Object.fromEntries(Object.entries(e.severity_mix).map(([sev, n]) => [sev.toLowerCase(), n]))}
                   />
                 </td>
-                <td className="p-2 text-xs">{e.project_ids.length}</td>
+                <td className="p-2 text-xs">{e.project_count}</td>
                 <td className="p-2 text-xs">{formatDate(e.last_seen)}</td>
               </tr>
             ))}

@@ -8,8 +8,8 @@ import { HotspotHeatmap } from "../HotspotHeatmap";
 const OID_A = "0123456789abcdef01234567"; // resolvable -> "Payments API"
 const OID_B = "aaaaaaaaaaaaaaaaaaaaaaaa"; // unresolved -> truncated
 
-// Build an org-scope response whose union of project_ids exceeds the 30-column cap.
-const manyProjectIds = Array.from({ length: 40 }, (_, i) => `proj${String(i).padStart(3, "0")}`);
+// An org-scope response names the 30 column projects of keys spread over 42.
+const manyProjectIds = Array.from({ length: 28 }, (_, i) => `proj${String(i).padStart(3, "0")}`);
 
 vi.mock("@/api/cryptoAnalytics", () => ({
   getCryptoHotspots: vi.fn().mockImplementation(({ scope }: { scope: string }) => {
@@ -28,11 +28,13 @@ vi.mock("@/api/cryptoAnalytics", () => ({
             locations: ["/path/a"],
             locations_complete: false,
             project_ids: ["p"],
+            project_count: 1,
             first_seen: "",
             last_seen: "",
           },
         ],
         total: 1,
+        projects_total: 1,
         generated_at: "",
       });
     }
@@ -50,11 +52,13 @@ vi.mock("@/api/cryptoAnalytics", () => ({
           locations: [],
           locations_complete: false,
           project_ids: [OID_A, OID_B, ...manyProjectIds],
+          project_count: 42,
           first_seen: "",
           last_seen: "",
         },
       ],
       total: 12,
+      projects_total: 42,
       generated_at: "",
     });
   }),
@@ -76,11 +80,10 @@ function renderWithClient(ui: React.ReactElement) {
 }
 
 describe("HotspotHeatmap (org scope columns)", () => {
-  it("caps org-scope columns at 30 instead of rendering all project ids", async () => {
+  it("renders the 30 project columns the API names", async () => {
     renderWithClient(<HotspotHeatmap scope="global" groupBy="name" />);
     await screen.findByText("RSA-2048");
     const headerRow = screen.getAllByRole("row")[0];
-    // 1 "Key" column + 30 project columns (cap), never the full 42 unique ids.
     const headerCells = within(headerRow).getAllByRole("columnheader");
     expect(headerCells).toHaveLength(1 + 30);
   });

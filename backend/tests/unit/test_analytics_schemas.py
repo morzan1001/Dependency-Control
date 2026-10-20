@@ -21,6 +21,7 @@ def test_hotspot_entry_minimal():
         locations=["/a", "/b"],
         locations_complete=True,
         project_ids=["p1"],
+        project_count=1,
         first_seen=datetime.now(timezone.utc),
         last_seen=datetime.now(timezone.utc),
     )
@@ -36,6 +37,7 @@ def test_hotspot_response_requires_scope_enum():
             grouping_dimension="name",
             items=[],
             total=0,
+            projects_total=0,
             generated_at=datetime.now(timezone.utc),
         )
 

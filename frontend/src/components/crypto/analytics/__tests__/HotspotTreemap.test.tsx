@@ -23,6 +23,7 @@ const entry = (key: string, severity_mix: Record<string, number>): HotspotEntry 
   locations: [],
   locations_complete: true,
   project_ids: ["p1"],
+  project_count: 1,
   first_seen: "2026-10-01T00:00:00Z",
   last_seen: "2026-10-14T00:00:00Z",
 });
@@ -34,6 +35,7 @@ vi.mock("@/api/cryptoAnalytics", () => ({
     grouping_dimension: "name",
     items: [entry("RSA", { MEDIUM: 4, HIGH: 2 }), entry("SHA-224", { LOW: 1 }), entry("AES", {})],
     total: 3,
+    projects_total: 1,
     generated_at: "2026-10-14T00:00:00Z",
   })),
 }));

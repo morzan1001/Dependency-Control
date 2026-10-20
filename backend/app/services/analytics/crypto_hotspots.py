@@ -1,4 +1,5 @@
 import asyncio
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
@@ -21,8 +22,8 @@ _ASSET_GROUPINGS = {
 
 # Pushing every occurrence_locations array can exceed MongoDB's 16MB group-doc limit on a hot group.
 _LOCATION_SAMPLE_ASSETS = 20
-# Matches the heatmap's column budget so a row can mark every column it belongs to.
-_LOCATIONS_PER_ENTRY = 30
+# The heatmap's column budget, so a row can mark every column it belongs to.
+_HEATMAP_COLUMNS = 30
 
 
 def _distinct_locations(sampled: list[Any]) -> list[str]:
@@ -67,12 +68,19 @@ class CryptoHotspotService:
             limit=limit,
             key=key,
         )
+        # One shared column set: cutting each entry to its own first projects would show held cells as absent.
+        frequency = Counter(project_id for item in items for project_id in item.project_ids)
+        columns = sorted(frequency, key=lambda project_id: (-frequency[project_id], project_id))[:_HEATMAP_COLUMNS]
+        for item in items:
+            held = set(item.project_ids)
+            item.project_ids = [project_id for project_id in columns if project_id in held]
         return HotspotResponse(
             scope=resolved.scope,
             scope_id=resolved.scope_id,
             grouping_dimension=group_by,
             items=items,
             total=total,
+            projects_total=len(frequency),
             generated_at=datetime.now(timezone.utc),
         )
 
@@ -154,9 +162,10 @@ class CryptoHotspotService:
                     asset_count=row["asset_count"],
                     finding_count=0,
                     severity_mix={},
-                    locations=distinct[:_LOCATIONS_PER_ENTRY],
-                    locations_complete=sampled_every_asset and len(distinct) <= _LOCATIONS_PER_ENTRY,
-                    project_ids=list(row.get("project_ids", [])),
+                    locations=distinct[:_HEATMAP_COLUMNS],
+                    locations_complete=sampled_every_asset and len(distinct) <= _HEATMAP_COLUMNS,
+                    project_ids=row["project_ids"],
+                    project_count=len(row["project_ids"]),
                     first_seen=row.get("first_seen") or now,
                     last_seen=row.get("last_seen") or now,
                 )
@@ -257,6 +266,7 @@ class CryptoHotspotService:
                 # This dimension groups findings, which carry no per-asset location.
                 locations_complete=False,
                 project_ids=list(data["project_ids"]),
+                project_count=len(data["project_ids"]),
                 first_seen=data["first_seen"] or now,
                 last_seen=data["last_seen"] or now,
             )

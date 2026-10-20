@@ -15,6 +15,7 @@ function entry(over: Partial<HotspotEntry> = {}): HotspotEntry {
     locations: ['a.py', 'b.py'],
     locations_complete: true,
     project_ids: [],
+    project_count: 0,
     first_seen: '',
     last_seen: '',
     ...over,
@@ -52,7 +53,7 @@ describe('heatmapCell', () => {
   it('groups by project_ids when scope is not project', () => {
     const e = entry({ locations: [], locations_complete: false, project_ids: ['p1'] })
     expect(heatmapCell(e, 'p1', 'global', 5).state).toBe('present')
-    // project_ids is the whole set, so a sampled location list cannot make a project cell unknown.
+    // project_ids names every column the key is in, so a sampled location list cannot make a project cell unknown.
     expect(heatmapCell(e, 'p2', 'global', 5).state).toBe('absent')
   })
 })
