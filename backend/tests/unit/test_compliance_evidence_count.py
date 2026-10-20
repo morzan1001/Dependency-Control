@@ -66,7 +66,7 @@ def _with_evidence(finding_ids: list[str], asset_bom_refs: list[str]) -> Control
 def _csv_count(control: ControlResult) -> str:
     evaluation = _evaluation()
     evaluation.controls = [control]
-    body = CsvRenderer().render(evaluation, _report()).decode("utf-8")
+    body = CsvRenderer().render(evaluation, _report()).decode("utf-8-sig")
     (row,) = csv.DictReader(line for line in body.splitlines() if not line.startswith("#"))
     return row["evidence_count"]
 

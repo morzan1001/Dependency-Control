@@ -595,7 +595,7 @@ async def test_a_stored_rsa_key_size_reaches_the_key_size_control(db):
     ("fmt", "suffix", "mime"),
     [
         (ReportFormat.JSON, "json", "application/json"),
-        (ReportFormat.CSV, "csv", "text/csv"),
+        (ReportFormat.CSV, "csv", "text/csv; charset=utf-8"),
         (ReportFormat.SARIF, "sarif.json", "application/sarif+json"),
     ],
 )
