@@ -58,7 +58,7 @@ from app.models.webhook import Webhook
 from app.repositories.base import and_filters
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
-from app.repositories.findings import FindingRepository
+from app.repositories.findings import KEV_FINDINGS_ONLY, FindingRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
@@ -1176,8 +1176,9 @@ class ChatToolRegistry:
         return delta.model_dump(mode="json")
 
     async def _tool_get_kev_findings(self, ctx: _ToolContext) -> dict[str, Any]:
+        # The bare KEV clause, implied by the $elemMatch, lets the planner prove the partial KEV index applies.
         rows, names, ranking = await self._ranked_head_findings(
-            ctx, {"details.vulnerabilities": {"$elemMatch": {DETAILS_KEY_IN_KEV: True, **_ACTIVE}}}
+            ctx, {**KEV_FINDINGS_ONLY, "details.vulnerabilities": {"$elemMatch": {DETAILS_KEY_IN_KEV: True, **_ACTIVE}}}
         )
         out = _slim_with_project(rows, names)
         return {

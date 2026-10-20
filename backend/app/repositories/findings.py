@@ -5,6 +5,7 @@ from typing import Any
 
 from pymongo import ASCENDING, DESCENDING, UpdateOne
 
+from app.core.constants import DETAILS_KEY_IN_KEV
 from app.core.cve import advisory_ids, advisory_match
 from app.models.finding import LOCATION_FINDING_TYPES, FindingType
 from app.models.finding_record import FindingRecord
@@ -38,6 +39,11 @@ FIRST_DETECTION_INDEX = [
 # A vulnerability's finding_id names its component@version, so each version's newest copy is one seek.
 NEWEST_VULNERABILITY_INDEX = [("project_id", ASCENDING), ("finding_id", ASCENDING), ("created_at", DESCENDING)]
 VULNERABILITIES_ONLY = {"type": FindingType.VULNERABILITY.value}
+
+# KEV advisories are rare, so a partial index over them lets a KEV read skip every other finding of the scan.
+KEV_FINDINGS_INDEX = [("scan_id", ASCENDING), ("severity", ASCENDING)]
+KEV_FINDINGS_INDEX_NAME = "findings_kev_scan_severity"
+KEV_FINDINGS_ONLY = {f"details.vulnerabilities.{DETAILS_KEY_IN_KEV}": True}
 
 _DETECTION_CHUNK = 10_000
 
