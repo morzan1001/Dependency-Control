@@ -189,6 +189,10 @@ class TestDirectnessOfRealGraphs:
                 id="gomod",
             ),
             pytest.param("gobinary.trivy.cdx.json", {"github.com/google/uuid", "stdlib"}, id="gobinary"),
+            # trivy 0.76.0 output of a cargo-auditable binary, a .deps.json project and a uv project.
+            pytest.param("rustbinary.trivy.cdx.json", {"serde_json"}, id="rustbinary"),
+            pytest.param("dotnetcore.trivy.cdx.json", {"Newtonsoft.Json", "Serilog.Sinks.Console"}, id="dotnet-core"),
+            pytest.param("uv.trivy.cdx.json", {"httpx"}, id="uv"),
         ],
     )
     def test_trivy_root_package_is_skipped_and_its_children_are_direct(self, fixture, project_deps):

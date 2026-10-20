@@ -1,0 +1,199 @@
+{
+ "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
+ "bomFormat": "CycloneDX",
+ "specVersion": "1.7",
+ "serialNumber": "urn:uuid:4deceaa3-877f-4b36-88c3-6f06763e56e3",
+ "version": 1,
+ "metadata": {
+  "timestamp": "2026-10-20T20:11:46+00:00",
+  "tools": {
+   "components": [
+    {
+     "type": "application",
+     "manufacturer": {
+      "name": "Aqua Security Software Ltd."
+     },
+     "group": "aquasecurity",
+     "name": "trivy",
+     "version": "0.76.0"
+    }
+   ]
+  },
+  "component": {
+   "bom-ref": "3089f28c-861c-4df8-b785-5c542b5ae99c",
+   "type": "application",
+   "name": "/src/rustbin",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:SchemaVersion",
+     "value": "2"
+    }
+   ]
+  }
+ },
+ "components": [
+  {
+   "bom-ref": "82821e99-8dd9-4210-8059-a6c33c063a61",
+   "type": "application",
+   "name": "usr/local/bin/myservice",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:Class",
+     "value": "lang-pkgs"
+    },
+    {
+     "name": "aquasecurity:trivy:Type",
+     "value": "rustbinary"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:cargo/itoa@1.0.11",
+   "type": "library",
+   "name": "itoa",
+   "version": "1.0.11",
+   "purl": "pkg:cargo/itoa@1.0.11",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "itoa@1.0.11"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "rustbinary"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:cargo/memchr@2.7.4",
+   "type": "library",
+   "name": "memchr",
+   "version": "2.7.4",
+   "purl": "pkg:cargo/memchr@2.7.4",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "memchr@2.7.4"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "rustbinary"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:cargo/myservice@0.1.0",
+   "type": "library",
+   "name": "myservice",
+   "version": "0.1.0",
+   "purl": "pkg:cargo/myservice@0.1.0",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "myservice@0.1.0"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "rustbinary"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:cargo/ryu@1.0.18",
+   "type": "library",
+   "name": "ryu",
+   "version": "1.0.18",
+   "purl": "pkg:cargo/ryu@1.0.18",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "ryu@1.0.18"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "rustbinary"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:cargo/serde@1.0.204",
+   "type": "library",
+   "name": "serde",
+   "version": "1.0.204",
+   "purl": "pkg:cargo/serde@1.0.204",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "serde@1.0.204"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "rustbinary"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:cargo/serde_json@1.0.120",
+   "type": "library",
+   "name": "serde_json",
+   "version": "1.0.120",
+   "purl": "pkg:cargo/serde_json@1.0.120",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "serde_json@1.0.120"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "rustbinary"
+    }
+   ]
+  }
+ ],
+ "dependencies": [
+  {
+   "ref": "3089f28c-861c-4df8-b785-5c542b5ae99c",
+   "dependsOn": [
+    "82821e99-8dd9-4210-8059-a6c33c063a61"
+   ]
+  },
+  {
+   "ref": "82821e99-8dd9-4210-8059-a6c33c063a61",
+   "dependsOn": [
+    "pkg:cargo/myservice@0.1.0"
+   ]
+  },
+  {
+   "ref": "pkg:cargo/itoa@1.0.11",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:cargo/memchr@2.7.4",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:cargo/myservice@0.1.0",
+   "dependsOn": [
+    "pkg:cargo/serde_json@1.0.120"
+   ]
+  },
+  {
+   "ref": "pkg:cargo/ryu@1.0.18",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:cargo/serde@1.0.204",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:cargo/serde_json@1.0.120",
+   "dependsOn": [
+    "pkg:cargo/itoa@1.0.11",
+    "pkg:cargo/memchr@2.7.4",
+    "pkg:cargo/ryu@1.0.18",
+    "pkg:cargo/serde@1.0.204"
+   ]
+  }
+ ],
+ "vulnerabilities": []
+}

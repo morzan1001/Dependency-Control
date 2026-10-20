@@ -41,6 +41,9 @@ def _graph_sbom(node: dict) -> dict:
         "cargows.trivy.cdx.json",
         "gobinary.trivy.cdx.json",
         "gobinnomain.trivy.cdx.json",
+        "rustbinary.trivy.cdx.json",
+        "dotnetcore.trivy.cdx.json",
+        "uv.trivy.cdx.json",
         "mono.syft.spdx.json",
     ],
 )

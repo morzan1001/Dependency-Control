@@ -217,7 +217,9 @@ _SYFT_PROJECT_ROOT_PROPERTIES = (
     ("syft:package:foundBy", "java-pom-cataloger"),
 )
 # Trivy lock-file types whose single root package is the project; a Cargo workspace omits its members, so cargo is ambiguous.
-_TRIVY_ROOT_PACKAGE_TYPES = tuple(("aquasecurity:trivy:Type", kind) for kind in ("pom", "gomod", "gobinary"))
+_TRIVY_ROOT_PACKAGE_TYPES = tuple(
+    ("aquasecurity:trivy:Type", kind) for kind in ("pom", "gomod", "gobinary", "rustbinary", "dotnet-core", "uv")
+)
 
 
 def is_url(value: str) -> bool:
