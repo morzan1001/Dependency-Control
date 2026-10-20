@@ -17,6 +17,7 @@ class InventoryStatsResponse(BaseModel):
     transitive_count: int
     license_count: int
     ecosystem_count: int
+    ecosystems: list[str]
     crypto_asset_count: int
     cbom_evaluated: bool
 
