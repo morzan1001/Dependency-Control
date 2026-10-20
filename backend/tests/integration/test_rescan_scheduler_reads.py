@@ -70,4 +70,4 @@ async def test_the_releases_are_read_in_one_query_and_every_target_only_as_far_a
 
     assert sorted(target["_id"] for target in targets) == sorted(["build", *_ENVIRONMENTS])
     assert len(reads) == 2
-    assert all(set(target) <= set(RESCAN_SOURCE_PROJECTION) for target in targets)
+    assert all(set(target) <= {*RESCAN_SOURCE_PROJECTION, "status", "is_rescan"} for target in targets)

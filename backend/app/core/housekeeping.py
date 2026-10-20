@@ -47,7 +47,7 @@ from app.core.s3 import archive_key_prefix, delete_object, is_archive_enabled, l
 from app.db.mongodb import get_database
 from app.models.project import Project
 from app.repositories.distributed_locks import DistributedLocksRepository, LockLost, new_lock_holder, run_holding_lock
-from app.repositories.scans import HAS_SBOM_MATCH, USABLE_BUILD_MATCH, ScanRepository
+from app.repositories.scans import HAS_SBOM_MATCH, ScanRepository, is_usable_build
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.analysis.notifications import notify_analysis_failed
 from app.services.audit.retention import prune_old_audit_entries
@@ -115,6 +115,7 @@ async def _reap_orphan_callgraphs(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE)
 _RESCAN_PROJECT_PROJECTION = dict.fromkeys(
     ("_id", "name", "default_branch", "deleted_branches", "rescan_enabled", "rescan_interval"), 1
 )
+_RESCAN_TIP_PROJECTION = {**RESCAN_SOURCE_PROJECTION, "status": 1, "is_rescan": 1}
 
 
 def resolve_rescan_interval(project: Project, system_settings: Any) -> int | None:
@@ -145,10 +146,8 @@ def _is_rescan_due(source_scan: dict, interval_hours: int) -> bool:
 async def _rescan_targets(project: Project, db: Any) -> list[dict]:
     """The branch tip plus each environment's newest release, which has to keep being re-evaluated as well."""
     # Head's own tip build, not its lineage, so the rescan refreshes what head reports instead of the last rescan.
-    tip = await ScanRepository(db).head_build(
-        project, {**HAS_SBOM_MATCH, **USABLE_BUILD_MATCH}, RESCAN_SOURCE_PROJECTION
-    )
-    targets = [tip] if tip else []
+    tip = await ScanRepository(db).head_build(project, {}, _RESCAN_TIP_PROJECTION)
+    targets = [tip] if tip and is_usable_build(tip) and tip.get("sbom_refs") else []
 
     # The marked scan, never its rescan, which would grow the chain past effective_scan_ids' bound.
     marked_ids = set((await released_scan_ids(db, project.id)).values()) - {target["_id"] for target in targets}

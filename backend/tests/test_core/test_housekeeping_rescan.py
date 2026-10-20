@@ -762,6 +762,35 @@ class TestProcessProjectRescan:
         assert [t["_id"] for t in targets] == [head.id] == [_SOURCE_SCAN_ID]
 
     @pytest.mark.asyncio
+    async def test_a_default_branch_scanned_without_an_sbom_has_no_other_branch_rescanned_in_its_place(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        """Head stays on the SAST-only default branch, so a rescan of the feature build would refresh nothing it shows."""
+        await _seed_scan(db, _EMPTY_SBOM_SCAN_ID, branch=_MAIN_BRANCH, created_at=_NOW - _OLDER, sbom_refs=[])
+        await _seed_scan(db, _FEATURE_SCAN_ID, branch=_FEATURE_BRANCH, created_at=_NOW - _RECENT)
+        project = _project(default_branch=_MAIN_BRANCH)
+
+        targets = await _rescan_targets(project, db)
+        head = await ScanRepository(db).get_latest_active_scan(project)
+
+        assert targets == []
+        assert head.id == _EMPTY_SBOM_SCAN_ID
+
+    @pytest.mark.asyncio
+    async def test_a_head_that_only_a_rescan_can_report_is_no_target(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db, _ROOT_SCAN_ID, branch=_MAIN_BRANCH, created_at=_NOW - _OLDER, status=SCAN_STATUS_FAILED)
+        await _seed_scan(
+            db, _PREVIOUS_RESCAN_ID, branch=_MAIN_BRANCH, is_rescan=True, original_scan_id=_ROOT_SCAN_ID
+        )
+        await _seed_scan(db, _FEATURE_SCAN_ID, branch=_FEATURE_BRANCH, created_at=_NOW - _RECENT)
+
+        targets = await _rescan_targets(_project(default_branch=_MAIN_BRANCH), db)
+
+        assert targets == []
+
+    @pytest.mark.asyncio
     async def test_the_newest_branch_wins_when_the_vcs_names_no_default(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
