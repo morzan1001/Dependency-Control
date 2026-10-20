@@ -163,7 +163,7 @@ export function CryptoPolicyEditor({
           value={sourceFilter}
           onValueChange={(v) => setSourceFilter(v as typeof sourceFilter)}
         >
-          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-48" aria-label="Source"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All sources</SelectItem>
             {SOURCES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -174,7 +174,7 @@ export function CryptoPolicyEditor({
             value={statusFilter}
             onValueChange={(v) => setStatusFilter(v as StatusFilter)}
           >
-            <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-48" aria-label="Status"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
               <SelectItem value="system">System default</SelectItem>
@@ -235,6 +235,7 @@ export function CryptoPolicyEditor({
                 <tr key={r.rule_id} className="border-t">
                   <td className="p-2">
                     <Switch
+                      aria-label={`${r.rule_id}: Enabled`}
                       checked={r.enabled}
                       disabled={readOnly}
                       onCheckedChange={(v) => updateRule(idx, { enabled: v })}
@@ -242,6 +243,7 @@ export function CryptoPolicyEditor({
                   </td>
                   <td className="p-2">
                     <Textarea
+                      aria-label={`${r.rule_id}: Rule`}
                       disabled={readOnly}
                       value={r.name}
                       title={r.name}
@@ -256,7 +258,7 @@ export function CryptoPolicyEditor({
                       disabled={readOnly}
                       onValueChange={(v) => updateRule(idx, { finding_type: v as CryptoFindingType })}
                     >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger aria-label={`${r.rule_id}: Finding type`}><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {CRYPTO_FINDING_TYPES.map((f) => (
                           <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
@@ -270,7 +272,7 @@ export function CryptoPolicyEditor({
                       disabled={readOnly}
                       onValueChange={(v) => updateRule(idx, { default_severity: v as Severity })}
                     >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger aria-label={`${r.rule_id}: Severity`}><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {SEVERITIES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                       </SelectContent>
@@ -278,6 +280,7 @@ export function CryptoPolicyEditor({
                   </td>
                   <td className="p-2">
                     <Input
+                      aria-label={`${r.rule_id}: Min key size`}
                       type="number"
                       disabled={readOnly}
                       value={r.match_min_key_size_bits ?? ""}
@@ -291,6 +294,7 @@ export function CryptoPolicyEditor({
                   <td className="p-2">
                     {/* Parsed on blur so a trailing comma survives typing; the key reloads it on revert or resync. */}
                     <Input
+                      aria-label={`${r.rule_id}: Name patterns`}
                       key={r.match_name_patterns.join(",")}
                       disabled={readOnly}
                       defaultValue={r.match_name_patterns.join(", ")}
