@@ -429,6 +429,31 @@ class TestOrphanDelta:
 
         assert await _delta(db, "s1") is not None
 
+    @pytest.mark.asyncio
+    async def test_a_scan_that_finalised_after_the_census_keeps_its_fresh_delta(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
+    ):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"})
+        await db.scans.update_one({"_id": "s1"}, {"$set": {"status": "pending"}})
+        real_scan_census = reconcile_module.window_scan_ids_by_branch
+
+        async def _census_then_finalise(*args: Any, **kwargs: Any) -> Any:
+            result = await real_scan_census(*args, **kwargs)
+            await db.scans.update_one({"_id": "s1"}, {"$set": {"status": "completed"}})
+            await record_scan_update_delta(db, "s1")
+            return result
+
+        monkeypatch.setattr(reconcile_module, "window_scan_ids_by_branch", _census_then_finalise)
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert (report.resolved, spy) == ({}, [])
+        assert await _delta(db, "s1") is not None
+        assert await db.scan_outdated_sets.find_one({"_id": "s1"}) is not None
+        assert await _folded_window(db) == ["s1", "s2"]
+
 
 class TestConcurrentIngest:
     @pytest.mark.asyncio

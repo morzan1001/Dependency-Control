@@ -18,6 +18,7 @@ from app.repositories.update_frequency import (
     LedgerEntry,
     ScanOutdatedSetRepository,
     ScanUpdateDeltaRepository,
+    usable_scan_match,
     window_scan_ids_by_branch,
 )
 from app.services.update_frequency_rollup import record_scan_update_delta
@@ -151,7 +152,7 @@ def _skip_links(ledger: dict[str, LedgerEntry], owed: frozenset[str]) -> set[str
 async def _repair_chain(
     db: Any, chain: tuple[str, str], drift: _ChainDrift, report: ReconcileReport, since: datetime
 ) -> None:
-    deleted = await _delete_orphans(db, chain, drift.orphans, report)
+    deleted = await _delete_orphans(db, chain, drift.orphans, report, since)
     repairs = {repair.scan_id: repair for repair in drift.repairs}
     for dependent in await _dependents_of(db, chain, deleted, drift.owed, since):
         repairs.setdefault(dependent.scan_id, dependent)
@@ -168,10 +169,8 @@ async def _repair_chain(
 
 
 async def _delete_orphans(
-    db: Any, chain: tuple[str, str], orphans: tuple[str, ...], report: ReconcileReport
+    db: Any, chain: tuple[str, str], orphans: tuple[str, ...], report: ReconcileReport, since: datetime
 ) -> set[str]:
-    if not orphans:
-        return set()
     room = max(_MAX_ORPHAN_DELETES - report.resolved["orphan"], 0)
     doomed = list(orphans[:room])
     if len(doomed) < len(orphans):
@@ -179,6 +178,14 @@ async def _delete_orphans(
     if not doomed:
         return set()
     project_id, branch = chain
+    # Earlier chains' repairs age the census by minutes; a scan finalised since then owns a fresh delta.
+    revived = await ScanRepository(db).find_many_raw(
+        {**usable_scan_match(since), "_id": {"$in": doomed}, "project_id": project_id, "branch": branch},
+        projection={"_id": 1},
+    )
+    doomed = sorted(set(doomed) - {scan["_id"] for scan in revived})
+    if not doomed:
+        return set()
     # Scoped to the diagnosing chain: the scan id can sit in another chain already re-derived correctly.
     await ScanUpdateDeltaRepository(db).delete_many(
         {"_id": {"$in": doomed}, "project_id": project_id, "branch": branch}
