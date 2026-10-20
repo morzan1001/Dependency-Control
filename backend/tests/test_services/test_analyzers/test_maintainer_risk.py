@@ -381,6 +381,54 @@ class TestAnalyze:
         assert _risk_types(answered) == ["archived_repo"]
 
     @pytest.mark.asyncio
+    async def test_bot_pushes_to_side_branches_do_not_make_an_abandoned_repository_active(
+        self, fake_cache, monkeypatch
+    ):
+        last_commit = _days_ago(900)
+        _serve(
+            monkeypatch,
+            fake_cache,
+            {
+                f"{PYPI_API_URL}/oldlib/json": _pypi_project(uploaded_days_ago=800),
+                f"{GITHUB_API_URL}/repos/acme/oldlib": _github_repo(pushed_days_ago=1),
+                f"{GITHUB_API_URL}/repos/acme/oldlib/commits?per_page=1": [
+                    {"commit": {"committer": {"date": last_commit}}}
+                ],
+            },
+        )
+
+        result = await analyze_cyclonedx(
+            MaintainerRiskAnalyzer(), [_component("pypi", "oldlib", "https://github.com/acme/oldlib")]
+        )
+
+        [issue] = result["maintainer_issues"]
+        [inactive] = [risk for risk in issue["risks"] if risk["type"] == "inactive_repo"]
+        assert _risk_types(result) == ["stale_package", "inactive_repo"]
+        assert issue["maintainer_info"]["github"]["days_since_push"] == 900
+        assert inactive["detail"] == f"Last activity: {last_commit.replace('Z', '+00:00')}"
+
+    @pytest.mark.parametrize("answer", [409, 500, [], {"message": "odd"}], ids=["empty-repo", "500", "none", "odd"])
+    @pytest.mark.asyncio
+    async def test_without_a_default_branch_commit_the_push_date_decides(self, fake_cache, monkeypatch, answer):
+        _serve(
+            monkeypatch,
+            fake_cache,
+            {
+                f"{PYPI_API_URL}/oldlib/json": _pypi_project(uploaded_days_ago=800),
+                f"{GITHUB_API_URL}/repos/acme/oldlib": _github_repo(pushed_days_ago=800),
+                f"{GITHUB_API_URL}/repos/acme/oldlib/commits?per_page=1": answer,
+            },
+        )
+
+        result = await analyze_cyclonedx(
+            MaintainerRiskAnalyzer(), [_component("pypi", "oldlib", "https://github.com/acme/oldlib")]
+        )
+
+        [issue] = result["maintainer_issues"]
+        assert _risk_types(result) == ["stale_package", "inactive_repo"]
+        assert issue["maintainer_info"]["github"]["days_since_push"] == 800
+
+    @pytest.mark.asyncio
     async def test_a_pypi_upload_time_without_a_zone_is_read_as_utc(self, fake_cache, monkeypatch):
         uploaded = (datetime.now(timezone.utc) - timedelta(days=800)).strftime("%Y-%m-%dT%H:%M:%S")
         project = {**_pypi_project(), "releases": {"1.0.0": [{"upload_time": uploaded}]}}

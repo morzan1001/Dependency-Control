@@ -233,23 +233,39 @@ class MaintainerRiskAnalyzer(Analyzer):
     async def _check_github(
         self, client: InstrumentedAsyncClient, repo: str, github_token: str | None
     ) -> dict[str, Any] | None:
-        response = await client.get(
-            f"{GITHUB_API_URL}/repos/{repo}", headers=github_api_headers(github_token), follow_redirects=True
-        )
+        headers = github_api_headers(github_token)
+        response = await client.get(f"{GITHUB_API_URL}/repos/{repo}", headers=headers, follow_redirects=True)
         if response.status_code == 404:
             return None
         response.raise_for_status()
 
         data = response.json()
         pushed_at = parse_iso_utc(data.get("pushed_at"))
+        last_commit_at = await self._last_commit_at(client, repo, headers)
+        active_at = last_commit_at or pushed_at
         return {
             "stars": data.get("stargazers_count", 0),
             "forks": data.get("forks_count", 0),
             "open_issues": data.get("open_issues_count", 0),
             "archived": data.get("archived", False),
             "pushed_at": pushed_at.isoformat() if pushed_at else None,
-            "days_since_push": ((datetime.now(timezone.utc) - pushed_at).days if pushed_at else None),
+            "last_commit_at": last_commit_at.isoformat() if last_commit_at else None,
+            "days_since_push": (datetime.now(timezone.utc) - active_at).days if active_at else None,
         }
+
+    @staticmethod
+    async def _last_commit_at(client: InstrumentedAsyncClient, repo: str, headers: dict[str, str]) -> datetime | None:
+        """Bot pushes to side branches keep pushed_at fresh; the default branch's head shows real maintenance."""
+        try:
+            response = await client.get(
+                f"{GITHUB_API_URL}/repos/{repo}/commits", params={"per_page": 1}, headers=headers, follow_redirects=True
+            )
+            response.raise_for_status()
+            [head] = response.json()
+            return parse_iso_utc(head["commit"]["committer"]["date"])
+        except (httpx.HTTPError, ValueError, LookupError, TypeError) as e:
+            logger.debug(f"GitHub default-branch commit unavailable for {repo}: {e!r}")
+            return None
 
     def _assess_risks(self, info: dict[str, Any]) -> list[dict[str, Any]]:
         risks = []
@@ -335,7 +351,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                     "type": "inactive_repo",
                     "severity_score": 3,
                     "message": f"No repository activity in {days_since_push} days",
-                    "detail": f"Last push: {gh_info.get('pushed_at')}",
+                    "detail": f"Last activity: {gh_info.get('last_commit_at') or gh_info.get('pushed_at')}",
                 }
             )
 
