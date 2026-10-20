@@ -175,6 +175,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["dependencies"].create_index(DEPENDENCIES_SCAN_PACKAGE_INDEX, unique=True, sparse=True)
     await database["dependencies"].create_index(DEPENDENCIES_SCAN_VERSION_INDEX)
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
+    # Counts the type distribution off the index alone, without reading a dependency document.
+    await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("type", pymongo.ASCENDING)])
     # Bounds the anchored purl-prefix match of the per-scan enrichment copy to one scan's range.
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("purl", pymongo.ASCENDING)])
 
