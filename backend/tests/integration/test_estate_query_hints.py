@@ -160,13 +160,34 @@ async def test_an_advisory_finds_its_projects_off_the_scan_package_index(client,
     assert _plans(entries, "dependencies", "find") == [("IXSCAN { scan_id: 1, name: 1, version: 1, purl: 1 }", True)]
 
 
-async def test_vulnerability_search_counts_and_pages_off_the_scan_type_index(client, db, estate):
+def _reads(entries, collection):
+    """Each read's plan, "_id" for any plan on the _id index, and whether it stayed clear of the decoys."""
+    return [
+        ("_id" if e["planSummary"].endswith("{ _id: 1 }") else e["planSummary"], e["keysExamined"] < _DECOYS)
+        for e in entries
+        if e["ns"].endswith(f".{collection}")
+    ]
+
+
+async def test_vulnerability_search_counts_and_pages_in_one_scan_off_the_scan_type_index(client, db, estate):
     resp, entries = await _profiled(
         db, client.get("/api/v1/analytics/vulnerability-search", params={"q": "CVE-2026-0001"}, headers=estate)
     )
 
     assert [item["vulnerability_id"] for item in resp.json()["items"]] == ["CVE-2026-0001"]
-    assert _plans(entries, "findings", "aggregate") == [("IXSCAN { scan_id: 1, type: 1 }", True)] * 2
+    assert resp.json()["total"] == 1
+    assert _reads(entries, "findings") == [("IXSCAN { scan_id: 1, type: 1 }", True), ("_id", True)]
+
+
+async def test_dependency_search_counts_and_pages_in_one_scan_off_the_scan_package_index(client, db, estate):
+    resp, entries = await _profiled(db, client.get("/api/v1/analytics/search", params={"q": "lod"}, headers=estate))
+
+    assert [item["package"] for item in resp.json()["items"]] == [_COMPONENT]
+    assert resp.json()["total"] == 1
+    assert _reads(entries, "dependencies") == [
+        ("IXSCAN { scan_id: 1, name: 1, version: 1, purl: 1 }", True),
+        ("_id", True),
+    ]
 
 
 async def test_the_vulnerability_filter_reads_only_the_findings_of_the_matching_dependencies_scans(client, db, estate):

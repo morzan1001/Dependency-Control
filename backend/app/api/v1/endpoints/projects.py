@@ -38,6 +38,7 @@ from app.api.v1.helpers import (
     team_refs,
 )
 from app.api.v1.helpers.auth import send_project_member_added_email
+from app.api.v1.helpers.pagination import page_facet, unpack_page_facet
 from app.api.v1.helpers.projects import (
     direct_member_role,
     effective_project_role,
@@ -1142,27 +1143,11 @@ def _build_scan_findings_pipeline(
         stages.append({"$match": {"direct": {"$ne": False}}})
     stages += [
         *_scan_findings_sort_stages(sort_by, sort_dir),
-        {
-            "$facet": {
-                "metadata": [{"$count": "total"}],
-                "data": [
-                    {"$skip": skip},
-                    {"$limit": limit},
-                    *page_join,
-                    {"$project": {"_id": 0, "first_scanner": 0, "_folded": 0}},
-                ],
-            }
-        },
+        page_facet(
+            [{"$skip": skip}, {"$limit": limit}, *page_join, {"$project": {"_id": 0, "first_scanner": 0, "_folded": 0}}]
+        ),
     ]
     return stages
-
-
-def _unpack_scan_findings_facet(result: list[dict[str, Any]]) -> tuple:
-    bucket = result[0]
-    data = bucket.get("data") or []
-    metadata = bucket.get("metadata") or []
-    total = metadata[0]["total"] if metadata else 0
-    return data, total
 
 
 async def _require_scan_access(scan_id: str, current_user: User, db: Any) -> tuple[ScanMinimal, Project]:
@@ -1229,7 +1214,7 @@ async def read_scan_findings(
 
     finding_repo = FindingRepository(db)
     result = await finding_repo.aggregate(pipeline)
-    data, total = _unpack_scan_findings_facet(result)
+    data, total = unpack_page_facet(result)
 
     return build_pagination_response(data, total, skip, limit)
 
