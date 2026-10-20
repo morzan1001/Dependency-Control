@@ -1,6 +1,8 @@
 FROM python:3.14-slim
 
 ENV PYTHONUNBUFFERED=1
+# Motor otherwise sizes its thread pool by the node's CPUs; past the connection pool size (50) threads only queue.
+ENV MOTOR_MAX_WORKERS=50
 
 LABEL org.opencontainers.image.source="https://github.com/morzan1001/Dependency-Control"
 LABEL org.opencontainers.image.description="Backend for Dependency Control System"
