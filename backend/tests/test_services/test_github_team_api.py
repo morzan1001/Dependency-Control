@@ -853,7 +853,7 @@ class TestOrgTeamCount:
 
     @pytest.mark.asyncio
     async def test_reads_one_team_and_counts_by_the_last_page(self):
-        """Paging through every team spent a request per hundred teams of each organisation on a test."""
+        """One request per organisation, counted from the last page number."""
         count, api = await self._count(_team_count_page(_ORG_TEAMS[:1], last_page=37))
 
         assert count == 37

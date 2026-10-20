@@ -77,7 +77,7 @@ async def enrich_teams_with_usernames(teams: list[dict[str, Any]], db: AsyncIOMo
 
 
 async def syncing_sources(bound: Iterable[tuple[str, str]], db: AsyncIOMotorDatabase) -> set[str]:
-    """The member sources of these (provider, instance) bindings whose instance syncs teams, so restores entries."""
+    """Sources of these (provider, instance) bindings whose instance syncs teams; a sync restores their members."""
     instance_ids: defaultdict[str, set[str]] = defaultdict(set)
     for provider, instance_id in bound:
         instance_ids[provider].add(instance_id)

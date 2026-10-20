@@ -648,7 +648,7 @@ class TestTestConnection:
         return result, service
 
     def test_the_group_probe_reads_one_group_and_counts_by_the_total(self, admin_user):
-        """Walking ten pages of groups to tell none from some also capped the reported count at 1000."""
+        """One /groups request; the uncapped count comes from x-total."""
         result, service = self._probe(admin_user, group_page=_group_page(_ONE_GROUP, total=2345))
 
         assert result.success is True

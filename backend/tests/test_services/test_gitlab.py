@@ -479,7 +479,7 @@ class TestGroupListing:
         assert "search" not in paginated.await_args[1]["params"]
 
     def test_the_picker_reopened_within_the_minute_walks_nothing_again(self, gitlab_instance_a, group_cache):
-        """Each dialog open and debounced search term walked up to ten pages of 100 groups."""
+        """A repeat search term within the TTL is served from the cache."""
         service = GitLabService(gitlab_instance_a)
 
         async def _pick_twice():
