@@ -1,3 +1,28 @@
+# Upgrade notes
+
+These notes cover the upgrade from 1.9.58. Nothing has to happen before the rollout; there is no migration and no index change.
+
+## After the rollout
+
+- The crypto policy seed moves to version 3 at the first start. If the system crypto policy was ever edited by a person, the seeder only adds the missing rule `bsi-02102-ecb-mode`; add the patterns `EdDSA`, `Ed25519` and `Ed448` to the rule `pqc-quantum-vulnerable-pke` under Settings > Crypto Policy by hand. A project override of that rule keeps its own patterns.
+- Outdated findings computed before this release can name a pre-release as the latest version (for example `Update available: 3.0.0-beta2` for a stable 2.25.5); crypto findings gain their asset fields and the new rules only on a new analysis. Both are recomputed on each project's next scan or re-scan.
+- The latest-version cache moved to a new key; no Redis flush is needed.
+
+## Helm
+
+`database.extraRoles` renders custom MongoDB roles into the Percona cluster (`spec.roles`); an entry of `database.extraUsers` names such a role like a built-in one. Nothing renders while the list is unset. Use it to give a reporting user, such as Metabase, read access to only the collections it needs.
+
+## Behaviour changes
+
+- The outdated check compares a stable install with the newest stable release: deps.dev reports some Maven pre-releases as the default version, and Maven `CR` versions now count as pre-releases. An install ahead of the default carries the compared `latest_version` (additive).
+- Crypto: certificate and protocol findings carry the asset name, type and primitive, so the crypto hotspots count them; a standalone RSA-1024 key gets `crypto_weak_key`; Ed25519, EdDSA and Ed448 are quantum-vulnerable; a BSI rule flags ECB mode; protocol cards name the version ("TLS 1.0"), and protocol names are written as TLS, SSH, IPsec. Crypto findings have their own scan category `crypto` (also as a filter) and their own tab when CBOMkit runs.
+- Text sorts ignore letter case in more places: inventory components, licences and crypto assets (and their CSVs), the findings table's component column and severity tie-break, hotspot components, update-frequency lists and ties, scan delta lists, the dependency search, the chat dependency tree and the version-inconsistency sampling.
+- Downloads are named after project and branch: scan SBOMs `<project>_sbom_<n>_<branch>_<date>.json`, analyzer results `<project>_<analyzer>_<source>_<branch>_<date>.json`, archives `<project>_archive_<branch>_<scan-id>_<date>.json.gz`.
+- Compliance report notifications name their project or team (`scope_name` in the payload, additive); `/inventory/stats` lists its `ecosystems` (additive).
+- UI: every analytics control has an accessible name; projects that share a name show their owner in the Projects grid, the compliance report list, the dashboard's Recent Activity and Top 5 tooltip, the dependency search and the update-frequency cards; NEGLIGIBLE has its own colour in pills and charts; badges stay visible on highlighted rows; compliance frameworks show their display name; the finding dialog lists matched crypto rules and says "Varies by advisory" when only its advisories name fixes.
+
+
+
 # Release 1.9.58
 
 ## 📦 Build & CI
