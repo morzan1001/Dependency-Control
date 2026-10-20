@@ -105,9 +105,21 @@ async def _project_with_vulnerabilities_and_one_md5_finding(db):
         "primitive": CryptoPrimitive.HASH.value,
     }
     for finding in crypto_findings_for_assets([md5], load_seed_rules(), scanner="crypto_weak_algorithm"):
-        db.findings._docs[finding["id"]] = {**finding, "_id": finding["id"], "scan_id": "s1", "project_id": "p1"}
+        db.findings._docs[finding["id"]] = {
+            **finding,
+            "_id": finding["id"],
+            "finding_id": finding["id"],
+            "scan_id": "s1",
+            "project_id": "p1",
+        }
     for n in range(3):
-        db.findings._docs[f"v{n}"] = {"_id": f"v{n}", "type": "vulnerability", "scan_id": "s1", "project_id": "p1"}
+        db.findings._docs[f"v{n}"] = {
+            "_id": f"v{n}",
+            "finding_id": f"v{n}",
+            "type": "vulnerability",
+            "scan_id": "s1",
+            "project_id": "p1",
+        }
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", rules=list(load_seed_rules()), version=1)
     )

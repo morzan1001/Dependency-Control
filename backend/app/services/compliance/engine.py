@@ -43,7 +43,7 @@ _REPORT_SLOTS = asyncio.Semaphore(COMPLIANCE_REPORT_SLOTS)
 _RENDER_SLOT = asyncio.Semaphore(1)
 
 _NON_CRYPTO_FRAMEWORKS = frozenset({ReportFramework.CVE_REMEDIATION_SLA, ReportFramework.LICENSE_AUDIT})
-_BASE_FINDING_FIELDS = ("type", "severity", "scan_id", "waived", "waiver_reason")
+_BASE_FINDING_FIELDS = ("finding_id", "type", "severity", "scan_id", "waived", "waiver_reason")
 _CRYPTO_FINDING_FIELDS = ("details.rule_id", "details.matched_rules.rule_id", "details.bom_ref")
 _CRYPTO_ASSET_FIELDS = (
     "project_id",

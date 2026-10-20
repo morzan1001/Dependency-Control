@@ -75,6 +75,7 @@ def _partial() -> EvaluationCoverage:
 def _finding(index: int) -> dict:
     return {
         "_id": f"{_SCAN}-{index}",
+        "finding_id": f"lib-{index}:1.0.0",
         "project_id": _PROJECT,
         "scan_id": _SCAN,
         "type": "vulnerability",

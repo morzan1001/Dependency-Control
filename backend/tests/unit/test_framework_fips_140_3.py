@@ -42,6 +42,7 @@ def _weak_algorithm_finding(asset, *, waiver_reason=None):
     return {
         **finding,
         "_id": f"{asset.scan_id}-{finding['id']}",
+        "finding_id": finding["id"],
         "scan_id": asset.scan_id,
         "project_id": asset.project_id,
         **waiver,
@@ -132,7 +133,7 @@ async def test_a_waived_disallowed_algorithm_reads_waived_and_names_the_waiver()
     hashes = await _hash_control([md5], [finding])
 
     assert hashes.status == ControlStatus.WAIVED
-    assert hashes.evidence_finding_ids == [finding["_id"]]
+    assert hashes.evidence_finding_ids == [finding["finding_id"]]
     assert hashes.waiver_reasons == ["checksum of a public file"]
 
 

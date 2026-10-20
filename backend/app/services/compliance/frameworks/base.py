@@ -254,7 +254,8 @@ class SeedFramework:
 
 
 def extract_finding_id(finding: dict[str, Any]) -> str:
-    return str(finding.get("_id") or finding.get("id") or "")
+    # The record _id is minted per scan; the finding id is what an auditor can look up, and it stays across scans.
+    return str(finding["finding_id"])
 
 
 def _classify(

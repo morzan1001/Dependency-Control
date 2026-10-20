@@ -51,7 +51,9 @@ def _weak_rsa_control() -> ControlResult:
     )
     (finding,) = crypto_findings_for_assets([weak], [_RSA_RULE], scanner="crypto_weak_key")
     data = evaluation_input(
-        crypto_assets=[weak], findings=[finding | {"_id": "f1", "scan_id": weak.scan_id}], policy_rules=[_RSA_RULE]
+        crypto_assets=[weak],
+        findings=[finding | {"_id": "f1", "finding_id": finding["id"], "scan_id": weak.scan_id}],
+        policy_rules=[_RSA_RULE],
     )
     return default_evaluator(_RSA_CONTROL, data)
 
@@ -82,7 +84,10 @@ _RENDERERS = [pytest.param(_csv_count, id="csv"), pytest.param(_pdf_count, id="p
 @pytest.mark.parametrize("count", _RENDERERS)
 def test_a_crypto_finding_and_the_asset_it_flags_count_once(count):
     control = _weak_rsa_control()
-    assert (control.evidence_finding_ids, control.evidence_asset_bom_refs) == (["f1"], ["rsa-1024"])
+    assert (control.evidence_finding_ids, control.evidence_asset_bom_refs) == (
+        ["CRYPTO-crypto_weak_key-rsa-1024"],
+        ["rsa-1024"],
+    )
 
     assert count(control) == "1"
 
@@ -99,3 +104,30 @@ def test_a_crypto_finding_and_the_asset_it_flags_count_once(count):
 )
 def test_the_evidence_count_is_the_longer_of_the_two_lists(count, finding_ids, asset_bom_refs, expected):
     assert count(_with_evidence(finding_ids, asset_bom_refs)) == expected
+
+
+@pytest.mark.asyncio
+async def test_the_evidence_names_each_finding_by_the_id_it_keeps_across_scans():
+    """A stored record's _id is minted per scan, so only the finding id lets an auditor look the finding up."""
+    from datetime import datetime, timezone
+
+    from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
+
+    overdue = {
+        "finding_id": "log4j-core:2.14.1",
+        "type": "vulnerability",
+        "severity": "CRITICAL",
+        "waived": False,
+        "first_seen_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "details": {"vulnerabilities": [{"id": "CVE-2021-44228", "severity": "CRITICAL"}]},
+    }
+    findings = [
+        overdue | {"_id": "uuid5-of-scan-1", "scan_id": "s1"},
+        overdue | {"_id": "uuid5-of-scan-2", "scan_id": "s2"},
+    ]
+
+    evaluation = await CveRemediationSlaFramework().evaluate(evaluation_input(findings=findings, scan_ids=["s1", "s2"]))
+
+    critical = next(c for c in evaluation.controls if c.control_id == "CVE-SLA-CRITICAL")
+    assert critical.evidence_finding_ids == ["log4j-core:2.14.1", "log4j-core:2.14.1"]
+    assert critical.evidence_count == 2
