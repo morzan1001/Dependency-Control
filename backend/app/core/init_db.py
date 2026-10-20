@@ -268,6 +268,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         unique=True,
     )  # The upsert key: without uniqueness two concurrent marks of one scan both insert.
     await database["releases"].create_index("scan_id")
+    # Serves the release list across every environment.
+    await database["releases"].create_index([("project_id", pymongo.ASCENDING), *RELEASES_LATEST_SORT])
 
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])
     await database["findings"].create_index(FINDINGS_SCAN_TYPE_INDEX)
