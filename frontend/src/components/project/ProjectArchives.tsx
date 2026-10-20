@@ -19,7 +19,8 @@ import {
 } from "@/components/ui/select"
 import { Archive, RotateCcw, Download, GitBranch, GitCommit, AlertTriangle, Package, FileText } from 'lucide-react'
 import { toast } from "sonner"
-import { formatBytes, formatDateTime, shortCommitHash } from '@/lib/utils'
+import { cn, formatBytes, formatDateTime, shortCommitHash } from '@/lib/utils'
+import { getSeverityBgColor } from '@/lib/finding-utils'
 import { downloadServerFile } from '@/lib/download'
 import {
   Dialog,
@@ -116,12 +117,12 @@ export function ArchiveSummaryCells({ archive }: Readonly<{ archive: ArchiveList
         <div className="flex items-center gap-1.5">
           <span className="text-sm">{archive.findings_count}</span>
           {archive.critical_findings_count > 0 && (
-            <Badge variant="destructive" className="text-xs px-1.5 py-0 whitespace-nowrap">
+            <Badge className={cn('text-xs px-1.5 py-0 whitespace-nowrap', getSeverityBgColor('CRITICAL'))}>
               {archive.critical_findings_count} C
             </Badge>
           )}
           {archive.high_findings_count > 0 && (
-            <Badge variant="secondary" className="text-xs px-1.5 py-0 whitespace-nowrap border-orange-200 bg-orange-100 text-orange-800 dark:border-orange-800 dark:bg-orange-900 dark:text-orange-200">
+            <Badge className={cn('text-xs px-1.5 py-0 whitespace-nowrap', getSeverityBgColor('HIGH'))}>
               {archive.high_findings_count} H
             </Badge>
           )}

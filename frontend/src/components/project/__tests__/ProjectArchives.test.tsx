@@ -63,13 +63,13 @@ describe('ProjectArchives rows', () => {
     }
   })
 
-  it('edges the coloured high pill in its own hue instead of the neutral badge outline', () => {
+  it('fills the critical and high pills with the shared severity colours, as the scan list does', () => {
     mockUseProjectArchives.mockReturnValue({ data: makeResponse([ARCHIVE]), isLoading: false })
     render(<ProjectArchives projectId="p1" />)
 
-    const high = screen.getByText('5 H')
-    expect(high).toHaveClass('border-orange-200', 'dark:border-orange-800')
-    expect(high).not.toHaveClass('border-foreground/45')
+    expect(screen.getByText('2 C')).toHaveClass('bg-severity-critical', 'text-severity-critical-foreground')
+    expect(screen.getByText('5 H')).toHaveClass('bg-severity-high', 'text-severity-high-foreground')
+    expect(screen.getByText('5 H')).not.toHaveClass('border-foreground/45')
   })
 
   it('downloads the archive of the row', async () => {
