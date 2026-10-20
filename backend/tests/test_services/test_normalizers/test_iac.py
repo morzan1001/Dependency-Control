@@ -155,6 +155,18 @@ class TestNormalizeKics:
         f = next(iter(self.agg.findings.values()))
         assert f.details["cwe_ids"] == ["250"]
 
+    def test_a_reference_given_as_one_string_is_one_reference(self):
+        query = {
+            "query_name": "Healthcheck Instruction Missing",
+            "query_id": "b03a748a-542d-44f4-bb86-9199ab4fd2d5",
+            "severity": "LOW",
+            "references": "https://docs.docker.com/engine/reference/builder/#healthcheck",
+            "files": [{"file_name": "Dockerfile", "line": 1}],
+        }
+        self.agg.aggregate("kics", {"queries": [query]})
+        [finding] = self.agg.findings.values()
+        assert finding.details["references"] == [query["references"]]
+
     def test_similarity_id_stored_in_details(self):
         agg = ResultAggregator()
         result = {

@@ -54,6 +54,18 @@ async def test_opengrep_ingest_stats_block_shape(client, db, api_key_headers):
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
+async def test_a_reference_given_as_one_string_is_counted_not_a_server_error(client, db, api_key_headers):
+    payload = _payload()
+    payload["findings"][0]["extra"]["metadata"] = {"references": "https://owasp.org/Top10/A03_2021-Injection/"}
+
+    resp = await client.post("/api/v1/ingest/opengrep", json=payload, headers=api_key_headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["findings_count"] == len(_SEVERITIES)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_ingest_writes_no_findings_to_mongo_from_this_path(client, db, api_key_headers):
     resp = await client.post("/api/v1/ingest/opengrep", json=_payload(), headers=api_key_headers)
     assert resp.status_code == 200

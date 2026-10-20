@@ -1,3 +1,4 @@
+import logging
 from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType
@@ -13,6 +14,8 @@ from app.services.normalizers.utils import (
 
 if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
+
+logger = logging.getLogger(__name__)
 
 _CRYPTO_MISUSE_RULE_ID_PREFIX = "crypto-misuse-"
 # Semgrep CE writes this into extra.fingerprint and extra.lines of every result when run without login.
@@ -84,7 +87,7 @@ def _parse_opengrep_item(item: dict[str, Any]) -> Finding:
         subcategory=normalize_list(metadata.get("subcategory")),
         technology=normalize_list(metadata.get("technology")),
         vulnerability_class=normalize_list(metadata.get("vulnerability_class")),
-        references=metadata.get("references") or [],
+        references=normalize_list(metadata.get("references")),
         source_rule_url=metadata.get("source-rule-url") or metadata.get("source_rule_url"),
         source=metadata.get("source"),
         shortlink=metadata.get("shortlink"),
@@ -106,47 +109,62 @@ def _parse_opengrep_item(item: dict[str, Any]) -> Finding:
 
 def normalize_opengrep(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     # OpenGrep emits either "findings" or "results" depending on version.
-    results = result.get("findings") or result.get("results") or []
-    if not results:
-        return
+    for item in result.get("findings") or result.get("results") or []:
+        try:
+            finding = _parse_opengrep_item(item)
+        except Exception as exc:
+            logger.warning(
+                "normalize_opengrep: dropping unparseable finding (%s) — check_id=%s, path=%s",
+                exc,
+                item.get("check_id"),
+                item.get("path"),
+            )
+            continue
+        aggregator.add_finding(finding, source=source)
 
-    for item in results:
-        aggregator.add_finding(_parse_opengrep_item(item), source=source)
+
+def _parse_bearer_item(item: Any) -> Finding:
+    entry = BearerFinding.model_validate(item)
+    title = entry.title or "Unknown data risk"
+    sev_str = (entry.severity or "info").upper()
+    filename = entry.full_filename or entry.filename or "unknown"
+
+    location = entry.source or BearerSourceLocation()
+    line_number = entry.line_number or location.start or 0
+    column = location.column or {}
+
+    details = SastScannerDetails(
+        rule_id=entry.id,
+        title=title,
+        code_extract=entry.code_extract or entry.snippet,
+        start=LineSpan(line=line_number, column=column.get("start") or 0),
+        end=LineSpan(line=location.end or line_number, column=column.get("end") or 0),
+        cwe_ids=normalize_cwe_list(entry.cwe_ids),
+        category_groups=entry.category_groups,
+        documentation_url=entry.documentation_url,
+    ).model_dump(exclude_none=True)
+
+    return Finding(
+        id=build_finding_id(FindingIdPrefix.BEARER, entry.id, filename, line_number),
+        type=FindingType.SAST,
+        severity=safe_severity(_BEARER_OVERRIDES.get(sev_str, sev_str)),
+        component=filename,
+        version=None,
+        description=title,
+        scanners=["bearer"],
+        details=details,
+    )
 
 
 def normalize_bearer(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     for item in bearer_entries(result.get("findings")) or []:
-        entry = BearerFinding.model_validate(item)
-        title = entry.title or "Unknown data risk"
-        sev_str = (entry.severity or "info").upper()
-        severity = safe_severity(_BEARER_OVERRIDES.get(sev_str, sev_str))
-        filename = entry.full_filename or entry.filename or "unknown"
-
-        location = entry.source or BearerSourceLocation()
-        line_number = entry.line_number or location.start or 0
-        column = location.column or {}
-
-        details = SastScannerDetails(
-            rule_id=entry.id,
-            title=title,
-            code_extract=entry.code_extract or entry.snippet,
-            start=LineSpan(line=line_number, column=column.get("start") or 0),
-            end=LineSpan(line=location.end or line_number, column=column.get("end") or 0),
-            cwe_ids=normalize_cwe_list(entry.cwe_ids),
-            category_groups=entry.category_groups,
-            documentation_url=entry.documentation_url,
-        ).model_dump(exclude_none=True)
-
-        aggregator.add_finding(
-            Finding(
-                id=build_finding_id(FindingIdPrefix.BEARER, entry.id, filename, line_number),
-                type=FindingType.SAST,
-                severity=severity,
-                component=filename,
-                version=None,
-                description=title,
-                scanners=["bearer"],
-                details=details,
-            ),
-            source=source,
-        )
+        try:
+            finding = _parse_bearer_item(item)
+        except Exception as exc:
+            logger.warning(
+                "normalize_bearer: dropping unparseable finding (%s) — id=%s",
+                exc,
+                item.get("id") if isinstance(item, dict) else None,
+            )
+            continue
+        aggregator.add_finding(finding, source=source)

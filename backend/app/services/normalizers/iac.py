@@ -6,6 +6,7 @@ from app.services.normalizers.utils import (
     FindingIdPrefix,
     build_finding_id,
     normalize_cwe_list,
+    normalize_list,
     safe_severity,
 )
 
@@ -46,7 +47,7 @@ def _process_kics_file(
         code_extract=f.get("code_sample") or f.get("line_content"),
         cwe_ids=normalize_cwe_list(query.get("cwe")),
         documentation_url=query.get("description_url") or f.get("resource_url"),
-        references=query.get("references") or [],
+        references=normalize_list(query.get("references")),
     ).model_dump(exclude_none=True)
 
     aggregator.add_finding(

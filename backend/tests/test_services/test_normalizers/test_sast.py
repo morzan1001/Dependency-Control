@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from app.schemas.bearer import BearerFinding
 from app.services.aggregation import ResultAggregator
 
 # bearer 2.1.1 `scan . --format json` over a Python file hashing a password with MD5 and logging an email.
@@ -78,6 +79,36 @@ class TestNormalizeOpengrep:
         self.agg.aggregate("opengrep", result)
         f = next(iter(self.agg.findings.values()))
         assert f.details["cwe_ids"] == ["79", "89"]
+
+    def test_a_reference_given_as_one_string_is_one_reference(self):
+        result = self._opengrep_result(
+            [
+                {
+                    "check_id": "test-rule",
+                    "path": "file.py",
+                    "start": {"line": 1, "col": 1},
+                    "end": {"line": 1, "col": 10},
+                    "extra": {"severity": "ERROR", "message": "test", "metadata": {"references": "https://owasp.org"}},
+                }
+            ]
+        )
+        self.agg.aggregate("opengrep", result)
+        [finding] = self.agg.findings.values()
+        assert finding.details["references"] == ["https://owasp.org"]
+
+    def test_an_unreadable_finding_is_dropped_and_the_rest_kept(self):
+        def item(line: int, metadata: dict) -> dict:
+            return {
+                "check_id": "test-rule",
+                "path": "file.py",
+                "start": {"line": line, "col": 1},
+                "end": {"line": line, "col": 10},
+                "extra": {"severity": "ERROR", "message": "test", "metadata": metadata},
+            }
+
+        self.agg.aggregate("opengrep", self._opengrep_result([item(1, {"impact": ["HIGH"]}), item(2, {})]))
+
+        assert [f.details["start"]["line"] for f in self.agg.findings.values()] == [2]
 
     def test_owasp_metadata_captured(self):
         result = self._opengrep_result(
@@ -455,15 +486,20 @@ class TestNormalizeBearer:
 class TestBearerEntryContract:
     """One BearerFinding model governs /ingest and /adhoc, so an entry is read on both or on neither."""
 
-    def test_an_entry_without_a_rule_id_is_unreadable(self):
-        with pytest.raises(ValidationError, match="id"):
-            ResultAggregator().aggregate(
-                "bearer", {"findings": {"high": [{"rule_id": "r", "full_filename": "a.py", "line_number": 1}]}}
-            )
+    @pytest.mark.parametrize(
+        "unreadable",
+        [
+            pytest.param({"rule_id": "r", "full_filename": "a.py", "line_number": 1}, id="without-a-rule-id"),
+            pytest.param({"id": "r", "severity": 3, "full_filename": "a.py", "line_number": 1}, id="wrongly-typed"),
+        ],
+    )
+    def test_an_unreadable_entry_is_dropped_and_its_siblings_kept(self, unreadable):
+        agg = ResultAggregator()
+        agg.aggregate("bearer", {"findings": [unreadable, {"id": "r", "full_filename": "a.py", "line_number": 2}]})
 
-    def test_an_entry_with_a_wrongly_typed_field_is_unreadable(self):
-        with pytest.raises(ValidationError, match="severity"):
-            ResultAggregator().aggregate("bearer", {"findings": [{"id": "r", "severity": 3, "line_number": 1}]})
+        assert [f.details["start"]["line"] for f in agg.findings.values()] == [2]
+        with pytest.raises(ValidationError):
+            BearerFinding.model_validate(unreadable)
 
     def test_the_parent_snippet_stands_in_for_a_missing_code_extract(self):
         agg = ResultAggregator()
