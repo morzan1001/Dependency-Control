@@ -7,6 +7,7 @@ import pytest
 from app.api.v1.helpers.sorting import case_insensitive_key
 from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.chat.tools.crypto_tools import list_crypto_assets
+from tests.helpers.profiler import profiled
 
 _PID = "test-project-id"
 _NOW = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
@@ -138,6 +139,27 @@ async def test_stats_license_count_counts_tokenized_units(client, db, member_aut
 
     assert resp.status_code == 200
     assert resp.json()["license_count"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_stats_read_the_scans_dependencies_in_one_pass(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "a", direct=True, license_id="MIT")
+    await _seed_dep(db, "s1", "b", dep_type="pypi", license_id="Apache-2.0")
+
+    resp, entries = await profiled(
+        db, client.get(f"/api/v1/projects/{_PID}/inventory/stats", headers=member_auth_headers)
+    )
+
+    body = resp.json()
+    assert (body["components_total"], body["direct_count"], body["license_count"], body["ecosystems"]) == (
+        2,
+        1,
+        2,
+        ["npm", "pypi"],
+    )
+    assert [next(iter(e["command"])) for e in entries if e["ns"].endswith(".dependencies")] == ["aggregate"]
 
 
 @pytest.mark.asyncio
