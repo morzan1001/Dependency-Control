@@ -48,6 +48,7 @@ const FINDING_TABS: readonly (FindingTab & { readonly analyzers: readonly string
   { value: 'sast', label: 'SAST', category: 'sast', analyzers: ['opengrep', 'kics', 'bearer'] },
   { value: 'compliance', label: 'Compliance', category: 'compliance', analyzers: ['trivy', 'license_compliance', 'end_of_life'] },
   { value: 'quality', label: 'Quality', category: 'quality', analyzers: ['outdated_packages', 'maintainer_risk'] },
+  { value: 'crypto', label: 'Crypto', category: 'crypto', analyzers: ['cbomkit'] },
 ]
 
 function findingTabsFor(activeAnalyzers: readonly string[]): FindingTab[] {

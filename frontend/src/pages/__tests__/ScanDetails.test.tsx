@@ -535,7 +535,7 @@ describe('ScanDetails finding tabs', () => {
     [['outdated_packages'], ['Quality']],
     [['maintainer_risk'], ['Quality']],
     [['epss_kev', 'reachability'], []],
-    [['cbomkit'], []],
+    [['cbomkit'], ['Crypto']],
     [['maintainer_risk', 'trufflehog', 'osv', 'kics', 'end_of_life'], ['Security', 'Secrets', 'SAST', 'Compliance', 'Quality']],
   ])('shows the tabs of the analyzers %j next to All Findings and Raw Data', (active, tabs) => {
     analyzers.active = active
@@ -551,8 +551,9 @@ describe('ScanDetails finding tabs', () => {
     ['sast', 'sast'],
     ['compliance', 'compliance'],
     ['quality', 'quality'],
+    ['crypto', 'crypto'],
   ])('lists the %s tab\'s findings and waived findings by category %s', (tab, category) => {
-    analyzers.active = ['osv', 'trufflehog', 'opengrep', 'license_compliance', 'outdated_packages']
+    analyzers.active = ['osv', 'trufflehog', 'opengrep', 'license_compliance', 'outdated_packages', 'cbomkit']
     renderPage(`${SCAN_PATH}?tab=${tab}`)
 
     expect(lastProps(findingsTableProps)).toMatchObject({ scanId: 's1', projectId: 'p1' })
