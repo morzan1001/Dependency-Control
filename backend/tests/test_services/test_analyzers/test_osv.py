@@ -11,6 +11,8 @@ from tests.helpers.osv import (
     LOG4SHELL,
     MALWARE_COMBINEZONE,
     REQUEST_SSRF,
+    SWIFT_NIO_HTTP2_HEADERS,
+    TOKIO_PIPE,
     UBUNTU_OPENSSL,
     URLLIB3_CRLF,
 )
@@ -23,6 +25,8 @@ def _purl(purl: str) -> dict[str, Any]:
 _LODASH = _purl("pkg:npm/lodash@4.17.11")
 _DJANGO_4_2_0 = _purl("pkg:pypi/django@4.2.0")
 _LOG4J_CORE_2_14_1 = _purl("pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1")
+_TOKIO_1_20_1 = _purl("pkg:cargo/tokio@1.20.1")
+_SWIFT_NIO_HTTP2_1_19_1 = _purl("pkg:swift/github.com/apple/swift-nio-http2@1.19.1")
 _OPENSSL_ON_ALPINE_3_17 = {"package": {"ecosystem": "Alpine:v3.17", "name": "openssl"}, "version": "3.0.8-r0"}
 _OPENSSL_ON_DEBIAN_12 = {"package": {"ecosystem": "Debian:12", "name": "openssl"}, "version": "3.0.9-1"}
 _OPENSSL_ON_UBUNTU_20_04 = _purl("pkg:deb/ubuntu/openssl@1.1.1f-1ubuntu2.24")
@@ -145,6 +149,8 @@ class TestFixedVersion:
             pytest.param(GO_RAPID_RESET, _purl("pkg:golang/stdlib@1.21.1"), "1.21.3", id="second-interval"),
             pytest.param(GO_RAPID_RESET, _purl("pkg:golang/golang.org/x/net@v0.16.0"), "0.17.0", id="other-module"),
             pytest.param(LOG4SHELL, _LOG4J_CORE_2_14_1, "2.15.0", id="maven"),
+            pytest.param(TOKIO_PIPE, _TOKIO_1_20_1, "1.20.3", id="cargo"),
+            pytest.param(SWIFT_NIO_HTTP2_HEADERS, _SWIFT_NIO_HTTP2_1_19_1, "1.19.2", id="swift"),
             pytest.param(ALPINE_OPENSSL, _OPENSSL_ON_ALPINE_3_17, "3.0.12-r1", id="os-release-of-the-query"),
             pytest.param(DEBIAN_OPENSSL, _OPENSSL_ON_DEBIAN_12, "3.0.13-1~deb12u1", id="debian-revision"),
             pytest.param(
@@ -163,6 +169,8 @@ class TestFixedVersion:
             pytest.param(REQUEST_SSRF, _purl("pkg:npm/%40cypress/request@2.88.10"), "3.0.0", id="scoped-package"),
             pytest.param(GO_RAPID_RESET, _purl("pkg:golang/golang.org/x/net@v0.16.0"), "0.17.0", id="module-path"),
             pytest.param(LOG4SHELL, _LOG4J_CORE_2_14_1, "2.15.0", id="maven-group-artifact"),
+            pytest.param(TOKIO_PIPE, _TOKIO_1_20_1, "1.20.3", id="crates-io-label"),
+            pytest.param(SWIFT_NIO_HTTP2_HEADERS, _SWIFT_NIO_HTTP2_1_19_1, "1.19.2", id="swifturl-label"),
             pytest.param(
                 LOG4SHELL,
                 _purl("pkg:maven/com.guicedee.services/log4j-core@2.14.1"),

@@ -190,6 +190,44 @@ LOG4SHELL: dict[str, Any] = {
     ],
 }
 
+# OSV labels Rust packages "crates.io" while their purl type is cargo.
+TOKIO_PIPE: dict[str, Any] = {
+    "id": "RUSTSEC-2023-0001",
+    "summary": "reject_remote_clients Configuration corruption",
+    "aliases": ["CVE-2023-22466", "GHSA-7rrj-xr53-82p7"],
+    "affected": [
+        {
+            "package": {"name": "tokio", "ecosystem": "crates.io", "purl": "pkg:cargo/tokio"},
+            "ranges": _ranges(
+                {"introduced": "1.7.0"},
+                {"fixed": "1.18.4"},
+                {"introduced": "1.19.0"},
+                {"fixed": "1.20.3"},
+                {"introduced": "1.21.0"},
+                {"fixed": "1.23.1"},
+                kind="SEMVER",
+            ),
+        }
+    ],
+}
+
+# OSV labels Swift packages "SwiftURL" while their purl type is swift.
+SWIFT_NIO_HTTP2_HEADERS: dict[str, Any] = {
+    "id": "GHSA-ccw9-q5h2-8c2w",
+    "summary": "swift-nio-http2 vulnerable to denial of service via invalid HTTP/2 HEADERS frame length",
+    "aliases": ["CVE-2022-24666"],
+    "affected": [
+        {
+            "package": {
+                "name": "github.com/apple/swift-nio-http2",
+                "ecosystem": "SwiftURL",
+                "purl": "pkg:swift/github.com/apple/swift-nio-http2",
+            },
+            "ranges": _ranges({"introduced": "1.0.0"}, {"fixed": "1.19.2"}),
+        }
+    ],
+}
+
 # Every Alpine release shares one source purl but has its own fix; the record has no summary.
 ALPINE_OPENSSL: dict[str, Any] = {
     "id": "ALPINE-CVE-2023-5678",

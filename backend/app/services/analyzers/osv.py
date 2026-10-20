@@ -170,13 +170,17 @@ def _query_targets(components: list[dict[str, Any]]) -> tuple[list[_Target], int
     return targets, len(unqueryable)
 
 
+_OSV_LABEL_SYSTEMS = {"crates.io": "cargo", "swifturl": "swift"}
+
+
 def _package_key(package: dict[str, Any], purl_type: str | None) -> tuple[str, str] | None:
     ecosystem, name = str(package.get("ecosystem") or ""), str(package.get("name") or "")
     if purl_type is None:
         return ecosystem, name.casefold()
     purl = package.get("purl")
+    label = ecosystem.casefold()
     # OSV makes ``purl`` optional; Maven names are group:artifact.
-    if not purl and name and PURL_TYPE_TO_SYSTEM.get(purl_type) == ecosystem.casefold():
+    if not purl and name and PURL_TYPE_TO_SYSTEM.get(purl_type) == _OSV_LABEL_SYSTEMS.get(label, label):
         purl = f"pkg:{purl_type}/{name.replace(':', '/')}"
     return package_identity(purl, "", None, None) if purl else None
 
