@@ -20,7 +20,7 @@ async def test_a_vulnerability_row_carries_its_cves_and_a_title(db):
     await db.findings.insert_many(records)
 
     text = "".join([chunk async for chunk in iter_csv(FINDINGS_COLUMNS, iter_findings_rows(db, [_SCAN]))])
-    [row] = csv.DictReader(io.StringIO(text.lstrip("﻿")))
+    [row] = csv.DictReader(io.StringIO(text.lstrip("\ufeff")))
 
     assert (row["finding_id"], row["title"], row.get("cves")) == (
         "lodash:4.17.20",
@@ -52,6 +52,6 @@ async def test_a_ghsa_finding_is_titled_and_listed_by_the_cves_its_advisories_na
     )
 
     text = "".join([chunk async for chunk in iter_csv(FINDINGS_COLUMNS, iter_findings_rows(db, [_SCAN]))])
-    [row] = csv.DictReader(io.StringIO(text.lstrip("﻿")))
+    [row] = csv.DictReader(io.StringIO(text.lstrip("\ufeff")))
 
     assert (row["title"], row["cves"]) == ("CVE-2024-0001", "GHSA-zzzz-zzzz-zzzz; CVE-2024-0001; CVE-2024-0002")

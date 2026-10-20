@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 
 MULTI_VALUE_SEPARATOR = "; "
 # Excel only detects UTF-8 (umlauts!) when the payload starts with a BOM.
-_UTF8_BOM = "﻿"
+_UTF8_BOM = "\ufeff"
 _FORMULA_TRIGGER_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
 _NEGATIVE_NUMBER = re.compile(r"-\d+(\.\d+)?")
 _CHUNK_CHARS = 64 * 1024

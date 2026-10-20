@@ -154,8 +154,8 @@ def _parse_csv(resp) -> list[dict]:
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/csv")
     text = resp.text
-    assert text.startswith("﻿")
-    return list(csv.DictReader(io.StringIO(text.lstrip("﻿"))))
+    assert text.startswith("\ufeff")
+    return list(csv.DictReader(io.StringIO(text.lstrip("\ufeff"))))
 
 
 async def _seed_lifecycle_finding(db, scan_id, component, version, ftype, latest=None):

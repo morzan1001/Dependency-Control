@@ -21,15 +21,15 @@ async def _collect(columns, items) -> str:
 @pytest.mark.asyncio
 async def test_first_chunk_starts_with_bom_and_header():
     out = await _collect(["a", "b"], [])
-    assert out.startswith("﻿")
-    reader = csv.reader(io.StringIO(out.lstrip("﻿")))
+    assert out.startswith("\ufeff")
+    reader = csv.reader(io.StringIO(out.lstrip("\ufeff")))
     assert next(reader) == ["a", "b"]
 
 
 @pytest.mark.asyncio
 async def test_rows_follow_column_order_and_missing_keys_are_empty():
     out = await _collect(["a", "b", "c"], [{"b": "2", "a": "1"}])
-    reader = csv.reader(io.StringIO(out.lstrip("﻿")))
+    reader = csv.reader(io.StringIO(out.lstrip("\ufeff")))
     next(reader)
     assert next(reader) == ["1", "2", ""]
 
@@ -37,7 +37,7 @@ async def test_rows_follow_column_order_and_missing_keys_are_empty():
 @pytest.mark.asyncio
 async def test_umlauts_and_commas_survive_quoting():
     out = await _collect(["a"], [{"a": 'Größe, "quoted"'}])
-    reader = csv.reader(io.StringIO(out.lstrip("﻿")))
+    reader = csv.reader(io.StringIO(out.lstrip("\ufeff")))
     next(reader)
     assert next(reader) == ['Größe, "quoted"']
 
@@ -74,7 +74,7 @@ def test_format_cell_guards_formula_prefixes():
 async def test_formula_starting_with_a_negative_number_is_escaped():
     payload = "-1+cmd|' /C calc'!A0"
     out = await _collect(["a", "b"], [{"a": payload, "b": "-2.5"}])
-    reader = csv.reader(io.StringIO(out.lstrip("﻿")))
+    reader = csv.reader(io.StringIO(out.lstrip("\ufeff")))
     next(reader)
     assert next(reader) == [f"'{payload}", "-2.5"]
 
@@ -109,7 +109,7 @@ async def test_csv_response_sets_headers_and_streams_with_bom():
     assert response.headers["Content-Disposition"] == 'attachment; filename="some_file.csv"'
     chunks = [chunk async for chunk in response.body_iterator]
     body = "".join(chunks)
-    assert body.startswith("﻿")
-    reader = csv.reader(io.StringIO(body.lstrip("﻿")))
+    assert body.startswith("\ufeff")
+    reader = csv.reader(io.StringIO(body.lstrip("\ufeff")))
     assert next(reader) == ["a"]
     assert next(reader) == ["value1"]
