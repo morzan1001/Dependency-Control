@@ -15,6 +15,7 @@ from app.core.constants import (
 )
 
 NONCE_SIZE = 12
+_HEADER = struct.Struct(">4sBI")
 
 
 def is_encryption_enabled() -> bool:
@@ -39,7 +40,7 @@ def _seal(aesgcm: AESGCM, plaintext: bytes) -> bytes:
 
 async def encrypt_stream(source: AsyncIterator[bytes], chunk_size: int = ENCRYPTION_CHUNK_SIZE) -> AsyncIterator[bytes]:
     aesgcm = AESGCM(_get_key())
-    yield ENCRYPTION_MAGIC + bytes([ENCRYPTION_FORMAT_VERSION]) + struct.pack(">I", chunk_size)
+    yield _HEADER.pack(ENCRYPTION_MAGIC, ENCRYPTION_FORMAT_VERSION, chunk_size)
     buffer = bytearray()
     async for data in source:
         buffer.extend(data)
@@ -76,11 +77,11 @@ async def decrypt_stream(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
     aesgcm = AESGCM(_get_key())
     reader = _StreamReader(source)
 
-    header = await reader.read_exact(9)
-    if header[:4] != ENCRYPTION_MAGIC:
-        raise ValueError(f"Invalid encryption magic: {header[:4]!r}")
-    if header[4] != ENCRYPTION_FORMAT_VERSION:
-        raise ValueError(f"Unsupported encryption version: {header[4]}")
+    magic, version, _chunk_size = _HEADER.unpack(await reader.read_exact(_HEADER.size))
+    if magic != ENCRYPTION_MAGIC:
+        raise ValueError(f"Invalid encryption magic: {magic!r}")
+    if version != ENCRYPTION_FORMAT_VERSION:
+        raise ValueError(f"Unsupported encryption version: {version}")
     # CHUNK_SIZE field is informational; per-chunk LEN drives reads.
 
     while True:
