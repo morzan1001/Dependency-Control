@@ -540,6 +540,17 @@ class TestAHangingRedisCannotStallTheLockedPath:
         assert result == {"v": 1}
 
     @pytest.mark.asyncio
+    async def test_a_hanging_connection_check_pauses_the_cache_and_fetches_directly(self, tcp_redis, monkeypatch):
+        monkeypatch.setattr(redis.Redis, "ping", _hang)
+        svc = CacheService()
+        try:
+            result = await asyncio.wait_for(svc.get_or_fetch_with_lock("k", self._fetch, _TTL), _GUARD)
+        finally:
+            await svc._client.aclose(close_connection_pool=True)
+
+        assert (result, svc._available) == ({"v": 1}, False)
+
+    @pytest.mark.asyncio
     async def test_a_wait_for_a_pooled_connection_ends_on_the_same_bound(self, tcp_redis):
         svc = CacheService()
         client = await svc.get_client()
