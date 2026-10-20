@@ -210,6 +210,8 @@ def _algorithm(name, primitive, **properties):
         (_algorithm("AES/ECB/PKCS5Padding", "block-cipher"), {"bsi-02102-ecb-mode"}),
         (_algorithm("AES", "block-cipher", parameterSetIdentifier="128", mode="ecb"), {"bsi-02102-ecb-mode"}),
         (_algorithm("AES", "block-cipher", parameterSetIdentifier="256", mode="gcm"), set()),
+        (_algorithm("DESede", "block-cipher"), {"nist-131a-3des-disallowed"}),
+        (_algorithm("DES-EDE3-CBC", "block-cipher"), {"nist-131a-3des-disallowed"}),
     ],
     ids=lambda value: value["name"] if isinstance(value, dict) else None,
 )

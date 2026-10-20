@@ -71,12 +71,16 @@ def name_matches(asset: CryptoAsset, patterns: list[str]) -> bool:
 _QUALIFIER = re.compile(r"\b(ec|ml|slh|fn|hashml|hashslh) +")
 # A post-quantum or hybrid name (X25519-MLKEM768) holds no classic family on its own.
 _POST_QUANTUM_FAMILIES = ("mlkem", "mldsa", "slhdsa", "fndsa", "hashmldsa", "hashslhdsa")
+# The JCA (DESede) and OpenSSL (DES-EDE3) names of three-key 3DES, which is not single DES.
+_TRIPLE_DES_TOKENS = {"desede", "ede3"}
 
 
 def _family_tokens(name: str) -> set[str]:
     tokens = set(_QUALIFIER.sub(r"\1", " ".join(re.split(r"[^a-z0-9]+|with", name))).split())
     if any(token.startswith(_POST_QUANTUM_FAMILIES) for token in tokens):
         return set()
+    if tokens & _TRIPLE_DES_TOKENS:
+        tokens = tokens - {"des"} | {"3des"}
     return tokens | {m.group(1) for token in tokens if (m := re.match(r"([a-z]+)\d", token))}
 
 
