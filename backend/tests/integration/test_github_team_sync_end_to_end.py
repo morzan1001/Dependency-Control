@@ -311,6 +311,31 @@ async def _assert_the_organisation_case_does_not_decide(db) -> None:
     assert team["members"] == [{"user_id": "u-1", "role": "admin", "source": _OWN}]
 
 
+async def _assert_a_renamed_organisation_brings_the_team_back_to_the_bound_path(db) -> None:
+    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com", "is_verified": True})
+    repo = TeamRepository(db)
+    await repo.create(_bound_team(_github(org="acme-old")))
+    service = _service()
+    org_reads, check_reads, member_reads, map_reads = _stubbed_reads(service)
+
+    with org_reads, check_reads, member_reads, map_reads:
+        result = await service.sync_team_from_github(db, "acme/widgets", current_owner_ids=set())
+
+    assert result == TeamSyncResult(["t-1"])
+    assert [team["_id"] for team in await repo.find_raw_by_github_org("gh-1", "acme")] == ["t-1"]
+
+
+@pytest.mark.asyncio
+async def test_a_renamed_organisation_brings_the_team_back_to_the_bound_path():
+    await _assert_a_renamed_organisation_brings_the_team_back_to_the_bound_path(FakeDatabase())
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_renamed_organisation_brings_the_team_back_to_the_bound_path_on_real_mongo(db):
+    await _assert_a_renamed_organisation_brings_the_team_back_to_the_bound_path(db)
+
+
 @pytest.mark.asyncio
 async def test_a_repository_lands_in_the_bound_team_with_its_admin():
     await _assert_the_admin_lands_in_the_bound_team(FakeDatabase())

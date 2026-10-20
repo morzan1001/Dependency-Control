@@ -382,6 +382,29 @@ class TestTeamMemberWrite:
 
         repo.update_with_binding.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_the_stored_organisation_follows_a_renamed_one(self):
+        """Bound teams are looked up by organisation, so a stale one would leave the team off that path for good."""
+        service = _service()
+        team = _bound("t-1", 4711)
+        team["bindings"][0]["org"] = "acme-old"
+        repo = _team_repo(team)
+
+        await service._refresh_team(repo, "acme", _HolderBinding(4711, "payments", team), team, None)
+
+        assert repo.update_with_binding.await_args.args[3] == {"org": "acme"}
+
+    @pytest.mark.asyncio
+    async def test_an_organisation_stored_in_another_case_is_not_rewritten(self):
+        service = _service()
+        team = _bound("t-1", 4711)
+        team["bindings"][0]["org"] = "Acme"
+        repo = _team_repo(team)
+
+        await service._refresh_team(repo, "acme", _HolderBinding(4711, "payments", team), team, None)
+
+        repo.update_with_binding.assert_not_called()
+
 
 class TestSyncTeamFromGithub:
     @pytest.mark.asyncio

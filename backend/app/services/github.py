@@ -492,13 +492,18 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
     ) -> None:
         """None team_members leaves members alone without blocking the rename, since few logins resolve."""
         binding = binding_of(team, self.instance_id) or {}
-        # The binding is the numeric team id, so a renamed slug has to follow it.
+        # The binding is the numeric team id, so a renamed slug or organisation has to follow it.
+        binding_fields: dict[str, Any] = {}
+        if binding.get("slug") != holder.slug:
+            binding_fields["slug"] = holder.slug
+        if str(binding.get("org") or "").casefold() != org.casefold():
+            binding_fields["org"] = org
         await self._write_team_refresh(
             team_repo,
             team,
             holder.team_id,
             self._renamed_fields(team, binding, org, holder.slug),
-            {"slug": holder.slug} if binding.get("slug") != holder.slug else {},
+            binding_fields,
             team_members,
         )
 
