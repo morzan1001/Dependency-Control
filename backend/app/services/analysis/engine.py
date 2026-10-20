@@ -238,17 +238,16 @@ async def process_analyzer(
 
 def _evaluate_crypto(
     docs: list[dict[str, Any]], policy: EffectivePolicy, catalog: dict[str, CipherSuiteEntry]
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, dict[str, Any] | Exception]:
     assets = [CryptoAsset.model_validate(d) for d in docs]
-    results: dict[str, dict[str, Any]] = {}
+    results: dict[str, dict[str, Any] | Exception] = {}
     for name, evaluate in crypto_evaluators(catalog).items():
         started = time.time()
         analysis_scans_total.labels(analyzer=name).inc()
         try:
             results[name] = evaluate(assets, policy)
         except Exception as e:
-            logger.exception("Analysis %s failed: %s", name, e)
-            results[name] = {"error": str(e), "findings": []}
+            results[name] = e
         analysis_duration_seconds.labels(analyzer=name).observe(time.time() - started)
     return results
 
@@ -270,8 +269,12 @@ async def _run_crypto_analyzers(ctx: _RunContext, aggregator: ResultAggregator) 
 
     outcomes: list[AnalyzerOutcome] = []
     for name, result in results.items():
-        keep = partial(_keep_result, ctx, aggregator, name, source=_CRYPTO_SOURCE)
-        outcomes.append(_account(ctx, aggregator, await record_result(name, result, keep)))
+        if isinstance(result, Exception):
+            outcome = AnalyzerOutcome.from_error(name, result)
+        else:
+            keep = partial(_keep_result, ctx, aggregator, name, source=_CRYPTO_SOURCE)
+            outcome = await record_result(name, result, keep)
+        outcomes.append(_account(ctx, aggregator, outcome))
     return outcomes
 
 

@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -218,6 +219,29 @@ async def test_a_crypto_result_that_cannot_be_stored_fails_its_analyzer_with_a_s
     assert _results_lines(sent) == [f"{name}: Failed" for name in names]
     scan_errors = {doc["finding_id"]: doc["description"] async for doc in db.findings.find({"scan_id": scan_id})}
     assert scan_errors == {f"SCAN-ERROR-{name}": f"Scanner '{name}' failed: row rejected" for name in names}
+
+
+async def test_a_failing_crypto_evaluator_is_logged_once_with_its_traceback(db, monkeypatch, sent, caplog):
+    from app.services.crypto_policy.seeder import seed_crypto_policies
+
+    await seed_crypto_policies(db)
+    real_evaluators = engine.crypto_evaluators
+
+    def _weak_key_broken(catalog):
+        def _raise(_assets, _policy):
+            raise RuntimeError("key table gone")
+
+        return {**real_evaluators(catalog), "crypto_weak_key": _raise}
+
+    monkeypatch.setattr(engine, "crypto_evaluators", _weak_key_broken)
+
+    with caplog.at_level(logging.WARNING, logger=engine.__name__):
+        scan_id = await _run(db, [], sboms=0, scan_type="cbom")
+
+    (report,) = [r for r in caplog.records if r.getMessage().startswith("Analysis crypto_weak_key ")]
+    assert report.exc_info is not None
+    scan_errors = {doc["finding_id"]: doc["description"] async for doc in db.findings.find({"scan_id": scan_id})}
+    assert scan_errors == {"SCAN-ERROR-crypto_weak_key": "Scanner 'crypto_weak_key' failed: key table gone"}
 
 
 async def _reachability_run(db, monkeypatch, apply_reachability: AsyncMock, callgraphs: list) -> str:
