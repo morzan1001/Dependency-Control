@@ -13,7 +13,7 @@ from gridfs.errors import NoFile
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.core import abatched
-from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
+from app.core.constants import ORPHAN_MIN_AGE_HOURS
 from app.db.mongodb import open_gridfs_download_with_retry
 from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 
@@ -96,7 +96,7 @@ async def _reap_orphan_chunks(db: Any, cutoff: datetime) -> None:
 
 
 async def reap_orphan_gridfs_files(db: Any) -> int:
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ORPHAN_MIN_AGE_HOURS)
     fs = AsyncIOMotorGridFSBucket(db)
     locks = DistributedLocksRepository(db)
     holder = new_lock_holder()

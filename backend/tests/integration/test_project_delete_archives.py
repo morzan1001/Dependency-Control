@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core import housekeeping
-from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
+from app.core.constants import ORPHAN_MIN_AGE_HOURS
 from app.core.housekeeping import _reap_orphan_s3_objects
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
@@ -27,7 +27,7 @@ async def test_project_delete_lets_the_reaper_remove_its_archive_bundles(client,
     await db.archive_metadata.insert_many(
         [_archive(_DELETED_PROJECT, "scan-archived"), _archive(_SURVIVING_PROJECT, "scan-kept")]
     )
-    old_enough = datetime.now(timezone.utc) - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS + 1)
+    old_enough = datetime.now(timezone.utc) - timedelta(hours=ORPHAN_MIN_AGE_HOURS + 1)
     bundles = [{"Key": meta["s3_key"], "LastModified": old_enough} async for meta in db.archive_metadata.find()]
     reaped: list[str] = []
 

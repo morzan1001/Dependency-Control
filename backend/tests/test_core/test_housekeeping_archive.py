@@ -626,7 +626,7 @@ async def test_reap_orphan_callgraphs_deletes_only_orphans_past_the_age_window()
     """The window protects callgraphs uploaded before their scan row exists; an inverted cutoff destroys them."""
     from datetime import datetime, timedelta, timezone
 
-    from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
+    from app.core.constants import ORPHAN_MIN_AGE_HOURS
     from app.core.housekeeping import _reap_orphan_callgraphs
     from tests.mocks.fake_mongo import FakeDatabase
 
@@ -638,13 +638,13 @@ async def test_reap_orphan_callgraphs_deletes_only_orphans_past_the_age_window()
             {
                 "_id": "cg-orphan-old",
                 "scan_id": "scan-missing",
-                "created_at": now - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS * 2),
+                "created_at": now - timedelta(hours=ORPHAN_MIN_AGE_HOURS * 2),
             },
             {"_id": "cg-orphan-fresh", "scan_id": "scan-arriving", "created_at": now - timedelta(minutes=1)},
             {
                 "_id": "cg-known-old",
                 "scan_id": "scan-known",
-                "created_at": now - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS * 2),
+                "created_at": now - timedelta(hours=ORPHAN_MIN_AGE_HOURS * 2),
             },
         ]
     )
@@ -661,7 +661,7 @@ async def test_reap_orphan_callgraphs_spares_a_fresh_upload_reusing_an_orphaned_
     """A retry uploading under an abandoned scan_id right now is still in flight and must survive the sweep."""
     from datetime import datetime, timedelta, timezone
 
-    from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
+    from app.core.constants import ORPHAN_MIN_AGE_HOURS
     from app.core.housekeeping import _reap_orphan_callgraphs
     from tests.mocks.fake_mongo import FakeDatabase
 
@@ -672,7 +672,7 @@ async def test_reap_orphan_callgraphs_spares_a_fresh_upload_reusing_an_orphaned_
             {
                 "_id": "cg-stale",
                 "scan_id": "scan-retried",
-                "created_at": now - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS * 2),
+                "created_at": now - timedelta(hours=ORPHAN_MIN_AGE_HOURS * 2),
             },
             {"_id": "cg-retry", "scan_id": "scan-retried", "created_at": now - timedelta(minutes=1)},
         ]

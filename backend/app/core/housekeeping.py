@@ -13,7 +13,7 @@ from app.core.cache import update_cache_stats
 from app.core.config import settings
 from app.core.constants import (
     ARCHIVE_BATCH_SIZE,
-    ARCHIVE_ORPHAN_MIN_AGE_HOURS,
+    ORPHAN_MIN_AGE_HOURS,
     ARCHIVE_RESTORE_LOCK_TEMPLATE,
     HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS,
     HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS,
@@ -83,7 +83,7 @@ async def _referenced_scan_ids(db: Any, scan_ids: list[str]) -> set[str]:
 
 async def _reap_orphan_callgraphs(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
     """Covers uploads whose scan never existed; the age window spares a callgraph that arrives before its scan."""
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ORPHAN_MIN_AGE_HOURS)
 
     async def _reap_batch(scan_ids: list[str]) -> int:
         candidates = set(scan_ids)
@@ -266,7 +266,7 @@ async def _reap_orphan_s3_objects(db: Any) -> int:
         if key:
             known_keys.add(key)
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ORPHAN_MIN_AGE_HOURS)
     deleted = 0
     for obj in all_objects:
         key = obj.get("Key")

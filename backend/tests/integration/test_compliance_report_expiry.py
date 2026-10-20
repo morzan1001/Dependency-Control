@@ -33,7 +33,7 @@ async def test_a_deleted_or_expired_report_artifact_is_reaped(client, db, owner_
 
     await remove(client, db, report.id, owner_auth_headers_proj)
     kept = await db["fs.files"].count_documents(artifact)
-    monkeypatch.setattr("app.services.gridfs_maintenance.ARCHIVE_ORPHAN_MIN_AGE_HOURS", -1)
+    monkeypatch.setattr("app.services.gridfs_maintenance.ORPHAN_MIN_AGE_HOURS", -1)
     await reap_orphan_gridfs_files(db)
 
     assert (await client.get(f"{_REPORTS}/{report.id}", headers=owner_auth_headers_proj)).status_code == 404

@@ -156,8 +156,8 @@ async def test_a_reaped_orphan_callgraph_frees_its_file_in_the_same_cycle(client
     assert resp.status_code == 200, resp.text
     graph_file = ObjectId((await db.callgraphs.find_one({"scan_id": _SCAN_ID}))["graph_gridfs_id"])
     monkeypatch.setattr("app.core.housekeeping.get_database", AsyncMock(return_value=db))
-    monkeypatch.setattr("app.core.housekeeping.ARCHIVE_ORPHAN_MIN_AGE_HOURS", -1)
-    monkeypatch.setattr("app.services.gridfs_maintenance.ARCHIVE_ORPHAN_MIN_AGE_HOURS", -1)
+    monkeypatch.setattr("app.core.housekeeping.ORPHAN_MIN_AGE_HOURS", -1)
+    monkeypatch.setattr("app.services.gridfs_maintenance.ORPHAN_MIN_AGE_HOURS", -1)
 
     await run_housekeeping()
 

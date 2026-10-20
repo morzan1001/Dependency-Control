@@ -960,7 +960,8 @@ RETENTION_PROTECTED_FLAG_VALUES: list[object] = [True, 1]
 # Scan ids per round trip of the release-flag reconcile; both directions splice one into an $in.
 RELEASE_FLAG_RECONCILE_BATCH_SIZE = 1000
 
-ARCHIVE_ORPHAN_MIN_AGE_HOURS = 24
+# Uploads precede the document that references them, so the S3, callgraph and GridFS reapers spare younger ones.
+ORPHAN_MIN_AGE_HOURS = 24
 
 ADHOC_JOB_TTL_SECONDS: int = 24 * 3600
 
