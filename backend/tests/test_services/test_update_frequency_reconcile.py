@@ -379,7 +379,6 @@ class TestOrphanDelta:
         doc = await _delta(db, "s2")
         assert doc is not None
         assert doc["prev_scan_id"] is None
-        assert doc["is_baseline"] is True
 
     @pytest.mark.asyncio
     async def test_a_delta_of_a_scan_that_lost_its_usable_status_is_removed(self, spy: list[str]):

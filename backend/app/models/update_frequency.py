@@ -29,7 +29,6 @@ class ScanUpdateDelta(MongoDocument):
     commit_hash: str | None = None
     prev_scan_id: str | None = None
     prev_created_at: datetime | None = None
-    is_baseline: bool = False
     # 0 marks an SBOM-less scan; such a scan is never chosen as a predecessor.
     dep_count: int = 0
     updates: UpdateCounts = Field(default_factory=UpdateCounts)
@@ -49,6 +48,3 @@ class ScanOutdatedSet(MongoDocument):
 
     id: PyObjectId = Field(..., validation_alias="_id", serialization_alias="_id")
     names: list[str] = Field(default_factory=list)
-    n: int = 0
-    scan_created_at: datetime
-    schema_version: int = UPDATE_DELTA_SCHEMA_VERSION
