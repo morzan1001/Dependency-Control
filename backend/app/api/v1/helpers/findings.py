@@ -11,7 +11,7 @@ TYPE_CATEGORY_MAP: dict[str, str] = {
     "outdated": "quality",
     "quality": "quality",
     # crypto_key_management comes from SAST rules but belongs with the other crypto findings.
-    **dict.fromkeys(sorted(CRYPTO_FINDING_TYPES), "other"),
+    **dict.fromkeys(sorted(CRYPTO_FINDING_TYPES), "crypto"),
     "system_warning": "other",
     "other": "other",
 }
@@ -33,6 +33,7 @@ def aggregate_stats_by_category(type_counts: list) -> dict[str, int]:
         "sast": 0,
         "compliance": 0,
         "quality": 0,
+        "crypto": 0,
         "other": 0,
     }
 

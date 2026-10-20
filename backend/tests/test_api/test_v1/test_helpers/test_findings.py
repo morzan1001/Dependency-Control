@@ -27,8 +27,11 @@ class TestGetCategoryTypeFilter:
         result = get_category_type_filter("quality")
         assert result == {"$in": ["outdated", "quality"]}
 
-    def test_other_selects_the_crypto_and_leftover_types(self):
-        assert get_category_type_filter("other") == {"$in": [*sorted(CRYPTO_FINDING_TYPES), "system_warning", "other"]}
+    def test_crypto_selects_every_crypto_type(self):
+        assert get_category_type_filter("crypto") == {"$in": sorted(CRYPTO_FINDING_TYPES)}
+
+    def test_other_selects_the_leftover_types(self):
+        assert get_category_type_filter("other") == {"$in": ["system_warning", "other"]}
 
     def test_unknown_returns_none(self):
         assert get_category_type_filter("nonexistent") is None
@@ -65,6 +68,9 @@ class TestGetCategoryForType:
 
     def test_quality(self):
         assert get_category_for_type("quality") == "quality"
+
+    def test_a_sast_rule_s_crypto_finding_is_crypto(self):
+        assert get_category_for_type("crypto_key_management") == "crypto"
 
     def test_unknown_returns_other(self):
         assert get_category_for_type("unknown_type") == "other"
@@ -103,6 +109,11 @@ class TestAggregateStatsByCategory:
     def test_empty_list(self):
         result = aggregate_stats_by_category([])
         assert all(v == 0 for v in result.values())
+
+    def test_crypto_findings_count_as_crypto(self):
+        type_counts = [{"_id": "crypto_weak_algorithm", "count": 4}, {"_id": "crypto_cert_expired", "count": 1}]
+        result = aggregate_stats_by_category(type_counts)
+        assert (result["crypto"], result["other"]) == (5, 0)
 
     def test_unknown_types_go_to_other(self):
         type_counts = [{"_id": "custom_type", "count": 7}]
