@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
+import { SEVERITY_CHART_COLORS, SEVERITY_ORDER, getSeverityBgColor } from '@/lib/finding-utils'
 
 type Rgb = [number, number, number]
 
@@ -19,6 +19,9 @@ function token(theme: string, name: string): Rgb {
   const channel = (n: number) => l / 100 - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1))
   return [channel(0), channel(8), channel(4)].map((v) => Math.round(v * 255)) as Rgb
 }
+
+const over = (top: Rgb, bottom: Rgb, alpha: number): Rgb =>
+  top.map((v, i) => Math.round(alpha * v + (1 - alpha) * bottom[i])) as Rgb
 
 const hex = (value: string): Rgb => [1, 3, 5].map((i) => Number.parseInt(value.slice(i, i + 2), 16)) as Rgb
 
@@ -59,6 +62,26 @@ describe('dark-theme severity colours', () => {
   it.each(severityTokens)('give the %s pill text a WCAG contrast of at least 4.5:1 on its fill', (name) => {
     expect(contrast(token(darkTheme, `severity-${name}`), token(darkTheme, `severity-${name}-foreground`))).toBeGreaterThanOrEqual(4.5)
   })
+})
+
+describe('dark-theme severity pill outline', () => {
+  const muted = token(darkTheme, 'muted')
+  const rows = [
+    ['selected', muted],
+    ['hovered', over(muted, token(darkTheme, 'background'), 0.5)],
+  ] as const
+
+  // The unknown fill equals the muted row highlight, so only an outline keeps the pill visible there.
+  it.each(SEVERITY_ORDER.flatMap((severity) => rows.map(([row, highlight]) => [severity, row, highlight] as const)))(
+    'sets the %s pill off a %s row at a WCAG non-text contrast of at least 3:1',
+    (severity, _row, highlight) => {
+      const outline = /(?:^| )dark:border-foreground\/(\d+)(?: |$)/.exec(getSeverityBgColor(severity))
+      expect(outline).not.toBeNull()
+      const fill = token(darkTheme, `severity-${severity.toLowerCase()}`)
+      const edge = over(token(darkTheme, 'foreground'), fill, Number(outline![1]) / 100)
+      expect(contrast(edge, highlight)).toBeGreaterThanOrEqual(3)
+    },
+  )
 })
 
 describe('negligible pill colour', () => {
