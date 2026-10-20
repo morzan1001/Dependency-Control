@@ -879,6 +879,14 @@ class TestOrgTeamCount:
         assert count is None
 
     @pytest.mark.asyncio
+    async def test_a_200_html_page_counts_none(self):
+        count, _ = await self._count(
+            httpx.Response(200, text="<html>Sign in</html>", headers={"content-type": "text/html"})
+        )
+
+        assert count is None
+
+    @pytest.mark.asyncio
     async def test_is_never_served_from_the_cache(self, fake_cache):
         """A connection test reporting a five-minute-old token state, in green, is worse than slow."""
         service = _service()

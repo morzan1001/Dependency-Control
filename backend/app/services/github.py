@@ -399,7 +399,10 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         page = urllib.parse.parse_qs(last.query).get("page", [""])[0]
         if page.isdigit():
             return int(page)
-        teams = response.json()
+        try:
+            teams = response.json()
+        except ValueError:
+            return None
         return len(teams) if isinstance(teams, list) else None
 
     async def get_team_members(self, org: str, team_slug: str, team_id: int) -> list[dict[str, Any]] | None:

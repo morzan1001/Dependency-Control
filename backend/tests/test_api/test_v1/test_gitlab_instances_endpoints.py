@@ -670,6 +670,13 @@ class TestTestConnection:
         assert "read_api" in result.message
         assert result.gitlab_version == "16.5.0"
 
+    def test_a_200_html_group_listing_reads_as_a_token_that_cannot_list_groups(self, admin_user):
+        html = httpx.Response(200, text="<html>Sign in</html>", headers={"content-type": "text/html"})
+        result, _ = self._probe(admin_user, group_page=html)
+
+        assert result.success is False
+        assert "read_api" in result.message
+
     def test_a_token_belonging_to_no_group_fails_a_team_syncing_instance(self, admin_user):
         result, _ = self._probe(admin_user, groups=[])
 

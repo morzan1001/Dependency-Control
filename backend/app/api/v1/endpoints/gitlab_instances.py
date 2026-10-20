@@ -172,7 +172,11 @@ async def _probe_group_access(
 ) -> GitLabInstanceTestConnectionResponse | str:
     """The token's visible groups are all team sync can resolve, so one that reads none must fail the test."""
     response = await gitlab_service._api_get("/groups", params={"per_page": 1})
-    if response is None or response.status_code != 200:
+    try:
+        groups = response.json() if response is not None and response.status_code == 200 else None
+    except ValueError:
+        groups = None
+    if response is None or not isinstance(groups, list):
         return _test_result(
             instance,
             success=False,
@@ -183,7 +187,7 @@ async def _probe_group_access(
                 "scope. Until then no repository on this instance gets a team."
             ),
         )
-    if not response.json():
+    if not groups:
         return _test_result(
             instance,
             success=False,
