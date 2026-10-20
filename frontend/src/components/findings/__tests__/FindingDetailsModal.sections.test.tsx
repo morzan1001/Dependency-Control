@@ -494,7 +494,7 @@ describe("FindingDetailsModal advisory description", () => {
       details: { vulnerabilities: [{ id: "CVE-2021-44228", severity: "CRITICAL", description: "### Impact\n\nRemote code execution." }] },
     }));
 
-    expect(screen.getByRole("heading", { level: 3, name: "Impact" })).toHaveClass("font-semibold");
+    expect(screen.getByRole("heading", { name: "Impact" })).toHaveClass("font-semibold");
     expect(screen.getByText("Remote code execution.")).not.toHaveClass("font-semibold");
   });
 
