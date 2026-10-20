@@ -59,6 +59,23 @@ class TestNormalizeOutdated:
         self.agg.aggregate("outdated_packages", result)
         assert len(self.agg.findings) == 2
 
+    def test_an_install_ahead_of_a_prerelease_default_keeps_the_stable_release_it_was_compared_against(self):
+        result = {
+            "ahead_of_default": [
+                {
+                    "component": "slf4j-api",
+                    "current_version": "2.0.18",
+                    "default_version": "2.1.0-alpha1",
+                    "latest_version": "2.0.17",
+                    "message": "Installed 2.0.18 is newer than the newest stable release 2.0.17 the registry lists.",
+                }
+            ]
+        }
+        self.agg.aggregate("outdated_packages", result)
+        [f] = self.agg.get_findings()
+        assert f.details["ahead_of_default"] is True
+        assert (f.details["default_version"], f.details.get("latest_version")) == ("2.1.0-alpha1", "2.0.17")
+
 
 class TestNormalizeEol:
     def setup_method(self):

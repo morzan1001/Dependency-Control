@@ -200,6 +200,7 @@ class EolDetails(_DetailsModel):
 class OutdatedDetails(_DetailsModel):
     fixed_version: str | None = None
     default_version: str | None = None
+    latest_version: str | None = None
     ahead_of_default: bool | None = None
     additional_finding_types: list[AdditionalFindingType] = []
     vulnerability_info: VulnerabilityContextInfo | None = None

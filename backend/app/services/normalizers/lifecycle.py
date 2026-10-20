@@ -40,6 +40,7 @@ def normalize_outdated(aggregator: "ResultAggregator", result: dict[str, Any], s
                 scanners=["outdated_packages"],
                 details=OutdatedDetails(
                     default_version=item.get("default_version"),
+                    latest_version=item.get("latest_version"),
                     ahead_of_default=True,
                 ).model_dump(exclude_none=True),
             ),
