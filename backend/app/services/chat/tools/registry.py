@@ -29,17 +29,14 @@ from app.core.constants import (
     ANALYTICS_MAX_SCOPE_PROJECTS,
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
-    RETENTION_ACTION_DELETE,
     SCAN_USABLE_STATUSES,
-    SETTINGS_MODE_GLOBAL,
-    SETTINGS_MODE_PROJECT,
     SEVERITY_ORDER,
     get_severity_value,
     max_severity,
 )
 from app.core.cve import ADVISORY_ID_FIELDS, advisory_id, advisory_ids, advisory_match, canonical_cve
 from app.core.cache import cache_service
-from app.core.housekeeping import resolve_rescan_interval
+from app.core.housekeeping import effective_retention, resolve_rescan_interval
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.core.purl import canonical_purl
@@ -564,12 +561,9 @@ class ChatToolRegistry:
     async def _tool_get_project_details(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
         system = await SystemSettingsRepository(ctx.db).get()
-        if system.retention_mode == SETTINGS_MODE_GLOBAL:
-            days, action, source = system.global_retention_days, system.global_retention_action, SETTINGS_MODE_GLOBAL
-        else:
-            days = project.get("retention_days") or 0
-            action = project.get("retention_action") or RETENTION_ACTION_DELETE
-            source = SETTINGS_MODE_PROJECT
+        days, action, source = effective_retention(
+            project.get("retention_days"), project.get("retention_action"), system
+        )
         license_entry = (project.get("analyzer_settings") or {}).get("license_compliance")
         return {
             "project": {

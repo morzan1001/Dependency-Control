@@ -34,6 +34,7 @@ from app.core.constants import (
     SCAN_USABLE_STATUSES,
     SCANS_TIP_SORT,
     SETTINGS_MODE_GLOBAL,
+    SETTINGS_MODE_PROJECT,
 )
 from app.core.metrics import (
     archive_housekeeping_batch_total,
@@ -129,6 +130,13 @@ def resolve_rescan_interval(project: Project, system_settings: Any) -> int | Non
     if not interval_hours or interval_hours <= 0:
         return None
     return interval_hours
+
+
+def effective_retention(days: int | None, action: str | None, system_settings: Any) -> tuple[int, str, str]:
+    """(days, action, source) housekeeping applies to a project storing ``days`` and ``action``."""
+    if system_settings.retention_mode == SETTINGS_MODE_GLOBAL:
+        return system_settings.global_retention_days, system_settings.global_retention_action, SETTINGS_MODE_GLOBAL
+    return days or 0, action or RETENTION_ACTION_DELETE, SETTINGS_MODE_PROJECT
 
 
 def _is_rescan_due(source_scan: dict, interval_hours: int) -> bool:
