@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.responses import RESP_413
 from app.api.v1.helpers.users import resolve_usernames
 from app.core.constants import (
     MAX_COMPLIANCE_REPORT_PAGE,
@@ -34,7 +35,7 @@ from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
 
-router = CustomAPIRouter(prefix="/compliance", tags=["compliance-reports"])
+router = CustomAPIRouter(prefix="/compliance", tags=["compliance-reports"], responses=RESP_413)
 
 _REPORT_NOT_FOUND = "Report not found"
 

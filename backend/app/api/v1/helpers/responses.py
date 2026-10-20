@@ -7,6 +7,7 @@ RESP_401: _Responses = {401: {"description": "Not authenticated"}}
 RESP_403: _Responses = {403: {"description": "Not enough permissions"}}
 RESP_404: _Responses = {404: {"description": "Resource not found"}}
 RESP_409: _Responses = {409: {"description": "Conflicting concurrent change"}}
+RESP_413: _Responses = {413: {"description": "Scope holds too many projects"}}
 RESP_500: _Responses = {500: {"description": "Internal server error"}}
 RESP_502: _Responses = {502: {"description": "Upstream provider did not answer"}}
 RESP_501: _Responses = {501: {"description": "Feature not configured"}}

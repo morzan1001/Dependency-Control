@@ -2,7 +2,7 @@ from fastapi import Query
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_403
+from app.api.v1.helpers.responses import RESP_403, RESP_413
 from app.core.constants import (
     DEFAULT_PQC_PLAN_ITEMS,
     MAX_PQC_PLAN_ITEMS,
@@ -14,7 +14,7 @@ from app.services.analytics.scopes import ScopeResolver
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 from app.services.pqc_migration.mappings_loader import CURRENT_MAPPINGS_VERSION
 
-router = CustomAPIRouter(prefix="/analytics/crypto", tags=["pqc-migration"])
+router = CustomAPIRouter(prefix="/analytics/crypto", tags=["pqc-migration"], responses=RESP_413)
 
 
 @router.get("/pqc-migration", responses=RESP_403)
