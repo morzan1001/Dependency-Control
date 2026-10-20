@@ -220,7 +220,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
     await database["scans"].create_index(SCANS_TIP_INDEX_KEY)
-    # _id serves the update-frequency walk's newest-first read, ordered like the delta ledger's chains.
+    # _id last, so a newest-first read breaks same-millisecond ties like the delta ledger without a blocking sort.
     await database["scans"].create_index(
         [
             ("project_id", pymongo.ASCENDING),
