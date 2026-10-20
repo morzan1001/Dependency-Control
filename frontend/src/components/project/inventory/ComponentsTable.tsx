@@ -105,7 +105,7 @@ export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableP
                   <TableCell className="font-medium">{item.name}</TableCell>
                   <TableCell className="font-mono text-xs">{item.version}</TableCell>
                   <TableCell className="font-mono text-xs">{item.latest_version ?? ''}</TableCell>
-                  <TableCell><Badge variant="secondary">{item.ecosystem}</Badge></TableCell>
+                  <TableCell><Badge variant="secondary" className="whitespace-nowrap">{item.ecosystem}</Badge></TableCell>
                   <TableCell>{item.license ?? <span className="text-muted-foreground">unknown</span>}</TableCell>
                   <TableCell>{item.direct && <Badge variant="outline">direct</Badge>}</TableCell>
                   <TableCell><LifecycleBadge item={item} /></TableCell>

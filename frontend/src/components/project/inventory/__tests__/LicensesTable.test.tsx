@@ -37,6 +37,13 @@ describe('LicensesTable', () => {
     expect(screen.getByText('12')).toBeInTheDocument()
   })
 
+  it('keeps a category badge on one line where the table narrows, as the delta change badges do', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getLicenses).mockResolvedValue(payload)
+    renderTable()
+
+    expect(await screen.findByText('strong copyleft')).toHaveClass('whitespace-nowrap')
+  })
+
   it('triggers a CSV download for the selected branch', async () => {
     vi.mocked(inventoryApiModule.inventoryApi.getLicenses).mockResolvedValue(payload)
     renderTable()

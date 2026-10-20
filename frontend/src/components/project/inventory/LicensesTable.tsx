@@ -26,7 +26,7 @@ const CATEGORY_CLASSES: Record<string, string> = {
 function CategoryBadge({ category }: { readonly category?: string | null }) {
   if (!category) return <span className="text-muted-foreground">—</span>
   return (
-    <Badge variant="secondary" className={CATEGORY_CLASSES[category] ?? ''}>
+    <Badge variant="secondary" className={`whitespace-nowrap ${CATEGORY_CLASSES[category] ?? ''}`}>
       {category.replaceAll('_', ' ')}
     </Badge>
   )

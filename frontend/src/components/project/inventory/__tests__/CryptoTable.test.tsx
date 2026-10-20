@@ -37,6 +37,13 @@ describe('CryptoTable', () => {
     expect(screen.getByText('3')).toBeInTheDocument()
   })
 
+  it('keeps an asset type badge on one line where the table narrows, as the delta change badges do', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getCrypto).mockResolvedValue(page)
+    renderTable()
+
+    expect(await screen.findByText('protocol')).toHaveClass('whitespace-nowrap')
+  })
+
   it('triggers a CSV download for the selected branch', async () => {
     vi.mocked(inventoryApiModule.inventoryApi.getCrypto).mockResolvedValue(page)
     renderTable()

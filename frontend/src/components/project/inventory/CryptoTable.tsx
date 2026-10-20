@@ -80,7 +80,7 @@ export function CryptoTable({ projectId, branch, cbomEvaluated }: Readonly<Crypt
               {!isPending && !isError && data?.items.map((item, index) => (
                 <TableRow key={`${item.name}-${item.asset_type}-${index}`}>
                   <TableCell className="font-medium">{item.name}</TableCell>
-                  <TableCell><Badge variant="secondary">{item.asset_type}</Badge></TableCell>
+                  <TableCell><Badge variant="secondary" className="whitespace-nowrap">{item.asset_type}</Badge></TableCell>
                   <TableCell>{item.primitive}</TableCell>
                   <TableCell className="font-mono text-xs">{item.variant}</TableCell>
                   <TableCell>{item.key_size_bits ?? ''}</TableCell>

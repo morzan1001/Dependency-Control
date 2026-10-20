@@ -40,6 +40,14 @@ describe('ComponentsTable', () => {
     expect(screen.getByText('4.17.21')).toBeInTheDocument()
   })
 
+  it('keeps an ecosystem badge on one line where the table narrows, as the delta change badges do', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getComponents).mockResolvedValue(page)
+    renderTable()
+
+    const [ecosystem] = await screen.findAllByText('npm')
+    expect(ecosystem).toHaveClass('whitespace-nowrap')
+  })
+
   it('triggers a CSV download for the selected branch', async () => {
     vi.mocked(inventoryApiModule.inventoryApi.getComponents).mockResolvedValue(page)
     renderTable()
