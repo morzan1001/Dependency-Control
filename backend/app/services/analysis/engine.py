@@ -920,14 +920,13 @@ async def run_analysis(
 
     # Before the SBOM loop: an embedded CBOM re-persists over the carried copy of the same asset.
     await _carry_over_external_results(scan_id, scan_doc, db)
-    outcomes: list[AnalyzerOutcome] = []
+    carry_over_error: Exception | None = None
     try:
         await _carry_over_crypto_assets(scan_id, scan_doc, db)
     except Exception as e:
-        outcomes = _crypto_analyzers_failed(ctx, aggregator, e)
+        carry_over_error = e
 
-    payload, sbom_load_failures, sbom_outcomes = await _analyse_sboms(ctx, fs, stored_ids, aggregator)
-    outcomes.extend(sbom_outcomes)
+    payload, sbom_load_failures, outcomes = await _analyse_sboms(ctx, fs, stored_ids, aggregator)
     sbom_parse_failures = payload.count(None) - sbom_load_failures
 
     # A rescan has no stored inventory to fall back on, so a partial payload would leave it without one.
@@ -958,6 +957,8 @@ async def run_analysis(
 
     if scan_doc.scan_type == SCAN_TYPE_CBOM or any(p is not None and p.crypto_assets for p in payload):
         outcomes.extend(await _run_crypto_analyzers(ctx, aggregator))
+        if carry_over_error is not None:
+            outcomes.extend(_crypto_analyzers_failed(ctx, aggregator, carry_over_error))
 
     if not await _still_claimed(ctx):
         return None

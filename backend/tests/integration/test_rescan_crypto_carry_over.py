@@ -110,17 +110,25 @@ async def test_rescan_keeps_the_ingested_crypto_assets(db):
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_a_failed_carry_over_fails_the_crypto_analyzers_instead_of_grading_no_assets(db, monkeypatch):
+@pytest.mark.parametrize(
+    ("scan_type", "status", "failed"),
+    [
+        pytest.param("cbom", SCAN_STATUS_COMPLETED_WITH_ERRORS, sorted(CRYPTO_ANALYZERS), id="crypto-graded"),
+        pytest.param(None, SCAN_STATUS_COMPLETED, None, id="no-crypto-graded"),
+    ],
+)
+async def test_a_failed_carry_over_fails_the_crypto_analyzers_that_grade_the_rescan(
+    db, monkeypatch, scan_type, status, failed
+):
     await seed_crypto_policies(db)
-    _, rescan_id = await _seed_lineage(db, scan_type="cbom")
+    _, rescan_id = await _seed_lineage(db, scan_type=scan_type)
     monkeypatch.setattr(
         CryptoAssetRepository, "carry_over_to_scan", AsyncMock(side_effect=AutoReconnect("primary stepped down"))
     )
 
-    status = await analyse_scan(db, rescan_id, [sbom_ref(_FILE_ID)], _NO_ANALYZERS, worker_id=_WORKER)
+    assert await analyse_scan(db, rescan_id, [sbom_ref(_FILE_ID)], _NO_ANALYZERS, worker_id=_WORKER) == status
 
-    assert status == SCAN_STATUS_COMPLETED_WITH_ERRORS
-    assert (await db.scans.find_one({"_id": rescan_id}))["failed_analyzers"] == sorted(CRYPTO_ANALYZERS)
+    assert (await db.scans.find_one({"_id": rescan_id}))["failed_analyzers"] == failed
 
 
 async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], list[str]]:
