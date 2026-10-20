@@ -145,19 +145,6 @@ class AnalysisWorkerManager:
             await asyncio.wait(background, timeout=3)
             logger.info("Background tasks cancelled.")
 
-    def _drain_queue(self) -> None:
-        queue_size = self.queue.qsize()
-        if queue_size == 0:
-            return
-
-        logger.info(f"Dropping {queue_size} queued items; they stay pending in the DB for the stale loop of any pod.")
-        while not self.queue.empty():
-            try:
-                self.queue.get_nowait()
-                self.queue.task_done()
-            except asyncio.QueueEmpty:
-                break
-
     def _track_scan(self, scan_id: str) -> None:
         self._active_scans.add(scan_id)
         self._no_active_scans.clear()
@@ -197,8 +184,6 @@ class AnalysisWorkerManager:
         self._shutting_down = True
 
         await self._stop_background_tasks()
-
-        self._drain_queue()
 
         await self._await_active_scans()
 
