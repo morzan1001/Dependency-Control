@@ -376,7 +376,7 @@ async def vuln_details_by(
     }
 
 
-def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> list[dict[str, Any]]:
+def cross_project_package_pipeline(scan_ids: list[str], min_projects: int, viewed_scan_id: str) -> list[dict[str, Any]]:
     """Grouped in Mongo because a per-scan sample of the packages cannot produce a version count per package."""
     return [
         {MONGO_MATCH: {"scan_id": {"$in": scan_ids}}},
@@ -400,22 +400,23 @@ def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> li
                 "type": "$_id.type",
                 "versions": 1,
                 "version_count": {"$size": "$versions"},
-                # One head scan per compared project, so distinct scans count the projects.
-                "project_count": {
-                    "$size": {
-                        "$reduce": {
-                            "input": "$scan_ids",
-                            "initialValue": [],
-                            "in": {"$setUnion": ["$$value", "$$this"]},
-                        }
-                    }
+                "scan_ids": {
+                    "$reduce": {"input": "$scan_ids", "initialValue": [], "in": {"$setUnion": ["$$value", "$$this"]}}
                 },
                 "least_shared": 1,
             }
         },
+        # One head scan per compared project, so distinct scans count the projects.
+        {"$addFields": {"project_count": {"$size": "$scan_ids"}}},
         # Projects holding the same version set (nested copies included) agree; a version some project lacks differs.
-        {MONGO_MATCH: {"project_count": {"$gte": min_projects}, "$expr": {"$lt": ["$least_shared", "$project_count"]}}},
-        {"$unset": "least_shared"},
+        {
+            MONGO_MATCH: {
+                "scan_ids": viewed_scan_id,
+                "project_count": {"$gte": min_projects},
+                "$expr": {"$lt": ["$least_shared", "$project_count"]},
+            }
+        },
+        {"$unset": ["least_shared", "scan_ids"]},
         *case_insensitive_sort([("version_count", -1), ("name", 1)], {"name"}),
     ]
 
@@ -433,6 +434,7 @@ async def gather_cross_project_data(
     dep_repo = DependencyRepository(db)
 
     cross_project_data: dict[str, Any] = {
+        "current_project_id": current_project_id,
         "projects": [],
         "shared_packages": [],
         "total_projects": len(user_projects),
@@ -452,9 +454,10 @@ async def gather_cross_project_data(
     details_by_scan = await vuln_details_by(finding_repo, {"scan_id": {"$in": scan_ids}}, "scan_id")
     scan_cves_map = {scan_id: live_cves(details) for (scan_id,), details in details_by_scan.items()}
 
-    cross_project_data["shared_packages"] = await dep_repo.aggregate(
-        cross_project_package_pipeline(scan_ids, CROSS_PROJECT_MIN_OCCURRENCES)
-    )
+    if viewed_scan_id := head_scan_ids.get(current_project_id):
+        cross_project_data["shared_packages"] = await dep_repo.aggregate(
+            cross_project_package_pipeline(scan_ids, CROSS_PROJECT_MIN_OCCURRENCES, viewed_scan_id)
+        )
 
     for project in compared:
         if not (scan_id := head_scan_ids.get(project.id)):

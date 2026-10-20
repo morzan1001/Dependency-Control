@@ -175,20 +175,25 @@ def analyze_cross_project_patterns(cross_project_data: dict[str, Any]) -> list[R
         if compared < total_projects
         else f"compared across all {total_projects} of your projects"
     )
+    viewed_cves = {
+        cve for p in projects if p["project_id"] == cross_project_data["current_project_id"] for cve in p["cves"]
+    }
     cards = (
-        _shared_vulnerability_card(projects, scope_note),
+        _shared_vulnerability_card(projects, viewed_cves, scope_note),
         _version_inconsistency_card(cross_project_data["shared_packages"], scope_note),
         _most_affected_projects_card(projects),
     )
     return [card for card in cards if card is not None]
 
 
-def _shared_vulnerability_card(projects: list[dict[str, Any]], scope_note: str) -> Recommendation | None:
+def _shared_vulnerability_card(
+    projects: list[dict[str, Any]], viewed_cves: set[str], scope_note: str
+) -> Recommendation | None:
     widespread_cves = sorted(
         (
             (cve, proj_list)
             for cve, proj_list in _build_cve_project_map(projects).items()
-            if len(proj_list) >= CROSS_PROJECT_MIN_OCCURRENCES
+            if cve in viewed_cves and len(proj_list) >= CROSS_PROJECT_MIN_OCCURRENCES
         ),
         key=lambda c: len(c[1]),
         reverse=True,
@@ -201,7 +206,8 @@ def _shared_vulnerability_card(projects: list[dict[str, Any]], scope_note: str) 
         priority=Priority.HIGH if len(widespread_cves) > _SHARED_CVES_HIGH_PRIORITY else Priority.MEDIUM,
         title=f"{len(widespread_cves)} vulnerabilities affect multiple projects",
         description=(
-            f"These CVEs appear in {CROSS_PROJECT_MIN_OCCURRENCES} or more of your projects, {scope_note}. "
+            f"These CVEs of this project appear in {CROSS_PROJECT_MIN_OCCURRENCES} or more of your projects, "
+            f"{scope_note}. "
             "Fixing them once (e.g., in a shared package or template) "
             "could benefit all affected projects."
         ),
@@ -241,7 +247,7 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
         priority=Priority.LOW,
         title=f"Version inconsistency across {len(inconsistent_packages)} shared packages",
         description=(
-            f"These packages are used across multiple projects but with "
+            f"These packages of this project are used across multiple projects but with "
             f"different versions, {scope_note}. Standardizing versions can simplify "
             "maintenance and reduce security gaps."
         ),

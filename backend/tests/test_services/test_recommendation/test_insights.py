@@ -60,8 +60,9 @@ def _quality_finding(
     }
 
 
-def _cross_project_data(projects, total_projects=None, shared_packages=None):
+def _cross_project_data(projects, total_projects=None, shared_packages=None, current_project_id="p1"):
     return {
+        "current_project_id": current_project_id,
         "projects": projects,
         "shared_packages": shared_packages or [],
         "total_projects": total_projects or len(projects),
@@ -241,6 +242,35 @@ class TestAnalyzeCrossProjectPatternsSharedVuln:
         # The per-project CVE lists carry no severity to break the count down by.
         assert shared_recs[0].impact == {"total": 1}
 
+    def test_only_cves_the_viewed_project_has_are_listed(self):
+        data = _cross_project_data(
+            [
+                _project(project_id="current", project_name="Current", cves=["CVE-2024-001"]),
+                _project(project_id="p1", project_name="App1", cves=["CVE-2024-001", "CVE-2024-002"]),
+                _project(project_id="p2", project_name="App2", cves=["CVE-2024-001", "CVE-2024-002"]),
+            ],
+            current_project_id="current",
+        )
+
+        [card] = [r for r in analyze_cross_project_patterns(data) if r.type == RecommendationType.SHARED_VULNERABILITY]
+
+        assert [c["cve"] for c in card.action["cves"]] == ["CVE-2024-001"]
+        assert card.impact == {"total": 1}
+
+    def test_no_card_when_the_viewed_project_shares_no_cve(self):
+        data = _cross_project_data(
+            [
+                _project(project_id="current", project_name="Current"),
+                _project(project_id="p1", project_name="App1", cves=["CVE-2024-002"]),
+                _project(project_id="p2", project_name="App2", cves=["CVE-2024-002"]),
+            ],
+            current_project_id="current",
+        )
+
+        assert not [
+            r for r in analyze_cross_project_patterns(data) if r.type == RecommendationType.SHARED_VULNERABILITY
+        ]
+
 
 class TestAnalyzeCrossProjectPatternsInconsistentVersions:
     def test_inconsistent_versions_produces_recommendation(self):
@@ -288,6 +318,15 @@ class TestAnalyzeCrossProjectPatternsInconsistentVersions:
             "foo (npm): 2 versions across 2 projects",
             "foo (pypi): 2 versions across 2 projects",
         ]
+
+    def test_the_text_says_the_packages_are_the_viewed_projects(self):
+        data = _cross_project_data(
+            [_project(project_id="p1"), _project(project_id="p2")], shared_packages=[_shared_package()]
+        )
+
+        [card] = [r for r in analyze_cross_project_patterns(data) if r.type == RecommendationType.CROSS_PROJECT_PATTERN]
+
+        assert card.description.startswith("These packages of this project are used across multiple projects")
 
 
 class TestAnalyzeCrossProjectPatternsPrioritizeProjects:
@@ -358,7 +397,7 @@ class TestCrossProjectCardsStateTheirOwnNumbers:
         ]
 
         assert shared.description.startswith(
-            "These CVEs appear in 2 or more of your projects, compared across all 2 of your projects."
+            "These CVEs of this project appear in 2 or more of your projects, compared across all 2 of your projects."
         )
 
     def test_the_most_affected_card_books_no_other_projects_findings_as_its_impact(self):

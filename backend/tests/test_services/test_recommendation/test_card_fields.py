@@ -355,7 +355,7 @@ def _cross_project_cards():
         for i in range(_CROWD)
     ]
     return insights.analyze_cross_project_patterns(
-        {"projects": projects, "shared_packages": shared, "total_projects": 6}
+        {"current_project_id": "p0", "projects": projects, "shared_packages": shared, "total_projects": 6}
     )
 
 
