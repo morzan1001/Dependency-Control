@@ -299,7 +299,7 @@ def _outdated(*installs):
     outdated, ahead = [], []
     for name, version, default in installs:
         component = {"name": name, "version": version, "purl": f"pkg:npm/{name}@{version}"}
-        analyzer._classify_version(component, default, outdated, ahead)
+        analyzer._classify_version(component, {"default": default, "stable": default}, outdated, ahead)
     aggregator = ResultAggregator()
     aggregator.aggregate("outdated_packages", {"outdated_dependencies": outdated, "ahead_of_default": ahead})
     return [f.model_dump() for f in aggregator.get_findings()]

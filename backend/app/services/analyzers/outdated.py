@@ -87,7 +87,7 @@ class OutdatedAnalyzer(Analyzer):
             if isinstance(info, BaseException):
                 failed.append(component.get("name", ""))
             elif info and info.get("default"):
-                self._classify_version(component, self._latest_for(component, info), outdated, ahead)
+                self._classify_version(component, info, outdated, ahead)
 
         result: dict[str, Any] = {"outdated_dependencies": outdated, "ahead_of_default": ahead}
         if failed:
@@ -133,10 +133,12 @@ class OutdatedAnalyzer(Analyzer):
     def _classify_version(
         self,
         component: dict[str, Any],
-        latest_version: str,
+        info: dict[str, Any],
         outdated: list[dict[str, Any]],
         ahead: list[dict[str, Any]],
     ) -> None:
+        latest_version = self._latest_for(component, info)
+        default_version = str(info["default"])
         name = component.get("name", "")
         version = component.get("version", "")
         purl = component.get("purl", "")
@@ -153,17 +155,19 @@ class OutdatedAnalyzer(Analyzer):
                 }
             )
         elif _is_ahead_of(version, latest_version):
+            compared = (
+                f"the registry default {latest_version}. The registry may not have flagged this release as default yet."
+                if latest_version == default_version
+                else f"the newest stable release {latest_version} the registry lists."
+            )
             ahead.append(
                 {
                     "component": name,
                     "current_version": version,
-                    "default_version": latest_version,
+                    "default_version": default_version,
+                    "latest_version": latest_version,
                     "purl": purl,
                     "severity": Severity.INFO.value,
-                    "message": (
-                        f"Installed {version} is newer than the registry default "
-                        f"{latest_version}. The registry may not have flagged this "
-                        f"release as default yet."
-                    ),
+                    "message": f"Installed {version} is newer than {compared}",
                 }
             )

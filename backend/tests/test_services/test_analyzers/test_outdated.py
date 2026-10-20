@@ -171,6 +171,27 @@ class TestPrereleaseDefault:
         assert result == {"outdated_dependencies": [], "ahead_of_default": []}
 
     @pytest.mark.asyncio
+    async def test_a_stable_install_ahead_of_the_newest_stable_release_names_that_release(
+        self, fake_cache, monkeypatch
+    ) -> None:
+        result = await self._classify(fake_cache, monkeypatch, _SLF4J, "2.0.18")
+
+        [ahead] = result["ahead_of_default"]
+        assert (ahead["default_version"], ahead["latest_version"]) == ("2.1.0-alpha1", "2.0.17")
+        assert ahead["message"].startswith("Installed 2.0.18 is newer than the newest stable release 2.0.17")
+        assert "registry default" not in ahead["message"]
+
+    @pytest.mark.asyncio
+    async def test_an_install_ahead_of_a_stable_default_names_the_registry_default(
+        self, fake_cache, monkeypatch
+    ) -> None:
+        result = await self._classify(fake_cache, monkeypatch, [_v("2.0.17", default=True)], "2.0.18")
+
+        [ahead] = result["ahead_of_default"]
+        assert (ahead["default_version"], ahead["latest_version"]) == ("2.0.17", "2.0.17")
+        assert ahead["message"].startswith("Installed 2.0.18 is newer than the registry default 2.0.17.")
+
+    @pytest.mark.asyncio
     async def test_a_prerelease_install_compares_against_the_default(self, fake_cache, monkeypatch) -> None:
         result = await self._classify(fake_cache, monkeypatch, _SLF4J, "2.1.0-alpha0")
 
