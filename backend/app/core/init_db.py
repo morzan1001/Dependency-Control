@@ -239,7 +239,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         ]
     )
     await database["scans"].create_index([("status", pymongo.ASCENDING), ("analysis_started_at", pymongo.ASCENDING)])
-    await database["scans"].create_index("original_scan_id")
+    # A lineage's history pages its rescans newest first straight off this key.
+    await database["scans"].create_index([("original_scan_id", pymongo.ASCENDING), *SCANS_TIP_SORT])
     await database["scans"].create_index("latest_rescan_id")
 
     await database["scans"].create_index(

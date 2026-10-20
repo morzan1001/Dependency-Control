@@ -74,7 +74,7 @@ from app.models.system import SystemSettings
 from app.models.user import User
 from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
 from app.repositories.archive_metadata import ArchiveMetadataRepository
-from app.repositories.base import and_filters
+from app.repositories.base import and_filters, find_window
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.findings import FindingRepository
@@ -791,14 +791,15 @@ async def read_scan_history(
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
     root_id = scan.get("original_scan_id") or scan_id
-    lineage: dict[str, Any] = {
-        "project_id": project_id,
-        "$or": [{"_id": root_id}, {"original_scan_id": root_id}],
-    }
-
+    rescans, rescan_count = await find_window(
+        scan_repo.collection, {"original_scan_id": root_id}, _SCAN_HISTORY_PAGE_SIZE, sort=SCANS_TIP_SORT
+    )
+    root = scan if root_id == scan_id else await scan_repo.find_one({"_id": root_id})
+    # Every rescan is created after the build it re-analyses, so the original sorts last.
+    runs = [*rescans, *([root] if root else [])][:_SCAN_HISTORY_PAGE_SIZE]
     return ScanHistoryResponse(
-        runs=await scan_repo.find_many(lineage, sort=[("created_at", -1)], limit=_SCAN_HISTORY_PAGE_SIZE),
-        total=await scan_repo.count(lineage),
+        runs=[Scan(**doc) for doc in runs],
+        total=rescan_count + bool(root),
         page_size=_SCAN_HISTORY_PAGE_SIZE,
     )
 
