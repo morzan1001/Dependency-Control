@@ -12,18 +12,7 @@ from app.repositories.findings import FindingRepository
 from app.schemas.inventory import ComponentItem
 from app.services.aggregation.cross_link import is_ahead_of_default
 
-COMPONENT_COLUMNS = [
-    "name",
-    "version",
-    "latest_version",
-    "ecosystem",
-    "license",
-    "license_category",
-    "direct",
-    "eol",
-    "outdated",
-    "purl",
-]
+COMPONENT_COLUMNS = list(ComponentItem.model_fields)
 
 TEXT_SORT_FIELDS = frozenset({"name", "version", "type", "license"})
 _SORT_FIELDS = {*TEXT_SORT_FIELDS, "direct"}
