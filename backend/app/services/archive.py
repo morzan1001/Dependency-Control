@@ -95,7 +95,7 @@ _RESTORABLE_COLLECTIONS = frozenset({*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FR
 
 
 class _ArchiveSourceReadError(Exception):
-    """Aborts the upload so housekeeping, which deletes only archived scans, cannot lose an unread document."""
+    """A source read failed; counted as INTEGRITY, not S3_ERROR."""
 
 
 class RestoreFailed(Exception):
@@ -133,21 +133,27 @@ def _strip_license_parameters(collection: str, doc: dict[str, Any]) -> None:
 async def _hash_plaintext_secrets_in(
     collection: str, docs: AsyncIterator[dict[str, Any]]
 ) -> AsyncIterator[dict[str, Any]]:
-    async for doc in docs:
-        _hash_plaintext_secrets(collection, doc)
-        yield doc
+    try:
+        async for doc in docs:
+            _hash_plaintext_secrets(collection, doc)
+            yield doc
+    except PyMongoError as e:
+        raise _ArchiveSourceReadError(str(e)) from e
 
 
 async def _stream_gridfs_chunks(db: Any, scan_doc: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
     """Each file opens with an n=0 frame, even when empty."""
     scan_id = scan_doc["_id"]
-    file_ids = dict.fromkeys(
-        [
-            *extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", [])),
-            *await db.analysis_results.distinct("result_gridfs_id", {"scan_id": scan_id}),
-            *await db.callgraphs.distinct("graph_gridfs_id", {"scan_id": scan_id}),
-        ]
-    )
+    try:
+        file_ids = dict.fromkeys(
+            [
+                *extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", [])),
+                *await db.analysis_results.distinct("result_gridfs_id", {"scan_id": scan_id}),
+                *await db.callgraphs.distinct("graph_gridfs_id", {"scan_id": scan_id}),
+            ]
+        )
+    except PyMongoError as e:
+        raise _ArchiveSourceReadError(str(e)) from e
     for gid in file_ids:
         try:
             file_id = ObjectId(gid)

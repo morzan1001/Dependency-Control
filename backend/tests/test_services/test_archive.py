@@ -1178,3 +1178,33 @@ async def test_decompress_hands_out_a_highly_compressed_chunk_in_pieces_of_at_mo
 
     assert b"".join(pieces) == plaintext
     assert max(map(len, pieces)) <= 1 << 20
+
+
+class _CursorDyingAfterOneDoc(_AsyncCursorMock):
+    def __aiter__(self):
+        async def _gen():
+            yield self._docs[0]
+            raise AutoReconnect("primary stepped down")
+
+        return _gen()
+
+
+def _findings_cursor_dies(db: MagicMock) -> None:
+    db.findings.find = MagicMock(return_value=_CursorDyingAfterOneDoc([{"_id": "f1", "scan_id": "scan-1"}]))
+
+
+def _gridfs_id_lookup_dies(db: MagicMock) -> None:
+    db.analysis_results.distinct = AsyncMock(side_effect=AutoReconnect("primary stepped down"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("break_source", [_findings_cursor_dies, _gridfs_id_lookup_dies], ids=["cursor", "distinct"])
+async def test_an_archive_whose_source_read_fails_counts_as_integrity_not_s3(archive_env, break_source):
+    db = _make_mock_db(scan_doc=_make_scan_doc())
+    break_source(db)
+
+    with _patch_repos()(), patch(f"{MODULE}.count_archive_failure") as count_failure:
+        assert await archive_scan(db, "scan-1") is None
+
+    count_failure.assert_called_once_with("archive", "integrity")
+    assert archive_env.objects == {}
