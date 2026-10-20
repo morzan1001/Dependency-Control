@@ -108,7 +108,7 @@ _BOUNDED_LISTS = (
     "references",
 )
 _MAX_LIST_ITEMS = 50
-# Scan-time matching costs assets x rules on the event loop; the seed set is 28 rules.
+# Scan-time matching costs assets x rules on the event loop; the seed set is 29 rules.
 _MAX_RULES = 200
 
 

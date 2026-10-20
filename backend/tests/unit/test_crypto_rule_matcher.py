@@ -202,10 +202,43 @@ def _algorithm(name, primitive, **properties):
         (_algorithm("FN_DSA_512", "signature"), set()),
         (_algorithm("X25519-MLKEM768", "kem"), set()),
         (_algorithm("AES-256-GCM", "ae"), set()),
+        (_algorithm("Ed25519", "signature"), {"pqc-quantum-vulnerable-pke"}),
+        (_algorithm("EdDSA", "signature"), {"pqc-quantum-vulnerable-pke"}),
+        (_algorithm("Ed448", "signature"), {"pqc-quantum-vulnerable-pke"}),
+        (_algorithm("SHA256-RSA", "signature", parameterSetIdentifier="256"), {"pqc-quantum-vulnerable-pke"}),
+        (_algorithm("AES-128-ECB", "block-cipher", parameterSetIdentifier="128"), {"bsi-02102-ecb-mode"}),
+        (_algorithm("AES/ECB/PKCS5Padding", "block-cipher"), {"bsi-02102-ecb-mode"}),
+        (_algorithm("AES", "block-cipher", parameterSetIdentifier="128", mode="ecb"), {"bsi-02102-ecb-mode"}),
+        (_algorithm("AES", "block-cipher", parameterSetIdentifier="256", mode="gcm"), set()),
     ],
     ids=lambda value: value["name"] if isinstance(value, dict) else None,
 )
 def test_seeded_rules_match_full_cyclonedx_algorithm_names(component, expected):
+    assert _seeded_rule_ids_matching(component) == expected
+
+
+def _key_material(name, size):
+    return {
+        "type": "cryptographic-asset",
+        "bom-ref": f"crypto/key/{name}",
+        "name": name,
+        "cryptoProperties": {
+            "assetType": "related-crypto-material",
+            "relatedCryptoMaterialProperties": {"type": "public-key", "size": size},
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("component", "expected"),
+    [
+        (_key_material("RSA-1024", 1024), {"nist-131a-rsa-min-2048"}),
+        (_key_material("RSA-2048", 2048), set()),
+        (_key_material("AES-64", 64), {"nist-131a-aes-min-128"}),
+    ],
+    ids=lambda value: value["name"] if isinstance(value, dict) else None,
+)
+def test_key_material_is_judged_by_its_name_since_cyclonedx_gives_it_no_primitive(component, expected):
     assert _seeded_rule_ids_matching(component) == expected
 
 

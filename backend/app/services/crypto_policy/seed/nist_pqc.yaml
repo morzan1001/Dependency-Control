@@ -4,12 +4,13 @@ rules:
   - rule_id: pqc-quantum-vulnerable-pke
     name: Public-key algorithm is vulnerable to Shor's algorithm
     description: >
-      RSA, DSA, DH, ECDH, ECDSA, and ECC-based key-exchange algorithms are
+      RSA, DSA, DH, ECDH, ECDSA, EdDSA, and ECC-based key-exchange algorithms are
       vulnerable to a cryptographically-relevant quantum computer. NIST
       recommends migration to ML-KEM, ML-DSA, and SLH-DSA by 2035.
     finding_type: crypto_quantum_vulnerable
     default_severity: MEDIUM
-    match_name_patterns: ["RSA", "DSA", "ECDSA", "ECDH", "ECDHE", "X25519", "X448", "DH", "Diffie-Hellman", "EC-DSA"]
+    match_name_patterns:
+      ["RSA", "DSA", "ECDSA", "ECDH", "ECDHE", "X25519", "X448", "DH", "Diffie-Hellman", "EC-DSA", "EdDSA", "Ed25519", "Ed448"]
     quantum_vulnerable: true
     source: nist-pqc
     references:

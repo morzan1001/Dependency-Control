@@ -2,7 +2,7 @@ import re
 from fnmatch import fnmatchcase
 
 from app.models.crypto_asset import CryptoAsset
-from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES
+from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES, CryptoAssetType
 from app.schemas.crypto_policy import CryptoRule
 
 
@@ -24,7 +24,12 @@ def asset_in_rule_scope(asset: CryptoAsset, rule: CryptoRule) -> bool:
     if not (rule.match_primitive or rule.match_name_patterns or rule.match_curves or rule.match_protocol_versions):
         return False
 
-    if rule.match_primitive is not None and asset.primitive != rule.match_primitive:
+    # CycloneDX gives key material no primitive, so only its name ties it to an algorithm (RSA-1024).
+    if (
+        rule.match_primitive is not None
+        and asset.primitive != rule.match_primitive
+        and asset.asset_type != CryptoAssetType.RELATED_CRYPTO_MATERIAL
+    ):
         return False
 
     if rule.match_name_patterns and not name_matches(asset, rule.match_name_patterns):
@@ -47,6 +52,9 @@ def name_matches(asset: CryptoAsset, patterns: list[str]) -> bool:
     candidates = [asset.name]
     if asset.variant:
         candidates.append(asset.variant)
+    if asset.mode:
+        # Some generators write the mode into the name (AES-128-ECB), others beside it.
+        candidates.append(f"{asset.name}-{asset.mode}")
     lowered = [pat.lower() for pat in patterns]
     for candidate in candidates:
         c_lower = candidate.lower()
