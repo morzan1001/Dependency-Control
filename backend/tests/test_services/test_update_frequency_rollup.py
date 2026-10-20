@@ -144,7 +144,26 @@ class TestBaseline:
         doc = await _delta(db, "s1")
         assert doc is not None
         assert doc["dep_count"] == 0
-        assert doc["is_baseline"] is True
+
+    @pytest.mark.asyncio
+    async def test_scan_without_dependencies_links_no_predecessor_and_keeps_no_outdated_set(self):
+        """Never a predecessor and never folded, so a comparison or outdated set of it would go unread."""
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _at(0), [_dep("s1", "requests", "2.0.0")], ("requests",))
+        await _seed_scan(db, "s2", _at(1), [], ("requests",))
+        await record_scan_update_delta(db, "s1")
+        finds: list[Any] = []
+        _spy_on_find(db.scan_update_deltas, finds)
+        _spy_on_find(db.analysis_results, finds)
+
+        await record_scan_update_delta(db, "s2")
+
+        doc = await _delta(db, "s2")
+        assert doc is not None
+        assert (doc["dep_count"], doc["prev_scan_id"], doc["prev_created_at"]) == (0, None, None)
+        assert doc["outdated_count"] is None
+        assert await db.scan_outdated_sets.find_one({"_id": "s2"}) is None
+        assert finds == []
 
 
 class TestDiff:
@@ -450,7 +469,7 @@ class TestPredecessorSelection:
         empty = await _delta(db, "s2")
         assert empty is not None
         assert empty["dep_count"] == 0
-        assert empty["prev_scan_id"] == "s1"
+        assert empty["prev_scan_id"] is None
 
         doc = await _delta(db, "s3")
         assert doc is not None
@@ -573,7 +592,7 @@ class TestOutOfOrderArrival:
 
         empty = await _delta(db, "s3")
         assert empty is not None
-        assert empty["prev_scan_id"] == "s2"
+        assert empty["prev_scan_id"] is None
 
         doc = await _delta(db, "s4")
         assert doc is not None
@@ -589,12 +608,13 @@ class TestOutOfOrderArrival:
         await record_scan_update_delta(db, "anchor")
         for i in range(1, 8):
             await record_scan_update_delta(db, f"empty{i}")
+        await db.scan_update_deltas.update_many({}, {"$set": {"computed_at": T0}})
 
         await _seed_scan(db, "late", _at(1), [_dep("late", "requests", "1.5.0")])
         with caplog.at_level("WARNING"):
             await record_scan_update_delta(db, "late")
 
-        repaired = [i for i in range(1, 8) if (await _delta(db, f"empty{i}"))["prev_scan_id"] == "late"]
+        repaired = [i for i in range(1, 8) if (await _delta(db, f"empty{i}"))["computed_at"] != T0]
         assert repaired == [1, 2, 3, 4, 5]
         # Silence here would hide deltas left on a stale predecessor; the hop count is the assertion above.
         assert "repair stopped" in caplog.text
