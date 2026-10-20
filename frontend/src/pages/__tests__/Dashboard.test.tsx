@@ -4,17 +4,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import Dashboard from '../Dashboard'
 import type { Project } from '@/types/project'
 
-const { useProjectsMock, useProjectMock, navigateMock, useRecentScansMock } = vi.hoisted(() => ({
+const { useProjectsMock, useProjectDetailsMock, navigateMock, useRecentScansMock } = vi.hoisted(() => ({
   useProjectsMock: vi.fn(),
-  useProjectMock: vi.fn((_id: string) => ({ data: undefined as Project | undefined })),
+  useProjectDetailsMock: vi.fn((_ids: readonly string[]): Project[] => []),
   navigateMock: vi.fn(),
   useRecentScansMock: vi.fn(() => ({ data: [] as unknown[], isLoading: false })),
 }))
 
 vi.mock('@/hooks/queries/use-projects', () => ({
   useProjects: (...args: unknown[]) => useProjectsMock(...args),
-  useProject: (id: string) => useProjectMock(id),
+  useProjectDetails: (ids: readonly string[]) => useProjectDetailsMock(ids),
 }))
+vi.mock('@/hooks/queries/use-instances', () => ({ useInstanceNames: () => new Map() }))
 vi.mock('@/hooks/queries/use-analytics', () => ({
   useDashboardStats: () => ({ data: undefined, isLoading: false }),
 }))
@@ -100,7 +101,7 @@ describe('Dashboard recent activity namesakes', () => {
   }
 
   it('names the owner of each project whose name another project in the list shares, as the project picker does', () => {
-    useProjectMock.mockImplementation((id: string) => ({ data: owners[id] }))
+    useProjectDetailsMock.mockImplementation((ids) => ids.map((id) => owners[id]))
     useRecentScansMock.mockReturnValue({
       data: [scan('s1', 'p1', 'shared-lib'), scan('s2', 'p2', 'shared-lib'), scan('s3', 'p3', 'checkout')],
       isLoading: false,
@@ -108,12 +109,13 @@ describe('Dashboard recent activity namesakes', () => {
     renderDashboard([])
 
     expect(screen.getByText('Payments')).toBeInTheDocument()
-    expect(screen.getByText('org/shared-lib')).toBeInTheDocument()
-    expect(useProjectMock).not.toHaveBeenCalledWith('p3')
+    expect(screen.getByText('Unassigned')).toBeInTheDocument()
+    expect(useProjectDetailsMock).toHaveBeenCalledWith(['p1', 'p2'])
+    expect(useProjectDetailsMock).not.toHaveBeenCalledWith(expect.arrayContaining(['p3']))
   })
 
   it('truncates a long name inside the card and sets the owner hint in normal weight, as the project picker does', () => {
-    useProjectMock.mockImplementation((id: string) => ({ data: owners[id] }))
+    useProjectDetailsMock.mockImplementation((ids) => ids.map((id) => owners[id]))
     useRecentScansMock.mockReturnValue({
       data: [scan('s1', 'p1', 'shared-lib'), scan('s2', 'p2', 'shared-lib')],
       isLoading: false,
@@ -133,7 +135,7 @@ describe('Dashboard recent activity namesakes', () => {
     })
     renderDashboard([])
 
-    expect(useProjectMock).not.toHaveBeenCalled()
+    expect(useProjectDetailsMock).not.toHaveBeenCalled()
   })
 })
 

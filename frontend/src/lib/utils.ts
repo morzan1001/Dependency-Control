@@ -24,10 +24,10 @@ export function isNameTaken(items: readonly Named[] | undefined, name: string, c
 }
 
 // The same id listed twice, as two runs of one project, shares its name with nothing.
-export function sharedNames(items: readonly Named[]): Set<string> {
+export function sharedNames(items: readonly Named[]): Map<string, string[]> {
   const idsByName = new Map<string, Set<string>>()
   for (const { id, name } of items) idsByName.set(name, (idsByName.get(name) ?? new Set<string>()).add(id))
-  return new Set([...idsByName].filter(([, ids]) => ids.size > 1).map(([name]) => name))
+  return new Map([...idsByName].filter(([, ids]) => ids.size > 1).map(([name, ids]) => [name, [...ids]]))
 }
 
 // A chart axis drops a label that would overlap its neighbour, so long ones keep only their tail, where names sharing a prefix differ.

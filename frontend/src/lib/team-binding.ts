@@ -4,6 +4,12 @@ import { BindingProvider, TeamBinding } from '@/types/team';
 
 export const PROVIDER_LABEL: Record<BindingProvider, string> = { github: 'GitHub', gitlab: 'GitLab' };
 
+// Instance names are listed to system managers only, so anyone else sees the provider alone.
+export function sourceLabel(provider: BindingProvider, instanceId: string, instanceNames: ReadonlyMap<string, string>): string {
+  const name = instanceNames.get(instanceId);
+  return name ? `${PROVIDER_LABEL[provider]} · ${name}` : PROVIDER_LABEL[provider];
+}
+
 // Only an active instance takes a new binding, and only one that syncs teams acts on it.
 interface InstanceFields {
   id: string;

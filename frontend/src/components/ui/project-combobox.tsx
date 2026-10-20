@@ -10,6 +10,7 @@ import { useDebounce } from '@/hooks/use-debounce'
 import { useClickOutside } from '@/hooks/use-click-outside'
 import { DEBOUNCE_DELAY_MS } from '@/lib/constants'
 import { ProjectOwner } from '@/components/project/ProjectOwner'
+import type { Project } from '@/types/project'
 
 interface ProjectComboboxProps
   extends Pick<React.ButtonHTMLAttributes<HTMLButtonElement>, 'id' | 'aria-invalid' | 'aria-describedby'> {
@@ -40,6 +41,7 @@ export function ProjectCombobox({
   const listedSelection = projects.find(p => p.id === value)
   const selectedProject = listedSelection ?? selectedProjectData
   const namesakes = sharedNames(projects)
+  const namesakesOf = (project: Project) => projects.filter((p) => p.name === project.name)
 
   const handleClose = useCallback(() => setOpen(false), [])
   useClickOutside(containerRef, handleClose, open)
@@ -111,7 +113,7 @@ export function ProjectCombobox({
                 <>
                   <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
                   <span className="truncate">{selectedProject.name}</span>
-                  {listedSelection && namesakes.has(listedSelection.name) && <ProjectOwner project={listedSelection} />}
+                  {listedSelection && namesakes.has(listedSelection.name) && <ProjectOwner project={listedSelection} namesakes={namesakesOf(listedSelection)} />}
                 </>
               ) : (
                 <span className="text-muted-foreground">Select a project...</span>
@@ -175,7 +177,7 @@ export function ProjectCombobox({
                     />
                     <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
                     <span className="truncate flex-1 text-left">{project.name}</span>
-                    {namesakes.has(project.name) && <ProjectOwner project={project} />}
+                    {namesakes.has(project.name) && <ProjectOwner project={project} namesakes={namesakesOf(project)} />}
                   </button>
                 ))}
                 {projectsData && projectsData.total > projects.length && (

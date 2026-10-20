@@ -15,11 +15,12 @@ vi.mock('@/api/compliance', () => ({
   deleteReport: vi.fn(),
 }))
 vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ hasPermission: () => false }) }))
-const { useProjectMock } = vi.hoisted(() => ({ useProjectMock: vi.fn((_id: string) => ({ data: undefined as Project | undefined })) }))
+const { useProjectDetailsMock } = vi.hoisted(() => ({ useProjectDetailsMock: vi.fn((_ids: readonly string[]): Project[] => []) }))
 vi.mock('@/hooks/queries/use-projects', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/hooks/queries/use-projects')>()),
-  useProject: (id: string) => useProjectMock(id),
+  useProjectDetails: (ids: readonly string[]) => useProjectDetailsMock(ids),
 }))
+vi.mock('@/hooks/queries/use-instances', () => ({ useInstanceNames: () => new Map() }))
 vi.mock('@/hooks/queries/use-users', () => ({ useCurrentUser: () => ({ data: { id: 'lena' } }) }))
 
 function report(status: ReportStatus): ComplianceReportMeta {
@@ -110,7 +111,7 @@ describe('ComplianceReportsPanel', () => {
       p1: { id: 'p1', name: 'shared-lib', teams: [{ id: 't1', name: 'Payments' }] },
       p2: { id: 'p2', name: 'shared-lib', teams: [{ id: 't2', name: 'Platform' }] },
     }
-    useProjectMock.mockImplementation((id: string) => ({ data: owners[id] }))
+    useProjectDetailsMock.mockImplementation((ids) => ids.map((id) => owners[id]))
     vi.mocked(listReports).mockResolvedValue({
       reports: [
         { ...report('completed'), _id: 'r1', scope: 'project', scope_id: 'p1', scope_name: 'shared-lib' },
@@ -123,13 +124,13 @@ describe('ComplianceReportsPanel', () => {
 
     expect(await screen.findAllByText('Payments')).toHaveLength(2)
     expect(screen.getByText('Platform')).toBeInTheDocument()
-    expect(useProjectMock).not.toHaveBeenCalledWith('p3')
+    expect(useProjectDetailsMock).not.toHaveBeenCalledWith(expect.arrayContaining(['p3']))
   })
 
   it('names the owner of a namesake scope in the report dialog too', async () => {
-    useProjectMock.mockImplementation((id: string) => ({
-      data: { id, name: 'shared-lib', teams: [{ id: `t-${id}`, name: id === 'p1' ? 'Payments' : 'Platform' }] },
-    }))
+    useProjectDetailsMock.mockImplementation((ids) =>
+      ids.map((id) => ({ id, name: 'shared-lib', teams: [{ id: `t-${id}`, name: id === 'p1' ? 'Payments' : 'Platform' }] })),
+    )
     vi.mocked(listReports).mockResolvedValue({
       reports: [
         { ...report('completed'), _id: 'r1', scope: 'project', scope_id: 'p1', scope_name: 'shared-lib' },

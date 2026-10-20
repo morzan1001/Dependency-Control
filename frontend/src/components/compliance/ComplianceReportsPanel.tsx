@@ -30,7 +30,7 @@ export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultF
   const namesakes = sharedNames(
     reports.flatMap((r) => (r.scope === "project" && r.scope_id && r.scope_name ? [{ id: r.scope_id, name: r.scope_name }] : [])),
   );
-  const isNamesake = (r: ComplianceReportMeta) => r.scope === "project" && namesakes.has(r.scope_name ?? "");
+  const namesakeIds = (r: ComplianceReportMeta) => (r.scope === "project" ? namesakes.get(r.scope_name ?? "") : undefined);
   const selected = reports.find((r) => r._id === selectedId) ?? null;
 
   return (
@@ -74,7 +74,7 @@ export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultF
                 <td className="p-2">{r.format.toUpperCase()}</td>
                 <td className="p-2"><ReportStatusBadge status={r.status} /></td>
                 <td className="p-2 text-xs">{formatDateTime(r.requested_at)}</td>
-                <td className="p-2 text-xs"><ReportScope report={r} namesake={isNamesake(r)} /></td>
+                <td className="p-2 text-xs"><ReportScope report={r} namesakeIds={namesakeIds(r)} /></td>
               </tr>
             ))}
           </tbody>
@@ -89,7 +89,7 @@ export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultF
       {newReportDialog.open && (
         <NewReportDialog onClose={newReportDialog.closeDialog} defaultFramework={prefillFramework} />
       )}
-      <ReportDetailDrawer report={selected} namesake={selected !== null && isNamesake(selected)} onClose={() => setSelectedId(null)} />
+      <ReportDetailDrawer report={selected} namesakeIds={selected ? namesakeIds(selected) : undefined} onClose={() => setSelectedId(null)} />
     </div>
   );
 }

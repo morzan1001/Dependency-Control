@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { gitlabInstancesApi } from '@/api/gitlab-instances';
 import { githubInstancesApi } from '@/api/github-instances';
+import { useAuth } from '@/context/useAuth';
 
 export const gitlabInstanceKeys = { all: ['gitlab-instances'] as const };
 export const githubInstanceKeys = { all: ['github-instances'] as const };
@@ -18,6 +19,14 @@ export const useGitHubInstances = (params?: { active_only?: boolean }, enabled =
     queryFn: () => githubInstancesApi.list(params),
     enabled,
   });
+
+export const useInstanceNames = (enabled = true): ReadonlyMap<string, string> => {
+  const { hasPermission } = useAuth();
+  const canList = enabled && hasPermission('system:manage');
+  const { data: github } = useGitHubInstances(undefined, canList);
+  const { data: gitlab } = useGitLabInstances(undefined, canList);
+  return new Map([...(github?.items ?? []), ...(gitlab?.items ?? [])].map((instance) => [instance.id, instance.name]));
+};
 
 export const useGitLabGroups = (instanceId: string | null, search: string) =>
   useQuery({
