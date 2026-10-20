@@ -441,8 +441,22 @@ async def test_waived_findings_do_not_reach_the_engine(client, db, owner_auth_he
     resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
 
     assert resp.status_code == 200, resp.text
-    assert [f.id for f in seen["findings"]] == ["f-live"]
+    assert [f["id"] for f in seen["findings"]] == ["f-live"]
     assert resp.json()["findings_total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_engine_reasons_on_the_raw_finding_rows(client, db, owner_auth_headers_proj, monkeypatch):
+    await _insert_scan(db, "s")
+    await db.findings.insert_one(_finding("f1", "secret"))
+    seen: dict = {}
+    monkeypatch.setattr(rec_module, "generate_recommendations", _engine_returning([], seen))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    [finding] = seen["findings"]
+    assert (type(finding), finding["_id"]) == (dict, "f1")
 
 
 _CROSS_PROJECT_COMPARISON_LIMIT = 20
@@ -603,7 +617,7 @@ async def test_a_cve_the_live_refresh_has_no_data_for_keeps_its_stored_scores(
     resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
 
     assert resp.status_code == 200, resp.text
-    [entry] = seen["findings"][0].details["vulnerabilities"]
+    [entry] = seen["findings"][0]["details"]["vulnerabilities"]
     assert (entry["epss_score"], entry["risk_score"]) == (0.42, 71.5)
 
 
@@ -655,8 +669,8 @@ async def test_the_engine_gets_findings_and_dependencies_without_the_payload_no_
 
     assert resp.status_code == 200, resp.text
     [finding], [dependency] = seen["findings"], seen["dependencies"]
-    [stored_advisory] = finding.details["vulnerabilities"]
-    assert (stored_advisory["id"], finding.related_findings) == ("CVE-2021-23337", [])
+    [stored_advisory] = finding["details"]["vulnerabilities"]
+    assert (stored_advisory["id"], finding.get("related_findings")) == ("CVE-2021-23337", None)
     assert not set(_ADVISORY_PAYLOAD) & set(stored_advisory)
     assert (dependency["name"], dependency["license"]) == ("lodash", "MIT")
     assert not set(_DEPENDENCY_PAYLOAD) & set(dependency)

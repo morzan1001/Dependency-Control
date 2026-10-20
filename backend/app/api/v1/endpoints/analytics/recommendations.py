@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections import Counter
 from typing import Any
 
 from fastapi import HTTPException
@@ -21,7 +22,6 @@ from app.core.constants import (
 from app.core.cve import entry_cves
 from app.core.permissions import Permissions
 from app.models.finding import CRYPTO_FINDING_TYPES
-from app.models.finding_record import FindingRecord
 from app.repositories.base import find_window
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
@@ -86,11 +86,11 @@ _SAST_FINDING_TYPES = {"sast"} | (CRYPTO_FINDING_TYPES - CRYPTO_ISSUE_FINDING_TY
 
 
 async def _apply_live_threat_intel(
-    findings: list[FindingRecord],
+    findings: list[dict[str, Any]],
 ) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
     """Mark each finding's advisories with KEV/EPSS as of now, not as of the scan, unless a live source is down."""
-    vuln_findings = [f for f in findings if f.type == "vulnerability"]
-    all_cves = list({c for f in vuln_findings for c in live_cves([f.details])})
+    vuln_findings = [f for f in findings if f["type"] == "vulnerability"]
+    all_cves = list({c for f in vuln_findings for c in live_cves([f["details"]])})
     if not all_cves:
         return {}, []
     try:
@@ -106,7 +106,7 @@ async def _apply_live_threat_intel(
     # A CVE the live sources returned nothing for keeps the scores stored at scan time.
     live = {cve: e for cve, e in enrichments.items() if e.epss_score is not None or e.is_kev}
     for f in vuln_findings:
-        refreshed = [v for v in f.details.get("vulnerabilities") or [] if any(c in live for c in entry_cves(v))]
+        refreshed = [v for v in f["details"].get("vulnerabilities") or [] if any(c in live for c in entry_cves(v))]
         apply_enrichments({"vulnerabilities": refreshed}, live)
     return enrichments, []
 
@@ -144,7 +144,7 @@ async def get_project_recommendations(
     )
 
     async def _compute() -> dict[str, Any]:
-        findings, findings_total = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
+        findings, findings_total = await finding_repo.find_raw_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
         threat_intel, threat_intel_unavailable = await _apply_live_threat_intel(findings)
 
         dependencies, dependencies_total = await find_window(
@@ -158,8 +158,8 @@ async def get_project_recommendations(
             {
                 n
                 for f in findings
-                if f.type in ("vulnerability", "outdated")
-                for n in component_name_candidates(f.component)
+                if f["type"] in ("vulnerability", "outdated")
+                for n in component_name_candidates(f["component"])
             }
         )
         join_query = {"project_id": project_id, "scan_id": scan_id, "name": {"$in": names}}
@@ -228,15 +228,16 @@ async def get_project_recommendations(
     return RecommendationsResponse.model_validate(payload)
 
 
-def _finding_counts(findings: list[FindingRecord]) -> dict[str, int]:
+def _finding_counts(findings: list[dict[str, Any]]) -> dict[str, int]:
+    types = Counter(f["type"] for f in findings)
     return {
-        "vulnerabilities": sum(1 for f in findings if f.type == "vulnerability"),
-        "secrets": sum(1 for f in findings if f.type == "secret"),
-        "sast": sum(1 for f in findings if f.type in _SAST_FINDING_TYPES),
-        "iac": sum(1 for f in findings if f.type == "iac"),
-        "license": sum(1 for f in findings if f.type == "license"),
-        "quality": sum(1 for f in findings if f.type == "quality"),
-        "crypto": sum(1 for f in findings if f.type in CRYPTO_ISSUE_FINDING_TYPES),
+        "vulnerabilities": types["vulnerability"],
+        "secrets": types["secret"],
+        "sast": sum(types[t] for t in _SAST_FINDING_TYPES),
+        "iac": types["iac"],
+        "license": types["license"],
+        "quality": types["quality"],
+        "crypto": sum(types[t] for t in CRYPTO_ISSUE_FINDING_TYPES),
     }
 
 
