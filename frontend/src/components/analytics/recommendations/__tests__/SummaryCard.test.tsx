@@ -144,6 +144,16 @@ describe("SummaryCard tiles", () => {
     expect(screen.queryByText("Other Security Findings")).not.toBeInTheDocument();
   });
 
+  it("counts the crypto issues among the other security findings, in the crypto colour", () => {
+    const { rerender } = render(<SummaryCard data={makeResponse({ summary: { ...EMPTY_SUMMARY, crypto_issues: 6 } })} />);
+
+    expect(screen.getByText("Other Security Findings")).toBeInTheDocument();
+    expect(tile("Crypto Issues")).toEqual({ value: "6", className: "text-2xl font-bold text-teal-500" });
+
+    rerender(<SummaryCard data={makeResponse({ summary: { ...EMPTY_SUMMARY, crypto_issues: 0 } })} />);
+    expect(screen.queryByText("Crypto Issues")).not.toBeInTheDocument();
+  });
+
   it("shows only the non-zero health tiles, and the section only when one is", () => {
     const { rerender } = render(<SummaryCard data={makeResponse({ summary: { ...EMPTY_SUMMARY, trend_alerts: 4 } })} />);
 

@@ -86,6 +86,7 @@ export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }
             { label: 'SAST Issues', value: summary.sast_issues, color: 'text-cyan-500' },
             { label: 'IAC Issues', value: summary.iac_issues, color: 'text-indigo-500' },
             { label: 'License Issues', value: summary.license_issues, color: 'text-pink-500' },
+            { label: 'Crypto Issues', value: summary.crypto_issues ?? 0, color: 'text-teal-500' },
           ])}
         />
         <TileGroup title="Health & Insights" icon={Lightbulb} tiles={healthTiles} />

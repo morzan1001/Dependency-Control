@@ -82,6 +82,25 @@ _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
     RecommendationType.SHARED_VULNERABILITY: (None, "cross_project_issues"),
     **dict.fromkeys(CRYPTO_RECOMMENDATION_TYPES, (None, "crypto_issues")),
 }
+# Their cards restate findings the tallies above already count, or have no tile to fall under.
+_NOT_SUMMARISED = frozenset(
+    {
+        RecommendationType.LICENSE_DRIFT,
+        RecommendationType.CRITICAL_RISK,
+        RecommendationType.CRITICAL_HOTSPOT,
+        RecommendationType.KNOWN_EXPLOIT,
+        RecommendationType.RANSOMWARE_RISK,
+        RecommendationType.ACTIVELY_EXPLOITED,
+        RecommendationType.MALWARE_DETECTED,
+        RecommendationType.TYPOSQUAT_DETECTED,
+        RecommendationType.HASH_MISMATCH,
+        RecommendationType.EOL_DEPENDENCY,
+        RecommendationType.QUICK_WIN,
+        RecommendationType.SINGLE_UPDATE_MULTI_FIX,
+        RecommendationType.TOXIC_DEPENDENCY,
+        RecommendationType.ATTACK_SURFACE_REDUCTION,
+    }
+)
 _SAST_FINDING_TYPES = {"sast"} | (CRYPTO_FINDING_TYPES - CRYPTO_ISSUE_FINDING_TYPES)
 
 
@@ -271,7 +290,9 @@ def _summarize(recommendations: list[Recommendation], finding_counts: dict[str, 
     summary: dict[str, Any] = {key: 0 for keys in _SUMMARY_BUCKETS.values() for key in keys if key}
     summary["finding_counts"] = finding_counts
     for rec in recommendations:
-        count_key, impact_key = _SUMMARY_BUCKETS.get(rec.type, (None, None))
+        if rec.type in _NOT_SUMMARISED:
+            continue
+        count_key, impact_key = _SUMMARY_BUCKETS[rec.type]
         if count_key:
             summary[count_key] += 1
         if impact_key:

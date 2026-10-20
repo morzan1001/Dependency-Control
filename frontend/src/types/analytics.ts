@@ -350,6 +350,7 @@ export interface RecommendationsSummary {
   fragmentation_issues?: number;
   trend_alerts?: number;
   cross_project_issues?: number;
+  crypto_issues?: number;
 }
 
 export interface RecommendationsResponse {
