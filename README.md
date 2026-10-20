@@ -256,7 +256,7 @@ curl -sS "$DEP_CONTROL_URL/api/v1/analyze/$JOB_ID" -H "Authorization: Bearer dck
 curl -sS "$DEP_CONTROL_URL/api/v1/analyze/$JOB_ID?format=html" -H "Authorization: Bearer dck_YOUR_TOKEN_HERE" -o report.html
 ```
 
-Input and result are kept for 24 hours and only the key's owner can read them. The request also takes `scanners`, `analyzers`, `callgraph` and `license_policy` (schema in `/api/v1/openapi.json`). The default `osv` analyzer sends the SBOM's package coordinates to api.osv.dev and the enrichment queries EPSS, GitHub's advisory API and the CISA KEV catalog; an explicit `analyzers` list decides what leaves the instance, and `analyzers.notes` in the result names each host that was reached.
+Input and result are kept for 24 hours and only the key's owner can read them. The request also takes `scanners`, `analyzers`, `callgraph` and `license_policy` (schema in `/api/v1/openapi.json`). The default `osv` analyzer sends the SBOM's package coordinates to api.osv.dev and the enrichment queries EPSS, GitHub's advisory API and the CISA KEV catalog; an explicit `analyzers` list decides what leaves the instance, and `analyzers.notes` in the result names each host that was reached. Advisory data looked up by its public id (OSV records, EPSS scores, GitHub advisories, the KEV catalog) goes into the cache the scans share; nothing keyed on the posted packages does.
 
 ## ☸️ Kubernetes Deployment
 

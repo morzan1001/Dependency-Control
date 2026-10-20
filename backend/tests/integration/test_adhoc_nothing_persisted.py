@@ -77,6 +77,9 @@ _DRIVER_ENTRY_POINTS: tuple[tuple[str, Any], ...] = (
 
 # Upstream reference lists shared by every caller: the key names the source, never the payload.
 _UPSTREAM_REFERENCE_CACHE_KEYS = frozenset({CacheKeys.popular_packages("pypi"), CacheKeys.kev_catalog()})
+# Public advisory data named by its upstream id; the owner allows ad-hoc runs to warm it for the scans.
+_UPSTREAM_ID_KEY_PREFIXES = ("osvrec:", "epss:", "ghsa:")
+_UPSTREAM_ID_KEY = CacheKeys.epss("CVE-2021-44228")
 
 # Asserted by equality, so an analyzer that stops running cannot quietly shrink the cache nets.
 _EXPECTED_CACHE_READS = frozenset({CacheKeys.popular_packages("pypi")})
@@ -413,8 +416,12 @@ class _RecordedCache:
         return {_unprefixed(key) for key in self.reads}
 
 
+def _named_by_upstream_alone(key: str) -> bool:
+    return key in _UPSTREAM_REFERENCE_CACHE_KEYS or key.startswith(_UPSTREAM_ID_KEY_PREFIXES)
+
+
 def assert_no_caller_derived_cache_writes(writes: list[tuple[str, str]]) -> None:
-    leaked = [key for key, _ in writes if _unprefixed(key) not in _UPSTREAM_REFERENCE_CACHE_KEYS]
+    leaked = [key for key, _ in writes if not _named_by_upstream_alone(_unprefixed(key))]
     assert leaked == [], f"ad-hoc analysis cached caller-derived keys: {leaked}"
 
 
@@ -496,7 +503,6 @@ async def test_adhoc_analysis_persists_nothing(bypass_attempts, recording_cache,
     assert recording_cache.read_keys() == set(_EXPECTED_CACHE_READS), (
         "the run must reach Redis exactly where it is expected to, or the cache nets are vacuous"
     )
-    assert recording_cache.writes == []
 
 
 @pytest.mark.asyncio
@@ -527,7 +533,6 @@ async def test_adhoc_analysis_persists_nothing_when_an_analyzer_fails(
     assert set(response.analyzers.errored) == {_FAILING_ANALYZER}, "the failure must reach the report"
     assert set(response.analyzers.ran) == set(_EXPECTED_RAN) - {_FAILING_ANALYZER}
     assert recording_cache.read_keys() == set(_EXPECTED_CACHE_READS)
-    assert recording_cache.writes == []
 
 
 @pytest.mark.asyncio
@@ -566,6 +571,26 @@ async def test_an_analyzer_that_caches_publishes_nothing_through_this_path(
     # The analyzer is silenced, not disabled: its upstream fetch still ran and it still contributed.
     assert fetched == [_CALLER_DERIVED_CACHE_KEY]
     assert _CACHING_ANALYZER in response.analyzers.ran
+
+
+@pytest.mark.asyncio
+async def test_advisory_data_named_by_its_upstream_id_is_cached_through_this_path(
+    monkeypatch, bypass_attempts, recording_cache
+):
+    class _Caching:
+        name = _CACHING_ANALYZER
+
+        async def analyze(self, sbom, settings=None, parsed_components=None):
+            await cache_service.set(_CALLER_DERIVED_CACHE_KEY, [_CALLER_ONLY_COMPONENT])
+            await cache_service.set(_UPSTREAM_ID_KEY, {"epss": 0.97})
+            return {"findings": []}
+
+    serve_analyzer(monkeypatch, _CACHING_ANALYZER, _Caching())
+
+    await _run_and_drain(_full_request(), _WriteRecordingDatabase())
+
+    assert recording_cache.written_keys() == {_UPSTREAM_ID_KEY}
+    assert_no_caller_derived_cache_writes(recording_cache.writes)
 
 
 async def _seed_adhoc_key(db: Any) -> str:
@@ -631,7 +656,6 @@ async def test_the_endpoint_writes_only_its_job(client, db, running_worker, reco
     assert_no_caller_derived_cache_writes(recording_cache.writes)
     assert_no_caller_data_in_shared_cache(recording_cache.writes)
     assert_no_files_left_behind(filesystem_watch)
-    assert recording_cache.writes == []
 
 
 @pytest.mark.asyncio
@@ -666,7 +690,7 @@ async def test_a_cancelled_cli_analyzer_leaves_no_scanner_running_and_no_file(
     assert_no_write_calls(db)
     await assert_nothing_persisted(db)
     assert bypass_attempts == []
-    assert recording_cache.writes == []
+    assert_no_caller_derived_cache_writes(recording_cache.writes)
 
 
 @pytest.mark.asyncio
@@ -776,6 +800,7 @@ def test_a_directly_constructed_driver_client_is_caught(bypass_attempts, label, 
 
 def test_a_caller_derived_cache_key_is_caught():
     assert_no_caller_derived_cache_writes([(_UPSTREAM_PYPI_KEY, "")])
+    assert_no_caller_derived_cache_writes([(f"{settings.CACHE_PREFIX}{_UPSTREAM_ID_KEY}", "")])
 
     with pytest.raises(AssertionError, match=_CALLER_DERIVED_CACHE_KEY):
         assert_no_caller_derived_cache_writes([(f"{settings.CACHE_PREFIX}{_CALLER_DERIVED_CACHE_KEY}", "")])

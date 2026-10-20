@@ -40,6 +40,13 @@ _UNLOCK_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('
 
 _writes_suppressed: ContextVar[bool] = ContextVar("cache_writes_suppressed", default=False)
 
+# Public advisory data named by its upstream id alone carries nothing of the caller, so suppression lets it through.
+_UPSTREAM_ID_KEY_PREFIXES = ("osvrec:", "epss:", "ghsa:", "kev:")
+
+
+def _write_suppressed(key: str) -> bool:
+    return _writes_suppressed.get() and not key.startswith(_UPSTREAM_ID_KEY_PREFIXES)
+
 
 @contextmanager
 def suppress_cache_writes() -> Iterator[None]:
@@ -287,7 +294,7 @@ class CacheService:
         return None
 
     async def set(self, key: str, value: Any, ttl_seconds: int | None = None) -> bool:
-        if _writes_suppressed.get() or not await self._ensure_available():
+        if _write_suppressed(key) or not await self._ensure_available():
             return False
 
         if ttl_seconds is None:
@@ -326,7 +333,8 @@ class CacheService:
         return dict.fromkeys(keys)
 
     async def mset(self, mapping: dict[str, Any], ttl_seconds: int | None = None) -> bool:
-        if _writes_suppressed.get() or not mapping or not await self._ensure_available():
+        mapping = {key: value for key, value in mapping.items() if not _write_suppressed(key)}
+        if not mapping or not await self._ensure_available():
             return False
 
         if ttl_seconds is None:
@@ -392,7 +400,7 @@ class CacheService:
             return cached
 
         # The stampede lock is itself a key, so a suppressed caller skips the whole locked path, not only the set.
-        if not self._available or _writes_suppressed.get():
+        if not self._available or _write_suppressed(key):
             return await self._fetch_bypassing_cache(key, fetch_fn, reraise_fetch_errors)
 
         lock_key = self._make_key(f"lock:{key}")

@@ -102,7 +102,7 @@ ADHOC_DEFAULT_ANALYZERS: tuple[str, ...] = (_OSV, "license_compliance")
 _NOT_REQUESTED = "not requested"
 _NO_PACKAGE_COMPONENTS = "no package components to analyse"
 _UNCACHED_FANOUT = (
-    "off by default: this path publishes nothing to the shared cache, so every run re-queries "
+    "off by default: this path caches nothing keyed on the posted packages, so every run re-queries "
     "the upstream registry for each package it recognises"
 )
 
@@ -470,7 +470,7 @@ def apply_global_waivers_in_memory(records: list[dict[str, Any]], waivers: list[
 
 
 async def run_adhoc_analysis(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeResponse:
-    """Writes nothing, not even to the analyzers' Redis cache it shares with the scan pipeline."""
+    """Writes nothing; of the Redis cache it shares with the scans, only advisory data named by its upstream id."""
     with suppress_cache_writes():
         return await _analyze(request, db)
 
