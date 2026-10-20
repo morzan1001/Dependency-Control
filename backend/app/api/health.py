@@ -1,4 +1,3 @@
-import time
 from typing import Any
 
 from fastapi import APIRouter, status
@@ -8,22 +7,17 @@ from app.api.deps import SystemManagerDep
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.cache import cache_service
 from app.core.config import settings
+from app.core.metrics import process_uptime_seconds
 from app.core.worker import worker_manager
 from app.db.mongodb import db
 
 router = APIRouter()
 
-_startup_time = time.time()
-
-
-def get_uptime_seconds() -> float:
-    return time.time() - _startup_time
-
 
 @router.get("/live", summary="Liveness Probe", response_model=None)
 async def liveness() -> dict[str, Any] | JSONResponse:
     """Liveness probe; reports unhealthy past max uptime to recycle pods for memory."""
-    uptime = get_uptime_seconds()
+    uptime = process_uptime_seconds()
     max_uptime = settings.MAX_POD_UPTIME_SECONDS
 
     if max_uptime > 0 and uptime > max_uptime:

@@ -1,9 +1,12 @@
 import asyncio
 import json
+import time
 
 import pytest
+from prometheus_client import REGISTRY
 
 from app.api import health
+from app.core import metrics
 
 
 @pytest.mark.parametrize(
@@ -12,7 +15,7 @@ from app.api import health
 )
 def test_liveness_recycles_past_max_pod_uptime(monkeypatch, max_uptime, uptime, status_code):
     monkeypatch.setattr(health.settings, "MAX_POD_UPTIME_SECONDS", max_uptime)
-    monkeypatch.setattr(health, "get_uptime_seconds", lambda: uptime)
+    monkeypatch.setattr(health, "process_uptime_seconds", lambda: uptime)
 
     response = asyncio.run(health.liveness())
 
@@ -20,6 +23,16 @@ def test_liveness_recycles_past_max_pod_uptime(monkeypatch, max_uptime, uptime, 
         assert response == {"status": "alive", "uptime_seconds": uptime}
     else:
         assert response.status_code == status_code
+
+
+def test_liveness_reads_the_clock_the_uptime_gauge_reads(monkeypatch):
+    monkeypatch.setattr(metrics, "startup_time", time.time() - 1000)
+    monkeypatch.setattr(health.settings, "MAX_POD_UPTIME_SECONDS", 0)
+
+    response = asyncio.run(health.liveness())
+    metrics.update_uptime()
+
+    assert response["uptime_seconds"] == pytest.approx(REGISTRY.get_sample_value("uptime_seconds"), abs=1)
 
 
 @pytest.mark.parametrize(

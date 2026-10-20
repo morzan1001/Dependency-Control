@@ -518,8 +518,12 @@ uptime_seconds = Gauge(
 startup_time = time.time()
 
 
+def process_uptime_seconds() -> float:
+    return time.time() - startup_time
+
+
 def update_uptime() -> None:
-    uptime_seconds.set(time.time() - startup_time)
+    uptime_seconds.set(process_uptime_seconds())
 
 
 async def metrics_endpoint(_request: Request) -> Response:
