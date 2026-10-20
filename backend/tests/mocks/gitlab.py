@@ -95,12 +95,12 @@ async def sync_team(service, project_details, **kwargs):
 
 @contextmanager
 def make_repositories(existing_team=None, user_doc=None) -> Iterator[tuple[MagicMock, MagicMock]]:
-    """add_binding_if_absent only records, as a sync must never bind an existing team through it."""
+    """replace_binding_for_instance only records, as a sync must never bind an existing team through it."""
     team_repo = MagicMock()
     team_repo.get_raw_by_binding = AsyncMock(return_value=existing_team)
     team_repo.update_with_binding = AsyncMock()
     team_repo.create_bound = AsyncMock(side_effect=lambda team: team.model_dump(by_alias=True))
-    team_repo.add_binding_if_absent = AsyncMock()
+    team_repo.replace_binding_for_instance = AsyncMock()
 
     user_repo = MagicMock()
     user_repo.verified_users_by_email = AsyncMock(

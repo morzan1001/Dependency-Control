@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import ReturnDocument
 from pymongo.collation import Collation
 from pymongo.errors import DuplicateKeyError
 
@@ -109,27 +108,25 @@ class TeamRepository:
     async def get_raw_by_binding(self, provider: str, instance_id: str, external_id: int) -> dict[str, Any] | None:
         return await self.get_raw_by_binding_key(team_binding_key(provider, instance_id, external_id))
 
-    async def add_binding_if_absent(self, team_id: str, binding: dict[str, Any]) -> dict[str, Any] | None:
+    async def _push_binding_if_instance_free(self, team_id: str, binding: dict[str, Any]) -> bool:
         # In the filter, since a multikey unique index cannot refuse two bindings of one instance on one team.
-        adopted: dict[str, Any] | None = await self.collection.find_one_and_update(
+        result = await self.collection.update_one(
             {"_id": team_id, _BINDING_INSTANCE: {"$ne": binding["instance_id"]}},
             {"$push": {_BINDINGS: binding}, "$set": {"updated_at": datetime.now(timezone.utc)}},
-            return_document=ReturnDocument.AFTER,
         )
-        return adopted
+        return bool(result.matched_count)
 
-    async def replace_binding_for_instance(self, team_id: str, binding: dict[str, Any]) -> bool:
+    async def replace_binding_for_instance(self, team_id: str, binding: dict[str, Any]) -> None:
         """Set the team's binding for one instance; append and replace are each atomic, so nothing is doubled."""
-        if await self.add_binding_if_absent(team_id, binding) is not None:
-            return True
-        result = await self.collection.update_one(
+        if await self._push_binding_if_instance_free(team_id, binding):
+            return
+        await self.collection.update_one(
             {"_id": team_id},
             {
                 "$set": {f"{_BINDINGS}.$[{_ENTRY}]": binding, "updated_at": datetime.now(timezone.utc)},
             },
             array_filters=[{f"{_ENTRY}.instance_id": binding["instance_id"]}],
         )
-        return bool(result.matched_count)
 
     async def remove_binding_for_instance(self, team_id: str, instance_id: str, source: str) -> bool:
         result = await self.collection.update_one(

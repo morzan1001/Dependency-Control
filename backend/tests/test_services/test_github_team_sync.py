@@ -103,7 +103,7 @@ def _team_repo(*bound_teams, already_bound=None) -> MagicMock:
     repo.find_raw_by_github_org = AsyncMock(return_value=list(bound_teams))
     repo.get_raw_by_binding = AsyncMock(return_value=already_bound)
     # The one door an existing team can be bound through; a sync must never reach it.
-    repo.add_binding_if_absent = AsyncMock()
+    repo.replace_binding_for_instance = AsyncMock()
     repo.update_with_binding = AsyncMock()
     repo.create_bound = AsyncMock(side_effect=lambda team: team.model_dump(by_alias=True))
     return repo
@@ -961,7 +961,7 @@ class TestAGroupNobodyBoundGetsATeamOfItsOwn:
         created = team_repo.create_bound.await_args.args[0]
         assert created.name == f"GitHub Team: acme/{slug}"
         assert result == TeamSyncResult([str(created.id)])
-        team_repo.add_binding_if_absent.assert_not_awaited()
+        team_repo.replace_binding_for_instance.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_a_group_already_bound_is_still_answered_by_the_team_that_holds_the_binding(self):
@@ -973,7 +973,7 @@ class TestAGroupNobodyBoundGetsATeamOfItsOwn:
 
         assert result == TeamSyncResult(["t-platform"])
         team_repo.create_bound.assert_not_called()
-        team_repo.add_binding_if_absent.assert_not_awaited()
+        team_repo.replace_binding_for_instance.assert_not_awaited()
 
 
 _SIX_GROUPS = (100, 900, 4711, 500, 101, 902)
