@@ -338,9 +338,30 @@ class TestAnalyzeCrossProjectPatternsPrioritizeProjects:
                     _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
                     _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
                     _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
+                    _project(project_id="p4", project_name="App4", total_critical=0, total_high=0),
                 ],
                 1,
                 id="one-project-above-critical-threshold",
+            ),
+            pytest.param(
+                [
+                    _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
+                    _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
+                    _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
+                ],
+                0,
+                id="only-the-listed-projects",
+            ),
+            pytest.param(
+                [
+                    _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
+                    _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
+                    _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
+                    _project(project_id="p4", project_name="App4", total_critical=1, total_high=0),
+                    _project(project_id="p5", project_name="App5", total_critical=1, total_high=0),
+                ],
+                0,
+                id="the-last-listed-project-does-not-stand-out",
             ),
             pytest.param(
                 [
@@ -373,6 +394,7 @@ class TestAnalyzeCrossProjectPatternsPrioritizeProjects:
                 _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
                 _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
                 _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
+                _project(project_id="p4", project_name="App4", total_critical=0, total_high=3),
             ]
         )
         result = analyze_cross_project_patterns(data)
