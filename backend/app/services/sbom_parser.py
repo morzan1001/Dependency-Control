@@ -58,6 +58,13 @@ _LICENSE_CHOICE_PURL_TYPES = frozenset({"maven", "npm"})
 _SPDX_LICENSE_REF = re.compile(r"LicenseRef-[A-Za-z0-9.\-]+")
 _HEX_SHA512 = re.compile(r"[0-9a-fA-F]{128}")
 
+SKIP_CRYPTO_ASSET = "cryptographic-asset"
+_SKIP_FILE = "file"
+_SKIP_NON_DEPENDENCY = "non-dependency"
+_SKIP_ROOT = "root-component"
+# Skips of entries that are no dependencies; every other skip reason counts a lost component.
+DELIBERATE_SKIP_REASONS = frozenset({SKIP_CRYPTO_ASSET, _SKIP_FILE, _SKIP_NON_DEPENDENCY, _SKIP_ROOT})
+
 
 def _join_licenses(entries: list[str], purl: str | None) -> str:
     unique = list(dict.fromkeys(entries))
@@ -504,13 +511,13 @@ class SBOMParser:
         parsed_by_ref: dict[Any, ParsedDependency] = {}
         for comp in components:
             comp_type, bom_ref = comp.get("type"), comp.get("bom-ref")
-            if comp_type in ("cryptographic-asset", "file"):
+            if comp_type in (SKIP_CRYPTO_ASSET, _SKIP_FILE):
                 # Crypto assets are parsed into crypto_assets; file-catalog entries aren't dependencies.
                 self._count_skipped(result, comp_type)
             elif comp_type in self._NON_DEPENDENCY_COMPONENT_TYPES:
-                self._count_skipped(result, "non-dependency")
+                self._count_skipped(result, _SKIP_NON_DEPENDENCY)
             elif bom_ref in root_refs or comp.get("purl") in root_refs:
-                self._count_skipped(result, "root-component")
+                self._count_skipped(result, _SKIP_ROOT)
             elif parsed := self._append_parsed(
                 result,
                 "CycloneDX component",
@@ -543,7 +550,7 @@ class SBOMParser:
             self._count_skipped(result, "parse-error")
             return None
         if parsed is None:
-            self._count_skipped(result, "non-dependency" if structural else "unidentifiable")
+            self._count_skipped(result, _SKIP_NON_DEPENDENCY if structural else "unidentifiable")
         else:
             result.dependencies.append(parsed)
         return parsed
@@ -848,7 +855,7 @@ class SBOMParser:
         raw_artifacts = sbom.get("artifacts") or []
         artifacts = [artifact for artifact in raw_artifacts if isinstance(artifact, dict)]
         self._count_skipped(result, "malformed", len(raw_artifacts) - len(artifacts))
-        self._count_skipped(result, "file", len(sbom.get("files") or []))
+        self._count_skipped(result, _SKIP_FILE, len(sbom.get("files") or []))
 
         node_ids = {source_id, *(artifact.get("id") for artifact in artifacts)}
         forward, contains = self._build_syft_dependency_graph(sbom.get("artifactRelationships") or [], node_ids)
@@ -858,7 +865,7 @@ class SBOMParser:
         parsed_by_id: dict[Any, ParsedDependency] = {}
         for artifact in artifacts:
             if artifact.get("id") in subjects:
-                self._count_skipped(result, "root-component")
+                self._count_skipped(result, _SKIP_ROOT)
             elif parsed := self._append_parsed(
                 result, "Syft artifact", self._parse_syft_artifact, artifact, source_type, source_target, directness
             ):
@@ -1029,7 +1036,7 @@ class SBOMParser:
 
         packages = sbom.get("packages") or []
         license_refs = self._spdx_license_refs(sbom)
-        self._count_skipped(result, "file", len(sbom.get("files") or []))
+        self._count_skipped(result, _SKIP_FILE, len(sbom.get("files") or []))
 
         roots = set(subjects)
         for pkg in packages:
@@ -1049,7 +1056,7 @@ class SBOMParser:
             if not isinstance(pkg, dict):
                 self._count_skipped(result, "malformed")
             elif pkg.get("SPDXID") in roots:
-                self._count_skipped(result, "root-component")
+                self._count_skipped(result, _SKIP_ROOT)
             elif parsed := self._append_parsed(
                 result,
                 "SPDX package",
