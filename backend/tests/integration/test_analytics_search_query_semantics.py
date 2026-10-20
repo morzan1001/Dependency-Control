@@ -639,3 +639,58 @@ async def test_the_vulnerability_search_lists_a_scanner_error_only_when_its_type
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert ([(row["component"], row["vulnerability_id"]) for row in body["items"]], body["total"]) == ([expected], 1)
+
+
+@pytest_asyncio.fixture
+async def two_projects(db, scanned):
+    """Ordered by name case-insensitively, omega precedes Project-P; by id or by binary name it follows."""
+    from app.models.project import Project, ProjectMember
+
+    other = Project(id="p2", name="omega", members=[ProjectMember(user_id="ownerp", role="admin")])
+    await db.projects.insert_one({**other.model_dump(by_alias=True), "latest_scan_id": "scan-p2"})
+    await db.projects.update_one({"_id": "p"}, {"$set": {"name": "Project-P"}})
+    await db.scans.insert_one(
+        {"_id": "scan-p2", "project_id": "p2", "status": "completed", "created_at": datetime.now(timezone.utc)}
+    )
+    return scanned
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("has_vulnerabilities", [None, "true"])
+@pytest.mark.parametrize(
+    ("sort_order", "expected"), [("asc", ["omega", "Project-P"]), ("desc", ["Project-P", "omega"])]
+)
+async def test_dependency_search_sorts_by_the_project_name(
+    client, db, two_projects, has_vulnerabilities, sort_order, expected
+):
+    for scan_id, project_id in ((_SCAN_ID, "p"), ("scan-p2", "p2")):
+        dependency = {**_dependency("lodash"), "_id": f"dep-{project_id}", "scan_id": scan_id, "project_id": project_id}
+        await db.dependencies.insert_one(dependency)
+        await db.findings.insert_one(
+            {**_vulnerability("lodash"), "_id": f"finding-{project_id}", "scan_id": scan_id, "project_id": project_id}
+        )
+    params = {"q": "lodash", "sort_by": "project_name", "sort_order": sort_order}
+    if has_vulnerabilities:
+        params["has_vulnerabilities"] = has_vulnerabilities
+
+    pages = await _pages(client, _SEARCH_PATH, two_projects, params, 2)
+
+    assert [row["project_name"] for page in pages for row in page["items"]] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("sort_order", "expected"), [("asc", ["omega", "Project-P"]), ("desc", ["Project-P", "omega"])]
+)
+async def test_vulnerability_search_sorts_by_the_project_name(client, db, two_projects, sort_order, expected):
+    for scan_id, project_id in ((_SCAN_ID, "p"), ("scan-p2", "p2")):
+        await db.findings.insert_one(
+            {**_vulnerability("lodash"), "_id": f"finding-{project_id}", "scan_id": scan_id, "project_id": project_id}
+        )
+    params = {"q": _CVE, "sort_by": "project_name", "sort_order": sort_order}
+
+    pages = await _pages(client, _VULN_SEARCH_PATH, two_projects, params, 2)
+
+    assert [row["project_name"] for page in pages for row in page["items"]] == expected

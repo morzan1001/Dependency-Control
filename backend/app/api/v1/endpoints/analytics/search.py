@@ -16,7 +16,12 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.responses import RESP_AUTH
-from app.api.v1.helpers.sorting import SortOrderQuery, case_insensitive_sort, parse_sort_direction
+from app.api.v1.helpers.sorting import (
+    SortOrderQuery,
+    case_insensitive_key,
+    case_insensitive_sort,
+    parse_sort_direction,
+)
 from app.core.cve import canonical_cve
 from app.core.constants import (
     DEPENDENCIES_SCAN_PACKAGE_INDEX,
@@ -59,6 +64,14 @@ async def _resolve_search_scope(
     project_name_map, scan_ids = await get_projects_with_scans(projects, db, release_environment=release_environment)
     resolved, without_release = scope_resolution_counts([p.id for p in projects], scan_ids)
     return project_name_map, scan_ids, {"resolved_projects": resolved, "projects_without_release": without_release}
+
+
+_PROJECT_RANK = "_project_rank"
+
+
+def _project_name_rank(project_name_map: dict[str, str]) -> dict[str, Any]:
+    ordered = sorted(project_name_map, key=lambda pid: case_insensitive_key(project_name_map[pid]))
+    return {"$indexOfArray": [ordered, "$project_id"]}
 
 
 async def _dependency_ids_by_vulnerability(
@@ -155,14 +168,18 @@ async def search_dependencies_advanced(
         "name": "name",
         "version": "version",
         "type": "type",
-        "project_name": "project_id",  # sorts by project_id, not name
+        "project_name": _PROJECT_RANK,
         "license": "license",
         "direct": "direct",
     }
     mongo_sort_field = sort_field_map.get(sort_by, "name")
-    ordered = case_insensitive_sort(
-        [(mongo_sort_field, parse_sort_direction(sort_order)), ("_id", 1)], TEXT_SORT_FIELDS
+    ranked = (
+        [{"$addFields": {_PROJECT_RANK: _project_name_rank(project_name_map)}}] if sort_by == "project_name" else []
     )
+    ordered = [
+        *ranked,
+        *case_insensitive_sort([(mongo_sort_field, parse_sort_direction(sort_order)), ("_id", 1)], TEXT_SORT_FIELDS),
+    ]
     # An unanchored name regex bounds no key range, so only an exact version narrows the scan.
     hint = DEPENDENCIES_SCAN_VERSION_INDEX if version else DEPENDENCIES_SCAN_PACKAGE_INDEX
 
@@ -310,7 +327,6 @@ _VULN_SORTS: dict[str, tuple[Any, Any, _RowKey | None]] = {
     "cvss": ("$rows.cvss_score", {"$max": "$details.vulnerabilities.cvss_score"}, lambda row: row.cvss_score or 0.0),
     "epss": ("$rows.epss_score", "$details.epss_score", lambda row: row.epss_score or 0.0),
     "component": ("$component", "$component", None),
-    "project_name": ("$project_id", "$project_id", None),
 }
 
 
@@ -359,7 +375,11 @@ async def search_vulnerabilities(
     total_count = await finding_repo.count(query, hint=FINDINGS_SCAN_TYPE_INDEX)
 
     direction = parse_sort_direction(sort_order)
-    rows_value, finding_value, row_key = _VULN_SORTS.get(sort_by, _VULN_SORTS["severity"])
+    if sort_by == "project_name":
+        rank = _project_name_rank(project_name_map)
+        rows_value, finding_value, row_key = rank, rank, None
+    else:
+        rows_value, finding_value, row_key = _VULN_SORTS.get(sort_by, _VULN_SORTS["severity"])
     # A finding pages by its first row in sort order.
     sort_key = {"$cond": [{"$eq": ["$rows", []]}, finding_value, {"$max" if direction < 0 else "$min": rows_value}]}
     findings = await finding_repo.aggregate(
