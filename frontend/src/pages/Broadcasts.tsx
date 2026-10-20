@@ -253,8 +253,8 @@ export default function Broadcasts() {
 
               {announcementTarget === "teams" && (
                 <div className="space-y-2">
-                  <Label>Select Teams</Label>
-                   <div className="grid grid-cols-2 md:grid-cols-3 gap-2 border p-4 rounded-md h-40 overflow-y-auto">
+                  <Label id="announcement-teams-label">Select Teams</Label>
+                   <div role="group" aria-labelledby="announcement-teams-label" className="grid grid-cols-2 md:grid-cols-3 gap-2 border p-4 rounded-md h-40 overflow-y-auto">
                       {teams?.map((team) => (
                          <div key={team.id} className="flex items-center space-x-2">
                             <Checkbox
@@ -338,28 +338,30 @@ export default function Broadcasts() {
                 {packages.map((pkg, index) => (
                     <div key={pkg._key} className="flex gap-3 items-end p-3 border rounded-md bg-muted/20">
                         <div className="flex-1 space-y-2">
-                            <Label className="text-xs">Package Name</Label>
+                            <Label htmlFor={`advisory-package-name-${pkg._key}`} className="text-xs">Package Name</Label>
                             <PackageAutocomplete 
+                                id={`advisory-package-name-${pkg._key}`}
                                 value={pkg.name}
                                 onValueChange={(val) => updatePackage(index, 'name', val)}
                                 placeholder="e.g. log4j-core or group:artifact"
                             />
                         </div>
                         <div className="w-32 space-y-2">
-                            <Label className="text-xs">Max Version (&lt;=)</Label>
+                            <Label htmlFor={`advisory-package-version-${pkg._key}`} className="text-xs">Max Version (&lt;=)</Label>
                             <Input 
+                                id={`advisory-package-version-${pkg._key}`}
                                 placeholder="e.g. 2.14.0" 
                                 value={pkg.version || ""}
                                 onChange={(e) => updatePackage(index, 'version', e.target.value)}
                             />
                         </div>
                         <div className="w-32 space-y-2">
-                            <Label className="text-xs">Type (Optional)</Label>
+                            <Label htmlFor={`advisory-package-type-${pkg._key}`} className="text-xs">Type (Optional)</Label>
                             <Select
                                 value={pkg.type || "any"}
                                 onValueChange={(val) => updatePackage(index, 'type', val === "any" ? "" : val)}
                             >
-                                <SelectTrigger>
+                                <SelectTrigger id={`advisory-package-type-${pkg._key}`}>
                                     <SelectValue placeholder="Any" />
                                 </SelectTrigger>
                                 <SelectContent>

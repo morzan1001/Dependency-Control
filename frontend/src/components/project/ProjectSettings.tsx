@@ -542,9 +542,10 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                 )}
 
                 <div className="grid gap-2">
-                    <Label>Active Analyzers</Label>
+                    <Label id="settings-analyzers-label">Active Analyzers</Label>
                     <AnalyzerChecklist
                         idPrefix="settings-analyzer"
+                        labelledBy="settings-analyzers-label"
                         selected={form.active_analyzers}
                         onToggle={(analyzerId) => set({ active_analyzers: toggle(form.active_analyzers, analyzerId) })}
                         className="max-h-[300px]"

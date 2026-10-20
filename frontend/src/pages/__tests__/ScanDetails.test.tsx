@@ -574,7 +574,7 @@ describe('ScanDetails finding tabs', () => {
   it('offers the license category filter on the Compliance tab only', () => {
     analyzers.active = ['license_compliance', 'osv']
     renderPage(`${SCAN_PATH}?tab=compliance`)
-    expect(screen.getByRole('combobox')).toHaveTextContent('All Categories')
+    expect(screen.getByRole('combobox', { name: 'License category' })).toHaveTextContent('All Categories')
     expect(lastProps(findingsTableProps).licenseCategory).toBeUndefined()
 
     cleanup()

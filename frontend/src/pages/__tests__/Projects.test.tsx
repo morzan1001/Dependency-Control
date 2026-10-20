@@ -100,3 +100,12 @@ describe('ProjectsPage namesakes', () => {
     expect(screen.queryByText('Retail')).not.toBeInTheDocument()
   })
 })
+
+describe('ProjectsPage accessible names', () => {
+  it('names its search box and sort dropdown, which have no visible label', () => {
+    renderProjects()
+
+    expect(screen.getByRole('textbox', { name: 'Search projects' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Sort by' })).toBeInTheDocument()
+  })
+})

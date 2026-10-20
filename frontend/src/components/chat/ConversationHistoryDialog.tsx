@@ -68,6 +68,7 @@ export function ConversationHistoryDialog({
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search conversations"
             placeholder="Search conversations…"
           />
 

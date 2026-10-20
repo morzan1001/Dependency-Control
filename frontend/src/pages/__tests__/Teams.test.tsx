@@ -143,3 +143,12 @@ describe('TeamsPage header on a tablet', () => {
     expect(screen.getByRole('button', { name: /Sort (ascending|descending)/ }).parentElement).toHaveClass('flex-col', 'sm:flex-row', 'sm:flex-wrap')
   })
 })
+
+describe('TeamsPage accessible names', () => {
+  it('names its search box and sort dropdown, which have no visible label', async () => {
+    await renderPage()
+
+    expect(screen.getByRole('textbox', { name: 'Search teams' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Sort by' })).toBeInTheDocument()
+  })
+})

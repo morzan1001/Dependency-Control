@@ -336,7 +336,7 @@ export default function ScanDetails() {
                     value={scanId}
                     onValueChange={(value) => navigate(`/projects/${projectId}/scans/${value}`)}
                 >
-                    <SelectTrigger className="w-[250px]">
+                    <SelectTrigger className="w-[250px]" aria-label="Scan run">
                         <SelectValue placeholder="Select version" />
                     </SelectTrigger>
                     <SelectContent>
@@ -505,7 +505,7 @@ export default function ScanDetails() {
                                 value={complianceLicenseCategory || "all"}
                                 onValueChange={(val) => setComplianceLicenseCategory(val === "all" ? undefined : val)}
                             >
-                                <SelectTrigger className="w-[200px]">
+                                <SelectTrigger className="w-[200px]" aria-label="License category">
                                     <SelectValue placeholder="License Category" />
                                 </SelectTrigger>
                                 <SelectContent>

@@ -206,7 +206,7 @@ export function GeneralSettingsTab({
 
       <Card>
         <CardHeader>
-          <CardTitle>Default Analyzers for Auto-Created Projects</CardTitle>
+          <CardTitle id="default-analyzers-title">Default Analyzers for Auto-Created Projects</CardTitle>
           <CardDescription>
             Select which analyzers are enabled by default when projects are automatically created via CI/CD pipeline (OIDC).
           </CardDescription>
@@ -214,6 +214,7 @@ export function GeneralSettingsTab({
         <CardContent className="space-y-4">
           <AnalyzerChecklist
             idPrefix="default-analyzer"
+            labelledBy="default-analyzers-title"
             selected={analyzers}
             onToggle={(analyzerId) => handleInputChange('default_active_analyzers', toggle(analyzers, analyzerId))}
             className="max-h-[400px]"

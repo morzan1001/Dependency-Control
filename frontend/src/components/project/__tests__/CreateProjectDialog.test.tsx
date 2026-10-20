@@ -223,5 +223,6 @@ describe('CreateProjectDialog accessible names', () => {
 
     expectEveryFieldNamed()
     expect(screen.getByRole('combobox', { name: 'Team (Optional)' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Active Analyzers' })).toBeInTheDocument()
   })
 })

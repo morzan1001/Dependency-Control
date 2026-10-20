@@ -160,9 +160,10 @@ export function CreateProjectDialog({
             />
 
             <div className="space-y-3 pt-2">
-              <Label>Active Analyzers</Label>
+              <Label id="create-analyzers-label">Active Analyzers</Label>
               <AnalyzerChecklist
                 idPrefix="create-analyzer"
+                labelledBy="create-analyzers-label"
                 selected={analyzers}
                 onToggle={(id) => set({ pickedAnalyzers: toggle(analyzers, id) })}
                 className="max-h-[300px]"

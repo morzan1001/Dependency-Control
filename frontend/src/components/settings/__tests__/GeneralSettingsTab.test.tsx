@@ -63,5 +63,6 @@ describe('GeneralSettingsTab accessible names', () => {
     for (const name of ['Retention Mode', 'Re-scan Mode', 'Crypto Policy Mode']) {
       expect(screen.getByRole('combobox', { name })).toBeInTheDocument()
     }
+    expect(screen.getByRole('group', { name: 'Default Analyzers for Auto-Created Projects' })).toBeInTheDocument()
   })
 })

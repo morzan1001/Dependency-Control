@@ -587,6 +587,12 @@ describe('ProjectSettings notifications', () => {
     )
   })
 
+  it('names the analyzer checklist by its label, like the webhook events group', () => {
+    renderSettings(githubProject())
+
+    expect(screen.getByRole('group', { name: 'Active Analyzers' })).toBeInTheDocument()
+  })
+
   it('links the enforce switch to its label', () => {
     renderSettings(githubProject())
 

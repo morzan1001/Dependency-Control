@@ -7,15 +7,16 @@ import { cn } from '@/lib/utils'
 
 interface AnalyzerChecklistProps {
   idPrefix: string
+  labelledBy: string
   selected: readonly string[]
   onToggle: (analyzerId: string) => void
   className?: string
   renderAction?: (analyzerId: string) => ReactNode
 }
 
-export function AnalyzerChecklist({ idPrefix, selected, onToggle, className, renderAction }: Readonly<AnalyzerChecklistProps>) {
+export function AnalyzerChecklist({ idPrefix, labelledBy, selected, onToggle, className, renderAction }: Readonly<AnalyzerChecklistProps>) {
   return (
-    <div className={cn('flex flex-col gap-2 border rounded-md p-4 overflow-y-auto', className)}>
+    <div role="group" aria-labelledby={labelledBy} className={cn('flex flex-col gap-2 border rounded-md p-4 overflow-y-auto', className)}>
       {Object.entries(ANALYZER_CATEGORIES).map(([categoryId, categoryInfo]) => {
         const categoryAnalyzers = AVAILABLE_ANALYZERS.filter((a) => a.category === categoryId)
         return (

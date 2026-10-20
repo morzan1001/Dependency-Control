@@ -77,6 +77,7 @@ export function ProjectCombobox({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={handleKeyDown}
+              aria-label="Search projects"
               placeholder={placeholder}
               className="pl-9 pr-8"
               autoFocus
