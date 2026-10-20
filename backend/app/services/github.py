@@ -830,7 +830,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return await self._send_comment("PATCH", f"/repos/{owner}/{repo}/issues/comments/{comment_id}", body)
 
     async def _jwks_uris(self) -> list[str]:
-        if "token.actions.githubusercontent.com" in self.base_url:
+        if _hostname(self.base_url) == _hostname(GITHUB_SHARED_OIDC_ISSUER):
             return [_GITHUB_COM_JWKS_URI]
         discovered = await discover_jwks_uri(self.base_url, self._get_cache_key(f"jwks_uri:{self.base_url}"))
         return [discovered or f"{self.base_url}/.well-known/jwks"]

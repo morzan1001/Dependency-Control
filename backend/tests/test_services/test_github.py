@@ -288,6 +288,21 @@ class TestGitHubJwksSource:
         assert await GitHubService(github_instance_a()).get_jwks() == _JWKS
         assert requested == ["https://token.actions.githubusercontent.com/.well-known/jwks"]
 
+    async def test_an_enterprise_scoped_actions_issuer_reads_the_github_com_keys(self, monkeypatch, jwks_cache):
+        requested = serve_idp(monkeypatch, lambda request: httpx.Response(200, json=_JWKS))
+        service = GitHubService(make_github_instance(url="https://token.actions.githubusercontent.com/acme"))
+
+        assert await service.get_jwks() == _JWKS
+        assert requested == ["https://token.actions.githubusercontent.com/.well-known/jwks"]
+
+    async def test_a_ghes_issuer_naming_the_actions_host_in_its_path_reads_its_own_keys(self, monkeypatch, jwks_cache):
+        base = "https://github.corp.example.com/token.actions.githubusercontent.com"
+        requested = serve_idp(monkeypatch, lambda request: httpx.Response(404))
+
+        await GitHubService(make_github_instance(url=base)).get_jwks()
+
+        assert requested == [f"{base}/.well-known/openid-configuration", f"{base}/.well-known/jwks"]
+
     async def test_ghes_without_discovery_falls_back_without_remembering_the_guess(self, monkeypatch, jwks_cache):
         base = "https://github.corp.example.com/_services/token"
         rotated = {"keys": [{"kid": "k2", "kty": "RSA", "n": "n2", "e": "AQAB"}]}
