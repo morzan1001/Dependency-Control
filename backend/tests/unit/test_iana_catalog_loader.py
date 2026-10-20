@@ -68,6 +68,20 @@ async def test_the_bundled_snapshot_serves_a_failed_fetch():
 
 
 @pytest.mark.asyncio
+async def test_the_bundled_snapshot_is_read_from_disk_once_per_process(monkeypatch):
+    loader._load_fallback_yaml.cache_clear()
+    reads = []
+    safe_load = yaml.safe_load
+    monkeypatch.setattr(loader.yaml, "safe_load", lambda stream: reads.append(stream) or safe_load(stream))
+
+    first = await load_iana_catalog()
+    second = await load_iana_catalog()
+
+    assert len(reads) == 1
+    assert first == second
+
+
+@pytest.mark.asyncio
 async def test_the_negative_cache_marker_falls_back_to_the_bundled_snapshot(monkeypatch):
     _shared_cache_returns(monkeypatch, {})
 

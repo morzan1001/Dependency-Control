@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import csv
+import functools
 import logging
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
@@ -171,13 +173,14 @@ def _derive_weaknesses(name: str) -> list[str]:
     return sorted(set(tags))
 
 
-def _load_fallback_yaml() -> list[dict[str, Any]]:
+@functools.cache
+def _load_fallback_yaml() -> tuple[dict[str, Any], ...]:
     with _CATALOG_FALLBACK_PATH.open() as fh:
         doc = yaml.safe_load(fh) or {}
-    return list(doc.get("suites") or [])
+    return tuple(doc.get("suites") or [])
 
 
-def _materialize(suites: list[dict[str, Any]]) -> dict[str, CipherSuiteEntry]:
+def _materialize(suites: Sequence[dict[str, Any]]) -> dict[str, CipherSuiteEntry]:
     return {
         row["name"]: CipherSuiteEntry(
             name=row["name"],
