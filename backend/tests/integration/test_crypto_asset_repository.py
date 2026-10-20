@@ -112,3 +112,14 @@ async def test_an_asset_is_found_by_the_id_its_listing_names_and_so_is_its_resca
     assert carried.id != listed.id
     assert fetched_copy is not None
     assert fetched_copy.scan_id == "s2"
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_read_by_scan_alone_walks_an_index(db):
+    """The scan cascade, archive streaming and restore rollback name no project."""
+    await create_indexes(db)
+
+    explain = await db.command({"explain": {"find": "crypto_assets", "filter": {"scan_id": {"$in": ["s1"]}}}})
+
+    assert "COLLSCAN" not in str(explain["queryPlanner"]["winningPlan"])

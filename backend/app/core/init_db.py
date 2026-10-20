@@ -385,6 +385,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["crypto_assets"].create_index(
         [("project_id", pymongo.ASCENDING), ("asset_type", pymongo.ASCENDING), ("primitive", pymongo.ASCENDING)]
     )
+    # The scan cascade, archive streaming, restore rollback and global hotspots read a scan's assets by scan_id alone.
+    await database["crypto_assets"].create_index("scan_id")
 
     await database["crypto_policies"].create_index(
         [("scope", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING)], unique=True
