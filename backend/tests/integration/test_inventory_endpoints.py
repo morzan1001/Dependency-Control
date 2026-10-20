@@ -317,6 +317,42 @@ async def test_components_sort_by_version_descending(client, db, member_auth_hea
     assert [i["version"] for i in resp.json()["items"]] == ["3.0.0", "2.0.0", "1.0.0"]
 
 
+_NUMBERED_VERSIONS = ["9.0.0", "9.2.0", "9.10.0", "10.0.0", "10.0.0-rc.2", "10.0.0-rc.10"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sort_order", ["asc", "desc"])
+async def test_components_sort_versions_by_the_value_of_their_numbers(client, db, member_auth_headers, sort_order):
+    await _seed_scan(db)
+    for i, version in enumerate(reversed(_NUMBERED_VERSIONS)):
+        await _seed_dep(db, "s1", f"pkg-{i}", version=version)
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/components",
+        params={"sort_by": "version", "sort_order": sort_order},
+        headers=member_auth_headers,
+    )
+
+    assert resp.status_code == 200
+    expected = _NUMBERED_VERSIONS if sort_order == "asc" else _NUMBERED_VERSIONS[::-1]
+    assert [i["version"] for i in resp.json()["items"]] == expected
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_components_list_one_packages_versions_by_the_value_of_their_numbers(client, db, member_auth_headers):
+    await _seed_scan(db)
+    for version in ("10.0.0", "9.0.0"):
+        await _seed_dep(db, "s1", "lib", version=version)
+
+    rows = _parse_csv(
+        await client.get(f"/api/v1/projects/{_PID}/inventory/components/export", headers=member_auth_headers)
+    )
+
+    assert [r["version"] for r in rows] == ["9.0.0", "10.0.0"]
+
+
 # Each column's values sort differently by code point than whatever their case and accents.
 _CASE_MIXED = {
     "name": ("lodash", "Newtonsoft.Json", "Autofac", "élan"),

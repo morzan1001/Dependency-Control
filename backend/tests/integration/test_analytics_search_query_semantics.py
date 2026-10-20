@@ -131,6 +131,25 @@ async def test_dependency_search_orders_names_whatever_their_case(client, db, sc
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 @pytest.mark.parametrize("has_vulnerabilities", [None, "true"])
+async def test_dependency_search_orders_versions_by_the_value_of_their_numbers(
+    client, db, scanned, has_vulnerabilities
+):
+    for i, version in enumerate(["10.0.0", "9.10.0", "9.0.0", "9.2.0"]):
+        await db.dependencies.insert_one({**_dependency(f"lib-{i}"), "version": version})
+        await db.findings.insert_one({**_vulnerability(f"lib-{i}"), "version": version})
+    params = {"q": "lib", "sort_by": "version", "sort_order": "asc"}
+    if has_vulnerabilities:
+        params["has_vulnerabilities"] = has_vulnerabilities
+
+    resp = await client.get(_SEARCH_PATH, params=params, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    assert [row["version"] for row in resp.json()["items"]] == ["9.0.0", "9.2.0", "9.10.0", "10.0.0"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("has_vulnerabilities", [None, "true"])
 async def test_dependency_search_keeps_only_the_requested_version(client, db, scanned, has_vulnerabilities):
     await db.dependencies.insert_one(_dependency("a-lib"))
     await db.dependencies.insert_one({**_dependency("b-lib"), "version": "2.0.0"})

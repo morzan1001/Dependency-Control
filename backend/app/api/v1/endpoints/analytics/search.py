@@ -47,7 +47,7 @@ from app.schemas.analytics import (
 )
 from app.services.aggregation.versions import normalize_version
 from app.services.component_identity import build_component_index, lookup_component
-from app.services.inventory.components import TEXT_SORT_FIELDS
+from app.services.inventory.components import NUMBERED_SORT_FIELDS, TEXT_SORT_FIELDS
 from app.services.recommendation.common import max_advisory_cvss
 
 router = CustomAPIRouter()
@@ -195,7 +195,9 @@ async def search_dependencies_advanced(
     )
     ordered = [
         *ranked,
-        *case_insensitive_sort([(mongo_sort_field, parse_sort_direction(sort_order)), ("_id", 1)], TEXT_SORT_FIELDS),
+        *case_insensitive_sort(
+            [(mongo_sort_field, parse_sort_direction(sort_order)), ("_id", 1)], TEXT_SORT_FIELDS, NUMBERED_SORT_FIELDS
+        ),
     ]
     # An unanchored name regex bounds no key range, so only an exact version narrows the scan.
     hint = DEPENDENCIES_SCAN_VERSION_INDEX if version else DEPENDENCIES_SCAN_PACKAGE_INDEX
