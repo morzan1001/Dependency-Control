@@ -7,6 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 
 from app.core.constants import (
     DEPENDENCIES_SCAN_PACKAGE_INDEX,
+    DEPENDENCIES_SCAN_VERSION_INDEX,
     FINDINGS_SCAN_COMPONENT_INDEX,
     FINDINGS_SCAN_TYPE_INDEX,
     SCANS_TIP_SORT,
@@ -172,7 +173,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     # Unique for idempotent concurrent upserts; sparse is inert but stays, as changing it fails on the built index.
     await database["dependencies"].create_index(DEPENDENCIES_SCAN_PACKAGE_INDEX, unique=True, sparse=True)
-    await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("version", pymongo.ASCENDING)])
+    await database["dependencies"].create_index(DEPENDENCIES_SCAN_VERSION_INDEX)
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
     # Bounds the anchored purl-prefix match of the per-scan enrichment copy to one scan's range.
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("purl", pymongo.ASCENDING)])

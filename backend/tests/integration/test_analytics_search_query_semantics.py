@@ -130,6 +130,24 @@ async def test_dependency_search_orders_names_whatever_their_case(client, db, sc
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
+@pytest.mark.parametrize("has_vulnerabilities", [None, "true"])
+async def test_dependency_search_keeps_only_the_requested_version(client, db, scanned, has_vulnerabilities):
+    await db.dependencies.insert_one(_dependency("a-lib"))
+    await db.dependencies.insert_one({**_dependency("b-lib"), "version": "2.0.0"})
+    await db.findings.insert_one(_vulnerability("a-lib"))
+    await db.findings.insert_one({**_vulnerability("b-lib"), "version": "2.0.0"})
+    params = {"q": "lib", "version": "1.0.0"}
+    if has_vulnerabilities:
+        params["has_vulnerabilities"] = has_vulnerabilities
+
+    resp = await client.get(_SEARCH_PATH, params=params, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    assert [(row["package"], row["version"]) for row in resp.json()["items"]] == [("a-lib", "1.0.0")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_vulnerability_search_returns_the_unwaived_finding(client, db, scanned):
     await db.findings.insert_one(_vulnerability("left-pad"))
     await db.findings.insert_one(_vulnerability("waived-pkg", waived=True))
