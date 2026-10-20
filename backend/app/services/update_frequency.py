@@ -911,8 +911,8 @@ def rank_summaries(summaries: list[ProjectUpdateSummary]) -> UpdateFrequencyComp
 
     measured = [s for s in ready if s.update_coverage_pct is not None]
     unmeasured = [s for s in ready if s.update_coverage_pct is None]
-    measured.sort(key=lambda s: (s.update_coverage_pct, _rate(s)), reverse=True)
-    unmeasured.sort(key=_rate, reverse=True)
+    measured.sort(key=lambda s: (-(s.update_coverage_pct or 0.0), -_rate(s), _name_key(s)))
+    unmeasured.sort(key=lambda s: (-_rate(s), _name_key(s)))
 
     rates = [s.updates_per_month for s in ready if s.updates_per_month is not None]
     return UpdateFrequencyComparison(

@@ -1829,12 +1829,20 @@ class TestRankSummaries:
         assert result.partial_projects == 1
 
     @pytest.mark.parametrize(
-        ("status", "rate"), [("partial", 2.0), ("pending", None), ("insufficient_data", None), ("error", None)]
+        ("status", "rate", "coverage"),
+        [
+            ("ready", 2.0, 50.0),
+            ("ready", 2.0, None),
+            ("partial", 2.0, None),
+            ("pending", None, None),
+            ("insufficient_data", None, None),
+            ("error", None, None),
+        ],
     )
-    def test_an_unranked_list_orders_names_whatever_their_case(self, status, rate):
+    def test_a_list_orders_names_on_as_many_updates_whatever_their_case(self, status, rate, coverage):
         names = ["zeta", "Beta", "alpha", "Élan"]
 
-        result = rank_summaries([self._summary(name, status, rate) for name in names])
+        result = rank_summaries([self._summary(name, status, rate, coverage) for name in names])
 
         assert [p.project_name for p in result.projects] == ["alpha", "Beta", "Élan", "zeta"]
 
