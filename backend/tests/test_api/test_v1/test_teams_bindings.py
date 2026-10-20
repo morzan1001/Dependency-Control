@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +9,7 @@ from pymongo.errors import DuplicateKeyError
 from app.api.deps import PermissionChecker
 from app.core.permissions import Permissions
 from app.schemas.team import TeamGitHubBindingRequest, TeamGitLabBindingRequest
+from app.services.github import GitHubCoreRateLimit
 from app.services.gitlab import GitLabGroupLookup
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
@@ -25,6 +26,8 @@ _GROUP = {"id": 77, "path": "edge", "full_path": "mo/edge", "name": "Edge"}
 _FOUND = GitLabGroupLookup(reachable=True, group=_GROUP)
 _ABSENT = GitLabGroupLookup(reachable=True, group=None)
 _UNREACHABLE = GitLabGroupLookup(reachable=False, group=None)
+
+_HEALTHY_BUDGET = GitHubCoreRateLimit(remaining=4999, reset_at=_TIMESTAMP)
 
 _GITHUB = TeamGitHubBindingRequest(provider="github", instance_id="gh-1", org="Acme", external_id=4711)
 _GITLAB = TeamGitLabBindingRequest(provider="gitlab", instance_id="gl-1", external_id=77)
@@ -69,13 +72,16 @@ def _team(team_id: str = "team-1", name: str = "Payments Guild", *bindings) -> d
     }
 
 
-def _run_bind(db, binding=_GITHUB, *, org_teams=_ORG_TEAMS, lookup=_FOUND, team_id="team-1"):
+def _run_bind(
+    db, binding=_GITHUB, *, org_teams=_ORG_TEAMS, lookup=_FOUND, team_id="team-1", rate_limit=_HEALTHY_BUDGET
+):
     from app.api.v1.endpoints.teams import set_team_binding
 
     github_instances = MagicMock()
     github_instances.get_by_id = AsyncMock(return_value=make_github_instance(id="gh-1", access_token="ghp-secret"))
-    github = MagicMock()
+    github = MagicMock(rate_limited_until=None)
     github.get_org_teams = AsyncMock(return_value=org_teams)
+    github.get_core_rate_limit = AsyncMock(return_value=rate_limit)
     gitlab_instances = MagicMock()
     gitlab_instances.get_by_id = AsyncMock(return_value=make_gitlab_instance(id="gl-1"))
     gitlab = MagicMock()
@@ -164,6 +170,25 @@ class TestSetBinding:
             _run_bind(db, org_teams=None)
 
         assert excinfo.value.status_code == 502
+        assert _bindings(db) == []
+
+    def test_an_organisation_listing_refused_for_its_scope_says_so(self):
+        with pytest.raises(HTTPException) as excinfo:
+            _run_bind(_db(_team()), org_teams=None)
+
+        assert "The token needs read:org there." in excinfo.value.detail
+        assert "rate limit" not in excinfo.value.detail
+
+    def test_a_throttled_organisation_listing_reports_the_wait_rather_than_the_scope(self):
+        budget = GitHubCoreRateLimit(remaining=0, reset_at=datetime.now(timezone.utc) + timedelta(minutes=5))
+        db = _db(_team())
+
+        with pytest.raises(HTTPException) as excinfo:
+            _run_bind(db, org_teams=None, rate_limit=budget)
+
+        assert excinfo.value.status_code == 502
+        assert "rate limit is exhausted" in excinfo.value.detail
+        assert "read:org" not in excinfo.value.detail
         assert _bindings(db) == []
 
     def test_an_unreachable_instance_is_a_bad_gateway_rather_than_a_guess(self):

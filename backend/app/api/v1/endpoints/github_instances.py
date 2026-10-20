@@ -1,7 +1,4 @@
 import logging
-import math
-from datetime import datetime, timezone
-from enum import Enum, auto
 from typing import Annotated, Any
 
 from fastapi import HTTPException, Query, status
@@ -9,7 +6,16 @@ from fastapi import HTTPException, Query, status
 from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.vcs_instances import apply_update, assert_unique, delete_guarded, get_or_404, list_page
+from app.api.v1.helpers.vcs_instances import (
+    Refusal,
+    apply_update,
+    assert_unique,
+    delete_guarded,
+    get_or_404,
+    list_page,
+    refused_listing,
+    why_refused,
+)
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400,
@@ -117,44 +123,6 @@ async def delete_instance(
     await delete_guarded(db, instance_repo, instance, provider=TEAM_SOURCE_GITHUB, username=current_user.username)
 
 
-class _Refusal(Enum):
-    BUDGET = auto()
-    SCOPE = auto()
-    UNDETERMINED = auto()
-
-
-async def _why_refused(github_service: GitHubService) -> tuple[_Refusal, str]:
-    """Asks the uncharged GET /rate_limit only when the read's own rate-limit headers are silent."""
-    reset_at = github_service.rate_limited_until
-    if reset_at is None:
-        limit = await github_service.get_core_rate_limit()
-        if limit is None:
-            return _Refusal.UNDETERMINED, ""
-        if limit.remaining > 0:
-            return _Refusal.SCOPE, ""
-        reset_at = limit.reset_at
-    minutes = math.ceil((reset_at - datetime.now(timezone.utc)).total_seconds() / 60)
-    due = f"about {minutes} minute(s) from now" if minutes > 0 else "any moment now"
-    return _Refusal.BUDGET, f"{reset_at:%Y-%m-%d %H:%M UTC}, {due}"
-
-
-async def _refused_listing(github_service: GitHubService, subject: str, scope_hint: str) -> HTTPException:
-    """Names what refused rather than assuming a missing scope."""
-    cause, reset = await _why_refused(github_service)
-    if cause is _Refusal.BUDGET:
-        detail = (
-            f"Could not list {subject}: the token's GitHub API rate limit is exhausted. The limit resets at {reset}."
-        )
-    elif cause is _Refusal.SCOPE:
-        detail = f"Could not list {subject}. {scope_hint}"
-    else:
-        detail = (
-            f"Could not list {subject}, and GET /rate_limit did not answer either, so whether an "
-            "exhausted rate limit or a missing read:org refused could not be determined. Check both."
-        )
-    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
-
-
 @router.get("/{instance_id}/orgs", responses=RESP_AUTH_404_502)
 async def list_instance_organisations(
     instance_id: str,
@@ -166,7 +134,7 @@ async def list_instance_organisations(
     github_service = GitHubService(instance)
     orgs = await github_service.get_viewer_organisations()
     if orgs is None:
-        raise await _refused_listing(
+        raise await refused_listing(
             github_service,
             f"the organisations of instance '{instance.name}'",
             "The token needs read:org.",
@@ -186,7 +154,7 @@ async def list_organisation_teams(
     github_service = GitHubService(instance)
     org_teams = await github_service.get_org_teams(org)
     if org_teams is None:
-        raise await _refused_listing(
+        raise await refused_listing(
             github_service,
             f"the teams of organisation '{org}'",
             "The token needs read:org there.",
@@ -224,8 +192,8 @@ async def _probe_token(
     response = await github_service._api_get("/user")
     if response is not None and response.status_code == 200:
         return " The access token authenticates."
-    cause, reset = await _why_refused(github_service)
-    if cause is _Refusal.BUDGET:
+    cause, reset = await why_refused(github_service)
+    if cause is Refusal.BUDGET:
         return _budget_failure(instance, "the token could not be tried", reset)
     if response is not None and response.status_code in (401, 403):
         return _failed_test(
@@ -245,10 +213,10 @@ async def _probe_token(
 async def _refused_org_listing(
     github_service: GitHubService, instance: GitHubInstance
 ) -> GitHubInstanceTestConnectionResponse | None:
-    cause, reset = await _why_refused(github_service)
-    if cause is _Refusal.BUDGET:
+    cause, reset = await why_refused(github_service)
+    if cause is Refusal.BUDGET:
         return _budget_failure(instance, "its organisations could not be listed", reset)
-    if cause is _Refusal.UNDETERMINED:
+    if cause is Refusal.UNDETERMINED:
         return _failed_test(
             instance,
             "OIDC endpoint reachable, but the token could not list its organisations, and "
@@ -261,11 +229,11 @@ async def _refused_org_listing(
 async def _refused_team_listing(
     github_service: GitHubService, instance: GitHubInstance, unreadable: list[str]
 ) -> GitHubInstanceTestConnectionResponse:
-    cause, reset = await _why_refused(github_service)
+    cause, reset = await why_refused(github_service)
     # Exhaustion mid-loop makes every later organisation look unreadable, so naming any could accuse a readable one.
-    if cause is _Refusal.BUDGET:
+    if cause is Refusal.BUDGET:
         return _budget_failure(instance, "its team access could not be checked", reset)
-    if cause is _Refusal.UNDETERMINED:
+    if cause is Refusal.UNDETERMINED:
         return _failed_test(
             instance,
             "OIDC endpoint reachable, but the token's team access could not be checked, and "

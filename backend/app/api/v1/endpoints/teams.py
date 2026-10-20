@@ -17,6 +17,7 @@ from app.api.v1.helpers import (
     visible_teams_filter,
 )
 from app.api.v1.helpers.teams import enrich_teams_with_usernames
+from app.api.v1.helpers.vcs_instances import refused_listing
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
@@ -167,14 +168,13 @@ async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDat
     if not instance:
         raise HTTPException(status_code=404, detail=f"GitHub instance with ID {request.instance_id} not found")
 
-    org_teams = await GitHubService(instance).get_org_teams(request.org)
+    github_service = GitHubService(instance)
+    org_teams = await github_service.get_org_teams(request.org)
     if org_teams is None:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=(
-                f"Could not list the teams of organisation '{request.org}' on instance "
-                f"'{instance.name}'. The token needs read:org there."
-            ),
+        raise await refused_listing(
+            github_service,
+            f"the teams of organisation '{request.org}' on instance '{instance.name}'",
+            "The token needs read:org there.",
         )
 
     slug = build_team_slug_map(org_teams).get(request.external_id)

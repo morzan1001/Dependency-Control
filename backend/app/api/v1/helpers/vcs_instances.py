@@ -1,6 +1,8 @@
 import logging
+import math
 from collections.abc import Callable
 from datetime import datetime, timezone
+from enum import Enum, auto
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -15,6 +17,7 @@ from app.models.gitlab_instance import GitLabInstance
 from app.repositories.projects import ProjectRepository
 from app.repositories.teams import TeamRepository
 from app.repositories.vcs_instances import VcsInstanceRepository
+from app.services.github import GitHubService
 
 logger = logging.getLogger(__name__)
 
@@ -116,3 +119,41 @@ async def delete_guarded(
     logger.warning(
         "Deleted %s instance '%s' by user %s, detached from %d teams", provider, instance.name, username, detached
     )
+
+
+class Refusal(Enum):
+    BUDGET = auto()
+    SCOPE = auto()
+    UNDETERMINED = auto()
+
+
+async def why_refused(github_service: GitHubService) -> tuple[Refusal, str]:
+    """Asks the uncharged GET /rate_limit only when the read's own rate-limit headers are silent."""
+    reset_at = github_service.rate_limited_until
+    if reset_at is None:
+        limit = await github_service.get_core_rate_limit()
+        if limit is None:
+            return Refusal.UNDETERMINED, ""
+        if limit.remaining > 0:
+            return Refusal.SCOPE, ""
+        reset_at = limit.reset_at
+    minutes = math.ceil((reset_at - datetime.now(timezone.utc)).total_seconds() / 60)
+    due = f"about {minutes} minute(s) from now" if minutes > 0 else "any moment now"
+    return Refusal.BUDGET, f"{reset_at:%Y-%m-%d %H:%M UTC}, {due}"
+
+
+async def refused_listing(github_service: GitHubService, subject: str, scope_hint: str) -> HTTPException:
+    """Names what refused rather than assuming a missing scope."""
+    cause, reset = await why_refused(github_service)
+    if cause is Refusal.BUDGET:
+        detail = (
+            f"Could not list {subject}: the token's GitHub API rate limit is exhausted. The limit resets at {reset}."
+        )
+    elif cause is Refusal.SCOPE:
+        detail = f"Could not list {subject}. {scope_hint}"
+    else:
+        detail = (
+            f"Could not list {subject}, and GET /rate_limit did not answer either, so whether an "
+            "exhausted rate limit or a missing read:org refused could not be determined. Check both."
+        )
+    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
