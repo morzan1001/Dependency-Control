@@ -1,6 +1,7 @@
 """One scan pair at a time, so peak memory stays at ~2 x deps/scan regardless of project size."""
 
 import asyncio
+import heapq
 import logging
 import re
 from collections import Counter, defaultdict, deque
@@ -215,14 +216,12 @@ def _measured_count(outdated: set[str] | None) -> int | None:
     return None if outdated is None else len(outdated)
 
 
-def _update_sample_order(event: DependencyUpdateEvent) -> tuple[int, str, str]:
-    """Mongo document order is unstable, so the cut of a busy scan needs a total order of its own."""
-    return (UPDATE_SAMPLE_RANK[event.update_type], event.package_name, event.new_version)
+_VersionChange = tuple[str, dict[str, str], dict[str, str], UpdateKind]
 
 
 def version_changes(
     prev_deps: dict[str, dict[str, str]], curr_deps: dict[str, dict[str, str]]
-) -> Iterator[tuple[str, dict[str, str], dict[str, str], UpdateKind]]:
+) -> Iterator[_VersionChange]:
     for identity, curr in curr_deps.items():
         prev = prev_deps.get(identity)
         if prev is None or prev["version"] == curr["version"]:
@@ -239,41 +238,42 @@ def resolved_outdated(
     return (prev_outdated & ({info["name"] for info in curr_deps.values()} - curr_failed)) - curr_outdated
 
 
-def _compare_scan_pair(
-    prev_deps: dict[str, dict[str, str]],
+def _update_sample_order(change: _VersionChange) -> tuple[int, str, str]:
+    """Mongo document order is unstable, so the cut of a busy scan needs a total order of its own."""
+    _identity, _prev, curr, kind = change
+    return (UPDATE_SAMPLE_RANK[kind], curr["display"], curr["version"])
+
+
+def _sample_events(
+    changes: list[_VersionChange],
     prev_scan_date: datetime,
-    curr_deps: dict[str, dict[str, str]],
     curr_scan_date: datetime,
     prev_outdated: set[str] | None,
-) -> list[tuple[DependencyUpdateEvent, str]]:
+) -> list[DependencyUpdateEvent]:
     days_between = max(1, (curr_scan_date - prev_scan_date).days)
     return [
-        (
-            DependencyUpdateEvent(
-                package_name=curr["display"],
-                package_type=curr["type"],
-                purl=curr["purl"] or None,
-                old_version=prev["version"],
-                new_version=curr["version"],
-                update_type=kind,
-                scan_date=curr_scan_date.isoformat(),
-                previous_scan_date=prev_scan_date.isoformat(),
-                days_between_scans=days_between,
-                was_outdated=prev["name"] in (prev_outdated or ()),
-            ),
-            identity,
+        DependencyUpdateEvent(
+            package_name=curr["display"],
+            package_type=curr["type"],
+            purl=curr["purl"] or None,
+            old_version=prev["version"],
+            new_version=curr["version"],
+            update_type=kind,
+            scan_date=curr_scan_date.isoformat(),
+            previous_scan_date=prev_scan_date.isoformat(),
+            days_between_scans=days_between,
+            was_outdated=prev["name"] in (prev_outdated or ()),
         )
-        for identity, prev, curr, kind in version_changes(prev_deps, curr_deps)
+        for _identity, prev, curr, kind in heapq.nsmallest(RECENT_UPDATES_LIMIT, changes, key=_update_sample_order)
     ]
 
 
 def _build_timeline_entry(
     scan_id: str,
     scan_date: datetime,
-    events: list[DependencyUpdateEvent],
+    type_counts: Mapping[str, int],
     outdated_count: int | None,
 ) -> ScanTimelineEntry:
-    type_counts = Counter(e.update_type for e in events)
     return ScanTimelineEntry(
         scan_id=scan_id,
         date=scan_date.isoformat(),
@@ -584,6 +584,8 @@ def dominant_ecosystem(eco: Mapping[str, Any]) -> str | None:
 
 @dataclass
 class _AccumulatorState:
+    # Adoption feeds only the upstream cadence, which needs a release fetcher.
+    track_adoption: bool
     type_counter: Counter = field(default_factory=Counter)
     recent_events_by_scan: deque[list[DependencyUpdateEvent]] = field(
         default_factory=lambda: deque(maxlen=RECENT_UPDATES_LIMIT)
@@ -604,7 +606,7 @@ class _AccumulatorState:
             if name not in self.dep_type_map:
                 self.dep_type_map[name] = info["type"]
             system = info["deps_dev_system"]
-            if system and identity not in self.package_specs:
+            if self.track_adoption and system and identity not in self.package_specs:
                 self.package_specs[identity] = (system, info["deps_dev_name"])
 
     def record_outdated(self, outdated: set[str] | None) -> None:
@@ -628,17 +630,23 @@ class _AccumulatorState:
             return
         self.ever_resolved |= resolved_outdated(prev_outdated, curr_outdated, curr_deps, curr_failed)
 
-    def absorb_events(self, events: list[tuple[DependencyUpdateEvent, str]], curr_scan_date: datetime) -> None:
-        for e, identity in events:
-            self.type_counter[e.update_type] += 1
-            # Returning to an old release is no adoption of it.
-            if e.update_type != "downgrade" and len(self.first_seen_versions) < _MAX_OBSERVATIONS:
-                key = (identity, e.new_version)
-                if key not in self.first_seen_versions:
-                    self.first_seen_versions[key] = curr_scan_date
-        if events:
-            ranked = sorted((e for e, _identity in events), key=_update_sample_order)
-            self.recent_events_by_scan.append(ranked[:RECENT_UPDATES_LIMIT])
+    def absorb_changes(
+        self,
+        changes: list[_VersionChange],
+        prev_scan_date: datetime,
+        curr_scan_date: datetime,
+        prev_outdated: set[str] | None,
+    ) -> Counter[str]:
+        kinds: Counter[str] = Counter(kind for *_, kind in changes)
+        self.type_counter.update(kinds)
+        if self.track_adoption:
+            for identity, _prev, curr, kind in changes:
+                # Returning to an old release is no adoption of it.
+                if kind != "downgrade" and len(self.first_seen_versions) < _MAX_OBSERVATIONS:
+                    self.first_seen_versions.setdefault((identity, curr["version"]), curr_scan_date)
+        if changes:
+            self.recent_events_by_scan.append(_sample_events(changes, prev_scan_date, curr_scan_date, prev_outdated))
+        return kinds
 
     def recent_events(self) -> list[DependencyUpdateEvent]:
         return list(islice(chain.from_iterable(reversed(self.recent_events_by_scan)), RECENT_UPDATES_LIMIT))
@@ -764,7 +772,7 @@ async def compute_update_frequency(
 
     completed_scans, truncated = await _load_completed_scans(scan_repo, project_id, branch, max_scans, since)
 
-    state = _AccumulatorState()
+    state = _AccumulatorState(track_adoption=release_fetcher is not None)
 
     analysed: list[dict[str, Any]] = []
     prev_deps: dict[str, dict[str, str]] = {}
@@ -790,20 +798,20 @@ async def compute_update_frequency(
         )
         state.record_outdated(curr_outdated)
 
-        events: list[tuple[DependencyUpdateEvent, str]] = []
+        kinds: Counter[str] = Counter()
         if analysed:
             prev_scan = analysed[-1]
             if not curr_scan["commit_hash"] or prev_scan["commit_hash"] != curr_scan["commit_hash"]:
                 _close_bar()
             state.record_resolved(prev_outdated, curr_outdated, curr_deps, curr_failed)
-            events = _compare_scan_pair(
-                prev_deps, prev_scan["created_at"], curr_deps, curr_scan["created_at"], prev_outdated
+            kinds = state.absorb_changes(
+                list(version_changes(prev_deps, curr_deps)),
+                prev_scan["created_at"],
+                curr_scan["created_at"],
+                prev_outdated,
             )
-            state.absorb_events(events, curr_scan["created_at"])
         state.scan_timeline.append(
-            _build_timeline_entry(
-                curr_scan["_id"], curr_scan["created_at"], [e for e, _ in events], _measured_count(curr_outdated)
-            )
+            _build_timeline_entry(curr_scan["_id"], curr_scan["created_at"], kinds, _measured_count(curr_outdated))
         )
 
         analysed.append(curr_scan)

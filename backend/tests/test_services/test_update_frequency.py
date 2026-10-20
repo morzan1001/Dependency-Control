@@ -21,7 +21,12 @@ from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     BranchWindowActivity,
 )
-from app.schemas.analytics import ProjectUpdateSummary, ScanTimelineEntry, UpdateFrequencyMetrics
+from app.schemas.analytics import (
+    DependencyUpdateEvent,
+    ProjectUpdateSummary,
+    ScanTimelineEntry,
+    UpdateFrequencyMetrics,
+)
 from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
     _COMPARISON_CONCURRENCY,
@@ -1244,6 +1249,22 @@ class TestStreamingOrchestrator:
         assert m.adoption_latency_days_median is None
 
     @pytest.mark.asyncio
+    async def test_without_a_release_fetcher_no_adoption_is_tracked(self, monkeypatch):
+        handed: list[tuple[Any, dict[str, Any], dict[str, Any]]] = []
+
+        async def _capture(fetcher: Any, specs: dict[str, Any], first_seen: dict[str, Any]) -> None:
+            handed.append((fetcher, dict(specs), dict(first_seen)))
+
+        monkeypatch.setattr(update_frequency_module, "_maybe_fetch_upstream_cadence", _capture)
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {"s1": [_make_dep("s1", "pkg-a", "1.0.0")], "s2": [_make_dep("s2", "pkg-a", "1.0.1")]}
+
+        m = await _compute(scans, deps)
+
+        assert m.total_updates == 1
+        assert handed == [(None, {}, {})]
+
+    @pytest.mark.asyncio
     async def test_a_deps_dev_slower_than_the_budget_leaves_only_the_cadence_card_empty(self, monkeypatch):
         monkeypatch.setattr(update_frequency_module, "_UPSTREAM_BUDGET_SECONDS", 0.05)
 
@@ -1839,6 +1860,31 @@ class TestRecentUpdatesSelection:
         assert [event.package_name for event in m.recent_updates[1:]] == [
             f"pkg{i:03d}" for i in range(RECENT_UPDATES_LIMIT - 1)
         ]
+
+    @pytest.mark.asyncio
+    async def test_only_the_changes_the_list_can_show_become_events(self, monkeypatch):
+        built: list[DependencyUpdateEvent] = []
+
+        class _CountedEvent(DependencyUpdateEvent):
+            def __init__(self, **data: Any) -> None:
+                super().__init__(**data)
+                built.append(self)
+
+        monkeypatch.setattr(update_frequency_module, "DependencyUpdateEvent", _CountedEvent)
+        changed = RECENT_UPDATES_LIMIT + 10
+        scans = [_make_scan("s0", 0), _make_scan("s1", 1)]
+        deps = {
+            "s0": [_make_dep("s0", f"pkg{i:03d}", "1.0.0") for i in range(changed)],
+            "s1": [_make_dep("s1", f"pkg{i:03d}", "1.0.1") for i in range(changed)],
+        }
+
+        m = await _compute(scans, deps)
+
+        assert (m.total_updates, len(m.recent_updates), len(built)) == (
+            changed,
+            RECENT_UPDATES_LIMIT,
+            RECENT_UPDATES_LIMIT,
+        )
 
     @pytest.mark.asyncio
     async def test_the_newest_scan_comes_first(self):
