@@ -5,7 +5,7 @@ from app.core.constants import get_severity_value
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType
 from app.schemas.crypto_policy import CryptoRule
-from app.schemas.finding_details import CryptoRuleDetails, MatchedRuleEntry
+from app.schemas.finding_details import CryptoAssetDetails, CryptoRuleDetails, MatchedRuleEntry
 from app.services.analyzers.crypto.matcher import rule_matches
 from app.services.crypto_policy.resolver import EffectivePolicy
 
@@ -25,6 +25,16 @@ def crypto_findings_for_assets(
                 by_type.setdefault(rule.finding_type, []).append(rule)
         findings.extend(_build_finding_dedup(asset, matched, scanner) for matched in by_type.values())
     return findings
+
+
+def asset_details(asset: CryptoAsset) -> dict[str, Any]:
+    return CryptoAssetDetails(
+        bom_ref=asset.bom_ref,
+        asset_name=asset.name,
+        asset_type=asset.asset_type,
+        primitive=asset.primitive,
+        occurrence_count=len(asset.occurrence_locations),
+    ).model_dump(exclude_none=True)
 
 
 def strictest_rule(rules: Sequence[CryptoRule]) -> CryptoRule:
@@ -60,17 +70,13 @@ def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule], scanner: s
         "description": lead.description or lead.name,
         "scanners": [scanner],
         "details": CryptoRuleDetails(
+            **asset_details(asset),
             rule_id=lead.rule_id,
             rule_name=lead.name,
             policy_source=lead.source,
             matched_rules=[matched_rule_entry(r) for r in rules],
-            bom_ref=asset.bom_ref,
-            asset_name=asset.name,
-            asset_type=asset.asset_type,
             key_size_bits=asset.key_size_bits,
-            primitive=asset.primitive,
             references=list(dict.fromkeys(ref for r in rules for ref in r.references)),
-            occurrence_count=len(asset.occurrence_locations),
         ).model_dump(exclude_none=True),
         "found_in": asset.occurrence_locations[:MAX_FINDING_LOCATIONS],
         "aliases": [],

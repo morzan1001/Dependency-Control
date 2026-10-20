@@ -7,16 +7,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from prometheus_client import REGISTRY
 
-from app.core.constants import SCAN_STATUS_COMPLETED
-from app.core.init_db import create_indexes
-from app.models.crypto_policy import CryptoPolicy
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
-from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.scans import ScanRepository
-from app.services.analysis import engine
 from app.services.analysis.registry import CRYPTO_ANALYZERS
-from app.services.crypto_policy.seeder import load_seed_rules
+from tests.helpers.analyzers import ingest_and_analyze_cbom
 from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, content_ref, filler_components, fixture_component
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "cbom"
@@ -128,20 +123,8 @@ async def test_an_empty_cbom_retry_replaces_the_earlier_uploads_assets(client, d
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_the_crypto_analyzers_run_over_an_empty_cbom(client, db, api_key_headers):
-    await CryptoPolicyRepository(db).upsert_system_policy(
-        CryptoPolicy(scope="system", rules=list(load_seed_rules()), version=1)
-    )
-    resp = await client.post("/api/v1/ingest/cbom", json={"cbom": cbom_of([])}, headers=api_key_headers)
-    scan_id = resp.json()["scan_id"]
-    scan = await db.scans.find_one_and_update(
-        {"_id": scan_id}, {"$set": {"status": "processing", "worker_id": "pod-a/worker-0"}}, return_document=True
-    )
+    scan_id = await ingest_and_analyze_cbom(client, db, api_key_headers, cbom_of([]))
 
-    status = await engine.run_analysis(
-        scan_id, [], [], db, worker_id="pod-a/worker-0", sbom_generation=scan["sbom_generation"]
-    )
-
-    assert status == SCAN_STATUS_COMPLETED
     ran = {row["analyzer_name"] for row in await db.analysis_results.find({"scan_id": scan_id}).to_list(None)}
     assert ran == CRYPTO_ANALYZERS
     assert await db.findings.count_documents({"scan_id": scan_id}) == 0
@@ -407,25 +390,12 @@ async def test_a_failed_asset_store_leaves_no_scan_and_no_release(client, db, ap
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_a_cbom_past_the_old_asset_cap_is_stored_and_evaluated_whole(client, db, api_key_headers):
-    await create_indexes(db)
-    await CryptoPolicyRepository(db).upsert_system_policy(
-        CryptoPolicy(scope="system", rules=list(load_seed_rules()), version=1)
-    )
     md5 = fixture_component("legacy_crypto_mixed.json", "algo-md5")
     cbom = cbom_of([*filler_components(range(OLD_ASSET_CAP)), md5])
 
-    resp = await client.post("/api/v1/ingest/cbom", json={"cbom": cbom}, headers=api_key_headers)
+    scan_id = await ingest_and_analyze_cbom(client, db, api_key_headers, cbom)
 
-    assert resp.status_code == 202, resp.text
-    scan_id = resp.json()["scan_id"]
-    assert resp.json()["assets_stored"] == OLD_ASSET_CAP + 1
-    scan = await db.scans.find_one_and_update(
-        {"_id": scan_id}, {"$set": {"status": "processing", "worker_id": "pod-a/worker-0"}}, return_document=True
-    )
-    status = await engine.run_analysis(
-        scan_id, [], [], db, worker_id="pod-a/worker-0", sbom_generation=scan["sbom_generation"]
-    )
-    assert status == SCAN_STATUS_COMPLETED
+    assert await db.crypto_assets.count_documents({"scan_id": scan_id}) == OLD_ASSET_CAP + 1
     findings = await db.findings.find({"scan_id": scan_id}).to_list(None)
     assert [(f["type"], f["component"]) for f in findings] == [
         ("crypto_weak_algorithm", f"MD5 [bom-ref:{content_ref(md5)}]")

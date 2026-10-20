@@ -8,6 +8,8 @@ from app.schemas.recommendation import Priority, RecommendationType
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.recommendation.crypto import _CRYPTO_CARDS, process_crypto
+from tests.helpers.analyzers import scan_cbom
+from tests.helpers.cbom import cbom_of, fixture_component, load_cbom
 
 
 def _md5_findings():
@@ -92,3 +94,67 @@ def test_only_rsa_and_dsa_keys_are_told_to_reach_3072_bits(name, primitive, bits
     [rec] = process_crypto([f for f in findings if f["type"] == FindingType.CRYPTO_WEAK_KEY])
 
     assert rec.action["suggested_replacement"] == suggested
+
+
+def test_certificate_and_protocol_cards_name_their_asset_like_every_crypto_card():
+    _, findings = scan_cbom(load_cbom("tls_service.json"))
+
+    recs = process_crypto(findings)
+
+    assert sorted((rec.action["finding_type"], rec.title) for rec in recs) == [
+        ("crypto_cert_expired", "Rotate or fix certificate: api.example.com"),
+        ("crypto_cert_weak_key", "Rotate or fix certificate: api.example.com"),
+        ("crypto_cert_weak_signature", "Rotate or fix certificate: api.example.com"),
+        ("crypto_quantum_vulnerable", "Plan PQC migration for RSA"),
+        ("crypto_quantum_vulnerable", "Plan PQC migration for SHA1withRSA"),
+        ("crypto_weak_algorithm", "Replace weak algorithm: MD5"),
+        ("crypto_weak_algorithm", "Replace weak algorithm: TLS"),
+        ("crypto_weak_protocol", "Upgrade protocol/cipher: TLS 1.0"),
+    ]
+    # The frontend keys recommendation cards by type and title.
+    assert len({(rec.type, rec.title) for rec in recs}) == len(recs)
+
+
+def test_two_protocols_of_one_name_share_a_card_as_two_algorithms_of_one_name_do():
+    endpoint = fixture_component("tls_service.json", "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d")
+    other = {**endpoint, "bom-ref": "admin-endpoint", "evidence": {"occurrences": [{"location": "admin.yml"}]}}
+    assets, findings = scan_cbom(cbom_of([endpoint, other]))
+
+    [card] = process_crypto([f for f in findings if f["type"] == FindingType.CRYPTO_WEAK_PROTOCOL])
+
+    assert card.title == "Upgrade protocol/cipher: TLS 1.0"
+    assert card.action["bom_refs"] == sorted(asset.bom_ref for asset in assets)
+    assert card.description.startswith("TLS 1.0 uses a deprecated protocol version or cipher suite (4 findings).")
+
+
+def test_two_versions_of_one_protocol_get_a_card_each_named_by_version():
+    tls10, tls12 = (fixture_component("tls_service.json", "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d") for _ in range(2))
+    tls12["bom-ref"] = "tls12-endpoint"
+    tls12["cryptoProperties"]["protocolProperties"]["version"] = "1.2"
+    _, findings = scan_cbom(cbom_of([tls10, tls12]))
+
+    cards = process_crypto([f for f in findings if f["type"] == FindingType.CRYPTO_WEAK_PROTOCOL])
+
+    assert sorted(card.title for card in cards) == [
+        "Upgrade protocol/cipher: TLS 1.0",
+        "Upgrade protocol/cipher: TLS 1.2",
+    ]
+    assert {card.action["suggested_replacement"] for card in cards} == {
+        "TLS 1.2 (preferably TLS 1.3) with AEAD cipher suites"
+    }
+
+
+def test_every_lifecycle_finding_of_two_certificates_of_one_name_lands_on_one_rotate_card():
+    cert = fixture_component("tls_service.json", "4d1c2a7e-0b5f-4e3a-9c8d-1f2e3a4b5c6d")
+    other = {**cert, "bom-ref": "edge-certificate", "evidence": {"occurrences": [{"location": "edge/api.pem"}]}}
+    assets, findings = scan_cbom(cbom_of([cert, other]))
+
+    [card] = process_crypto(findings)
+
+    assert {f["type"] for f in findings} == {FindingType.CRYPTO_CERT_EXPIRED, FindingType.CRYPTO_CERT_SELF_SIGNED}
+    assert (card.type, card.title) == (
+        RecommendationType.ROTATE_CERTIFICATE,
+        "Rotate or fix certificate: api.example.com",
+    )
+    assert card.action["bom_refs"] == sorted(asset.bom_ref for asset in assets)
+    assert card.description.startswith("Certificate api.example.com has lifecycle/integrity issues (4 findings).")

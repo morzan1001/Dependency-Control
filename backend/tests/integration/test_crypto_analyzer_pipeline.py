@@ -1,3 +1,5 @@
+from collections import Counter
+
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
@@ -9,7 +11,8 @@ from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.cbom_parser import parse_crypto_components
-from tests.helpers.analyzers import evaluate_crypto
+from tests.helpers.analyzers import evaluate_crypto, ingest_and_analyze_cbom, scan_cbom
+from tests.helpers.cbom import load_cbom
 
 _SHARED_PROJECT = "p4"
 _SHARED_SCAN = "s4"
@@ -255,3 +258,58 @@ def test_a_rule_finding_carries_the_first_twenty_locations_and_the_total():
     (finding,) = crypto_findings_for_assets([asset], [rule], scanner="crypto_weak_algorithm")
     assert finding["found_in"] == asset.occurrence_locations[:20]
     assert finding["details"]["occurrence_count"] == 25
+
+
+def test_every_crypto_finding_names_the_asset_it_flags():
+    assets, findings = scan_cbom(load_cbom("tls_service.json"))
+    by_ref = {asset.bom_ref: asset for asset in assets}
+
+    named = Counter(
+        (f["details"].get("asset_name"), f["details"].get("asset_type"), f["details"].get("primitive"))
+        for f in findings
+    )
+
+    assert named == {
+        ("api.example.com", "certificate", None): 4,
+        ("TLS", "protocol", None): 3,
+        ("SHA1withRSA", "algorithm", "signature"): 1,
+        ("RSA", "algorithm", "pke"): 1,
+        ("MD5", "algorithm", "hash"): 1,
+    }
+    assert all(f["details"]["asset_name"] == by_ref[f["details"]["bom_ref"]].name for f in findings)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_every_finding_of_a_scanned_cbom_counts_under_its_asset_in_the_hotspots(
+    client, db, api_key_headers, member_auth_headers
+):
+    scan_id = await ingest_and_analyze_cbom(client, db, api_key_headers, load_cbom("tls_service.json"), branch="main")
+
+    async def hotspots(group_by):
+        resp = await client.get(
+            "/api/v1/analytics/crypto/hotspots",
+            params={"scope": "project", "scope_id": "test-project-id", "group_by": group_by},
+            headers=member_auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        return {e["key"]: (e["asset_count"], e["finding_count"]) for e in resp.json()["items"]}
+
+    by_type = await hotspots("asset_type")
+    assert by_type == {
+        "algorithm": (4, 3),
+        "certificate": (1, 4),
+        "protocol": (1, 3),
+        "related-crypto-material": (1, 0),
+    }
+    assert sum(findings for _, findings in by_type.values()) == await db.findings.count_documents({"scan_id": scan_id})
+    assert await hotspots("name") == {
+        "api.example.com": (1, 4),
+        "TLS": (1, 3),
+        "SHA1withRSA": (1, 1),
+        "RSA": (1, 1),
+        "MD5": (1, 1),
+        "RSA-1024": (1, 0),
+        "AES": (1, 0),
+    }
+    assert await hotspots("primitive") == {"signature": (1, 1), "pke": (1, 1), "hash": (1, 1), "block-cipher": (1, 0)}

@@ -6,7 +6,7 @@ from app.models.finding import FindingType, Severity
 from app.schemas.cbom import CryptoAssetType
 from app.schemas.crypto_policy import CryptoRule
 from app.schemas.finding_details import CryptoProtocolDetails
-from app.services.analyzers.crypto.base import MAX_FINDING_LOCATIONS, matched_rule_entry, strictest_rule
+from app.services.analyzers.crypto.base import MAX_FINDING_LOCATIONS, asset_details, matched_rule_entry, strictest_rule
 from app.services.analyzers.crypto.catalogs.loader import (
     IANA_WEAKNESS_RULES_VERSION,
     WEAKNESS_SEVERITY,
@@ -72,7 +72,7 @@ def _build_finding(
         "description": description,
         "scanners": ["crypto_protocol_cipher"],
         "details": CryptoProtocolDetails(
-            bom_ref=proto.bom_ref,
+            **asset_details(proto),
             protocol_type=proto.protocol_type,
             protocol_version=proto.version,
             cipher_suite=suite_name,
@@ -85,7 +85,6 @@ def _build_finding(
             catalog_version=IANA_WEAKNESS_RULES_VERSION,
             rule_id=lead.rule_id if lead else None,
             matched_rules=[matched_rule_entry(r) for r in rules] or None,
-            occurrence_count=len(proto.occurrence_locations),
         ).model_dump(exclude_none=True),
         "found_in": proto.occurrence_locations[:MAX_FINDING_LOCATIONS],
         "aliases": [],
