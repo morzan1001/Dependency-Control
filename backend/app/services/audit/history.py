@@ -12,6 +12,7 @@ from app.core.constants import (
     WEBHOOK_EVENT_LICENSE_POLICY_CHANGED,
     NotificationEvent,
 )
+from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions
 from app.models.crypto_policy import CryptoPolicy
 from app.models.policy_audit_entry import PolicyAuditEntry, PolicyType
@@ -19,7 +20,7 @@ from app.models.user import User
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.repositories.projects import ProjectRepository
 from app.schemas.policy_audit import PolicyAuditAction
-from app.schemas.project import LicensePolicySchema
+from app.schemas.project import LicensePolicySchema, license_policy_from_settings
 from app.services.notifications.service import notification_service
 from app.services.webhooks import webhook_service
 
@@ -175,24 +176,28 @@ async def record_license_policy_change(
     db: AsyncIOMotorDatabase,
     *,
     project_id: str,
-    old_policy: dict[str, Any],
-    new_policy: dict[str, Any],
-    action: PolicyAuditAction,
+    old_entry: dict[str, Any] | None,
+    new_entry: dict[str, Any] | None,
     actor: User,
 ) -> PolicyAuditEntry | None:
-    """Version continues the highest audited one because the project doc has no version column."""
-    if old_policy == new_policy:
+    """Best effort after the project write; the version continues the highest audited one, as projects keep none."""
+    try:
+        old_policy = license_policy_from_settings(old_entry).model_dump()
+        new_policy = license_policy_from_settings(new_entry).model_dump()
+        if old_policy == new_policy:
+            return None
+        repo = PolicyAuditRepository(db)
+        version = await repo.max_version(policy_scope="project", project_id=project_id, policy_type="license") + 1
+    except Exception:
+        logger.exception("License-policy audit for project %s failed (non-blocking)", sanitize_for_log(project_id))
         return None
-
-    repo = PolicyAuditRepository(db)
-    version = await repo.max_version(policy_scope="project", project_id=project_id, policy_type="license") + 1
 
     entry = PolicyAuditEntry(
         policy_type="license",
         policy_scope="project",
         project_id=project_id,
         version=version,
-        action=action,
+        action=PolicyAuditAction.UPDATE if old_entry else PolicyAuditAction.CREATE,
         actor_user_id=actor.id,
         actor_display_name=actor.username or actor.email,
         timestamp=datetime.now(timezone.utc),

@@ -62,7 +62,6 @@ from app.core.constants import (
     TEAM_SOURCE_MANUAL,
     severity_rank_expr,
 )
-from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import risk_score_expr
 from app.core.worker import worker_manager
@@ -91,7 +90,6 @@ from app.repositories.projects import (
     set_owners_pipeline,
 )
 from app.schemas.pagination import Page
-from app.schemas.policy_audit import PolicyAuditAction
 from app.schemas.projections import ScanMinimal
 from app.schemas.project import (
     BranchInfo,
@@ -111,7 +109,6 @@ from app.schemas.project import (
     ScanHistoryResponse,
     ScanReleaseRef,
     ScanWithReleases,
-    license_policy_from_settings,
 )
 from app.services.audit.history import record_license_policy_change
 from app.services.branch_sync import sync_project_branches
@@ -530,19 +527,9 @@ async def _audit_license_policy_change(
     updated_project: Project,
     actor: User,
 ) -> None:
-    try:
-        old_entry = (old_project.analyzer_settings or {}).get("license_compliance") if old_project else None
-        new_entry = (updated_project.analyzer_settings or {}).get("license_compliance")
-        await record_license_policy_change(
-            db,
-            project_id=project_id,
-            old_policy=license_policy_from_settings(old_entry).model_dump(),
-            new_policy=license_policy_from_settings(new_entry).model_dump(),
-            action=PolicyAuditAction.UPDATE if old_entry else PolicyAuditAction.CREATE,
-            actor=actor,
-        )
-    except Exception:  # pragma: no cover - defensive
-        logger.exception("License-policy audit for project %s failed (non-blocking)", sanitize_for_log(project_id))
+    old_entry = (old_project.analyzer_settings or {}).get("license_compliance") if old_project else None
+    new_entry = (updated_project.analyzer_settings or {}).get("license_compliance")
+    await record_license_policy_change(db, project_id=project_id, old_entry=old_entry, new_entry=new_entry, actor=actor)
 
 
 @router.put("/{project_id}", summary="Update project details", responses=RESP_AUTH_400_404_409)
