@@ -180,7 +180,7 @@ _FINDING_RANK_FETCH_CAP = 1000
 _SEVERITY_TIERS: tuple[str, ...] = tuple(s.value for s in Severity)
 
 _RANKING_SAMPLED = (
-    "State this caveat in your answer: the {tier} tier holds {total} findings and only "
+    "State this caveat in your answer: the {tier} tier holds more than {cap} findings and only "
     "{cap} were read, so these are {tier} findings but not necessarily the worst {tier} ones. "
     "Narrow the question — a single project, or a finding type — for an exact answer."
 )
@@ -440,16 +440,20 @@ async def _ranked_findings(
     for tier in _severity_tiers(query.get("severity")):
         if len(out) >= limit:
             break
-        tier_query = {**query, "severity": tier}
-        cursor = db["findings"].find(tier_query, RANKED_FINDING_PROJECTION, limit=_FINDING_RANK_FETCH_CAP)
-        candidates = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
+        # One past the cap tells a tier larger than it from one that lands on it, without counting the tier.
+        cursor = db["findings"].find(
+            {**query, "severity": tier}, RANKED_FINDING_PROJECTION, limit=_FINDING_RANK_FETCH_CAP + 1
+        )
+        candidates = await cursor.to_list(length=None)
         if not candidates:
             continue
-        if not ranking and len(candidates) >= _FINDING_RANK_FETCH_CAP:
-            ranking["ranking_note"] = _RANKING_SAMPLED.format(
-                tier=tier if isinstance(tier, str) else "lowest-severity",
-                total=await db["findings"].count_documents(tier_query),
-                cap=_FINDING_RANK_FETCH_CAP,
+        if len(candidates) > _FINDING_RANK_FETCH_CAP:
+            del candidates[_FINDING_RANK_FETCH_CAP:]
+            ranking.setdefault(
+                "ranking_note",
+                _RANKING_SAMPLED.format(
+                    tier=tier if isinstance(tier, str) else "lowest-severity", cap=_FINDING_RANK_FETCH_CAP
+                ),
             )
         candidates.sort(
             key=lambda f: (
