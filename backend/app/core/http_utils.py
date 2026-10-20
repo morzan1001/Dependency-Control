@@ -27,7 +27,7 @@ SSL_CONTEXT = httpx.create_ssl_context()
 _MAX_RETRY_AFTER_SECONDS = 60.0
 
 # GitHub's advice for a rate-limit refusal that names no wait.
-_UNNAMED_QUOTA_WAIT_SECONDS = 60.0
+UNNAMED_QUOTA_WAIT_SECONDS = 60.0
 
 
 def _retry_after_seconds(outcome: httpx.Response | httpx.TransportError) -> float | None:
@@ -52,7 +52,7 @@ def quota_lifts_at(response: httpx.Response) -> float | None:
     with suppress(KeyError, ValueError):
         if spent:
             lifts.append(float(headers["X-RateLimit-Reset"]))
-    return max(lifts, default=now + _UNNAMED_QUOTA_WAIT_SECONDS)
+    return max(lifts, default=now + UNNAMED_QUOTA_WAIT_SECONDS)
 
 
 def _quota_outlasts_a_retry(outcome: httpx.Response | httpx.TransportError) -> bool:

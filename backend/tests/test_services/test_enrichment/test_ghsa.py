@@ -35,13 +35,18 @@ async def _exhausted(request: httpx.Request) -> httpx.Response:
     return httpx.Response(403, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset})
 
 
+_SECONDARY_LIMIT_BODY = {
+    "message": "You have exceeded a secondary rate limit. Please wait a few minutes before you try again."
+}
+
+
 async def _secondary_limit(request: httpx.Request) -> httpx.Response:
     await asyncio.sleep(0)
     reset = str(int(time.time()) + 3600)
     return httpx.Response(
         403,
         headers={"Retry-After": "60", "X-RateLimit-Remaining": "4990", "X-RateLimit-Reset": reset},
-        json={"message": "You have exceeded a secondary rate limit. Please wait a few minutes before you try again."},
+        json=_SECONDARY_LIMIT_BODY,
     )
 
 
@@ -160,6 +165,37 @@ async def test_a_secondary_limit_stops_every_lookup_for_its_retry_after(fake_cac
     after_retry_after = time.time() + 61
     monkeypatch.setattr(time, "time", lambda: after_retry_after)
     assert (await _resolve(_LOG4SHELL))[_LOG4SHELL].cve_id == _LOG4SHELL_CVE
+
+
+@pytest.mark.asyncio
+async def test_a_secondary_limit_named_only_in_its_message_stops_every_lookup_for_a_minute(fake_cache, monkeypatch):
+    healthy = Upstreams(advisories={_LOG4SHELL: _LOG4SHELL_CVE})
+    limited = [True]
+    bare_secondary_limit = httpx.Response(403, headers={"X-RateLimit-Remaining": "4990"}, json=_SECONDARY_LIMIT_BODY)
+    seen = serve_enrichment(monkeypatch, fake_cache, lambda r: bare_secondary_limit if limited[0] else healthy(r))
+
+    await _resolve(_OTHER)
+    assert (await _resolve(_LOG4SHELL))[_LOG4SHELL].cve_id is None
+    assert len(seen) == 1
+
+    limited[0] = False
+    after_a_minute = time.time() + 61
+    monkeypatch.setattr(time, "time", lambda: after_a_minute)
+    assert (await _resolve(_LOG4SHELL))[_LOG4SHELL].cve_id == _LOG4SHELL_CVE
+
+
+@pytest.mark.asyncio
+async def test_a_permission_refusal_does_not_stop_other_lookups(fake_cache, monkeypatch):
+    seen = serve_enrichment(
+        monkeypatch,
+        fake_cache,
+        lambda r: httpx.Response(403, json={"message": "Resource not accessible by personal access token"}),
+    )
+
+    await _resolve(_OTHER)
+    await _resolve(_LOG4SHELL)
+
+    assert len(seen) == 2
 
 
 @pytest.mark.asyncio
