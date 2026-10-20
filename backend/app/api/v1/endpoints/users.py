@@ -498,6 +498,6 @@ async def delete_user(
     ensure_can_manage_target(current_user, user)
 
     # Memberships first: a leftover admin entry would satisfy the last-admin guards for a ghost.
-    await TeamRepository(db).remove_user_from_all(user_id, datetime.now(timezone.utc))
+    await TeamRepository(db).remove_user_from_all(user_id)
     await ProjectRepository(db).remove_user_from_all(user_id)
     await user_repo.delete(user_id)

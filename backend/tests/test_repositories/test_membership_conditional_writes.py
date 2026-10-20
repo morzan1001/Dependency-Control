@@ -53,8 +53,8 @@ async def test_two_concurrent_adds_of_one_user_leave_one_team_member() -> None:
     member = {"user_id": _NEWCOMER, "role": TEAM_ROLE_MEMBER}
 
     accepted = await asyncio.gather(
-        repo.add_member(_TEAM_ID, dict(member), _NOW),
-        repo.add_member(_TEAM_ID, dict(member), _NOW),
+        repo.add_member(_TEAM_ID, dict(member)),
+        repo.add_member(_TEAM_ID, dict(member)),
     )
 
     assert accepted.count(True) == 1
@@ -90,8 +90,8 @@ async def test_two_admins_removing_each_other_leave_the_team_one_admin() -> None
     repo = TeamRepository(db)
 
     accepted = await asyncio.gather(
-        repo.remove_member(_TEAM_ID, _ADMIN_B, _NOW),
-        repo.remove_member(_TEAM_ID, _ADMIN_A, _NOW),
+        repo.remove_member(_TEAM_ID, _ADMIN_B),
+        repo.remove_member(_TEAM_ID, _ADMIN_A),
     )
 
     assert accepted.count(True) == 1
@@ -105,8 +105,8 @@ async def test_two_admins_demoting_each_other_leave_the_team_one_admin() -> None
     repo = TeamRepository(db)
 
     accepted = await asyncio.gather(
-        repo.update_member_role(_TEAM_ID, _ADMIN_B, TEAM_ROLE_MEMBER, _NOW),
-        repo.update_member_role(_TEAM_ID, _ADMIN_A, TEAM_ROLE_MEMBER, _NOW),
+        repo.update_member_role(_TEAM_ID, _ADMIN_B, TEAM_ROLE_MEMBER),
+        repo.update_member_role(_TEAM_ID, _ADMIN_A, TEAM_ROLE_MEMBER),
     )
 
     assert accepted.count(True) == 1
@@ -118,7 +118,7 @@ async def test_removing_a_plain_member_needs_no_second_admin() -> None:
     db = FakeDatabase()
     await db.teams.insert_one(_team_doc([(_ADMIN_A, TEAM_ROLE_ADMIN), (_NEWCOMER, TEAM_ROLE_MEMBER)]))
 
-    assert await TeamRepository(db).remove_member(_TEAM_ID, _NEWCOMER, _NOW) is True
+    assert await TeamRepository(db).remove_member(_TEAM_ID, _NEWCOMER) is True
     assert _members(await db.teams.find_one({"_id": _TEAM_ID})) == [(_ADMIN_A, TEAM_ROLE_ADMIN)]
 
 
@@ -127,7 +127,7 @@ async def test_a_team_with_no_admin_can_still_lose_a_plain_member() -> None:
     db = FakeDatabase()
     await db.teams.insert_one(_team_doc([(_PLAIN_MEMBER, TEAM_ROLE_MEMBER), (_NEWCOMER, TEAM_ROLE_MEMBER)]))
 
-    assert await TeamRepository(db).remove_member(_TEAM_ID, _NEWCOMER, _NOW) is True
+    assert await TeamRepository(db).remove_member(_TEAM_ID, _NEWCOMER) is True
     assert _members(await db.teams.find_one({"_id": _TEAM_ID})) == [(_PLAIN_MEMBER, TEAM_ROLE_MEMBER)]
 
 
@@ -136,7 +136,7 @@ async def test_a_team_with_no_admin_can_still_set_a_plain_members_role() -> None
     db = FakeDatabase()
     await db.teams.insert_one(_team_doc([(_PLAIN_MEMBER, TEAM_ROLE_MEMBER), (_NEWCOMER, TEAM_ROLE_MEMBER)]))
 
-    assert await TeamRepository(db).update_member_role(_TEAM_ID, _NEWCOMER, TEAM_ROLE_MEMBER, _NOW) is True
+    assert await TeamRepository(db).update_member_role(_TEAM_ID, _NEWCOMER, TEAM_ROLE_MEMBER) is True
 
 
 @pytest.mark.asyncio

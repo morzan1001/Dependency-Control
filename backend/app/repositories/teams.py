@@ -206,7 +206,9 @@ class TeamRepository:
         return document
 
     async def update(self, team_id: str, update_data: dict[str, Any]) -> Team | None:
-        await self.collection.update_one({"_id": team_id}, {"$set": update_data})
+        await self.collection.update_one(
+            {"_id": team_id}, {"$set": {**update_data, "updated_at": datetime.now(timezone.utc)}}
+        )
         return await self.get_by_id(team_id)
 
     async def delete(self, team_id: str) -> bool:
@@ -233,35 +235,35 @@ class TeamRepository:
         cursor = self.collection.find({"_id": {"$in": list(team_ids)}}, {"members.user_id": 1, "members.role": 1})
         return {str(doc["_id"]): doc.get(_MEMBERS) or [] async for doc in cursor}
 
-    async def add_member(self, team_id: str, member_data: dict[str, Any], updated_at: datetime) -> bool:
+    async def add_member(self, team_id: str, member_data: dict[str, Any]) -> bool:
         """False when the user is already a member; the filter decides, not an earlier read."""
         result = await self.collection.update_one(
             {"_id": team_id, _MEMBERS_USER_ID: {"$ne": member_data[_USER_ID]}},
-            {"$push": {"members": member_data}, "$set": {"updated_at": updated_at}},
+            {"$push": {"members": member_data}, "$set": {"updated_at": datetime.now(timezone.utc)}},
         )
         return bool(result.matched_count)
 
-    async def remove_member(self, team_id: str, user_id: str, updated_at: datetime) -> bool:
+    async def remove_member(self, team_id: str, user_id: str) -> bool:
         result = await self.collection.update_one(
             {"_id": team_id, **_not_the_last_admin(user_id)},
-            {"$pull": {"members": {_USER_ID: user_id}}, "$set": {"updated_at": updated_at}},
+            {"$pull": {"members": {_USER_ID: user_id}}, "$set": {"updated_at": datetime.now(timezone.utc)}},
         )
         return bool(result.matched_count)
 
-    async def remove_user_from_all(self, user_id: str, updated_at: datetime) -> None:
+    async def remove_user_from_all(self, user_id: str) -> None:
         await self.collection.update_many(
             {_MEMBERS_USER_ID: user_id},
-            {"$pull": {_MEMBERS: {_USER_ID: user_id}}, "$set": {"updated_at": updated_at}},
+            {"$pull": {_MEMBERS: {_USER_ID: user_id}}, "$set": {"updated_at": datetime.now(timezone.utc)}},
         )
 
-    async def update_member_role(self, team_id: str, user_id: str, role: str, updated_at: datetime) -> bool:
+    async def update_member_role(self, team_id: str, user_id: str, role: str) -> bool:
         query: dict[str, Any] = {"_id": team_id}
         if role != TEAM_ROLE_ADMIN:
             query.update(_not_the_last_admin(user_id))
         # Address the member by identity: a concurrent $pull shifts array indices under a positional write.
         result = await self.collection.update_one(
             query,
-            {"$set": {"members.$[m].role": role, "updated_at": updated_at}},
+            {"$set": {"members.$[m].role": role, "updated_at": datetime.now(timezone.utc)}},
             array_filters=[{f"m.{_USER_ID}": user_id}],
         )
         return bool(result.matched_count)

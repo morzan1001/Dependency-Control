@@ -1,6 +1,5 @@
 import logging
 import re
-from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, status
@@ -132,10 +131,7 @@ async def update_team(
 
     team_repo = TeamRepository(db)
 
-    update_data = team_in.model_dump(exclude_unset=True)
-    update_data["updated_at"] = datetime.now(timezone.utc)
-
-    await team_repo.update(team_id, update_data)
+    await team_repo.update(team_id, team_in.model_dump(exclude_unset=True))
 
     return await fetch_and_enrich_team(team_id, db)
 
@@ -314,7 +310,7 @@ async def add_team_member(
 
     new_member = TeamMember(user_id=str(user_to_add["_id"]), role=member_in.role)
 
-    if not await team_repo.add_member(team_id, new_member.model_dump(), datetime.now(timezone.utc)):
+    if not await team_repo.add_member(team_id, new_member.model_dump()):
         raise HTTPException(status_code=400, detail=_MSG_ALREADY_IN_TEAM)
 
     return await fetch_and_enrich_team(team_id, db)
@@ -350,7 +346,7 @@ async def update_team_member(
     team = await get_team_with_access(team_id, current_user, db)
     await _ensure_hand_editable_member(team, user_id, db)
 
-    if not await TeamRepository(db).update_member_role(team_id, user_id, member_in.role, datetime.now(timezone.utc)):
+    if not await TeamRepository(db).update_member_role(team_id, user_id, member_in.role):
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_DEMOTE)
 
     return await fetch_and_enrich_team(team_id, db)
@@ -367,7 +363,7 @@ async def remove_team_member(
     team = await get_team_with_access(team_id, current_user, db)
     await _ensure_hand_editable_member(team, user_id, db)
 
-    if not await TeamRepository(db).remove_member(team_id, user_id, datetime.now(timezone.utc)):
+    if not await TeamRepository(db).remove_member(team_id, user_id):
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN)
 
     return await fetch_and_enrich_team(team_id, db)
