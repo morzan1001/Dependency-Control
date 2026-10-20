@@ -389,8 +389,9 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
         "direct_updates": 1,
         "transitive_updates": 1,
         "no_fix": 1,
-        "total_fixable_vulns": 7,
-        "total_unfixable_vulns": 8,
+        # Counted from the findings, not the card impacts: the one vulnerability records no fix.
+        "total_fixable_vulns": 0,
+        "total_unfixable_vulns": 1,
         "secrets_to_rotate": 16,
         "sast_issues": 64,
         "iac_issues": 128,
@@ -412,6 +413,37 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
             "crypto": 1,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_the_fixable_and_no_fix_tiles_count_every_vulnerability_finding_card_or_not(
+    client, db, owner_auth_headers_proj, no_live_intel
+):
+    await _insert_scan(db, "s")
+    zlib = {"name": "zlib1g", "version": "1.2.13", "purl": "pkg:deb/debian/zlib1g@1.2.13", "type": "deb"}
+    await db.dependencies.insert_one(zlib | {"_id": "d-zlib", "project_id": "p", "scan_id": "s"})
+    records = [
+        ("lodash", "4.17.20", {"id": "CVE-2024-0001", "severity": "MEDIUM"}),
+        ("minimist", "0.0.8", {"id": "CVE-2024-0002", "severity": "LOW"}),
+        ("left-pad", "1.0.0", {"id": "CVE-2024-0003", "severity": "HIGH", "fixed_version": "1.3.0"}),
+        ("zlib1g", "1.2.13", {"id": "CVE-2024-0004", "severity": "MEDIUM", "fixed_version": "1.2.13.dfsg-1"}),
+    ]
+    for component, version, advisory in records:
+        await db.findings.insert_many(_vulnerability_records("s", component, version, [advisory]))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total_vulnerabilities"] == 4
+    assert (body["summary"]["total_fixable_vulns"], body["summary"]["total_unfixable_vulns"]) == (2, 2)
+    vulnerability_cards = {
+        "base_image_update",
+        "direct_dependency_update",
+        "transitive_fix_via_parent",
+        "no_fix_available",
+    }
+    assert vulnerability_cards.isdisjoint(_card_types(resp))
 
 
 @pytest.mark.asyncio

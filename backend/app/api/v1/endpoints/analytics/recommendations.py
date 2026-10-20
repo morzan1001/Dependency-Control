@@ -39,7 +39,7 @@ from app.services.enrichment.service import (
     vulnerability_enrichment_service,
 )
 from app.services.recommendation import trends
-from app.services.recommendation.common import live_cves
+from app.services.recommendation.common import live_cves, live_fixed_version
 from app.services.recommendation.crypto import CRYPTO_ISSUE_FINDING_TYPES, CRYPTO_RECOMMENDATION_TYPES
 from app.services.recommendations import generate_recommendations
 
@@ -62,10 +62,10 @@ _JOIN_PROJECTION = dict.fromkeys(
 )
 
 _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
-    RecommendationType.BASE_IMAGE_UPDATE: ("base_image_updates", "total_fixable_vulns"),
-    RecommendationType.DIRECT_DEPENDENCY_UPDATE: ("direct_updates", "total_fixable_vulns"),
-    RecommendationType.TRANSITIVE_FIX_VIA_PARENT: ("transitive_updates", "total_fixable_vulns"),
-    RecommendationType.NO_FIX_AVAILABLE: ("no_fix", "total_unfixable_vulns"),
+    RecommendationType.BASE_IMAGE_UPDATE: ("base_image_updates", None),
+    RecommendationType.DIRECT_DEPENDENCY_UPDATE: ("direct_updates", None),
+    RecommendationType.TRANSITIVE_FIX_VIA_PARENT: ("transitive_updates", None),
+    RecommendationType.NO_FIX_AVAILABLE: ("no_fix", None),
     RecommendationType.ROTATE_SECRETS: (None, "secrets_to_rotate"),
     RecommendationType.FIX_CODE_SECURITY: (None, "sast_issues"),
     RecommendationType.FIX_INFRASTRUCTURE: (None, "iac_issues"),
@@ -243,6 +243,7 @@ async def get_project_recommendations(
             cross_project_data=cross_project_data,
             threat_intel=threat_intel,
         )
+        unfixable_vulns = await asyncio.to_thread(_unfixable_vulnerabilities, findings)
 
         finding_counts = _finding_counts(findings)
         response = RecommendationsResponse(
@@ -253,7 +254,7 @@ async def get_project_recommendations(
             findings_total=findings_total,
             total_vulnerabilities=finding_counts["vulnerabilities"],
             recommendations=[RecommendationResponse.model_validate(r) for r in recommendations],
-            summary=_summarize(recommendations, finding_counts),
+            summary=_summarize(recommendations, finding_counts, unfixable_vulns),
             dependencies_read=len(dependencies),
             dependencies_total=dependencies_total,
             threat_intel_unavailable=threat_intel_unavailable,
@@ -286,9 +287,18 @@ def _finding_counts(findings: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
-def _summarize(recommendations: list[Recommendation], finding_counts: dict[str, int]) -> dict[str, Any]:
+def _unfixable_vulnerabilities(findings: list[dict[str, Any]]) -> int:
+    """The engine's no-fix bucket in full, while its card lists only the Critical/High part."""
+    return sum(1 for f in findings if f["type"] == "vulnerability" and not live_fixed_version(f))
+
+
+def _summarize(
+    recommendations: list[Recommendation], finding_counts: dict[str, int], unfixable_vulns: int
+) -> dict[str, Any]:
     summary: dict[str, Any] = {key: 0 for keys in _SUMMARY_BUCKETS.values() for key in keys if key}
     summary["finding_counts"] = finding_counts
+    summary["total_fixable_vulns"] = finding_counts["vulnerabilities"] - unfixable_vulns
+    summary["total_unfixable_vulns"] = unfixable_vulns
     for rec in recommendations:
         if rec.type in _NOT_SUMMARISED:
             continue
