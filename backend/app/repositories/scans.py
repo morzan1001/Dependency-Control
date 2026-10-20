@@ -95,16 +95,6 @@ _MINIMAL_PROJECTION = {
 }
 
 
-def _project_id_and_deleted(project: Any) -> tuple[str | None, list[str]]:
-    if isinstance(project, dict):
-        pid = project.get("_id") or project.get("id")
-        deleted = project.get("deleted_branches") or []
-    else:
-        pid = getattr(project, "id", None) or getattr(project, "_id", None)
-        deleted = getattr(project, "deleted_branches", None) or []
-    return pid, list(deleted)
-
-
 def _project_field(project: Any, name: str) -> Any:
     if isinstance(project, dict):
         return project.get(name)
@@ -118,10 +108,9 @@ class _HeadScope(NamedTuple):
 
 
 def _head_scope(project: Any) -> tuple[str | None, _HeadScope]:
-    project_id, deleted = _project_id_and_deleted(project)
-    return project_id, _HeadScope(
+    return _project_field(project, "_id" if isinstance(project, dict) else "id"), _HeadScope(
         default_branch=_project_field(project, "default_branch"),
-        deleted=deleted,
+        deleted=list(_project_field(project, "deleted_branches") or []),
         pointer=_project_field(project, "latest_scan_id"),
     )
 
