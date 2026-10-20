@@ -23,15 +23,17 @@ from app.services.chat.service import ChatService
 
 _MSG_CONVERSATION_NOT_FOUND = "Conversation not found"
 
-router = CustomAPIRouter()
 
-
-def _check_chat_enabled() -> None:
+# Takes the caller so an anonymous request still meets 401 before learning whether the chat is on.
+def _check_chat_enabled(_: deps.CurrentUserDep) -> None:
     if not settings.CHAT_ENABLED:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Chat feature is currently disabled",
         )
+
+
+router = CustomAPIRouter(dependencies=[Depends(_check_chat_enabled)])
 
 
 ChatUserDep = Annotated[User, Depends(PermissionChecker(Permissions.CHAT_ACCESS))]
@@ -48,8 +50,6 @@ async def create_conversation(
     db: DatabaseDep,
 ) -> ConversationResponse:
     """Create a new chat conversation."""
-    _check_chat_enabled()
-
     conv = await ChatService(db).create_conversation(current_user, title=body.title)
     return ConversationResponse.model_validate(conv)
 
@@ -60,8 +60,6 @@ async def list_conversations(
     db: DatabaseDep,
 ) -> ConversationListResponse:
     """List the current user's chat conversations."""
-    _check_chat_enabled()
-
     convs = await ChatRepository(db).list_conversations(user_id=str(current_user.id))
     return ConversationListResponse(conversations=convs, total=len(convs))
 
@@ -73,8 +71,6 @@ async def get_conversation(
     db: DatabaseDep,
 ) -> ConversationDetailResponse:
     """Get a conversation with its messages."""
-    _check_chat_enabled()
-
     repo = ChatRepository(db)
     conv = await repo.get_conversation(conversation_id, user_id=str(current_user.id))
     if not conv:
@@ -91,8 +87,6 @@ async def delete_conversation(
     db: DatabaseDep,
 ) -> dict[str, str]:
     """Delete a conversation and all its messages."""
-    _check_chat_enabled()
-
     if not await ChatRepository(db).delete_conversation(conversation_id, user_id=str(current_user.id)):
         raise HTTPException(status_code=404, detail=_MSG_CONVERSATION_NOT_FOUND)
 
@@ -107,7 +101,6 @@ async def send_message(
     db: DatabaseDep,
 ) -> StreamingResponse:
     """Send a message and stream the AI response via SSE."""
-    _check_chat_enabled()
     system_settings = await deps.get_system_settings(db)
 
     await enforce_rate_limit(

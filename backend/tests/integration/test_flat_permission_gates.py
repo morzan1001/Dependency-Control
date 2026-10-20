@@ -67,3 +67,24 @@ async def test_the_cache_statistics_need_system_management(client, monkeypatch):
 
     assert (anonymous.status_code, refused.json()) == (401, _refusal(Permissions.SYSTEM_MANAGE))
     assert (granted.status_code, granted.json()) == (200, {"status": "healthy", "total_keys": 7})
+
+
+def _chat_routes() -> list[tuple[str, str]]:
+    from app.api.v1.endpoints import chat
+
+    return [
+        (method, f"/api/v1/chat{route.path.replace('{conversation_id}', 'c')}")
+        for route in chat.router.routes
+        for method in route.methods
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("method", "path"), _chat_routes())
+async def test_every_chat_route_is_closed_while_the_chat_is_disabled(client, monkeypatch, method, path):
+    monkeypatch.setattr(settings, "CHAT_ENABLED", False)
+    body = {"content": "hi", "title": "t"} if method == "POST" else None
+
+    resp = await client.request(method, path, headers=bearer_headers(*_NO_PERMISSIONS), json=body)
+
+    assert (resp.status_code, resp.json()) == (403, {"detail": "Chat feature is currently disabled"})
