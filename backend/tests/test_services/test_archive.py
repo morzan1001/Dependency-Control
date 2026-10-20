@@ -917,6 +917,30 @@ async def test_replay_hashes_the_plaintext_secret_of_a_legacy_trufflehog_result(
 
 
 @pytest.mark.asyncio
+async def test_replay_inserts_each_legacy_inline_analysis_result_on_its_own():
+    """A legacy row inlines a whole scanner report, so a batch of them would hold many reports in memory."""
+    from app.services.archive import _replay_bundle
+    from app.services.archive_bundle import BundleFrames, BundleStats
+
+    rows = [{"_id": f"r{i}", "scan_id": "scan-1", "analyzer_name": "grype", "result": {"matches": []}} for i in range(3)]
+
+    async def bundle():
+        async for chunk in BundleFrames.write(
+            scan_doc={"_id": "scan-1", "project_id": "p"},
+            collections={"analysis_results": _aiter(rows)},
+            stats=BundleStats(),
+        ):
+            yield chunk
+
+    db = _make_mock_db()
+
+    reason, _ = await _replay_bundle(db, "scan-1", "p", bundle())
+
+    assert reason is None
+    assert [call.args[0] for call in db.analysis_results.insert_many.await_args_list] == [[row] for row in rows]
+
+
+@pytest.mark.asyncio
 async def test_replay_strips_the_bundle_license_parameters_an_old_bundle_stored():
     from app.services.archive import _replay_bundle
     from app.services.archive_bundle import BundleFrames, BundleStats

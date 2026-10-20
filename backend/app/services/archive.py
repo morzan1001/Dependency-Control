@@ -502,7 +502,8 @@ async def _handle_doc_event(
     _hash_plaintext_secrets(coll, doc)
     _strip_license_parameters(coll, doc)
     batch_by_collection.setdefault(coll, []).append(doc)
-    if len(batch_by_collection[coll]) >= RESTORE_INSERT_BATCH_SIZE:
+    # A legacy analysis_results row inlines a whole scanner report, so a batch of them has no memory bound.
+    if coll == "analysis_results" or len(batch_by_collection[coll]) >= RESTORE_INSERT_BATCH_SIZE:
         await _flush_batches(db, batch_by_collection, collections_restored)
 
 
