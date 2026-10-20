@@ -137,7 +137,7 @@ async def test_an_inactive_instance_is_never_called():
     db = await _db(project, [_scan("s-main", _MAIN)])
     await db.gitlab_instances.insert_one({**_USABLE_INSTANCE, "is_active": False})
     with patch.object(GitLabService, "list_branches", AsyncMock(return_value=[_MAIN])) as list_branches:
-        assert await sync_project_branches(project, db) is False
+        assert await sync_project_branches(project, db) is None
 
     list_branches.assert_not_awaited()
     assert await db.projects.find_one({"_id": _PROJECT_ID}) == project
@@ -409,10 +409,34 @@ async def test_the_endpoint_syncs_the_project_it_was_granted():
 @pytest.mark.asyncio
 async def test_the_endpoint_reports_an_unreachable_vcs_as_502():
     """Answering 200 with the unchanged list would make a failed VCS call read as 'nothing changed'."""
-    with pytest.raises(HTTPException) as raised:
-        await _call_endpoint(Project(id=_PROJECT_ID, name="p", gitlab_instance_id="missing", gitlab_project_id=1))
+    project = Project(id=_PROJECT_ID, name="p", gitlab_instance_id="inst-1", gitlab_project_id=1)
+    db = await _db(project.model_dump(by_alias=True), [])
+    await db.gitlab_instances.insert_one(_USABLE_INSTANCE)
+    with (
+        patch.object(GitLabService, "list_branches", AsyncMock(return_value=None)),
+        pytest.raises(HTTPException) as raised,
+    ):
+        await _call_endpoint(project, db)
 
     assert raised.value.status_code == 502
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "instance",
+    [None, {**_USABLE_INSTANCE, "is_active": False}, {**_USABLE_INSTANCE, "access_token": None}],
+    ids=["missing", "inactive", "tokenless"],
+)
+async def test_the_endpoint_reports_an_unusable_vcs_instance_as_a_conflict(instance):
+    """No VCS call was made, so blaming the VCS with a 502 would send the admin to the wrong system."""
+    project = Project(id=_PROJECT_ID, name="p", gitlab_instance_id="inst-1", gitlab_project_id=1)
+    db = await _db(project.model_dump(by_alias=True), [])
+    if instance:
+        await db.gitlab_instances.insert_one(instance)
+    with pytest.raises(HTTPException) as raised:
+        await _call_endpoint(project, db)
+
+    assert raised.value.status_code == 409
 
 
 @pytest.mark.asyncio

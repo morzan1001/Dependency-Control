@@ -49,9 +49,9 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_400_404,
     RESP_AUTH_400_404_409,
     RESP_AUTH_400_404_409_500,
+    RESP_AUTH_400_404_409_502,
     RESP_AUTH_404,
     RESP_AUTH_404_500,
-    RESP_502,
 )
 from app.core.constants import (
     MAX_PROJECT_TEAMS,
@@ -643,7 +643,7 @@ async def read_project_branches(
 @router.post(
     "/{project_id}/sync-branches",
     summary="Sync branch status from VCS",
-    responses={**RESP_AUTH_400_404, **RESP_502},
+    responses=RESP_AUTH_400_404_409_502,
 )
 async def sync_project_branches_endpoint(
     project_id: str,
@@ -656,7 +656,10 @@ async def sync_project_branches_endpoint(
     if not linked_gitlab and not (project.github_instance_id and project.github_repository_path):
         raise HTTPException(status_code=400, detail="Project has no VCS connection configured")
 
-    if not await sync_project_branches(project.model_dump(by_alias=True), db):
+    synced = await sync_project_branches(project.model_dump(by_alias=True), db)
+    if synced is None:
+        raise HTTPException(status_code=409, detail="The project's VCS instance is missing, inactive or has no token")
+    if not synced:
         raise HTTPException(status_code=502, detail="The VCS could not be reached or listed no branches")
 
     return await read_project_branches(project_id, current_user, db)

@@ -36,11 +36,11 @@ async def _vcs_repo(project: dict[str, Any], db: Any) -> _VcsRepo | None:
     return None
 
 
-async def sync_project_branches(project: dict[str, Any], db: Any) -> bool:
-    """Leaves the project untouched when the VCS could not be asked or listed no branches."""
+async def sync_project_branches(project: dict[str, Any], db: Any) -> bool | None:
+    """None without a usable VCS instance, False when the VCS failed or listed no branches; both leave the project."""
     vcs = await _vcs_repo(project, db)
     if not vcs:
-        return False
+        return None
     list_branches, fetch_default_branch = vcs
     vcs_branches = await list_branches()
     if not vcs_branches:
