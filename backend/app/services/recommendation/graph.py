@@ -197,9 +197,11 @@ def analyze_duplicate_packages(
 
     recommendations = []
 
+    # A transitive package is its parent's choice; an SBOM without graph data marks none direct.
+    chosen = [dep for dep in dependencies if get_attr(dep, "direct")] or dependencies
     dep_names = {
         package_identity(get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "type"), get_attr(dep, "group"))[1]
-        for dep in dependencies
+        for dep in chosen
     }
 
     duplicates_found = []

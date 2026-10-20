@@ -663,7 +663,7 @@ SIMILAR_PACKAGE_GROUPS: list[dict[str, Any]] = [
     },
     {
         "category": "Testing Assertion",
-        "packages": ["chai", "expect", "should", "assert"],
+        "packages": ["chai", "should"],
         "suggestion": "Use Jest's built-in expect or standardize on one assertion library",
     },
 ]
