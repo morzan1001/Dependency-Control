@@ -23,6 +23,7 @@ from app.models.crypto_asset import CryptoAsset
 from app.models.system import SystemSettings
 from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport
+from app.schemas.analytics import RecommendationResponse
 from app.schemas.bearer import BearerFinding
 from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
 from app.schemas.enrichment import VulnerabilityEnrichment
@@ -544,7 +545,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         dependencies=aggregator.get_dependency_enrichments(),
         epss_kev_summary=epss_kev_summary,
         reachability_summary=reachability_summary,
-        recommendations=[recommendation.to_dict() for recommendation in recommendations],
+        recommendations=[RecommendationResponse.model_validate(recommendation) for recommendation in recommendations],
         analyzers=report,
         waivers_applied=waivers_applied,
         waived_count=waived_count,

@@ -480,7 +480,7 @@ class TestRecommend:
         card = self._card(f"pkg{index:04d}" for index in range(covered))
 
         assert len(card.affected_components) == AFFECTED_COMPONENTS_SHOWN
-        assert card.to_dict()["affected_components_total"] == covered
+        assert card.affected_components_total == covered
 
     @pytest.mark.parametrize(
         "entries",

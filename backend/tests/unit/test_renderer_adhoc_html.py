@@ -43,6 +43,19 @@ def _finding(**overrides):
     return base
 
 
+def _recommendation(title: str) -> dict:
+    return {
+        "type": "quick_win",
+        "priority": "high",
+        "title": title,
+        "description": "",
+        "impact": {},
+        "affected_components": [],
+        "action": {},
+        "effort": "low",
+    }
+
+
 def _result(**overrides):
     base = {
         "findings": [_finding()],
@@ -131,10 +144,7 @@ def test_a_findings_table_cut_to_the_row_cap_renders_only_that_many_rows():
 
 def test_a_recommendation_table_cut_to_the_row_cap_says_so():
     result = _result(
-        recommendations=[
-            {"priority": "high", "title": f"fix {index}", "effort": "low"}
-            for index in range(_RECOMMENDATIONS_OVER_THE_CAP)
-        ]
+        recommendations=[_recommendation(f"fix {index}") for index in range(_RECOMMENDATIONS_OVER_THE_CAP)]
     )
 
     html = render_adhoc_html(result)
@@ -144,10 +154,7 @@ def test_a_recommendation_table_cut_to_the_row_cap_says_so():
 
 def test_a_recommendation_table_cut_to_the_row_cap_renders_only_that_many_rows():
     result = _result(
-        recommendations=[
-            {"priority": "high", "title": f"fix {index}", "effort": "low"}
-            for index in range(_RECOMMENDATIONS_OVER_THE_CAP)
-        ]
+        recommendations=[_recommendation(f"fix {index}") for index in range(_RECOMMENDATIONS_OVER_THE_CAP)]
     )
 
     html = render_adhoc_html(result)

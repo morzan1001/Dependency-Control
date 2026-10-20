@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.constants import ScopeName
 from app.schemas.pagination import Page
@@ -241,6 +241,8 @@ class DependencySearchResponse(Page[DependencySearchResult]):
 
 
 class RecommendationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     type: str
     priority: str
     title: str

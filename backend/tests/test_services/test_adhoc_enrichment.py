@@ -178,8 +178,8 @@ async def test_the_kev_card_names_the_bundled_cve_the_enrichment_marks(monkeypat
     request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False)
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    [kev_card] = [r for r in response.recommendations if r["type"] == RecommendationType.KNOWN_EXPLOIT]
-    assert kev_card["action"]["cves"] == [second]
+    [kev_card] = [r for r in response.recommendations if r.type == RecommendationType.KNOWN_EXPLOIT]
+    assert kev_card.action["cves"] == [second]
 
 
 @pytest.mark.asyncio

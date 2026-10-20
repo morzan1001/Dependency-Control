@@ -87,7 +87,7 @@ def _request(**overrides) -> AdhocAnalyzeRequest:
 
 
 def _recommendations_of_type(response, recommendation_type) -> list[dict]:
-    return [rec for rec in response.recommendations if rec["type"] == recommendation_type]
+    return [rec.model_dump() for rec in response.recommendations if rec.type == recommendation_type]
 
 
 @pytest.mark.asyncio

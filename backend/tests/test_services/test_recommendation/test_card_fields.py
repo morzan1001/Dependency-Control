@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 
+from app.schemas.analytics import RecommendationResponse
 from app.services.aggregation import ResultAggregator
 from app.services.recommendation import (
     crypto,
@@ -383,7 +384,7 @@ def _risk_cards():
 
 def _cards():
     return [
-        card.to_dict()
+        RecommendationResponse.model_validate(card).model_dump()
         for build in (
             _vulnerability_cards,
             _exploited_cards,

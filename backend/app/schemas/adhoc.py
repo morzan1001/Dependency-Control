@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.constants import ScanStatus
 from app.models.stats import Stats
+from app.schemas.analytics import RecommendationResponse
 from app.schemas.project import LicensePolicySchema
 
 
@@ -59,7 +60,7 @@ class AdhocAnalyzeResponse(BaseModel):
     dependencies: list[dict[str, Any]] = Field(default_factory=list)
     epss_kev_summary: dict[str, Any] = Field(default_factory=dict)
     reachability_summary: dict[str, Any] | None = None
-    recommendations: list[dict[str, Any]] = Field(default_factory=list)
+    recommendations: list[RecommendationResponse] = Field(default_factory=list)
     analyzers: AnalyzerReport = Field(default_factory=AnalyzerReport)
     waivers_applied: Literal["global", "none"] = "none"
     waived_count: int = 0

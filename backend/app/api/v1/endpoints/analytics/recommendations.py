@@ -252,7 +252,7 @@ async def get_project_recommendations(
             total_findings=len(findings),
             findings_total=findings_total,
             total_vulnerabilities=finding_counts["vulnerabilities"],
-            recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
+            recommendations=[RecommendationResponse.model_validate(r) for r in recommendations],
             summary=_summarize(recommendations, finding_counts),
             dependencies_read=len(dependencies),
             dependencies_total=dependencies_total,

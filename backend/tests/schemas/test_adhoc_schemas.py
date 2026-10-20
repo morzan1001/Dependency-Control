@@ -145,3 +145,9 @@ def test_unusable_inputs_are_reported_apart_from_skipped_analyzers():
     report = AnalyzerReport(skipped={_ANALYZER: "no coverage"}, skipped_inputs={_SBOM_LABEL: _SKIP_REASON})
     assert report.skipped == {_ANALYZER: "no coverage"}
     assert report.skipped_inputs == {_SBOM_LABEL: _SKIP_REASON}
+
+
+def test_each_recommendation_is_documented_as_the_project_recommendations_are():
+    items = AdhocAnalyzeResponse.model_json_schema()["properties"]["recommendations"]["items"]
+
+    assert items["$ref"].endswith("/RecommendationResponse")
