@@ -393,20 +393,27 @@ class ScanRepository:
             _, scope = _head_scope(project)
             scan_id = (await self._head_scan_ids({project_id: scope._replace(pointer=None)})).get(project_id)
             doc = await self.collection.find_one({"_id": scan_id}, _HEAD_STATS_PROJECTION) if scan_id else None
-            head = doc["_id"] if doc else None
+            head, stats = (doc["_id"], doc.get("stats")) if doc else (None, None)
             # A pointer moved in between belongs to a writer that saw newer scans, so the head is derived again.
             written = await self.db.projects.update_one(
                 {"_id": project_id, "latest_scan_id": scope.pointer},
                 {
                     "$set": {
                         "latest_scan_id": head,
-                        "stats": doc.get("stats") if doc else None,
+                        "stats": stats,
                         "latest_scan_from_tag": doc is not None and _is_tag_build(doc),
                     }
                 },
             )
-            if written.matched_count:
+            if not written.matched_count:
+                continue
+            if head is None:
+                return None
+            # The pointer guard lets stats read before a locked refresh land after it; the next pass copies the fresh ones.
+            fresh = await self.collection.find_one({"_id": head}, {"stats": 1})
+            if (fresh or {}).get("stats") == stats:
                 return head
+        logger.warning("Project %s: head or its stats kept moving; left them for the next sync", project_id)
         return None
 
     async def get_preceding_scans(self, scan_id: str, limit: int) -> list[Scan]:

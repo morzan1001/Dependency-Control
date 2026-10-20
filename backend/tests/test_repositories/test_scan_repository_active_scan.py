@@ -456,7 +456,9 @@ _TAG_BUILDS = [
 class TestTagBuildHead:
     def test_a_pointer_the_sync_flagged_as_a_tag_build_head_is_trusted(self):
         result, reads = asyncio.run(
-            _resolve(_TAG_BUILDS, [_project("p1", default_branch="main", latest_scan_id="v2", latest_scan_from_tag=True)])
+            _resolve(
+                _TAG_BUILDS, [_project("p1", default_branch="main", latest_scan_id="v2", latest_scan_from_tag=True)]
+            )
         )
 
         assert result == {"p1": "v2"}
@@ -816,6 +818,41 @@ class TestSyncProjectHead:
 
         assert await ScanRepository(db).sync_project_head("p1") == "b2"
         assert (await db.projects.find_one({"_id": "p1"}))["latest_scan_id"] == "b2"
+
+    @pytest.mark.asyncio
+    async def test_stats_a_locked_refresh_wrote_meanwhile_are_not_overwritten_with_older_ones(self, monkeypatch):
+        """An unlocked sync can read the head's stats before a locked refresh rewrites them, and land after it."""
+        db = await _seeded([_scan("b1", "p1", "main", 2, stats={"critical": 1})])
+        await db.projects.insert_one(_project("p1", latest_scan_id="b1", default_branch="main", stats={"critical": 1}))
+        write = db.projects.update_one
+
+        async def _refresh_lands_first(*args, **kwargs):
+            monkeypatch.setattr(db.projects, "update_one", write)
+            await db.scans.update_one({"_id": "b1"}, {"$set": {"stats": {"critical": 0}}})
+            await write({"_id": "p1"}, {"$set": {"stats": {"critical": 0}}})
+            return await write(*args, **kwargs)
+
+        monkeypatch.setattr(db.projects, "update_one", _refresh_lands_first)
+
+        assert await ScanRepository(db).sync_project_head("p1") == "b1"
+        assert (await db.projects.find_one({"_id": "p1"}))["stats"] == {"critical": 0}
+
+    @pytest.mark.asyncio
+    async def test_a_pointer_that_keeps_moving_is_left_for_the_next_sync_with_a_warning(self, monkeypatch, caplog):
+        db = await _seeded([_scan("b1", "p1", "main", 2)])
+        await db.projects.insert_one(_project("p1", latest_scan_id="b0", default_branch="main"))
+        write = db.projects.update_one
+
+        async def _another_writer_moves_it_first(query, update, **kwargs):
+            await write({"_id": "p1"}, {"$set": {"latest_scan_id": f"moved-{query['latest_scan_id']}"}})
+            return await write(query, update, **kwargs)
+
+        monkeypatch.setattr(db.projects, "update_one", _another_writer_moves_it_first)
+
+        with caplog.at_level("WARNING", logger="app.repositories.scans"):
+            assert await ScanRepository(db).sync_project_head("p1") is None
+
+        assert "p1" in caplog.text
 
     @pytest.mark.asyncio
     async def test_flags_a_head_that_only_a_tag_build_could_give(self):
