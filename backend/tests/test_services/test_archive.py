@@ -208,6 +208,21 @@ async def test_archive_key_carries_the_archive_time(archive_env):
 
 
 @pytest.mark.asyncio
+async def test_the_bundle_header_key_and_metadata_carry_one_archive_time(archive_env):
+    from app.services.archive_bundle import read_bundle_frames
+
+    db = _make_mock_db(scan_doc=_make_scan_doc())
+
+    with _patch_repos()():
+        result = await archive_scan(db, "scan-1")
+
+    bundle = zlib.decompress(archive_env.objects[result.s3_key], wbits=31)
+    header = await anext(read_bundle_frames(_aiter([bundle])))
+    assert datetime.fromisoformat(header["data"]["archived_at"]) == result.archived_at
+    assert result.s3_key.endswith(f"-{int(result.archived_at.timestamp())}.bundle")
+
+
+@pytest.mark.asyncio
 async def test_archive_key_starts_with_the_configured_prefix(archive_env, monkeypatch):
     monkeypatch.setattr("app.core.s3.settings.S3_KEY_PREFIX", "dc-a")
     db = _make_mock_db(scan_doc=_make_scan_doc())
@@ -471,7 +486,10 @@ async def test_replay_labels_mongo_error_not_as_s3_error():
 
     from app.services.archive import _replay_bundle
 
-    header = json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x", "project_id": "y"}}).encode() + b"\n"
+    header = (
+        json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x", "project_id": "y"}}).encode()
+        + b"\n"
+    )
 
     async def src():
         yield header
@@ -837,6 +855,7 @@ async def test_replay_rejects_unknown_collection_marker():
             scan_doc={"_id": "scan-1", "project_id": "p"},
             collections={"users": _aiter([{"_id": "u1", "username": "attacker"}])},
             stats=BundleStats(),
+            archived_at=datetime.now(timezone.utc),
         ):
             yield chunk
 
@@ -867,7 +886,10 @@ def _bundle_with_collection(name: str) -> AsyncIterator[bytes]:
     from app.services.archive_bundle import BundleFrames, BundleStats
 
     return BundleFrames.write(
-        scan_doc={"_id": "scan-1", "project_id": "p"}, collections={name: _aiter([{"_id": "a1"}])}, stats=BundleStats()
+        scan_doc={"_id": "scan-1", "project_id": "p"},
+        collections={name: _aiter([{"_id": "a1"}])},
+        stats=BundleStats(),
+        archived_at=datetime.now(timezone.utc),
     )
 
 
@@ -922,6 +944,7 @@ async def test_replay_hashes_the_plaintext_secret_of_a_legacy_trufflehog_result(
             scan_doc={"_id": "scan-1", "project_id": "p"},
             collections={"analysis_results": _aiter([legacy_result])},
             stats=BundleStats(),
+            archived_at=datetime.now(timezone.utc),
         ):
             yield chunk
 
@@ -941,13 +964,16 @@ async def test_replay_inserts_each_legacy_inline_analysis_result_on_its_own():
     from app.services.archive import _replay_bundle
     from app.services.archive_bundle import BundleFrames, BundleStats
 
-    rows = [{"_id": f"r{i}", "scan_id": "scan-1", "analyzer_name": "grype", "result": {"matches": []}} for i in range(3)]
+    rows = [
+        {"_id": f"r{i}", "scan_id": "scan-1", "analyzer_name": "grype", "result": {"matches": []}} for i in range(3)
+    ]
 
     async def bundle():
         async for chunk in BundleFrames.write(
             scan_doc={"_id": "scan-1", "project_id": "p"},
             collections={"analysis_results": _aiter(rows)},
             stats=BundleStats(),
+            archived_at=datetime.now(timezone.utc),
         ):
             yield chunk
 
@@ -990,6 +1016,7 @@ async def test_replay_strips_the_bundle_license_parameters_an_old_bundle_stored(
             scan_doc={"_id": "scan-1", "project_id": "p"},
             collections={"dependencies": _aiter(dependencies)},
             stats=BundleStats(),
+            archived_at=datetime.now(timezone.utc),
         ):
             yield chunk
 
@@ -1046,6 +1073,7 @@ async def test_replay_inserts_the_scan_as_a_restore_in_progress():
             scan_doc={"_id": "scan-1", "project_id": "p", "restored_at": earlier_restore, "retention_deleting": True},
             collections={},
             stats=BundleStats(),
+            archived_at=datetime.now(timezone.utc),
         ):
             yield chunk
 
@@ -1129,6 +1157,7 @@ async def test_download_hashes_trufflehog_secrets_and_passes_sbom_lines_through_
                     ),
                 },
                 stats=BundleStats(),
+                archived_at=datetime.now(timezone.utc),
             )
         ]
     )

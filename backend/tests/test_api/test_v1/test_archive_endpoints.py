@@ -749,6 +749,7 @@ async def _legacy_bundle(*, encrypted: bool) -> bytes:
             ),
         },
         stats=BundleStats(),
+        archived_at=datetime.now(timezone.utc),
     )
     gzipped = _gzip_compress_stream(frames)
     return b"".join([chunk async for chunk in (encrypt_stream(gzipped) if encrypted else gzipped)])

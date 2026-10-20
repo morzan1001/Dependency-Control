@@ -41,6 +41,7 @@ class BundleFrames:
         scan_doc: dict[str, Any],
         collections: dict[str, AsyncIterator[dict[str, Any]]],
         stats: BundleStats,
+        archived_at: dt.datetime,
     ) -> AsyncIterator[bytes]:
         sha = hashlib.sha256()
 
@@ -50,7 +51,7 @@ class BundleFrames:
 
         header = {
             "version": ARCHIVE_BUNDLE_VERSION,
-            "archived_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "archived_at": archived_at.isoformat(),
             "scan_id": scan_doc.get("_id"),
             "project_id": scan_doc.get("project_id"),
             "scan": scan_doc,

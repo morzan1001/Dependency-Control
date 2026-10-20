@@ -348,6 +348,7 @@ async def test_a_bundle_carrying_a_row_of_another_scan_or_project_restores_nothi
                     "findings": _rows([{"_id": "f-own", "scan_id": SCAN_ID, "project_id": "proj-1"}, foreign_row])
                 },
                 stats=BundleStats(),
+                archived_at=_ARCHIVED_AT,
             )
         ]
     )

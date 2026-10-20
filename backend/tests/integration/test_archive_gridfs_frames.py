@@ -131,7 +131,10 @@ async def _archive_without_chunk_frames(db, archive_env, sbom: dict[str, Any]) -
         [
             line
             async for line in BundleFrames.write(
-                scan_doc=scan, collections={"gridfs_sboms": _aiter(entries)}, stats=BundleStats()
+                scan_doc=scan,
+                collections={"gridfs_sboms": _aiter(entries)},
+                stats=BundleStats(),
+                archived_at=datetime.now(timezone.utc),
             )
         ]
     )

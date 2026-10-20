@@ -218,6 +218,7 @@ def _build_archive_payload(
     scan_doc: dict[str, Any],
     scan_id: str,
     stats: BundleStats,
+    archived_at: datetime,
 ) -> tuple[AsyncIterator[bytes], str]:
     frames = BundleFrames.write(
         scan_doc=scan_doc,
@@ -229,6 +230,7 @@ def _build_archive_payload(
             ARCHIVE_GRIDFS_CHUNK_FRAME: _stream_gridfs_chunks(db, scan_doc),
         },
         stats=stats,
+        archived_at=archived_at,
     )
     gzipped = _gzip_compress_stream(frames)
     if is_encryption_enabled():
@@ -334,9 +336,10 @@ async def _upload_archive_bundle(
     scan_doc: dict[str, Any],
     scan_id: str,
     s3_key: str,
+    archived_at: datetime,
 ) -> tuple[int, BundleStats] | None:
     stats = BundleStats()
-    payload, content_type = _build_archive_payload(db, scan_doc, scan_id, stats)
+    payload, content_type = _build_archive_payload(db, scan_doc, scan_id, stats, archived_at)
     try:
         total = await upload_stream(s3_key, payload, content_type=content_type)
     except _ArchiveSourceReadError as e:
@@ -394,7 +397,7 @@ async def archive_scan(
         renew_lock = partial(lock_repo.renew_lock, lock_name, holder, _ARCHIVE_LOCK_TTL_SECONDS)
         start_time = time.monotonic()
         try:
-            upload = _upload_archive_bundle(db, scan_doc, scan_id, s3_key)
+            upload = _upload_archive_bundle(db, scan_doc, scan_id, s3_key, archived_at)
             upload_result = await run_holding_lock(renew_lock, _ARCHIVE_LOCK_TTL_SECONDS, upload)
             # A pod that took the lock over archives on its own, possibly while this archive's delete runs.
             if upload_result is not None and not await renew_lock():
