@@ -439,7 +439,8 @@ EPSS_VERY_HIGH_BOOST: float = 1.5
 EPSS_HIGH_BOOST: float = 1.3
 EPSS_MEDIUM_BOOST: float = 1.1
 
-DAYS_KNOWN_OVERDUE_THRESHOLD: int = 90
+# Most severe first; LOW and below carry no remediation deadline.
+REMEDIATION_SLA_DAYS: dict[Severity, int] = {Severity.CRITICAL: 7, Severity.HIGH: 30, Severity.MEDIUM: 90}
 BLAST_RADIUS_THRESHOLD: int = 3
 KEV_DUE_SOON_DAYS: int = 30
 

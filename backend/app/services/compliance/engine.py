@@ -6,7 +6,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 from app.core.config import settings
-from app.core.constants import COMPLIANCE_REPORT_SLOTS
+from app.core.constants import COMPLIANCE_REPORT_SLOTS, REMEDIATION_SLA_DAYS
 from app.core.metrics import compliance_reports_total
 from app.models.compliance_report import ComplianceReport
 from app.models.crypto_asset import CryptoAsset
@@ -29,7 +29,6 @@ from app.services.analytics.scopes import ResolvedScope, ScopeResolver, read_sco
 from app.services.analyzers.crypto.catalogs.loader import IANA_WEAKNESS_RULES_VERSION
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.frameworks.base import ComplianceFramework, EvaluationInput, SeedFramework
-from app.services.compliance.frameworks.cve_remediation_sla import SLA_DAYS
 from app.services.compliance.frameworks.fips_140_3 import AlgorithmConformanceFramework
 from app.services.compliance.frameworks.license_audit import LICENSE_AUDIT_CATEGORIES
 from app.services.compliance.renderers import RENDERER_REGISTRY
@@ -245,7 +244,10 @@ class ComplianceReportEngine:
         if framework.key == ReportFramework.PQC_MIGRATION_PLAN:
             return None
         if framework.key == ReportFramework.CVE_REMEDIATION_SLA:
-            clause = {"type": "vulnerability", "severity": {"$in": [severity.value for severity in SLA_DAYS]}}
+            clause = {
+                "type": "vulnerability",
+                "severity": {"$in": [severity.value for severity in REMEDIATION_SLA_DAYS]},
+            }
             fields = (
                 "first_seen_at",
                 "scan_created_at",

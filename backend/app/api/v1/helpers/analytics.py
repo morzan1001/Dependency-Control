@@ -9,7 +9,6 @@ from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.core.constants import (
     BLAST_RADIUS_THRESHOLD,
     CROSS_PROJECT_MIN_OCCURRENCES,
-    DAYS_KNOWN_OVERDUE_THRESHOLD,
     EPSS_HIGH_BOOST,
     EPSS_HIGH_THRESHOLD,
     EPSS_MEDIUM_BOOST,
@@ -28,12 +27,14 @@ from app.core.constants import (
     KEV_OVERDUE_BOOST,
     KEV_RANSOMWARE_BOOST,
     RELEASE_ENVIRONMENT_PATTERN,
+    REMEDIATION_SLA_DAYS,
     SEVERITY_ORDER,
     get_severity_value,
 )
 from app.core.cve import counted_cves
 from app.core.permissions import Permissions, has_permission
 from app.core.purl import package_identity_expr
+from app.models.finding import Severity
 from app.models.user import User
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
@@ -225,6 +226,14 @@ def select_impact_candidates[T](scored: list[tuple[float, T]], limit: int) -> li
     return [payload for score, payload in ranked if score >= threshold]
 
 
+def _missed_sla(severity_counts: dict[str, int], days_known: int | None) -> tuple[Severity, int] | None:
+    """The deadline of the most severe live CVE, as the CVE-SLA report sets it, once days_known reaches it."""
+    for severity, sla_days in REMEDIATION_SLA_DAYS.items():
+        if severity_counts.get(severity.value.lower()):
+            return (severity, sla_days) if days_known is not None and days_known >= sla_days else None
+    return None
+
+
 def calculate_impact_score(
     severity_counts: dict[str, int],
     affected_projects: int,
@@ -241,7 +250,7 @@ def calculate_impact_score(
     if has_fix:
         base_impact *= IMPACT_FIX_AVAILABLE_BOOST
 
-    if days_known and days_known > DAYS_KNOWN_OVERDUE_THRESHOLD:
+    if _missed_sla(severity_counts, days_known):
         base_impact *= IMPACT_AGE_BOOST
 
     return base_impact
@@ -281,8 +290,12 @@ def build_priority_reasons(
     if has_fix:
         reasons.append("fix_available:Fix available - easy to remediate")
 
-    if days_known and days_known > DAYS_KNOWN_OVERDUE_THRESHOLD:
-        reasons.append(f"overdue:Known for {days_known} days - overdue for remediation")
+    if missed := _missed_sla(severity_counts, days_known):
+        severity, sla_days = missed
+        reasons.append(
+            f"overdue:Known for {days_known} days - past the {sla_days}-day remediation SLA "
+            f"for {severity.value.lower()} vulnerabilities"
+        )
 
     return reasons
 
