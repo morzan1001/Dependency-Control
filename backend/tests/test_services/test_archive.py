@@ -1166,3 +1166,15 @@ async def test_gzip_compression_of_a_large_chunk_leaves_the_event_loop_running()
 
     assert ticks > 0
     assert zlib.decompress(compressed, wbits=31) == chunk
+
+
+@pytest.mark.asyncio
+async def test_decompress_hands_out_a_highly_compressed_chunk_in_pieces_of_at_most_one_mib():
+    plaintext = b"\0" * (8 << 20) + b"tail"
+    compressor = zlib.compressobj(wbits=31)
+    gzipped = compressor.compress(plaintext) + compressor.flush()
+
+    pieces = [piece async for piece in _gzip_decompress_stream(_aiter([gzipped[:10], gzipped[10:]]))]
+
+    assert b"".join(pieces) == plaintext
+    assert max(map(len, pieces)) <= 1 << 20

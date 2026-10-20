@@ -88,6 +88,7 @@ _ARCHIVE_LOCK_TTL_SECONDS = 600
 _GRIDFS_RESTORE_LOCK_POLL_SECONDS = 1
 # zlib releases the GIL, so a chunk this large (a whole SBOM line) compresses in a thread instead of stalling the loop.
 _COMPRESS_IN_THREAD_MIN_BYTES = 1 << 20
+_DECOMPRESS_PIECE_BYTES = 1 << 20
 
 # Marker names are attacker-influenceable (the footer is a plain sha256, not an HMAC), so others abort the restore.
 _RESTORABLE_COLLECTIONS = frozenset({*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FRAME, ARCHIVE_GRIDFS_CHUNK_FRAME})
@@ -194,11 +195,13 @@ async def _gzip_compress_stream(source: AsyncIterator[bytes]) -> AsyncIterator[b
 async def _gzip_decompress_stream(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
     decompressor = zlib.decompressobj(wbits=31)
     async for chunk in source:
-        if not chunk:
-            continue
-        out = decompressor.decompress(chunk)
-        if out:
-            yield out
+        data = chunk
+        # A highly compressed chunk would otherwise inflate in one piece many times its size.
+        while data:
+            out = decompressor.decompress(data, _DECOMPRESS_PIECE_BYTES)
+            if out:
+                yield out
+            data = decompressor.unconsumed_tail
     tail = decompressor.flush()
     if tail:
         yield tail
