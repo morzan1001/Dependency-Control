@@ -16,6 +16,7 @@ import { createReport } from "@/api/compliance";
 import type { ReportFormat, ReportFramework } from "@/types/compliance";
 import { useAuth } from "@/context/useAuth";
 import { useTeams } from "@/hooks/queries/use-teams";
+import { useCurrentUser } from "@/hooks/queries/use-users";
 import { REPORT_FRAMEWORK_LABELS } from "@/lib/constants";
 
 const FORMATS: { value: ReportFormat; label: string }[] = [
@@ -70,11 +71,15 @@ export function NewReportDialog({
   const [scopeError, setScopeError] = useState<string | null>(null);
 
   const needsScopeId = scope === "project" || scope === "team";
+  const readsAllProjects = canGlobal || hasPermission("project:read_all");
   // The report gate admits these callers to teams or projects that GET /teams or GET /projects would not list.
   const typesScopeId = scope === "team"
-    ? (canGlobal || hasPermission("project:read_all")) && !hasPermission("team:read_all")
+    ? readsAllProjects && !hasPermission("team:read_all")
     : hasPermission("project:update") && !hasPermission("project:read") && !hasPermission("project:read_all");
   const { data: teams } = useTeams(undefined, "name", "asc", { enabled: scope === "team" && !typesScopeId });
+  const { data: me } = useCurrentUser();
+  // team:read_all lists every team, but without all projects the report gate admits only the caller's own.
+  const offeredTeams = readsAllProjects ? teams : teams?.filter((t) => t.members?.some((m) => m.user_id === me?.id));
   const pickScopeId = (id: string) => { setScopeId(id); setScopeError(null); };
   const scopeIdField = {
     id: "report-scope-id",
@@ -139,7 +144,7 @@ export function NewReportDialog({
                 <Select value={scopeId} onValueChange={pickScopeId}>
                   <SelectTrigger {...scopeIdField}><SelectValue placeholder="Select a team..." /></SelectTrigger>
                   <SelectContent>
-                    {teams?.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+                    {offeredTeams?.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               )}
