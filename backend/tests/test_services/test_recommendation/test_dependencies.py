@@ -141,6 +141,11 @@ class TestAnalyzeVersionFragmentationEcosystems:
 
         assert sorted((p["name"], p["type"]) for p in rec.action["packages"]) == [("foo", "npm"), ("foo", "pypi")]
 
+    def test_same_named_packages_of_two_ecosystems_count_as_two_components(self):
+        [rec] = analyze_version_fragmentation(self._fragmented("npm", "pypi"))
+
+        assert (sorted(rec.affected_components), rec.affected_components_total) == (["foo (npm)", "foo (pypi)"], 2)
+
     @pytest.mark.parametrize(
         ("purl_types", "commands"),
         [

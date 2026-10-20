@@ -130,6 +130,10 @@ def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
     return obj.get(key, default)
 
 
+def package_label(package: dict[str, Any]) -> str:
+    return f"{package['name']} ({package['type']})" if package["type"] else package["name"]
+
+
 def dependency_label(dep: ModelOrDict) -> str:
     return f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
 

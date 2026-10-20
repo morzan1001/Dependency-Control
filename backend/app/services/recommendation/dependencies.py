@@ -21,6 +21,7 @@ from app.services.recommendation.common import (
     ModelOrDict,
     get_attr,
     installed_copy_lookup,
+    package_label,
     recommend,
     sampled,
     severity_impact,
@@ -151,7 +152,7 @@ def analyze_version_fragmentation(
                     "single version."
                 ),
                 impact={"total": 0},
-                components=(f["name"] for f in significant_fragmented),
+                components=(package_label(f) for f in significant_fragmented),
                 action={
                     "type": "deduplicate_versions",
                     **sampled(

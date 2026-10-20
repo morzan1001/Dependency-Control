@@ -16,6 +16,7 @@ from app.services.recommendation.common import (
     cve_severities,
     get_attr,
     live_advisories,
+    package_label,
     recommend,
     sampled,
     scorecard_details,
@@ -233,10 +234,6 @@ def _shared_vulnerability_card(
     )
 
 
-def _package_label(package: dict[str, Any]) -> str:
-    return f"{package['name']} ({package['type']})" if package["type"] else package["name"]
-
-
 def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], scope_note: str) -> Recommendation | None:
     # The cross-project package aggregation sees every dependency row of every compared scan, not a sample.
     if not inconsistent_packages:
@@ -253,7 +250,7 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
         ),
         impact={"total": 0},
         components=(
-            f"{_package_label(p)}: {p['version_count']} versions across {p['project_count']} projects"
+            f"{package_label(p)}: {p['version_count']} versions across {p['project_count']} projects"
             for p in inconsistent_packages
         ),
         action={
