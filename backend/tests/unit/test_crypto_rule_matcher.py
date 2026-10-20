@@ -212,6 +212,13 @@ def _algorithm(name, primitive, **properties):
         (_algorithm("AES", "block-cipher", parameterSetIdentifier="256", mode="gcm"), set()),
         (_algorithm("DESede", "block-cipher"), {"nist-131a-3des-disallowed"}),
         (_algorithm("DES-EDE3-CBC", "block-cipher"), {"nist-131a-3des-disallowed"}),
+        (_algorithm("RSASSA-PSS", "signature"), {"pqc-quantum-vulnerable-pke"}),
+        (_algorithm("RSASSA-PKCS1-v1_5", "signature"), {"pqc-quantum-vulnerable-pke"}),
+        (_algorithm("RSAES-OAEP", "pke"), {"pqc-quantum-vulnerable-pke"}),
+        (
+            _algorithm("RSAES-OAEP-1024", "pke", parameterSetIdentifier="1024"),
+            {"nist-131a-rsa-min-2048", "pqc-quantum-vulnerable-pke"},
+        ),
     ],
     ids=lambda value: value["name"] if isinstance(value, dict) else None,
 )

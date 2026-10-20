@@ -73,6 +73,8 @@ _QUALIFIER = re.compile(r"\b(ec|ml|slh|fn|hashml|hashslh) +")
 _POST_QUANTUM_FAMILIES = ("mlkem", "mldsa", "slhdsa", "fndsa", "hashmldsa", "hashslhdsa")
 # The JCA (DESede) and OpenSSL (DES-EDE3) names of three-key 3DES, which is not single DES.
 _TRIPLE_DES_TOKENS = {"desede", "ede3"}
+# A family name runs up to a digit (RSA2048), and CycloneDX names RSA's schemes RSASSA-PSS, RSAES-OAEP, RSA-KEM.
+_FAMILY_PREFIX = re.compile(r"(rsa)(?:ssa|es|kem)|([a-z]+)\d")
 
 
 def _family_tokens(name: str) -> set[str]:
@@ -81,7 +83,7 @@ def _family_tokens(name: str) -> set[str]:
         return set()
     if tokens & _TRIPLE_DES_TOKENS:
         tokens = tokens - {"des"} | {"3des"}
-    return tokens | {m.group(1) for token in tokens if (m := re.match(r"([a-z]+)\d", token))}
+    return tokens | {m.group(1) or m.group(2) for token in tokens if (m := _FAMILY_PREFIX.match(token))}
 
 
 def _protocol_version_matches(asset: CryptoAsset, match_list: list[str]) -> bool:
