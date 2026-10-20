@@ -5,6 +5,7 @@ from typing import Any
 import pymongo
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 
+from app.api.v1.helpers.sorting import CASE_INSENSITIVE
 from app.core.constants import (
     DEPENDENCIES_SCAN_PACKAGE_INDEX,
     DEPENDENCIES_SCAN_VERSION_INDEX,
@@ -26,7 +27,6 @@ from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.dependencies import DependencyRepository
-from app.api.v1.helpers.sorting import CASE_INSENSITIVE
 from app.repositories.dependency_enrichments import NAME_INDEX, NAME_INDEX_NAME, DependencyEnrichmentRepository
 from app.repositories.findings import (
     FIRST_DETECTION_INDEX,
