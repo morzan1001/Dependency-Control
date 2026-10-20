@@ -16,7 +16,6 @@ from app.models.waiver import Waiver
 from app.repositories.projects import ProjectRepository
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
-from app.repositories.waivers import WaiverRepository
 from app.schemas.ingest import IngestEnvelope
 from app.services.waivers.matching import record_matches, route_waiver, waiver_criteria, waiver_strong_match
 
@@ -31,12 +30,41 @@ def deterministic_scan_id(project_id: str, pipeline_id: int | None, commit_hash:
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, seed))
 
 
+def apply_waivers(findings: list[Finding], waivers: list[Waiver]) -> tuple[list[Finding], int]:
+    """Best effort: the recalculation re-anchors a moved location finding."""
+    # Keyed by what a matching finding must equal, so each finding meets only the waivers that can match it.
+    by_anchor: dict[tuple[str, str | None], list[tuple[MatchSignature, str]]] = defaultdict(list)
+    by_finding_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    unkeyed: list[dict[str, Any]] = []
+    for waiver in waivers:
+        route = route_waiver(waiver)
+        if route == "signature" and waiver.match is not None and waiver.match.is_strong:
+            by_anchor[(waiver.match.file_key, waiver.match.anchor)].append((waiver.match, waiver.status))
+        elif route == "query" and (criteria := waiver_criteria(waiver)):
+            (by_finding_id[criteria["finding_id"]] if "finding_id" in criteria else unkeyed).append(criteria)
+
+    kept = []
+    for finding in findings:
+        record = {
+            "finding_id": finding.id,
+            "component": finding.component,
+            "version": finding.version,
+            "type": finding.type,
+            "details": finding.details,
+        }
+        waived = any(record_matches(record, criteria) for criteria in (*by_finding_id.get(finding.id, ()), *unkeyed))
+        if not waived and (match := finding.match) is not None:
+            signed = by_anchor.get((match.file_key, match.anchor), ())
+            waived = any(waiver_strong_match(match, signature, status) for signature, status in signed)
+        if not waived:
+            kept.append(finding)
+    return kept, len(findings) - len(kept)
+
+
 class ScanManager:
     def __init__(self, db: AsyncIOMotorDatabase, project: Project):
         self.db = db
         self.project = project
-        # Memoized for this request-scoped instance; no cross-request cache/TTL.
-        self._waivers: list[Waiver] | None = None
 
     def build_pipeline_url(self, data: IngestEnvelope) -> str | None:
         if data.pipeline_url:
@@ -93,43 +121,6 @@ class ScanManager:
         if scan_type is not None:
             update["$set"]["scan_type"] = scan_type
         await ScanRepository(self.db).upsert({"_id": scan_id}, update)
-
-    async def _get_waivers(self) -> list[Waiver]:
-        if self._waivers is None:
-            self._waivers = await WaiverRepository(self.db).find_active_for_project(str(self.project.id))
-        return self._waivers
-
-    async def apply_waivers(self, findings: list[Finding]) -> tuple[list[Finding], int]:
-        """Best effort: the recalculation re-anchors a moved location finding."""
-        # Keyed by what a matching finding must equal, so each finding meets only the waivers that can match it.
-        by_anchor: dict[tuple[str, str | None], list[tuple[MatchSignature, str]]] = defaultdict(list)
-        by_finding_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        unkeyed: list[dict[str, Any]] = []
-        for waiver in await self._get_waivers():
-            route = route_waiver(waiver)
-            if route == "signature" and waiver.match is not None and waiver.match.is_strong:
-                by_anchor[(waiver.match.file_key, waiver.match.anchor)].append((waiver.match, waiver.status))
-            elif route == "query" and (criteria := waiver_criteria(waiver)):
-                (by_finding_id[criteria["finding_id"]] if "finding_id" in criteria else unkeyed).append(criteria)
-
-        kept = []
-        for finding in findings:
-            record = {
-                "finding_id": finding.id,
-                "component": finding.component,
-                "version": finding.version,
-                "type": finding.type,
-                "details": finding.details,
-            }
-            waived = any(
-                record_matches(record, criteria) for criteria in (*by_finding_id.get(finding.id, ()), *unkeyed)
-            )
-            if not waived and (match := finding.match) is not None:
-                signed = by_anchor.get((match.file_key, match.anchor), ())
-                waived = any(waiver_strong_match(match, signature, status) for signature, status in signed)
-            if not waived:
-                kept.append(finding)
-        return kept, len(findings) - len(kept)
 
     async def register_result(self, scan_id: str, analyzer_name: str, trigger_analysis: bool = False) -> None:
         now = datetime.now(timezone.utc)
