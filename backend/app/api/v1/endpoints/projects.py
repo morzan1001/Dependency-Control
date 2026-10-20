@@ -29,7 +29,6 @@ from app.api.v1.helpers import (
     generate_project_api_key,
     get_category_type_filter,
     get_sort_field,
-    get_user_project_ids,
     is_write_superuser,
     last_admin_guard,
     may_read_projects,
@@ -113,6 +112,7 @@ from app.schemas.project import (
     ScanWithReleases,
     license_policy_from_settings,
 )
+from app.services.analytics.scopes import read_scope_projects
 from app.services.audit.history import record_license_policy_change
 from app.services.branch_sync import sync_project_branches
 from app.services.component_identity import component_match_expr
@@ -385,16 +385,20 @@ async def read_all_scans(
     if not may_read_projects(current_user):
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
-    project_ids = await get_user_project_ids(current_user, db)
-    if not project_ids:
-        return []
+    # A rescan carries an old pipeline number under today's date, so it would read as a fresh run.
+    scans: dict[str, Any] = {"is_rescan": {"$ne": True}}
+    visible = await build_user_project_query(current_user, TeamRepository(db))
+    if visible:
+        project_ids = [project.id for project in await read_scope_projects(db, visible)]
+        if not project_ids:
+            return []
+        scans["project_id"] = {"$in": project_ids}
 
     direction = parse_sort_direction(sort_order)
     sort_field = get_sort_field("scans", sort_by)
 
     pipeline: list[dict[str, Any]] = [
-        # A rescan carries an old pipeline number under today's date, so it would read as a fresh run.
-        {"$match": {"project_id": {"$in": project_ids}, "is_rescan": {"$ne": True}}},
+        {"$match": scans},
         {"$sort": dict(_scan_page_sort(sort_field, direction))},
         {"$skip": skip},
         {"$limit": limit},
@@ -403,6 +407,7 @@ async def read_all_scans(
                 "from": "projects",
                 "localField": "project_id",
                 "foreignField": "_id",
+                "pipeline": [{"$project": {"name": 1}}],
                 "as": "project_info",
             }
         },

@@ -847,21 +847,20 @@ def _run_lookup(docs: list, spec: dict, database: Any) -> list:
     foreign_docs = list(database[spec["from"]]._docs.values())
     as_field = spec["as"]
     for doc in docs:
-        if "pipeline" in spec:
-            # "$$name" resolves as the path "$name", so the let-vars ride on each candidate under that key.
-            bound = {f"${var}": _eval_expr(doc, expr) for var, expr in (spec.get("let") or {}).items()}
-            candidates = [{**bound, **fd} for fd in _copy.deepcopy(foreign_docs)]
-            matched = _run_pipeline(candidates, spec["pipeline"], database)
-            doc[as_field] = [{k: v for k, v in m.items() if not k.startswith("$")} for m in matched]
-        else:
+        joined = foreign_docs
+        if "localField" in spec:
             local = _resolve_dotted(doc, spec["localField"])
             # MongoDB joins an array localField element-wise, and a scalar against an array foreignField too.
             wanted = local if isinstance(local, list) else [local]
-            doc[as_field] = [
-                _copy.deepcopy(fd)
-                for fd in foreign_docs
-                if _matches_any(_resolve_dotted(fd, spec["foreignField"]), wanted)
-            ]
+            joined = [fd for fd in foreign_docs if _matches_any(_resolve_dotted(fd, spec["foreignField"]), wanted)]
+        if "pipeline" in spec:
+            # "$$name" resolves as the path "$name", so the let-vars ride on each candidate under that key.
+            bound = {f"${var}": _eval_expr(doc, expr) for var, expr in (spec.get("let") or {}).items()}
+            candidates = [{**bound, **fd} for fd in _copy.deepcopy(joined)]
+            matched = _run_pipeline(candidates, spec["pipeline"], database)
+            doc[as_field] = [{k: v for k, v in m.items() if not k.startswith("$")} for m in matched]
+        else:
+            doc[as_field] = [_copy.deepcopy(fd) for fd in joined]
     return docs
 
 
