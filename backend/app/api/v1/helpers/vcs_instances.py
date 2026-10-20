@@ -18,6 +18,7 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.teams import TeamRepository
 from app.repositories.vcs_instances import VcsInstanceRepository
 from app.services.github import GitHubService
+from app.services.gitlab import GitLabService
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,15 @@ async def get_or_404[T: VcsInstanceModel](repo: VcsInstanceRepository[T], instan
             status_code=status.HTTP_404_NOT_FOUND, detail=f"{label} instance with ID {instance_id} not found"
         )
     return instance
+
+
+async def require_signing_keys(service: GitHubService | GitLabService) -> None:
+    jwks = await service.get_jwks()
+    if not jwks or not jwks.get("keys"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OIDC endpoint unreachable or returned no signing keys. Verify the issuer URL.",
+        )
 
 
 async def list_page[T: VcsInstanceModel](

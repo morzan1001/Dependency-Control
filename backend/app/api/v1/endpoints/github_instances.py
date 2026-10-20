@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Annotated, Any
 
-from fastapi import HTTPException, Query, status
+from fastapi import Query, status
 
 from app.api import deps
 from app.api.deps import DatabaseDep
@@ -16,6 +16,7 @@ from app.api.v1.helpers.vcs_instances import (
     get_or_404,
     list_page,
     refused_listing,
+    require_signing_keys,
     undetermined,
     why_refused,
 )
@@ -83,13 +84,7 @@ async def create_instance(
     await assert_unique(instance_repo, _LABEL, url=instance_data.url, name=instance_data.name)
 
     new_instance = GitHubInstance(**instance_data.model_dump(), created_by=str(current_user.id))
-
-    jwks = await GitHubService(new_instance).get_jwks()
-    if not jwks or not jwks.get("keys"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OIDC endpoint unreachable or returned no signing keys. Verify the issuer URL.",
-        )
+    await require_signing_keys(GitHubService(new_instance))
 
     created_instance = await instance_repo.create(new_instance)
 

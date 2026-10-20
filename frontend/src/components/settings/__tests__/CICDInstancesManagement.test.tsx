@@ -557,16 +557,29 @@ describe('CICDInstancesManagement outcomes', () => {
     fireEvent.click(within(screen.getByRole('row', { name: row })).getAllByRole('button')[0])
   }
 
-  it('names the GitLab version a successful test reached', async () => {
-    mockGitLabTest.mockResolvedValue({ success: true, message: 'ok', gitlab_version: '17.4.1' })
+  it('passes the server message on for a successful GitLab test with the version it reached', async () => {
+    mockGitLabTest.mockResolvedValue({ success: true, message: 'Found 2 signing key(s).', gitlab_version: '17.4.1' })
     renderManagement()
 
     testRow(/Internal GitLab/)
 
     await waitFor(() =>
-      expect(toast.success).toHaveBeenCalledWith('Connection successful!', { description: 'GitLab version: 17.4.1' }),
+      expect(toast.success).toHaveBeenCalledWith('Connection successful!', {
+        description: 'Found 2 signing key(s). GitLab version: 17.4.1.',
+      }),
     )
     expect(mockGitLabTest).toHaveBeenCalledWith('gl-1')
+  })
+
+  it('passes the server message on for a successful test of a token-less GitLab instance', async () => {
+    mockGitLabTest.mockResolvedValue({ success: true, message: 'Found 2 signing key(s).', gitlab_version: null })
+    renderManagement()
+
+    testRow(/Internal GitLab/)
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith('Connection successful!', { description: 'Found 2 signing key(s).' }),
+    )
   })
 
   it('passes the server message on for a successful GitHub test', async () => {
