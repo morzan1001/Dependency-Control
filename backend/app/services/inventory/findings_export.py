@@ -10,7 +10,7 @@ from app.models.finding import FindingType, Severity
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
 from app.services.component_identity import build_component_index, lookup_component
-from app.services.recommendation.common import display_vulnerability_id
+from app.services.recommendation.common import display_vulnerability_id, scorecard_details
 
 
 class ExportedScan(NamedTuple):
@@ -67,6 +67,8 @@ _PROJECTION = {
     "details.reachability.is_reachable": 1,
     "details.fixed_version": 1,
     "details.recommendation": 1,
+    "details.quality_issues.type": 1,
+    "details.quality_issues.details.recommendation": 1,
     "details.license": 1,
     "details.category": 1,
     "details.purl": 1,
@@ -106,7 +108,7 @@ def _row(scan: ExportedScan, doc: dict[str, Any], dep_lookup: _DepLookup) -> dic
         "reachable": (details.get("reachability") or {}).get("is_reachable") if is_vuln else None,
         "exploit_maturity": details.get("exploit_maturity") if is_vuln else None,
         "fixed_version": details.get("fixed_version"),
-        "recommendation": details.get("recommendation"),
+        "recommendation": details.get("recommendation") or scorecard_details(details).get("recommendation"),
         "license": details.get("license") if is_license else None,
         "license_category": details.get("category") if is_license else None,
         "scanners": doc.get("scanners") or [],
