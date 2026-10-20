@@ -1,5 +1,6 @@
+import threading
 import weakref
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -65,3 +66,27 @@ async def test_an_adhoc_job_releases_what_its_analysis_left_behind(automatic_gc_
 
     assert (await db.adhoc_jobs.find_one({"_id": "job-1"}))["status"] == SCAN_STATUS_COMPLETED
     assert refs and refs[0]() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("job", ["scan", "adhoc"])
+async def test_a_finished_job_trims_the_heap_off_the_event_loop_with_the_libc_loaded_at_import(monkeypatch, job):
+    db = await _scan_db()
+    await db.adhoc_jobs.insert_one({"_id": "job-1", "status": SCAN_STATUS_PENDING})
+    trimmed_on: list[int] = []
+    monkeypatch.setattr("app.core.worker._malloc_trim", lambda pad: trimmed_on.append(threading.get_ident()))
+    monkeypatch.setattr("app.core.worker.ctypes.CDLL", Mock(side_effect=AssertionError("libc reloaded per job")))
+    manager = AnalysisWorkerManager(num_workers=1)
+
+    with (
+        patch("app.core.worker.get_database", AsyncMock(return_value=db)),
+        patch("app.core.worker.run_analysis", AsyncMock(return_value=SCAN_STATUS_COMPLETED)),
+        patch("app.core.worker._run_adhoc_job", AsyncMock(return_value={"status": SCAN_STATUS_COMPLETED})),
+    ):
+        if job == "scan":
+            await manager._process("scan-1", "pod/worker-1")
+        else:
+            await manager._process_adhoc("job-1", "pod/worker-1")
+
+    assert len(trimmed_on) == 1
+    assert trimmed_on[0] != threading.get_ident()

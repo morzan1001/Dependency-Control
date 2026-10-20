@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import ctypes
 import gc
 import logging
@@ -79,11 +78,17 @@ async def _run_adhoc_job(db: AsyncIOMotorDatabase, job: dict[str, Any]) -> dict[
     return {"status": SCAN_STATUS_COMPLETED, "result_file_id": str(result_file_id)}
 
 
-def _release_memory_to_os() -> None:
+try:
+    _malloc_trim: Callable[[int], int] | None = ctypes.CDLL("libc.so.6").malloc_trim
+except (OSError, AttributeError):
+    _malloc_trim = None
+
+
+async def _release_memory_to_os() -> None:
     """glibc keeps freed heap pages unless malloc_trim returns them; elsewhere this is a plain gc."""
     gc.collect()
-    with contextlib.suppress(OSError, AttributeError):
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    if _malloc_trim is not None:
+        await asyncio.to_thread(_malloc_trim, 0)
 
 
 def _record_job(status: str, started: float) -> None:
@@ -257,8 +262,8 @@ class AnalysisWorkerManager:
         finally:
             claim_keeper.cancel()
             self._untrack_scan(scan_id)
-            _release_memory_to_os()
             logger.info(f"Worker {worker_id} finished scan {scan_id}")
+            await _release_memory_to_os()
 
     async def _process_adhoc(self, job_id: str, worker_id: str) -> None:
         started = time.time()
@@ -292,7 +297,7 @@ class AnalysisWorkerManager:
         finally:
             claim_keeper.cancel()
             self._untrack_scan(job_id)
-            _release_memory_to_os()
+            await _release_memory_to_os()
 
     async def worker(self, name: str) -> None:
         worker_id = f"{INSTANCE_ID}/{name}"
