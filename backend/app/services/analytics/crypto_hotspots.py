@@ -61,7 +61,6 @@ class CryptoHotspotService:
         limit: int = 100,
         key: str | None = None,
     ) -> HotspotResponse:
-        """A key narrows the read to that one group."""
         latest_scan_ids = await self._pick_scan_ids(resolved, scan_id)
         scope = (resolved.scope, resolved.scope_id, scope_digest(resolved.project_ids))
         cache_key = ("crypto-hotspots", *scope, group_by, scope_digest(latest_scan_ids), limit, key)
@@ -79,12 +78,13 @@ class CryptoHotspotService:
             limit=limit,
             key=key,
         )
-        # One shared column set: cutting each entry to its own first projects would show held cells as absent.
         frequency = Counter(project_id for item in items for project_id in item.project_ids)
-        columns = sorted(frequency, key=lambda project_id: (-frequency[project_id], project_id))[:_HEATMAP_COLUMNS]
-        for item in items:
-            held = set(item.project_ids)
-            item.project_ids = [project_id for project_id in columns if project_id in held]
+        if key is None:
+            # One shared column set: cutting each entry to its own first projects would show held cells as absent.
+            columns = sorted(frequency, key=lambda project_id: (-frequency[project_id], project_id))[:_HEATMAP_COLUMNS]
+            for item in items:
+                held = set(item.project_ids)
+                item.project_ids = [project_id for project_id in columns if project_id in held]
         return HotspotResponse(
             scope=resolved.scope,
             scope_id=resolved.scope_id,

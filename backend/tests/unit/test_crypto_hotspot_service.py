@@ -201,6 +201,22 @@ async def test_an_entry_counts_every_project_but_names_only_the_heatmap_columns(
 
 
 @pytest.mark.asyncio
+async def test_a_key_lookup_names_every_project_holding_the_key(db):
+    projects = [f"p{i:02d}" for i in range(_HEATMAP_COLUMNS + 5)]
+    for project_id in projects:
+        await store_assets(db, project_id, "s", [_asset("md5", "MD5", project_id=project_id, scan_id="s")])
+    resolved = ResolvedScope(scope="user", scope_id=None, project_ids=projects)
+
+    result = await CryptoHotspotService(db).hotspots(
+        resolved=resolved, group_by="name", scan_id="s", key="MD5", limit=1
+    )
+
+    [entry] = result.items
+    assert (entry.project_count, sorted(entry.project_ids)) == (len(projects), projects)
+    assert result.projects_total == len(projects)
+
+
+@pytest.mark.asyncio
 async def test_keys_on_as_many_assets_rank_by_name_whatever_its_case(db):
     names = ["md5", "Ed25519", "bcrypt", "AES", "SHA-1", "SHA-1"]
     await store_assets(

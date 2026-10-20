@@ -437,7 +437,10 @@ class HotspotEntry(BaseModel):
     )
     project_ids: list[str] = Field(
         default_factory=list,
-        description="The entry's projects among the response's heatmap columns, the projects most entries share",
+        description=(
+            "The entry's projects among the response's heatmap columns, the projects most entries share; "
+            "a single-key lookup names every project holding the key"
+        ),
     )
     project_count: int = Field(..., ge=0, description="Every project holding the key")
     first_seen: datetime
