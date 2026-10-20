@@ -47,7 +47,7 @@ async def _fetch_package_info(
     client: InstrumentedAsyncClient, system: str, deps_dev_name: str
 ) -> dict[str, Any] | None:
     document = await fetch_deps_dev_json(client, deps_dev_package_url(system, deps_dev_name))
-    # The update-frequency view reads the same document, so it need not download it again.
+    # The document holds the whole release history, so caching that as well saves a second download.
     await cache_service.set(
         CacheKeys.release_history(system, deps_dev_name),
         release_list_to_cache(parse_deps_dev_response(document or {})),
