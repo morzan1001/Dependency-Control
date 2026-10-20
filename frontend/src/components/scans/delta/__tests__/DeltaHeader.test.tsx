@@ -1,5 +1,4 @@
 // Force a non-UTC timezone so date parsing is exercised in local time.
-
 process.env.TZ = 'America/New_York'
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
