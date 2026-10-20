@@ -298,6 +298,19 @@ def _json_size(value: Any) -> int:
     return len(json.dumps(value, ensure_ascii=False, default=str).encode())
 
 
+def _list_to_cut(result: dict[str, Any]) -> tuple[dict[str, Any], str, str] | None:
+    """The longest top-level list; only a result with none is searched one object down."""
+    top = [(result, key, key) for key, value in result.items() if isinstance(value, list) and value]
+    candidates = top or [
+        (holder, key, f"{parent}.{key}")
+        for parent, holder in result.items()
+        if isinstance(holder, dict)
+        for key, value in holder.items()
+        if isinstance(value, list) and value
+    ]
+    return max(candidates, key=lambda candidate: len(candidate[0][candidate[1]]), default=None)
+
+
 def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
     try:
         if _json_size(result) <= MAX_TOOL_RESULT_BYTES:
@@ -305,25 +318,19 @@ def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         return result
 
-    biggest_key = None
-    biggest_len = 0
-    for k, v in result.items():
-        if isinstance(v, list) and len(v) > biggest_len:
-            biggest_key = k
-            biggest_len = len(v)
-    if biggest_key is None:
-        result["_truncated"] = True
+    target = _list_to_cut(result)
+    if target is None:
         return result
-
-    original = result[biggest_key]
+    holder, key, label = target
+    original = holder[key]
     # The list may be a page of a larger set, whose total, not the page length, names the population.
-    population = result.get(f"{biggest_key}{_TOTAL_SUFFIX}")
-    total = population if isinstance(population, int) else biggest_len
+    population = holder.get(f"{key}{_TOTAL_SUFFIX}")
+    total = population if isinstance(population, int) else len(original)
 
     def keep(count: int) -> None:
-        result[biggest_key] = original[:count]
+        holder[key] = original[:count]
         result["_truncation_note"] = (
-            f"Result truncated from {total} to {count} entries in '{biggest_key}'. "
+            f"Result truncated from {total} to {count} entries in '{label}'. "
             f"Call this tool with a smaller limit or a narrower filter for more data."
         )
 
