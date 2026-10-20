@@ -979,17 +979,15 @@ async def compute_update_frequency_comparison(
 
     async def _compute_single(project: dict[str, Any]) -> ProjectUpdateSummary:
         project_id = str(project["_id"])
+        primary: str | None = None
+        try:
+            branches = activity.get(project_id, {})
+            primary = select_primary_branch(branches, project.get("default_branch"), project.get("deleted_branches"))
+            # The window holds every scan the walk would read, so one commit can only ever fold into one bar.
+            if primary is None or branches[primary].commit_count < MIN_COMPARABLE_BARS:
+                return placeholder_summary(project, "insufficient_data", window_days, primary)
 
-        branches = activity.get(project_id, {})
-        primary = select_primary_branch(branches, project.get("default_branch"), project.get("deleted_branches"))
-        if primary is None:
-            return placeholder_summary(project, "insufficient_data", window_days)
-        # The window holds every scan the walk would read, so one commit can only ever fold into one bar.
-        if branches[primary].commit_count < MIN_COMPARABLE_BARS:
-            return placeholder_summary(project, "insufficient_data", window_days, primary)
-
-        async with semaphore:
-            try:
+            async with semaphore:
                 metrics = await compute_update_frequency(
                     project_id=project_id,
                     project_name=project.get("name", ""),
@@ -1000,26 +998,12 @@ async def compute_update_frequency_comparison(
                     branch=primary,
                     retention_days=project.get("retention_horizon"),
                 )
-            except Exception:
-                logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)
-                return placeholder_summary(project, "error", window_days, primary)
-
             if metrics.scan_count < MIN_COMPARABLE_BARS:
                 return placeholder_summary(project, "insufficient_data", window_days, primary)
-
             # The walk reads the very scans coverage is measured against, so it cannot lag like the delta ledger.
             return measured_summary(metrics, project.get("teams") or [], window_days=window_days)
+        except Exception:
+            logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)
+            return placeholder_summary(project, "error", window_days, primary)
 
-    results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)
-    summaries = [
-        r
-        if isinstance(r, ProjectUpdateSummary)
-        # gather() hands back anything that escaped _compute_single's own guard.
-        else placeholder_summary(project, "error", window_days)
-        for project, r in zip(projects, results, strict=True)
-    ]
-    for outcome in results:
-        if isinstance(outcome, BaseException):
-            logger.warning("Update-frequency comparison lost a project", exc_info=outcome)
-
-    return rank_summaries(summaries)
+    return rank_summaries(await asyncio.gather(*[_compute_single(p) for p in projects]))

@@ -1447,7 +1447,6 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_a_project_whose_summary_cannot_be_built_is_counted_rather_than_lost(self):
-        # The summary is built outside the per-project guard, so its failure must not drop the project.
         scans_a, deps_a = self._two_scan_project("proj-a", "pkg-a", ("1.0.0", "1.0.1"))
         scans_b, deps_b = self._two_scan_project("proj-b", "pkg-b", ("2.0.0", "2.1.0"))
         projects = [{"_id": "proj-a", "name": "A"}, {"_id": "proj-b", "name": "B"}]
@@ -1457,7 +1456,7 @@ class TestStreamingOrchestrator:
         async def _bad_ratio_for_b(**kwargs):
             metrics = await real_compute(**kwargs)
             if kwargs["project_id"] == "proj-b":
-                # Survives here and fails only when the summary is built, outside the guard.
+                # Survives the walk and fails only when the summary is built.
                 metrics.granularity_ratio = {"patch": "not a number"}
             return metrics
 
@@ -1466,6 +1465,7 @@ class TestStreamingOrchestrator:
 
         assert {p.project_name for p in result.projects} == {"A", "B"}
         assert result.skipped_error == 1
+        assert [(p.data_status, p.branch) for p in result.projects if p.project_name == "B"] == [("error", "main")]
 
     @pytest.mark.asyncio
     async def test_a_primary_branch_of_one_commit_is_not_walked(self):
