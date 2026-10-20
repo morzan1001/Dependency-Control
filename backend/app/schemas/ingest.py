@@ -23,6 +23,11 @@ class IngestEnvelope(BaseModel):
     pipeline_url: str | None = Field(None, description="URL to the pipeline")
 
     job_id: int | None = Field(None, description="CI Job ID")
+    job_name: str | None = Field(
+        None,
+        max_length=255,
+        description="CI job name; each job of a scanner in one pipeline keeps its own result, a retry replaces it",
+    )
     job_started_at: str | None = Field(None, description="Job start time")
 
     project_name: str | None = Field(None, description="Name of the project")
