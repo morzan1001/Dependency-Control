@@ -193,13 +193,14 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.DESCENDING)]
     )
 
-    # The CSV export streams each severity bucket in (type, finding_id) order straight off this key.
+    # Streams the CSV export's (type, finding_id) order per severity; waived lets the severity count skip documents.
     await database["findings"].create_index(
         [
             ("scan_id", pymongo.ASCENDING),
             ("severity", pymongo.ASCENDING),
             ("type", pymongo.ASCENDING),
             ("finding_id", pymongo.ASCENDING),
+            ("waived", pymongo.ASCENDING),
         ]
     )
 
