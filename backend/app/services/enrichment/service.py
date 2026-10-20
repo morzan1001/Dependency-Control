@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.core.constants import (
+    ADVISORY_ENRICHMENT_KEYS,
     CVSS_SEVERITY_SCORES,
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
@@ -149,6 +150,31 @@ def apply_enrichments(details: dict[str, Any], enrichments: Mapping[str, Vulnera
     rollup = fold_enrichments(folded)
     if rollup is not None:
         details.update(_enrichment_fields(rollup))
+
+
+def _stored_enrichment(vuln: Mapping[str, Any]) -> VulnerabilityEnrichment:
+    return VulnerabilityEnrichment(
+        cve=str(vuln.get("id")),
+        epss_score=vuln.get("epss_score"),
+        epss_percentile=vuln.get("epss_percentile"),
+        is_kev=bool(vuln.get(DETAILS_KEY_IN_KEV)),
+        kev_date_added=vuln.get("kev_date_added"),
+        kev_due_date=vuln.get("kev_due_date"),
+        kev_required_action=vuln.get("kev_required_action"),
+        kev_ransomware_use=bool(vuln.get(DETAILS_KEY_KEV_RANSOMWARE)),
+        exploit_maturity=vuln.get("exploit_maturity") or "unknown",
+        risk_score=vuln["risk_score"],
+    )
+
+
+def roll_up_stored_enrichments(details: dict[str, Any], advisories: list[dict[str, Any]]) -> None:
+    """apply_enrichments' roll-up over the given stored advisories only; the EPSS date stays, as all share it."""
+    rollup = fold_enrichments(_stored_enrichment(vuln) for vuln in advisories if vuln.get("risk_score") is not None)
+    if rollup is None:
+        return
+    for key in ADVISORY_ENRICHMENT_KEYS:
+        details.pop(key, None)
+    details.update({k: v for k, v in _enrichment_fields(rollup).items() if k not in _ROLLUP_ONLY_KEYS})
 
 
 class VulnerabilityEnrichmentService:

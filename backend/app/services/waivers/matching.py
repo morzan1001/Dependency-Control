@@ -12,6 +12,7 @@ from app.core.cve import advisory_ids, advisory_match
 from app.models.finding import LOCATION_FINDING_TYPES
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
+from app.services.enrichment.service import roll_up_stored_enrichments
 
 REANCHOR_WINDOW = 50  # max line distance to consider a candidate the moved instance
 REANCHOR_MARGIN = 3  # nearest must beat second-nearest by this many lines to be unambiguous
@@ -124,14 +125,16 @@ def waive_advisories(record: dict[str, Any], waiver: Waiver) -> bool:
 
 def roll_up_advisories(record: dict[str, Any]) -> None:
     """Never un-waives the document."""
-    entries = (record.get("details") or {}).get("vulnerabilities") or []
+    details = record.get("details") or {}
+    entries = details.get("vulnerabilities") or []
     if not entries:
         return
-    # A fully waived document keeps the severity of its advisories, so dropping the waiver restores it.
+    # A fully waived document keeps the severity and threat intel of its advisories, so dropping the waiver restores them.
     live = [entry for entry in entries if not entry.get("waived")] or entries
     severity = max((entry.get("severity") for entry in live), key=get_severity_value)
     if severity:
         record["severity"] = severity
+    roll_up_stored_enrichments(details, live)
     if not record.get("waived") and all(entry.get("waived") for entry in entries):
         record["waived"] = True
         record["waiver_reason"] = entries[0].get("waiver_reason")

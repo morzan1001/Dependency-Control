@@ -11,6 +11,18 @@ INSTANCE_ID = f"{os.getenv('HOSTNAME', 'unknown')}:{os.getpid()}"
 # Keys of the KEV flags on a finding's details and each advisory; every writer and reader of them uses these.
 DETAILS_KEY_IN_KEV = "in_kev"
 DETAILS_KEY_KEV_RANSOMWARE = "kev_ransomware_use"
+# The threat intel apply_enrichments writes on each advisory and rolls up onto the finding's details.
+ADVISORY_ENRICHMENT_KEYS = (
+    "risk_score",
+    "epss_score",
+    "epss_percentile",
+    DETAILS_KEY_IN_KEV,
+    "kev_date_added",
+    "kev_due_date",
+    "kev_required_action",
+    DETAILS_KEY_KEV_RANSOMWARE,
+    "exploit_maturity",
+)
 
 # Higher = more severe, in Severity's declaration order; UNKNOWN (0) also ranks any unrecognised label.
 SEVERITY_ORDER: dict[str, int] = {level.value: rank for rank, level in enumerate(reversed(Severity))}

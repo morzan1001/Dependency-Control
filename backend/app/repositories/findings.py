@@ -5,6 +5,7 @@ from typing import Any
 
 from pymongo import ASCENDING, DESCENDING, UpdateOne
 
+from app.core.constants import ADVISORY_ENRICHMENT_KEYS
 from app.core.cve import advisory_ids, advisory_match
 from app.models.finding import LOCATION_FINDING_TYPES, FindingType
 from app.models.finding_record import FindingRecord
@@ -57,8 +58,16 @@ _COPY_DATES: dict[str, Any] = {
     },
 }
 
-# What names an advisory, and its per-advisory waiver state.
-_ADVISORY_WAIVER_FIELDS = ("id", "aliases", "resolved_cve", "severity", "waived", "waiver_reason")
+# What names an advisory, its waiver state and the threat intel the document rolls up from it.
+_ADVISORY_WAIVER_FIELDS = (
+    "id",
+    "aliases",
+    "resolved_cve",
+    "severity",
+    "waived",
+    "waiver_reason",
+    *ADVISORY_ENRICHMENT_KEYS,
+)
 
 
 def finding_identity(doc: Mapping[str, Any]) -> FindingIdentity:
@@ -84,6 +93,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
             "component": 1,
             "version": 1,
             "severity": 1,
+            **{f"details.{f}": 1 for f in ADVISORY_ENRICHMENT_KEYS},
             **{f"details.vulnerabilities.{f}": 1 for f in _ADVISORY_WAIVER_FIELDS},
         }
         return await self.collection.find({"scan_id": scan_id, "type": "vulnerability", **clause}, projection).to_list(
