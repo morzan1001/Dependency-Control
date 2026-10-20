@@ -268,7 +268,7 @@ class AnalysisWorkerManager:
             claim_keeper.cancel()
             self._untrack_scan(scan_id)
             _release_memory_to_os()
-        logger.info(f"Worker {worker_id} finished scan {scan_id}")
+            logger.info(f"Worker {worker_id} finished scan {scan_id}")
 
     async def _process_adhoc(self, job_id: str, worker_id: str) -> None:
         started = time.time()

@@ -1,6 +1,7 @@
 """The pending->processing claim is a compare-and-swap: it is all that keeps two pods off one scan."""
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -205,6 +206,17 @@ async def test_a_scan_whose_project_is_gone_counts_as_a_failed_job():
 
     assert (await db.scans.find_one({"_id": "scan-1"}))["status"] == SCAN_STATUS_FAILED
     assert (_jobs("failed") - failed_before, _durations() - durations_before) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_a_scan_whose_project_is_gone_is_logged_as_finished(caplog):
+    db = FakeDatabase()
+    await db.scans.insert_one({"_id": "scan-1", "project_id": "gone", "status": "pending", "sbom_refs": []})
+
+    with caplog.at_level(logging.INFO, logger="app.core.worker"):
+        await _drain_one_job(db, "scan-1")
+
+    assert f"Worker {INSTANCE_ID}/worker-1 finished scan scan-1" in caplog.messages
 
 
 @pytest.mark.asyncio
