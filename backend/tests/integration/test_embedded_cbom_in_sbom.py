@@ -143,7 +143,7 @@ async def test_a_scan_of_several_sboms_evaluates_its_crypto_assets_once(db, cata
         ("crypto_weak_algorithm", f"MD5 [bom-ref:{md5}]"),
         ("crypto_weak_algorithm", f"TLS [bom-ref:{tls}]"),
         ("crypto_weak_key", f"RSA [bom-ref:{rsa}]"),
-        ("crypto_weak_protocol", f"tls 1.0 [bom-ref:{tls}]"),
+        ("crypto_weak_protocol", f"TLS 1.0 [bom-ref:{tls}]"),
     ]
     assert all(f["found_in"] == ["CBOM"] for f in findings)
     catalog_loader.assert_awaited_once()

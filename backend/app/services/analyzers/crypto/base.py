@@ -27,6 +27,14 @@ def crypto_findings_for_assets(
     return findings
 
 
+# CycloneDX spells protocol types in lower case (tls, ssh, ipsec); labels show the names people write.
+_PROTOCOL_NAMES = {"tls": "TLS", "ssh": "SSH", "ipsec": "IPsec", "ike": "IKE", "sstp": "SSTP", "wpa": "WPA"}
+
+
+def protocol_label(protocol_type: str | None) -> str | None:
+    return _PROTOCOL_NAMES.get(protocol_type.lower(), protocol_type) if protocol_type else None
+
+
 def asset_details(asset: CryptoAsset) -> dict[str, Any]:
     return CryptoAssetDetails(
         bom_ref=asset.bom_ref,

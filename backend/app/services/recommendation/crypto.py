@@ -5,6 +5,7 @@ from app.core.constants import max_severity
 from app.models.finding import FindingType
 from app.schemas.finding_details import all_rule_ids
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
+from app.services.analyzers.crypto.base import protocol_label
 from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
@@ -118,7 +119,7 @@ def process_crypto(findings: list[ModelOrDict]) -> list[Recommendation]:
         details = get_attr(f, "details", {})
         label = details.get("asset_name") or get_attr(f, "component") or "unknown"
         # Asset names and legacy component labels often carry the version already.
-        base = details.get("protocol_type") or details.get("asset_name")
+        base = protocol_label(details.get("protocol_type")) or details.get("asset_name")
         version = details.get("protocol_version")
         mode = str(details.get("mode") or "").lower()
         if base and version:

@@ -6,7 +6,13 @@ from app.models.finding import FindingType, Severity
 from app.schemas.cbom import CryptoAssetType
 from app.schemas.crypto_policy import CryptoRule
 from app.schemas.finding_details import CryptoProtocolDetails
-from app.services.analyzers.crypto.base import MAX_FINDING_LOCATIONS, asset_details, matched_rule_entry, strictest_rule
+from app.services.analyzers.crypto.base import (
+    MAX_FINDING_LOCATIONS,
+    asset_details,
+    matched_rule_entry,
+    protocol_label,
+    strictest_rule,
+)
 from app.services.analyzers.crypto.catalogs.loader import (
     IANA_WEAKNESS_RULES_VERSION,
     WEAKNESS_SEVERITY,
@@ -56,7 +62,9 @@ def evaluate_protocols(
 def _build_finding(
     proto: CryptoAsset, suite_name: str, entry: CipherSuiteEntry, rules: list[CryptoRule]
 ) -> dict[str, Any]:
-    comp_label = f"{proto.protocol_type or proto.name} {proto.version or ''} [bom-ref:{proto.bom_ref}]".strip()
+    comp_label = (
+        f"{protocol_label(proto.protocol_type) or proto.name} {proto.version or ''} [bom-ref:{proto.bom_ref}]".strip()
+    )
     severity = max_severity(*(WEAKNESS_SEVERITY[tag] for tag in entry.weaknesses))
     description = f"Cipher suite {suite_name} has weaknesses: {', '.join(entry.weaknesses)}"
     lead = strictest_rule(rules) if rules else None
