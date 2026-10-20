@@ -158,6 +158,21 @@ describe("UpdateFrequency", () => {
     ).toBeInTheDocument();
   });
 
+  it("counts the cadence between commits, as a CI retry of one commit adds no bar", async () => {
+    mockedFrequency.mockResolvedValue(metrics);
+    renderFrequency();
+
+    expect(await screen.findByText(`avg. between ${metrics.scan_count} commits`)).toBeInTheDocument();
+  });
+
+  it("asks for a second scanned commit, not a second scan, before it analyses", async () => {
+    mockedFrequency.mockResolvedValue({ ...metrics, scan_count: 1 });
+    renderFrequency();
+
+    expect(await screen.findByText("At least 2 scanned commits are required for update frequency analysis")).toBeInTheDocument();
+    expect(screen.getByText("Currently 1 commit(s) scanned")).toBeInTheDocument();
+  });
+
   it("says nothing when the whole window was read", async () => {
     mockedFrequency.mockResolvedValue(metrics);
     renderFrequency();

@@ -149,7 +149,14 @@ async def get_project_update_frequency(
     request: Request,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    max_scans: Annotated[int, Query(ge=MIN_COMPARABLE_BARS, le=500)] = 20,
+    max_scans: Annotated[
+        int,
+        Query(
+            ge=MIN_COMPARABLE_BARS,
+            le=500,
+            description="Newest timeline bars to analyse without window_days; consecutive scans of one commit count once",
+        ),
+    ] = 20,
     window_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
     branch: Annotated[str | None, Query(min_length=1, max_length=512)] = None,
 ) -> UpdateFrequencyMetrics:

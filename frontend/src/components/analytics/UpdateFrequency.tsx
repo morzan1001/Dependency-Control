@@ -112,7 +112,7 @@ function SummaryCards({ data, windowDays }: Readonly<{ data: UpdateFrequencyMetr
         <CardContent>
           <div className="text-2xl font-bold">{formatDays(data.avg_days_between_scans)}</div>
           <p className="text-xs text-muted-foreground">
-            avg. between {data.scan_count} scans
+            avg. between {data.scan_count} commits
           </p>
         </CardContent>
       </Card>
@@ -459,8 +459,8 @@ export function UpdateFrequency() {
           <CardContent className="py-12">
             <div className="flex flex-col items-center gap-4 text-muted-foreground">
               <Clock className="h-12 w-12" />
-              <p>At least 2 completed scans are required for update frequency analysis</p>
-              <p className="text-sm">Currently {data.scan_count} scan(s) available</p>
+              <p>At least 2 scanned commits are required for update frequency analysis</p>
+              <p className="text-sm">Currently {data.scan_count} commit(s) scanned</p>
             </div>
           </CardContent>
         </Card>

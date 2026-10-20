@@ -280,7 +280,7 @@ describe("UpdateFrequencyComparison", () => {
     await screen.findByText("Project Ranking");
     const row = rowFor("half-measured");
     const badge = within(row).getByText("Partial window");
-    expect(badge.closest("[title]")).toHaveAttribute("title", expect.stringContaining("only 2 scans"));
+    expect(badge.closest("[title]")).toHaveAttribute("title", expect.stringContaining("only 2 commits"));
     const cells = within(row).getAllByRole("cell");
     expect(cells[4]).toHaveTextContent("9");
     expect(cells[5]).toHaveTextContent("9%");

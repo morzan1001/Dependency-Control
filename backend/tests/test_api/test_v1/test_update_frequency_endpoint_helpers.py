@@ -747,3 +747,25 @@ class TestComparisonLeaderDisconnect:
         assert sent[0]["status"] == 200
         assert returning.status_code == 200, returning.text
         assert compute.await_count == 1
+
+
+class TestBarCountDocumentation:
+    """The wire names say scans, but each counts commit runs; the OpenAPI schema is where clients learn that."""
+
+    def test_every_bar_count_says_a_commit_run_counts_once(self):
+        schemas = _app(FakeDatabase()).openapi()["components"]["schemas"]
+        documented = {
+            ("UpdateFrequencyMetrics", "scan_count"),
+            ("UpdateFrequencyMetrics", "updates_per_scan"),
+            ("UpdateFrequencyMetrics", "avg_days_between_scans"),
+            ("ProjectUpdateSummary", "scan_count"),
+        }
+        for model, field in documented:
+            assert "one commit count once" in schemas[model]["properties"][field].get("description", ""), (model, field)
+
+    def test_max_scans_says_it_caps_commit_runs(self):
+        parameters = _app(FakeDatabase()).openapi()["paths"]["/projects/{project_id}/update-frequency"]["get"][
+            "parameters"
+        ]
+        max_scans = next(param for param in parameters if param["name"] == "max_scans")
+        assert "one commit count once" in max_scans.get("description", "")

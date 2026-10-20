@@ -134,9 +134,9 @@ function StatusBadge({ status }: Readonly<{ status: Exclude<UpdateDataStatus, 'r
 }
 
 function partialHint(scanCount: number | null): string {
-  const scans = scanCount === null ? 'only part of' : `only ${scanCount} scans of`
+  const commits = scanCount === null ? 'only part of' : `only ${scanCount} commits of`
   return (
-    `Measured on ${scans} this window. The numbers are exact for those scans, but they ` +
+    `Measured on ${commits} this window. The numbers are exact for those commits, but they ` +
     'cover a shorter stretch than a fully measured project, so this row carries no rank ' +
     'and stays out of the team averages.'
   )

@@ -317,19 +317,22 @@ class SlowPackage(BaseModel):
     scans_outdated: int
 
 
+_BARS = "Timeline bars: consecutive scans of one commit count once"
+
+
 class UpdateFrequencyMetrics(BaseModel):
     project_id: str
     project_name: str
     # Branch the timeline covers; None only when the project has no completed scans.
     branch: str | None = None
-    scan_count: int
+    scan_count: int = Field(..., description=_BARS)
     time_range_days: float
     first_scan_date: str
     last_scan_date: str
 
     # Downgrades/rollbacks are tracked separately and never counted as updates.
     total_updates: int
-    updates_per_scan: float
+    updates_per_scan: float = Field(..., description=f"Updates per interval between bars. {_BARS}")
     # Rate over the requested calendar window; None when none was requested.
     updates_per_month: float | None
 
@@ -340,7 +343,7 @@ class UpdateFrequencyMetrics(BaseModel):
     downgrade_updates: int = 0
     granularity_ratio: dict[str, float]  # {"patch": 0.6, "minor": 0.3, "major": 0.1}
 
-    avg_days_between_scans: float
+    avg_days_between_scans: float = Field(..., description=f"Average days between bars. {_BARS}")
 
     # Coverage of ever-outdated packages since resolved; None means nothing was ever outdated, unlike 0%.
     total_outdated_detected: int
@@ -385,7 +388,7 @@ class ProjectUpdateSummary(BaseModel):
     # Projects rarely carry a default_branch, so the row says which branch it describes.
     branch: str | None = None
     window_days: int
-    scan_count: int | None = None
+    scan_count: int | None = Field(None, description=_BARS)
     updates_per_month: float | None = None
     update_coverage_pct: float | None = None
     patch_ratio: float | None = None  # proportion of patch updates (0-1)
