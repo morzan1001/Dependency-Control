@@ -33,7 +33,6 @@ _SLACK_ANSWERS = {
 }
 _OK = 200
 _REDIRECT = 307
-_BAD_REQUEST = 400
 _FORBIDDEN = 403
 
 
@@ -72,6 +71,13 @@ async def _install_url(client) -> tuple[str, dict[str, str]]:
     return url.netloc, {key: values[0] for key, values in parse_qs(url.query).items()}
 
 
+def _settings_page_says(response: httpx.Response, reason: str) -> bool:
+    return (
+        response.status_code == _REDIRECT
+        and response.headers["location"] == f"{settings.FRONTEND_BASE_URL}/settings?slack_error={reason}"
+    )
+
+
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["missing", "forged", "session token", "expired"])
@@ -80,9 +86,48 @@ async def test_a_callback_without_a_minted_state_keeps_the_bot_token(client, db,
 
     response = await client.get(_CALLBACK, params={"code": "foreign-code", **_state(kind)})
 
-    assert response.status_code == _BAD_REQUEST
+    assert _settings_page_says(response, "invalid_state")
     assert (await SystemSettingsRepository(db).get()).slack_bot_token == "xoxb-current"
     assert slack == []
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize("params", [{"error": "access_denied"}, {}], ids=["denied", "no-code"])
+async def test_a_cancelled_install_returns_to_the_settings_page(client, db, slack, params):
+    await SystemSettingsRepository(db).update(_SLACK_APP)
+    _, query = await _install_url(client)
+
+    response = await client.get(_CALLBACK, params={"state": query["state"], **params})
+
+    assert _settings_page_says(response, "cancelled")
+    assert slack == []
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_an_install_whose_app_was_unconfigured_meanwhile_returns_to_the_settings_page(client, db, slack):
+    await SystemSettingsRepository(db).update(_SLACK_APP)
+    _, query = await _install_url(client)
+    await SystemSettingsRepository(db).update({"slack_client_secret": None})
+
+    response = await client.get(_CALLBACK, params={"code": "admin-code", "state": query["state"]})
+
+    assert _settings_page_says(response, "not_configured")
+    assert slack == []
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_code_slack_refuses_to_exchange_returns_to_the_settings_page(client, db, slack, monkeypatch):
+    await SystemSettingsRepository(db).update(_SLACK_APP)
+    monkeypatch.setitem(_SLACK_ANSWERS, _OAUTH_ACCESS, {"ok": False, "error": "invalid_code"})
+    _, query = await _install_url(client)
+
+    response = await client.get(_CALLBACK, params={"code": "stale-code", "state": query["state"]})
+
+    assert _settings_page_says(response, "exchange_failed")
+    assert (await SystemSettingsRepository(db).get()).slack_bot_token == "xoxb-current"
 
 
 @pytest.mark.live_mongo

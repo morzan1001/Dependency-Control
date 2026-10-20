@@ -18,6 +18,14 @@ import {
 } from "@/components/settings"
 import { CryptoPolicyPage } from "@/pages/admin/CryptoPolicyPage"
 
+// Keyed by the slack_error reason the OAuth callback redirects with.
+const SLACK_INSTALL_FAILURES = new Map([
+  ["cancelled", "The install was cancelled in Slack, so no workspace was linked."],
+  ["invalid_state", "The install link expired or was not started here. Connect again from this page."],
+  ["not_configured", "Enter and save the Slack Client ID and Client Secret, then connect again."],
+  ["exchange_failed", "Slack refused to exchange the authorisation code for a token. The server log names Slack's reason."],
+])
+
 function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsType }>) {
   const [formData, setFormData] = useState<Partial<SystemSettingsType>>(settings)
   // Re-sync on a new settings reference (e.g. Slack OAuth refetch) without clobbering edits while it is unchanged.
@@ -48,6 +56,16 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
         return params
       })
       queryClient.invalidateQueries({ queryKey: systemKeys.settings() })
+    }
+    const slackError = searchParams.get('slack_error')
+    if (slackError) {
+      toast.error("Failed to connect Slack", {
+        description: SLACK_INSTALL_FAILURES.get(slackError) ?? "The Slack install did not complete.",
+      })
+      setSearchParams(params => {
+        params.delete('slack_error')
+        return params
+      })
     }
   }, [searchParams, setSearchParams, queryClient])
 

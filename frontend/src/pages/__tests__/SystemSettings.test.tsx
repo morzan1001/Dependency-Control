@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { toast } from 'sonner'
 
 import SystemSettings from '../SystemSettings'
 import { systemKeys } from '@/hooks/queries/use-system'
@@ -92,6 +93,8 @@ function renderPage(initialEntries: string[] = ['/settings']) {
 beforeEach(() => {
   mockUseSystemSettings.mockReset()
   mockMutate.mockReset()
+  vi.mocked(toast.error).mockReset()
+  vi.mocked(toast.success).mockReset()
 })
 
 describe('SystemSettings - Slack connect refresh', () => {
@@ -138,6 +141,28 @@ describe('SystemSettings - Slack connect refresh', () => {
       expect.objectContaining({ slack_bot_token: 'new' }),
       expect.anything(),
     )
+  })
+})
+
+describe('SystemSettings - Slack connect failure', () => {
+  it.each([
+    ['cancelled', /cancelled in Slack/],
+    ['invalid_state', /Connect again from this page/],
+    ['not_configured', /Client ID and Client Secret/],
+    ['exchange_failed', /Slack refused/],
+    ['unexpected', /did not complete/],
+  ])('names why the %s install failed instead of claiming success', async (reason, description) => {
+    mockUseSystemSettings.mockReturnValue({ data: makeSettings(), isLoading: false })
+
+    const { invalidateSpy } = renderPage([`/settings?slack_error=${reason}`])
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to connect Slack', {
+        description: expect.stringMatching(description),
+      })
+    })
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(invalidateSpy).not.toHaveBeenCalled()
   })
 })
 
