@@ -57,6 +57,8 @@ export function getSeverityBgColor(severity: string): string {
       return 'bg-severity-medium hover:bg-severity-medium text-severity-medium-foreground'
     case 'LOW':
       return 'bg-severity-low hover:bg-severity-low text-severity-low-foreground'
+    case 'NEGLIGIBLE':
+      return 'bg-severity-negligible hover:bg-severity-negligible text-severity-negligible-foreground'
     case 'INFO':
       return 'bg-severity-info hover:bg-severity-info text-severity-info-foreground'
     default:

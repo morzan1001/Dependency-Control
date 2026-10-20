@@ -10,7 +10,7 @@ describe("SeverityBadge", () => {
     ["MEDIUM", "text-severity-medium-foreground"],
     ["LOW", "text-severity-low-foreground"],
     ["INFO", "text-severity-info-foreground"],
-    ["NEGLIGIBLE", "text-severity-unknown-foreground"],
+    ["NEGLIGIBLE", "text-severity-negligible-foreground"],
     ["UNKNOWN", "text-severity-unknown-foreground"],
   ])("writes %s in the text colour designed for its background", (severity, foreground) => {
     render(<SeverityBadge severity={severity} />);

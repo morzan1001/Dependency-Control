@@ -47,11 +47,36 @@ const deltaE76 = (a: Rgb, b: Rgb) => Math.hypot(...lab(a).map((v, i) => v - lab(
 
 describe('light-theme severity colours', () => {
   it('pair every severity fill with its own text colour, unknown included', () => {
-    expect(severityTokens).toEqual(expect.arrayContaining(['critical', 'high', 'medium', 'low', 'info', 'unknown']))
+    expect(severityTokens).toEqual(expect.arrayContaining(['critical', 'high', 'medium', 'low', 'negligible', 'info', 'unknown']))
   })
 
   it.each(severityTokens)('give the %s pill text a WCAG contrast of at least 4.5:1 on its fill', (name) => {
     expect(contrast(token(lightTheme, `severity-${name}`), token(lightTheme, `severity-${name}-foreground`))).toBeGreaterThanOrEqual(4.5)
+  })
+})
+
+describe('dark-theme severity colours', () => {
+  it.each(severityTokens)('give the %s pill text a WCAG contrast of at least 4.5:1 on its fill', (name) => {
+    expect(contrast(token(darkTheme, `severity-${name}`), token(darkTheme, `severity-${name}-foreground`))).toBeGreaterThanOrEqual(4.5)
+  })
+})
+
+describe('negligible pill colour', () => {
+  it('fills the light-theme pill with the colour its chart slice is drawn in', () => {
+    expect(deltaE76(token(lightTheme, 'severity-negligible'), hex(SEVERITY_CHART_COLORS.NEGLIGIBLE))).toBeLessThan(1)
+  })
+
+  it('writes dark text on the dark-theme pill like the other dark severity fills', () => {
+    expect(luminance(token(darkTheme, 'severity-negligible-foreground'))).toBeLessThan(luminance(token(darkTheme, 'severity-negligible')))
+  })
+
+  it.each([
+    ['light', lightTheme],
+    ['dark', darkTheme],
+  ])('differs in the %s theme from the unknown and info pills by a Delta E of at least 15', (_name, theme) => {
+    for (const other of ['unknown', 'info']) {
+      expect(deltaE76(token(theme, 'severity-negligible'), token(theme, `severity-${other}`))).toBeGreaterThanOrEqual(15)
+    }
   })
 })
 
