@@ -647,6 +647,23 @@ class DbHeartbeatFailures(monitoring.ServerHeartbeatListener):
         db_errors_total.labels(error_type=type(event.reply).__name__).inc()
 
 
+class DbPoolConnections(monitoring.ConnectionPoolListener):
+    """Counts the connections the driver's pools hold open; the other pool events leave that number alone."""
+
+    def connection_created(self, event: monitoring.ConnectionCreatedEvent) -> None:
+        db_connections_active.inc()
+
+    def connection_closed(self, event: monitoring.ConnectionClosedEvent) -> None:
+        db_connections_active.dec()
+
+    def _unchanged(self, event: Any) -> None:
+        pass
+
+    pool_created = pool_ready = pool_cleared = pool_closed = connection_ready = _unchanged
+    connection_check_out_started = connection_check_out_failed = _unchanged
+    connection_checked_out = connection_checked_in = _unchanged
+
+
 async def update_db_stats(database: Any) -> None:
     users_count = await database["users"].estimated_document_count()
     projects_count = await database["projects"].estimated_document_count()

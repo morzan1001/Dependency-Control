@@ -5,7 +5,7 @@ from prometheus_client import REGISTRY
 from pymongo import monitoring
 from pymongo.errors import AutoReconnect
 
-from app.core.metrics import DbCommandMetrics, DbHeartbeatFailures
+from app.core.metrics import DbCommandMetrics, DbHeartbeatFailures, DbPoolConnections
 from app.db.mongodb import create_client
 
 _DB = "dependency_control"
@@ -76,10 +76,10 @@ def test_an_unreachable_server_still_registers_as_an_error():
     assert _sample("db_errors_total", labels) == before + 1
 
 
-def test_every_client_carries_both_listeners():
+def test_every_client_carries_every_listener():
     client = create_client("mongodb://mongo:27017")
     try:
         kinds = {type(listener) for listener in client.options.event_listeners}
     finally:
         client.close()
-    assert kinds == {DbCommandMetrics, DbHeartbeatFailures}
+    assert kinds == {DbCommandMetrics, DbHeartbeatFailures, DbPoolConnections}

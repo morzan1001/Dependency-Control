@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -113,15 +114,17 @@ async def test_the_worker_gauges_follow_the_queue_and_the_running_workers(monkey
 
 
 @pytest.mark.asyncio
-async def test_the_connection_gauge_follows_connect_and_close(monkeypatch):
-    client = MagicMock()
-    client.admin.command = AsyncMock()
-    monkeypatch.setattr(mongodb, "AsyncIOMotorClient", lambda *_args, **_kwargs: client)
+@pytest.mark.live_mongo
+async def test_the_connection_gauge_counts_the_pools_connections_until_the_client_closes(db):
+    host, port = db.client.address
+    baseline = _sample("db_connections_active")
+    client = mongodb.create_client(f"mongodb://{host}:{port}", minPoolSize=0)
 
-    await mongodb.connect_to_mongo()
-    assert _sample("db_connections_active") == 1
-    await mongodb.close_mongo_connection()
-    assert _sample("db_connections_active") == 0
+    await asyncio.gather(*(client.admin.command("ping") for _ in range(3)))
+    opened = _sample("db_connections_active") - baseline
+    client.close()
+
+    assert (opened >= 1, _sample("db_connections_active")) == (True, baseline)
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from app.core.config import settings
-from app.core.metrics import DbCommandMetrics, DbHeartbeatFailures, db_connections_active
+from app.core.metrics import DbCommandMetrics, DbHeartbeatFailures, DbPoolConnections
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ def create_client(url: str, **options: Any) -> AsyncIOMotorClient[Any]:
         readPreference="primary",
         tz_aware=True,
         tzinfo=timezone.utc,
-        event_listeners=[DbCommandMetrics(), DbHeartbeatFailures()],
+        event_listeners=[DbCommandMetrics(), DbHeartbeatFailures(), DbPoolConnections()],
         **options,
     )
 
@@ -60,7 +60,6 @@ async def connect_to_mongo() -> None:
     try:
         await db.client.admin.command("ping")
         logger.info("Connected to MongoDB")
-        db_connections_active.set(1)
     except Exception as e:
         logger.exception("Failed to connect to MongoDB: %s", e)
         db.client = None
@@ -72,4 +71,3 @@ async def close_mongo_connection() -> None:
         db.client.close()
         db.client = None
         logger.info("Closed MongoDB connection")
-        db_connections_active.set(0)
