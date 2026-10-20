@@ -152,6 +152,21 @@ describe("CryptoAnalyticsTab hotspots on a phone", () => {
   });
 });
 
+describe("CryptoAnalyticsTab selection buttons", () => {
+  it("tells assistive technology which hotspot view and which trend range is chosen", () => {
+    renderTab();
+
+    expect(screen.getByRole("button", { name: "Table" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Heatmap" })).toHaveAttribute("aria-pressed", "false");
+    const trendsTab = screen.getByRole("tab", { name: /trends/i });
+    fireEvent.mouseDown(trendsTab);
+    fireEvent.click(trendsTab);
+    fireEvent.click(screen.getByRole("button", { name: "90d" }));
+    expect(screen.getByRole("button", { name: "90d" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "30d" })).toHaveAttribute("aria-pressed", "false");
+  });
+});
+
 describe("CryptoAnalyticsTab accessible names", () => {
   it("names the hotspots' group-by dropdown and the trends' metric dropdown", () => {
     renderTab();

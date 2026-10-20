@@ -152,6 +152,7 @@ function TrendsSection() {
             <button
               key={p.days}
               type="button"
+              aria-pressed={days === p.days}
               onClick={() => setDays(p.days)}
               className={`rounded px-3 py-1 text-xs ${days === p.days ? "bg-primary text-primary-foreground" : "border"}`}
             >

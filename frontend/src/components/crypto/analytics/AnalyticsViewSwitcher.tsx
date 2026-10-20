@@ -26,6 +26,7 @@ export function AnalyticsViewSwitcher({ availableViews }: Readonly<Props>) {
           key={v}
           variant={current === v ? "default" : "ghost"}
           size="sm"
+          aria-pressed={current === v}
           onClick={() => {
             const next = new URLSearchParams(params);
             next.set("analytics_view", v);
