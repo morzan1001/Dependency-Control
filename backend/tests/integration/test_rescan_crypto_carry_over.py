@@ -1,9 +1,12 @@
 """CBOM-ingested assets have no SBOM in GridFS, so a rescan cannot re-derive them and must carry them over."""
 
+from unittest.mock import AsyncMock
+
 import pytest
+from pymongo.errors import AutoReconnect
 
 from app.api.v1.helpers.ingest import process_findings_ingest
-from app.core.constants import SCAN_STATUS_COMPLETED
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
 from app.models.project import Project, Scan
@@ -63,11 +66,13 @@ async def _ingest_assets(db, scan_id: str) -> None:
     )
 
 
-async def _seed_lineage(db) -> tuple[str, str]:
+async def _seed_lineage(db, scan_type: str | None = None) -> tuple[str, str]:
     await create_indexes(db)
     await store_sbom(db, _SBOM, _FILE_ID)
     await db.projects.insert_one(Project(id=_PROJECT_ID, name="cbom-rescan").model_dump(by_alias=True))
-    original = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[sbom_ref(_FILE_ID)], status="completed")
+    original = Scan(
+        project_id=_PROJECT_ID, branch="main", sbom_refs=[sbom_ref(_FILE_ID)], status="completed", scan_type=scan_type
+    )
     await db.scans.insert_one(original.model_dump(by_alias=True))
     rescan = Scan(
         project_id=_PROJECT_ID,
@@ -77,6 +82,7 @@ async def _seed_lineage(db) -> tuple[str, str]:
         worker_id=_WORKER,
         is_rescan=True,
         original_scan_id=original.id,
+        scan_type=scan_type,
     )
     await db.scans.insert_one(rescan.model_dump(by_alias=True))
 
@@ -100,6 +106,21 @@ async def _rescan_and_list(db) -> list[str]:
 @pytest.mark.asyncio
 async def test_rescan_keeps_the_ingested_crypto_assets(db):
     assert await _rescan_and_list(db) == ["MD5", "RSA-1024"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_failed_carry_over_fails_the_crypto_analyzers_instead_of_grading_no_assets(db, monkeypatch):
+    await seed_crypto_policies(db)
+    _, rescan_id = await _seed_lineage(db, scan_type="cbom")
+    monkeypatch.setattr(
+        CryptoAssetRepository, "carry_over_to_scan", AsyncMock(side_effect=AutoReconnect("primary stepped down"))
+    )
+
+    status = await analyse_scan(db, rescan_id, [sbom_ref(_FILE_ID)], _NO_ANALYZERS, worker_id=_WORKER)
+
+    assert status == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    assert (await db.scans.find_one({"_id": rescan_id}))["failed_analyzers"] == sorted(CRYPTO_ANALYZERS)
 
 
 async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], list[str]]:

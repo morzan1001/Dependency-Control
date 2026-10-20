@@ -3,10 +3,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from pymongo.errors import AutoReconnect
 
-from app.core.constants import SCAN_STATUS_COMPLETED
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 from app.core.init_db import create_indexes
 from app.models.crypto_policy import CryptoPolicy
+from app.models.finding import FindingType
 from app.models.project import Scan
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
@@ -158,3 +160,21 @@ async def test_a_scan_without_protocol_assets_never_loads_the_cipher_catalog(db,
     assert status == SCAN_STATUS_COMPLETED
     assert [f["type"] for f in await db.findings.find({"scan_id": scan_id}).to_list(None)] == ["crypto_weak_algorithm"]
     catalog_loader.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_failed_embedded_crypto_persist_fails_the_crypto_analyzers_instead_of_grading_no_assets(
+    db, catalog_loader, monkeypatch
+):
+    await create_indexes(db)
+    monkeypatch.setattr(
+        CryptoAssetRepository, "bulk_upsert", AsyncMock(side_effect=AutoReconnect("primary stepped down"))
+    )
+
+    scan_id, status = await _analyze(db, [_sbom_embedding("cyclonedx_1_6_with_crypto_assets.json", "app")])
+
+    assert status == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    assert (await db.scans.find_one({"_id": scan_id}))["failed_analyzers"] == sorted(CRYPTO_ANALYZERS)
+    findings = await db.findings.find({"scan_id": scan_id}).to_list(None)
+    assert {f["type"] for f in findings} == {FindingType.SYSTEM_WARNING}

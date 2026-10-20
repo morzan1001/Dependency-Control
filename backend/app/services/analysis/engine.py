@@ -186,13 +186,8 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Scan, db: Databas
 
 async def _carry_over_crypto_assets(scan_id: str, scan_doc: Scan, db: Database) -> None:
     """A CBOM posted to /ingest/cbom is not in GridFS, so a rescan cannot re-derive its assets."""
-    if not (scan_doc.is_rescan and scan_doc.original_scan_id):
-        return
-
-    try:
+    if scan_doc.is_rescan and scan_doc.original_scan_id:
         await CryptoAssetRepository(db).carry_over_to_scan(scan_doc.project_id, scan_doc.original_scan_id, scan_id)
-    except Exception as e:
-        logger.exception("Failed to carry over crypto assets to rescan %s: %s", scan_id, e)
 
 
 async def _keep_result(
@@ -258,6 +253,10 @@ def _evaluate_crypto(
     return results
 
 
+def _crypto_analyzers_failed(ctx: _RunContext, aggregator: ResultAggregator, error: Exception) -> list[AnalyzerOutcome]:
+    return [_account(ctx, aggregator, AnalyzerOutcome.from_error(name, error)) for name in sorted(CRYPTO_ANALYZERS)]
+
+
 async def _run_crypto_analyzers(ctx: _RunContext, aggregator: ResultAggregator) -> list[AnalyzerOutcome]:
     """Must run after every SBOM's embedded crypto assets are persisted."""
     try:
@@ -267,7 +266,7 @@ async def _run_crypto_analyzers(ctx: _RunContext, aggregator: ResultAggregator) 
         catalog = await load_iana_catalog() if has_protocols else {}
         results = await asyncio.to_thread(_evaluate_crypto, docs, policy, catalog)
     except Exception as e:
-        return [_account(ctx, aggregator, AnalyzerOutcome.from_error(name, e)) for name in sorted(CRYPTO_ANALYZERS)]
+        return _crypto_analyzers_failed(ctx, aggregator, e)
 
     outcomes: list[AnalyzerOutcome] = []
     for name, result in results.items():
@@ -360,22 +359,11 @@ def _parse_and_track_sbom(
 
 
 async def _persist_embedded_crypto_assets(parsed_sbom: Any, project_id: str, scan_id: str, db: Database) -> None:
-    try:
-        crypto_assets = [
-            CryptoAsset(project_id=project_id, scan_id=scan_id, **a.model_dump()) for a in parsed_sbom.crypto_assets
-        ]
-        persisted = await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
-        logger.info(
-            "engine: persisted %d crypto assets from embedded CBOM (scan=%s)",
-            persisted,
-            scan_id,
-        )
-    except Exception as cbom_err:
-        logger.warning(
-            "engine: failed to persist embedded CBOM crypto assets for scan %s: %s",
-            scan_id,
-            cbom_err,
-        )
+    crypto_assets = [
+        CryptoAsset(project_id=project_id, scan_id=scan_id, **a.model_dump()) for a in parsed_sbom.crypto_assets
+    ]
+    persisted = await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
+    logger.info("engine: persisted %d crypto assets from embedded CBOM (scan=%s)", persisted, scan_id)
 
 
 def _resolve_effective_analyzers(
@@ -391,11 +379,15 @@ def _resolve_effective_analyzers(
 async def _process_sbom(
     ctx: _RunContext, aggregator: ResultAggregator, parsed_sbom: ParsedSBOM | None, sbom: AnalyzerInput
 ) -> list[AnalyzerOutcome]:
+    outcomes: list[AnalyzerOutcome] = []
     if parsed_sbom is not None and parsed_sbom.crypto_assets:
-        await _persist_embedded_crypto_assets(parsed_sbom, ctx.project_id, ctx.scan_id, ctx.db)
+        try:
+            await _persist_embedded_crypto_assets(parsed_sbom, ctx.project_id, ctx.scan_id, ctx.db)
+        except Exception as e:
+            outcomes = _crypto_analyzers_failed(ctx, aggregator, e)
     names = _resolve_effective_analyzers(ctx.active_analyzers, parsed_sbom, sbom.components, ctx.scan.scan_type)
     tasks = [process_analyzer(ctx, aggregator, name, sbom) for name in names if name in analyzer_factories]
-    return list(await asyncio.gather(*tasks))
+    return [*outcomes, *await asyncio.gather(*tasks)]
 
 
 async def _analyse_sboms(
@@ -910,9 +902,14 @@ async def run_analysis(
 
     # Before the SBOM loop: an embedded CBOM re-persists over the carried copy of the same asset.
     await _carry_over_external_results(scan_id, scan_doc, db)
-    await _carry_over_crypto_assets(scan_id, scan_doc, db)
+    outcomes: list[AnalyzerOutcome] = []
+    try:
+        await _carry_over_crypto_assets(scan_id, scan_doc, db)
+    except Exception as e:
+        outcomes = _crypto_analyzers_failed(ctx, aggregator, e)
 
-    payload, sbom_load_failures, outcomes = await _analyse_sboms(ctx, fs, stored_ids, aggregator)
+    payload, sbom_load_failures, sbom_outcomes = await _analyse_sboms(ctx, fs, stored_ids, aggregator)
+    outcomes.extend(sbom_outcomes)
 
     if scan_doc.scan_type == "cbom" or any(p is not None and p.crypto_assets for p in payload):
         outcomes.extend(await _run_crypto_analyzers(ctx, aggregator))
