@@ -6,13 +6,8 @@ from unittest.mock import AsyncMock
 import pymongo
 
 from app.core.constants import SCANS_TIP_SORT
-from app.core.init_db import (
-    RELEASES_LATEST_LOOKUP_KEY,
-    RELEASES_LATEST_LOOKUP_NAME,
-    RELEASES_LATEST_SORT,
-    SCANS_TIP_INDEX_KEY,
-    create_indexes,
-)
+from app.core.init_db import SCANS_TIP_INDEX_KEY, create_indexes
+from app.repositories.releases import RELEASES_LATEST_LOOKUP_KEY, RELEASES_LATEST_LOOKUP_NAME, RELEASES_LATEST_SORT
 from tests.mocks.fake_mongo import FakeDatabase
 
 _SCANS = "scans"

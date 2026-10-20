@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 from bson import ObjectId
 from pymongo.errors import OperationFailure
 
-from app.core.init_db import RELEASES_UPSERT_KEY_FIELDS
+from app.repositories.releases import RELEASES_UPSERT_KEY_FIELDS
 
 
 def _truncate_date(value: Any, unit: str) -> Any:

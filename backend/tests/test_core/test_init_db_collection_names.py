@@ -1,24 +1,46 @@
 import asyncio
-from unittest.mock import AsyncMock
+import importlib
+import inspect
+import pkgutil
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
+import app.repositories
 from app.core.init_db import create_indexes
-from tests.mocks.fake_mongo import FakeDatabase
+
+# The worker, the ad-hoc endpoints and housekeeping read this collection straight off the database.
+_WITHOUT_REPOSITORY = {"adhoc_jobs"}
 
 
-def _spy(db, name):
-    col = db[name]
-    col.create_index = AsyncMock()
-    return col
+class _NamingDatabase:
+    """Records each collection name it hands out, whether asked for by item or by attribute."""
+
+    def __init__(self) -> None:
+        self.names: set[str] = set()
+
+    def __getitem__(self, name: str) -> Any:
+        self.names.add(name)
+        return MagicMock(create_index=AsyncMock())
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return self[name]
 
 
-def test_policy_audit_indexes_target_crypto_policy_history_collection():
-    db = FakeDatabase()
-    real = _spy(db, "crypto_policy_history")
-    wrong = _spy(db, "policy_audit_entries")
+def _repository_collections() -> set[str]:
+    db = _NamingDatabase()
+    for module_info in pkgutil.iter_modules(app.repositories.__path__):
+        module = importlib.import_module(f"{app.repositories.__name__}.{module_info.name}")
+        for _, cls in inspect.getmembers(module, inspect.isclass):
+            if cls.__module__ == module.__name__ and cls.__name__.endswith("Repository") and not cls.__type_params__:
+                cls(db)
+    return db.names
+
+
+def test_every_collection_given_indexes_is_one_a_repository_reads():
+    db = _NamingDatabase()
 
     asyncio.run(create_indexes(db))
 
-    assert wrong.create_index.await_count == 0, (
-        "No index should be created on the unused 'policy_audit_entries' collection"
-    )
-    assert real.create_index.await_count == 2
+    assert db.names - _repository_collections() == _WITHOUT_REPOSITORY

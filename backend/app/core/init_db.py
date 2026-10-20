@@ -19,6 +19,14 @@ from app.core.permissions import ALL_PERMISSIONS
 from app.core.security import get_password_hash
 from app.db.mongodb import get_database
 from app.models.user import User
+from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.archive_metadata import ArchiveMetadataRepository
+from app.repositories.callgraphs import CallgraphRepository
+from app.repositories.compliance_report import ComplianceReportRepository
+from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.repositories.findings import (
     FIRST_DETECTION_INDEX,
     KEV_FINDINGS_INDEX,
@@ -26,43 +34,44 @@ from app.repositories.findings import (
     KEV_FINDINGS_ONLY,
     NEWEST_VULNERABILITY_INDEX,
     VULNERABILITIES_ONLY,
+    FindingRepository,
+)
+from app.repositories.github_instances import GitHubInstanceRepository
+from app.repositories.gitlab_instances import GitLabInstanceRepository
+from app.repositories.policy_audit_entry import PolicyAuditRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.releases import (
+    RELEASES_LATEST_LOOKUP_KEY,
+    RELEASES_LATEST_LOOKUP_NAME,
+    RELEASES_UPSERT_KEY_FIELDS,
+    RELEASES_UPSERT_KEY_NAME,
+    ReleaseRepository,
 )
 from app.repositories.scans import TAG_BUILD_MATCH
+from app.repositories.update_frequency import ScanUpdateDeltaRepository
+from app.repositories.users import UserRepository
+from app.repositories.waivers import WaiverRepository
+from app.repositories.webhooks import WebhookRepository
 from app.services.crypto_policy.seeder import seed_crypto_policies
 
 logger = logging.getLogger(__name__)
 
 MONGO_TYPE = "$type"
 
-RELEASES_UPSERT_KEY_NAME = "releases_upsert_key"
-# One release per (project, environment, scan), shared by the upsert filter and the unique index behind it.
-RELEASES_UPSERT_KEY_FIELDS: tuple[str, ...] = ("project_id", "environment", "scan_id")
-
-RELEASES_LATEST_LOOKUP_NAME = "releases_latest_lookup"
-
 GITLAB_PROJECT_KEY_NAME = "projects_gitlab_key"
 
-# BSON dates are milliseconds, so ties break on _id; each sort is its index's trailing keys, keeping the seek indexed.
-RELEASES_LATEST_SORT: list[tuple[str, int]] = [("released_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)]
-
+# SCANS_TIP_SORT is the key's tail, so the tip pick is an indexed seek.
 SCANS_TIP_INDEX_KEY: list[tuple[str, int]] = [
     ("project_id", pymongo.ASCENDING),
     ("status", pymongo.ASCENDING),
     *SCANS_TIP_SORT,
 ]
-RELEASES_LATEST_LOOKUP_KEY: list[tuple[str, int]] = [
-    ("project_id", pymongo.ASCENDING),
-    ("environment", pymongo.ASCENDING),
-    *RELEASES_LATEST_SORT,
-]
-# The index order left once project_id is matched by equality.
-RELEASES_ENVIRONMENT_SORT = RELEASES_LATEST_LOOKUP_KEY[1:]
 
 
 async def _backfill_gitlab_owner_provenance(database: AsyncIOMotorDatabase[Any]) -> None:
     """Skips a team bound to several GitLab instances, as the wrong one's next ingest would delete the owner."""
     teams = database["teams"]
-    projects = database["projects"]
+    projects = database[ProjectRepository.collection_name]
 
     cursor = teams.find(
         {"bindings": {"$elemMatch": {"provider": TEAM_SOURCE_GITLAB}}},
@@ -152,38 +161,64 @@ async def create_team_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     logger.info("Creating database indexes...")
 
-    await database["users"].create_index("username", unique=True)
-    await database["users"].create_index("email", unique=True)
+    users = database[UserRepository.collection_name]
+    projects = database[ProjectRepository.collection_name]
+    scans = database["scans"]
+    analysis_results = database[AnalysisResultRepository.collection_name]
+    waivers = database[WaiverRepository.collection_name]
+    dependencies = database[DependencyRepository.collection_name]
+    scan_update_deltas = database[ScanUpdateDeltaRepository.collection_name]
+    findings = database[FindingRepository.collection_name]
+    releases = database[ReleaseRepository.collection_name]
+    webhooks = database[WebhookRepository.collection_name]
+    webhook_deliveries = database["webhook_deliveries"]
+    distributed_locks = database["distributed_locks"]
+    token_blacklist = database["token_blacklist"]
+    gitlab_instances = database[GitLabInstanceRepository.collection_name]
+    github_instances = database[GitHubInstanceRepository.collection_name]
+    callgraphs = database[CallgraphRepository.collection_name]
+    system_invitations = database["system_invitations"]
+    dependency_enrichments = database[DependencyEnrichmentRepository.collection_name]
+    archive_metadata = database[ArchiveMetadataRepository.collection_name]
+    chat_conversations = database["chat_conversations"]
+    chat_messages = database["chat_messages"]
+    api_keys = database["api_keys"]
+    crypto_assets = database[CryptoAssetRepository.collection_name]
+    crypto_policies = database[CryptoPolicyRepository.collection_name]
+    crypto_policy_history = database[PolicyAuditRepository.collection_name]
+    compliance_reports = database[ComplianceReportRepository.collection_name]
+    adhoc_jobs = database["adhoc_jobs"]
+
+    await users.create_index("username", unique=True)
+    await users.create_index("email", unique=True)
 
     # Serves ownership filters; the list then sorts in memory, as its six sort keys rule out one compound index.
-    await database["projects"].create_index("team_ids")
-    await database["projects"].create_index("name")
-    await database["projects"].create_index("members.user_id")
+    await projects.create_index("team_ids")
+    await projects.create_index("name")
+    await projects.create_index("members.user_id")
 
     await create_team_indexes(database)
 
-    await database["scans"].create_index("pipeline_id")
-    await database["scans"].create_index([("created_at", pymongo.DESCENDING)])
-    await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
-    await database["scans"].create_index("sbom_refs.gridfs_id")
+    await scans.create_index("pipeline_id")
+    await scans.create_index([("created_at", pymongo.DESCENDING)])
+    await scans.create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
+    await scans.create_index("sbom_refs.gridfs_id")
 
-    await database["analysis_results"].create_index(
-        [("scan_id", pymongo.ASCENDING), ("analyzer_name", pymongo.ASCENDING)]
-    )
-    await database["analysis_results"].create_index("result_gridfs_id", sparse=True)
+    await analysis_results.create_index([("scan_id", pymongo.ASCENDING), ("analyzer_name", pymongo.ASCENDING)])
+    await analysis_results.create_index("result_gridfs_id", sparse=True)
 
-    await database["waivers"].create_index("expiration_date")
-    await database["waivers"].create_index([("project_id", pymongo.ASCENDING), ("expiration_date", pymongo.DESCENDING)])
+    await waivers.create_index("expiration_date")
+    await waivers.create_index([("project_id", pymongo.ASCENDING), ("expiration_date", pymongo.DESCENDING)])
 
     # Unique for idempotent concurrent upserts; sparse is inert but stays, as changing it fails on the built index.
-    await database["dependencies"].create_index(DEPENDENCIES_SCAN_PACKAGE_INDEX, unique=True, sparse=True)
-    await database["dependencies"].create_index(DEPENDENCIES_SCAN_VERSION_INDEX)
-    await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
+    await dependencies.create_index(DEPENDENCIES_SCAN_PACKAGE_INDEX, unique=True, sparse=True)
+    await dependencies.create_index(DEPENDENCIES_SCAN_VERSION_INDEX)
+    await dependencies.create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
     # Bounds the anchored purl-prefix match of the per-scan enrichment copy to one scan's range.
-    await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("purl", pymongo.ASCENDING)])
+    await dependencies.create_index([("scan_id", pymongo.ASCENDING), ("purl", pymongo.ASCENDING)])
 
     # scan_outdated_sets is read by _id only; _id is in this key as neighbour lookups order by (scan_created_at, _id).
-    await database["scan_update_deltas"].create_index(
+    await scan_update_deltas.create_index(
         [
             ("project_id", pymongo.ASCENDING),
             ("branch", pymongo.ASCENDING),
@@ -191,12 +226,10 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("_id", pymongo.DESCENDING),
         ]
     )
-    await database["scan_update_deltas"].create_index(
-        [("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.DESCENDING)]
-    )
+    await scan_update_deltas.create_index([("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.DESCENDING)])
 
     # The CSV export streams each severity bucket in (type, finding_id) order straight off this key.
-    await database["findings"].create_index(
+    await findings.create_index(
         [
             ("scan_id", pymongo.ASCENDING),
             ("severity", pymongo.ASCENDING),
@@ -207,7 +240,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     # A $type of "int" would match int32 alone.
     await _create_unique_index(
-        database["projects"],
+        projects,
         [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_project_id", pymongo.ASCENDING)],
         GITLAB_PROJECT_KEY_NAME,
         name=GITLAB_PROJECT_KEY_NAME,
@@ -216,15 +249,15 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             "gitlab_project_id": {MONGO_TYPE: "number"},
         },
     )
-    await database["projects"].create_index("gitlab_instance_id")
-    await database["projects"].create_index("latest_scan_id")
-    await database["projects"].create_index("retention_days")
-    await database["projects"].create_index([("last_scan_at", pymongo.DESCENDING)])
-    await database["projects"].create_index([("created_at", pymongo.DESCENDING)])
+    await projects.create_index("gitlab_instance_id")
+    await projects.create_index("latest_scan_id")
+    await projects.create_index("retention_days")
+    await projects.create_index([("last_scan_at", pymongo.DESCENDING)])
+    await projects.create_index([("created_at", pymongo.DESCENDING)])
 
-    await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
-    await database["scans"].create_index(SCANS_TIP_INDEX_KEY)
-    await database["scans"].create_index(
+    await scans.create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
+    await scans.create_index(SCANS_TIP_INDEX_KEY)
+    await scans.create_index(
         [
             ("project_id", pymongo.ASCENDING),
             ("branch", pymongo.ASCENDING),
@@ -232,7 +265,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         ]
     )
     # A branch's tip build is found in one seek, however many rescans of it pile up in front.
-    await database["scans"].create_index(
+    await scans.create_index(
         [
             ("project_id", pymongo.ASCENDING),
             ("branch", pymongo.ASCENDING),
@@ -240,11 +273,11 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             *SCANS_TIP_SORT,
         ]
     )
-    await database["scans"].create_index([("status", pymongo.ASCENDING), ("analysis_started_at", pymongo.ASCENDING)])
-    await database["scans"].create_index("original_scan_id")
-    await database["scans"].create_index("latest_rescan_id")
+    await scans.create_index([("status", pymongo.ASCENDING), ("analysis_started_at", pymongo.ASCENDING)])
+    await scans.create_index("original_scan_id")
+    await scans.create_index("latest_rescan_id")
 
-    await database["scans"].create_index(
+    await scans.create_index(
         [
             ("project_id", pymongo.ASCENDING),
             ("is_release", pymongo.ASCENDING),
@@ -253,62 +286,58 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         name="scans_released_list",
         partialFilterExpression={"is_release": True},
     )  # Serves the released-only scan list.
-    await database["scans"].create_index(
+    await scans.create_index(
         [("project_id", pymongo.ASCENDING), *SCANS_TIP_SORT],
         name="scans_tag_builds",
         partialFilterExpression=TAG_BUILD_MATCH,
     )
 
-    await database["releases"].create_index(
+    await releases.create_index(
         RELEASES_LATEST_LOOKUP_KEY,
         name=RELEASES_LATEST_LOOKUP_NAME,
     )  # Serves the latest release of a (project, environment) as a single sorted find_one.
-    await database["releases"].create_index(
+    await releases.create_index(
         [(field, pymongo.ASCENDING) for field in RELEASES_UPSERT_KEY_FIELDS],
         name=RELEASES_UPSERT_KEY_NAME,
         unique=True,
     )  # The upsert key: without uniqueness two concurrent marks of one scan both insert.
-    await database["releases"].create_index("scan_id")
+    await releases.create_index("scan_id")
 
-    await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])
-    await database["findings"].create_index(FINDINGS_SCAN_TYPE_INDEX)
-    await database["findings"].create_index(FINDINGS_SCAN_COMPONENT_INDEX)
+    await findings.create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])
+    await findings.create_index(FINDINGS_SCAN_TYPE_INDEX)
+    await findings.create_index(FINDINGS_SCAN_COMPONENT_INDEX)
     # Both detection lookups hint these keys; an unsatisfiable hint errors, so every persist needs them.
-    await database["findings"].create_index(FIRST_DETECTION_INDEX)
-    await database["findings"].create_index(NEWEST_VULNERABILITY_INDEX, partialFilterExpression=VULNERABILITIES_ONLY)
-    await database["findings"].create_index(
+    await findings.create_index(FIRST_DETECTION_INDEX)
+    await findings.create_index(NEWEST_VULNERABILITY_INDEX, partialFilterExpression=VULNERABILITIES_ONLY)
+    await findings.create_index(
         KEV_FINDINGS_INDEX, name=KEV_FINDINGS_INDEX_NAME, partialFilterExpression=KEV_FINDINGS_ONLY
     )
 
-    await database["waivers"].create_index("finding_id")
-    await database["waivers"].create_index("package_name")
+    await waivers.create_index("finding_id")
+    await waivers.create_index("package_name")
 
-    await database["webhooks"].create_index(
-        [("is_active", pymongo.ASCENDING), ("circuit_breaker_until", pymongo.ASCENDING)]
-    )
-    await database["webhooks"].create_index([("project_id", pymongo.ASCENDING), ("is_active", pymongo.ASCENDING)])
-    await database["webhooks"].create_index("events")
+    await webhooks.create_index([("is_active", pymongo.ASCENDING), ("circuit_breaker_until", pymongo.ASCENDING)])
+    await webhooks.create_index([("project_id", pymongo.ASCENDING), ("is_active", pymongo.ASCENDING)])
+    await webhooks.create_index("events")
 
-    await database["webhook_deliveries"].create_index(
-        [("webhook_id", pymongo.ASCENDING), ("timestamp", pymongo.DESCENDING)]
-    )
+    await webhook_deliveries.create_index([("webhook_id", pymongo.ASCENDING), ("timestamp", pymongo.DESCENDING)])
     # TTL: drops deliveries after 30 days.
-    await database["webhook_deliveries"].create_index([("timestamp", pymongo.ASCENDING)], expireAfterSeconds=2592000)
+    await webhook_deliveries.create_index([("timestamp", pymongo.ASCENDING)], expireAfterSeconds=2592000)
 
-    await database["distributed_locks"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
+    await distributed_locks.create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
 
     # TTL: drops blacklisted JWTs after they would have expired anyway.
-    await database["token_blacklist"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
+    await token_blacklist.create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
 
-    await database["gitlab_instances"].create_index("url", unique=True)
-    await database["gitlab_instances"].create_index("name", unique=True)
-    await database["gitlab_instances"].create_index("is_active")
+    await gitlab_instances.create_index("url", unique=True)
+    await gitlab_instances.create_index("name", unique=True)
+    await gitlab_instances.create_index("is_active")
 
-    await database["github_instances"].create_index("url", unique=True)
-    await database["github_instances"].create_index("name", unique=True)
-    await database["github_instances"].create_index("is_active")
+    await github_instances.create_index("url", unique=True)
+    await github_instances.create_index("name", unique=True)
+    await github_instances.create_index("is_active")
 
-    await database["projects"].create_index(
+    await projects.create_index(
         [("github_instance_id", pymongo.ASCENDING), ("github_repository_id", pymongo.ASCENDING)],
         unique=True,
         partialFilterExpression={
@@ -317,16 +346,14 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         },
     )
 
-    await database["scans"].create_index(
-        [("reachability_pending", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING)]
-    )
+    await scans.create_index([("reachability_pending", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING)])
 
-    await database["callgraphs"].create_index([("project_id", pymongo.ASCENDING), ("scan_id", pymongo.ASCENDING)])
-    await database["callgraphs"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
-    await database["callgraphs"].create_index("graph_gridfs_id", sparse=True)
+    await callgraphs.create_index([("project_id", pymongo.ASCENDING), ("scan_id", pymongo.ASCENDING)])
+    await callgraphs.create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
+    await callgraphs.create_index("graph_gridfs_id", sparse=True)
     # The type filter keeps pipeline-only uploads, whose scan_id is null, out of the uniqueness scope.
     await _create_unique_index(
-        database["callgraphs"],
+        callgraphs,
         [
             ("project_id", pymongo.ASCENDING),
             ("language", pymongo.ASCENDING),
@@ -336,38 +363,31 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         partialFilterExpression={"scan_id": {MONGO_TYPE: "string"}},
     )
 
-    await database["system_invitations"].create_index("token", unique=True)
-    await database["system_invitations"].create_index(
+    await system_invitations.create_index("token", unique=True)
+    await system_invitations.create_index(
         [
             ("email", pymongo.ASCENDING),
             ("is_used", pymongo.ASCENDING),
             ("expires_at", pymongo.ASCENDING),
         ]
     )
-    await database["system_invitations"].create_index(
-        [("is_used", pymongo.ASCENDING), ("expires_at", pymongo.ASCENDING)]
-    )
+    await system_invitations.create_index([("is_used", pymongo.ASCENDING), ("expires_at", pymongo.ASCENDING)])
 
-    await database["dependency_enrichments"].create_index("purl", unique=True)
+    await dependency_enrichments.create_index("purl", unique=True)
 
-    await database["archive_metadata"].create_index("scan_id", unique=True)
-    await database["archive_metadata"].create_index(
-        [("project_id", pymongo.ASCENDING), ("archived_at", pymongo.DESCENDING)]
-    )
+    await archive_metadata.create_index("scan_id", unique=True)
+    await archive_metadata.create_index([("project_id", pymongo.ASCENDING), ("archived_at", pymongo.DESCENDING)])
 
-    chat_conversations = database["chat_conversations"]
     await chat_conversations.create_index(
         [("user_id", pymongo.ASCENDING), ("updated_at", pymongo.DESCENDING)],
         name="user_conversations_listing",
     )
 
-    chat_messages = database["chat_messages"]
     await chat_messages.create_index(
         [("conversation_id", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)],
         name="conversation_messages_chronological",
     )
 
-    api_keys = database["api_keys"]
     await api_keys.create_index(
         [("user_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)],
         name="api_keys_user_listing",
@@ -383,22 +403,19 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         expireAfterSeconds=0,
     )
 
-    await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
-    await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("primitive", pymongo.ASCENDING)])
-    await database["crypto_assets"].create_index(
+    await crypto_assets.create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
+    await crypto_assets.create_index([("project_id", pymongo.ASCENDING), ("primitive", pymongo.ASCENDING)])
+    await crypto_assets.create_index(
         [("project_id", pymongo.ASCENDING), ("scan_id", pymongo.ASCENDING), ("bom_ref", pymongo.ASCENDING)],
         unique=True,
     )
-    await database["crypto_assets"].create_index(
+    await crypto_assets.create_index(
         [("project_id", pymongo.ASCENDING), ("asset_type", pymongo.ASCENDING), ("primitive", pymongo.ASCENDING)]
     )
 
-    await database["crypto_policies"].create_index(
-        [("scope", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING)], unique=True
-    )
+    await crypto_policies.create_index([("scope", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING)], unique=True)
 
-    # PolicyAuditRepository's entries live in crypto_policy_history.
-    await database["crypto_policy_history"].create_index(
+    await crypto_policy_history.create_index(
         [
             ("policy_type", pymongo.ASCENDING),
             ("policy_scope", pymongo.ASCENDING),
@@ -406,9 +423,9 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("version", pymongo.DESCENDING),
         ]
     )
-    await database["crypto_policy_history"].create_index([("timestamp", pymongo.DESCENDING)])
+    await crypto_policy_history.create_index([("timestamp", pymongo.DESCENDING)])
 
-    await database["compliance_reports"].create_index(
+    await compliance_reports.create_index(
         [
             ("scope", pymongo.ASCENDING),
             ("scope_id", pymongo.ASCENDING),
@@ -416,20 +433,18 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("requested_at", pymongo.DESCENDING),
         ]
     )
-    await database["compliance_reports"].create_index([("status", pymongo.ASCENDING)])
-    await database["compliance_reports"].create_index([("expires_at", pymongo.ASCENDING)])
-    await database["compliance_reports"].create_index(
-        [("requested_by", pymongo.ASCENDING), ("status", pymongo.ASCENDING)]
-    )
-    await database["compliance_reports"].create_index("artifact_gridfs_id", sparse=True)
+    await compliance_reports.create_index([("status", pymongo.ASCENDING)])
+    await compliance_reports.create_index([("expires_at", pymongo.ASCENDING)])
+    await compliance_reports.create_index([("requested_by", pymongo.ASCENDING), ("status", pymongo.ASCENDING)])
+    await compliance_reports.create_index("artifact_gridfs_id", sparse=True)
 
-    await database["adhoc_jobs"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
-    await database["adhoc_jobs"].create_index([("status", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)])
-    await database["adhoc_jobs"].create_index("input_file_id")
-    await database["adhoc_jobs"].create_index("result_file_id", sparse=True)
+    await adhoc_jobs.create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
+    await adhoc_jobs.create_index([("status", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)])
+    await adhoc_jobs.create_index("input_file_id")
+    await adhoc_jobs.create_index("result_file_id", sparse=True)
 
     # Crypto trends read findings by type and scan date across projects; no other index bounds that read.
-    await database["findings"].create_index([("type", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
+    await findings.create_index([("type", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
 
     logger.info("Database indexes created successfully.")
 
@@ -440,7 +455,7 @@ async def init_db() -> None:
     await _backfill_gitlab_owner_provenance(database)
     await create_indexes(database)
 
-    user_collection = database["users"]
+    user_collection = database[UserRepository.collection_name]
 
     if await user_collection.count_documents({}) == 0:
         logger.info("No users found. Creating initial admin user.")
