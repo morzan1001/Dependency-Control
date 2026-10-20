@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import urllib.parse
+from collections.abc import Callable
 from typing import Any, NamedTuple
 
 import httpx
@@ -127,9 +128,15 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
     async def post_merge_request_comment(self, project_id: int, mr_iid: int, body: str) -> bool:
         return await self._send_comment("POST", f"/projects/{project_id}/merge_requests/{mr_iid}/notes", body)
 
-    async def get_merge_request_notes(self, project_id: int, mr_iid: int) -> list[GitLabNote] | None:
-        notes = await self._api_get_paginated(f"/projects/{project_id}/merge_requests/{mr_iid}/notes")
-        return None if notes is None else [GitLabNote(**n) for n in notes]
+    async def find_merge_request_notes(
+        self, project_id: int, mr_iid: int, matches: Callable[[GitLabNote], bool]
+    ) -> list[GitLabNote] | None:
+        return await self._first_page_matches(
+            f"/projects/{project_id}/merge_requests/{mr_iid}/notes",
+            GitLabNote,
+            matches,
+            params={"sort": "asc", "order_by": "created_at"},
+        )
 
     async def update_merge_request_comment(self, project_id: int, mr_iid: int, note_id: int, body: str) -> bool:
         return await self._send_comment("PUT", f"/projects/{project_id}/merge_requests/{mr_iid}/notes/{note_id}", body)

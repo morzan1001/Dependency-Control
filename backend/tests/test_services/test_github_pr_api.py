@@ -1,9 +1,11 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from app.services.github import GitHubService
+from tests.helpers.oidc import serve_idp
 from tests.mocks.github import make_github_instance
 
 _MERGE_SHA = "1f0e9c2a3b4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f"
@@ -260,31 +262,31 @@ class TestNonJsonAnswers:
         assert result == (_MERGE_SHA, [])
 
 
-class TestGetPullRequestComments:
-    def test_lists_the_pull_requests_issue_comments(self):
-        service = GitHubService(make_github_instance(access_token="ghp-x"))
-        with patch.object(service, "_api_get_paginated", new_callable=AsyncMock, return_value=[]) as paginated:
-            asyncio.run(service.get_pull_request_comments("acme", "widget", 7))
-
-        paginated.assert_awaited_once_with("/repos/acme/widget/issues/7/comments")
-
-    def test_parses_comments_and_tolerates_a_missing_body(self):
-        service = GitHubService(make_github_instance(access_token="ghp-x"))
-        raw = [
-            {"id": 11, "body": "<!-- dependency-control:scan-comment -->\nold", "user": {"login": "bot"}},
-            {"id": 12, "user": {"login": "someone"}},
+class TestFindPullRequestComments:
+    def test_reads_the_pull_requests_issue_comments_up_to_the_first_page_holding_a_match(self, monkeypatch):
+        page = [
+            {"id": 11, "body": "<!-- dependency-control:scan-comment -->\nold", "user": {"login": "bot", "id": 5}},
+            {"id": 12, "user": {"login": "someone", "id": 6}},
         ]
-        with patch.object(service, "_api_get_paginated", new_callable=AsyncMock, return_value=raw):
-            comments = asyncio.run(service.get_pull_request_comments("acme", "widget", 7))
-
-        assert [c.id for c in comments] == [11, 12]
-        assert comments[1].body is None
-
-    def test_a_failed_read_is_none_rather_than_no_comments(self):
-        """An empty list would have the upsert post a second scan comment beside the first."""
+        requested = serve_idp(
+            monkeypatch,
+            lambda request: httpx.Response(
+                200, json=page, headers={"link": f'<{request.url.copy_set_param("page", 2)}>; rel="next"'}
+            ),
+        )
         service = GitHubService(make_github_instance(access_token="ghp-x"))
-        with patch.object(service, "_api_get_paginated", new_callable=AsyncMock, return_value=None):
-            assert asyncio.run(service.get_pull_request_comments("acme", "widget", 7)) is None
+
+        comments = asyncio.run(service.find_pull_request_comments("acme", "widget", 7, lambda c: c.body is None))
+
+        assert [(c.id, c.body) for c in comments] == [(12, None)]
+        assert [httpx.URL(url).path for url in requested] == ["/repos/acme/widget/issues/7/comments"]
+
+    def test_a_failed_read_is_none_rather_than_no_comments(self, monkeypatch):
+        """An empty list would have the upsert post a second scan comment beside the first."""
+        serve_idp(monkeypatch, lambda request: httpx.Response(502))
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+
+        assert asyncio.run(service.find_pull_request_comments("acme", "widget", 7, lambda c: True)) is None
 
 
 class TestWritePullRequestComments:

@@ -135,7 +135,9 @@ def _service(prs, comments=(), post=True, update=True, bot=_BOT):
     svc = MagicMock()
     svc.get_pull_requests_for_commit = AsyncMock(return_value=("abc", list(prs)))
     svc.get_current_user_id = AsyncMock(return_value=bot)
-    svc.get_pull_request_comments = AsyncMock(return_value=list(comments))
+    svc.find_pull_request_comments = AsyncMock(
+        side_effect=lambda owner, repo, number, matches: [c for c in comments if matches(c)]
+    )
     svc.post_pull_request_comment = AsyncMock(return_value=post)
     svc.update_pull_request_comment = AsyncMock(return_value=update)
     return svc
@@ -231,7 +233,7 @@ class TestPullRequestWorkflowScans:
             patch.object(GitHubService, "_api_get", api_get),
             patch.object(
                 GitHubService,
-                "_api_get_paginated",
+                "_first_page_matches",
                 AsyncMock(return_value=None if comments_page is None else list(comments_page)),
             ),
             patch.object(GitHubService, "_api_request", api_post),
@@ -304,7 +306,7 @@ class TestCommentUpsert:
         svc = _service([_pr(7)], bot=None)
         _run_with_service(_enabled_project(), _make_scan(commit_hash="abc"), svc)
 
-        svc.get_pull_request_comments.assert_not_awaited()
+        svc.find_pull_request_comments.assert_not_awaited()
         svc.post_pull_request_comment.assert_not_awaited()
 
     def test_identical_body_is_left_alone(self):
@@ -343,7 +345,7 @@ class TestFailureIsolation:
                 _pr(8),
             ]
         )
-        svc.get_pull_request_comments = AsyncMock(side_effect=[RuntimeError("boom"), []])
+        svc.find_pull_request_comments = AsyncMock(side_effect=[RuntimeError("boom"), []])
         _run_with_service(_enabled_project(), _make_scan(commit_hash="abc"), svc)
 
         assert [c.args[2] for c in svc.post_pull_request_comment.await_args_list] == [8]

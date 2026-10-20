@@ -319,21 +319,56 @@ class TestARejectedReadIsLogged:
         assert f"GitLab API GET {endpoint} returned HTTP 401" in [r.getMessage() for r in caplog.records]
 
 
+def _note(note_id, body="", author_id=7):
+    """One item of GET /projects/:id/merge_requests/:iid/notes."""
+    return {"id": note_id, "body": body, "system": False, "author": {"id": author_id, "username": f"user{author_id}"}}
+
+
+def _serve_pages(monkeypatch, *pages):
+    """Page n answers pages[n - 1], linking the next while one is left; a None page is refused."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params["page"])
+        if pages[page - 1] is None:
+            return httpx.Response(502)
+        more = page < len(pages)
+        link = {"link": f'<{request.url.copy_set_param("page", page + 1)}>; rel="next"'} if more else {}
+        return httpx.Response(200, json=pages[page - 1], headers=link)
+
+    return serve_idp(monkeypatch, answer)
+
+
+def _own_marker(note):
+    return note.author_id == 7 and "marker" in note.body
+
+
 class TestMergeRequestNotes:
-    def test_every_page_is_read(self, gitlab_instance_a):
-        """Notes come newest first, so a cap cuts off the scan note and the upsert posts another."""
-        service = GitLabService(gitlab_instance_a)
+    def test_notes_are_read_oldest_first_up_to_the_first_page_holding_a_match(self, gitlab_instance_a, monkeypatch):
+        requested = _serve_pages(
+            monkeypatch,
+            [_note(1, "chatter"), _note(2, "marker", author_id=99)],
+            [_note(3, "marker"), _note(4, "marker")],
+            [_note(5, "marker")],
+        )
 
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[])) as paginated:
-            asyncio.run(service.get_merge_request_notes(100, 7))
+        notes = asyncio.run(GitLabService(gitlab_instance_a).find_merge_request_notes(100, 7, _own_marker))
 
-        paginated.assert_awaited_once_with("/projects/100/merge_requests/7/notes")
+        assert [note.id for note in notes] == [3, 4]
+        urls = [httpx.URL(url) for url in requested]
+        assert [(url.path, url.params["sort"], url.params["order_by"]) for url in urls] == [
+            ("/api/v4/projects/100/merge_requests/7/notes", "asc", "created_at")
+        ] * 2
 
-    def test_a_failed_read_is_none_rather_than_no_notes(self, gitlab_instance_a):
-        service = GitLabService(gitlab_instance_a)
+    def test_every_page_is_read_when_none_holds_a_match(self, gitlab_instance_a, monkeypatch):
+        requested = _serve_pages(monkeypatch, [_note(1)], [_note(2)])
 
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=None)):
-            assert asyncio.run(service.get_merge_request_notes(100, 7)) is None
+        assert asyncio.run(GitLabService(gitlab_instance_a).find_merge_request_notes(100, 7, _own_marker)) == []
+        assert len(requested) == 2
+
+    def test_a_failed_read_is_none_rather_than_no_notes(self, gitlab_instance_a, monkeypatch):
+        _serve_pages(monkeypatch, [_note(1)], None)
+
+        assert asyncio.run(GitLabService(gitlab_instance_a).find_merge_request_notes(100, 7, _own_marker)) is None
 
 
 @pytest.fixture

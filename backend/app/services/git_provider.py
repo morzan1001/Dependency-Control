@@ -193,6 +193,18 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
                 items.extend(page)
         return items
 
+    async def _first_page_matches[M: BaseModel](
+        self, endpoint: str, model: type[M], matches: Callable[[M], bool], params: dict[str, Any] | None = None
+    ) -> list[M] | None:
+        """The matches of the first page holding any, which is the oldest when listed oldest first; None on failure."""
+        async with aclosing(self._iter_pages(endpoint, params)) as pages:
+            async for page in pages:
+                if page is None:
+                    return None
+                if found := [item for item in map(model.model_validate, page) if matches(item)]:
+                    return found
+        return []
+
     async def get_current_user_id(self) -> int | None:
         response = await self._get_ok("/user")
         user_id = None if response is None else json_document(response).get("id")

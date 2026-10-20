@@ -819,9 +819,13 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         head_sha = parents[1].get("sha")
         return str(head_sha) if head_sha else None
 
-    async def get_pull_request_comments(self, owner: str, repo: str, pr_number: int) -> list[GitHubIssueComment] | None:
-        comments = await self._api_get_paginated(f"/repos/{owner}/{repo}/issues/{pr_number}/comments")
-        return None if comments is None else [GitHubIssueComment(**c) for c in comments]
+    async def find_pull_request_comments(
+        self, owner: str, repo: str, pr_number: int, matches: Callable[[GitHubIssueComment], bool]
+    ) -> list[GitHubIssueComment] | None:
+        # GitHub lists issue comments oldest first.
+        return await self._first_page_matches(
+            f"/repos/{owner}/{repo}/issues/{pr_number}/comments", GitHubIssueComment, matches
+        )
 
     async def post_pull_request_comment(self, owner: str, repo: str, pr_number: int, body: str) -> bool:
         return await self._send_comment("POST", f"/repos/{owner}/{repo}/issues/{pr_number}/comments", body)

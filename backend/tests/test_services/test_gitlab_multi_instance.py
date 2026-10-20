@@ -44,6 +44,13 @@ def _make_scan(**kwargs):
     return Scan(**defaults)
 
 
+def _matching_notes(notes):
+    """Stands in for find_merge_request_notes over notes listed oldest first; None is an unreadable listing."""
+    return AsyncMock(
+        side_effect=lambda project_id, mr_iid, matches: None if notes is None else [n for n in notes if matches(n)]
+    )
+
+
 class TestApiMethodTokenGuards:
     def test_api_get_returns_none_without_token(self):
         service = GitLabService(make_gitlab_instance(access_token=None))
@@ -321,7 +328,7 @@ class TestMrDecorationInstanceRouting:
             mock_svc = MagicMock()
             mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=mrs)
             mock_svc.get_current_user_id = AsyncMock(return_value=BOT_USER_ID)
-            mock_svc.get_merge_request_notes = AsyncMock(return_value=[])
+            mock_svc.find_merge_request_notes = _matching_notes([])
             mock_svc.post_merge_request_comment = AsyncMock(return_value=True)
             MockService.return_value = mock_svc
 
@@ -370,7 +377,7 @@ class TestMrDecorationInstanceRouting:
             mock_svc = MagicMock()
             mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=mrs)
             mock_svc.get_current_user_id = AsyncMock(return_value=BOT_USER_ID)
-            mock_svc.get_merge_request_notes = AsyncMock(return_value=existing_notes)
+            mock_svc.find_merge_request_notes = _matching_notes(existing_notes)
             mock_svc.update_merge_request_comment = AsyncMock(return_value=True)
             mock_svc.post_merge_request_comment = AsyncMock(return_value=True)
             MockService.return_value = mock_svc
@@ -427,7 +434,7 @@ class TestMrDecorationInstanceRouting:
             mock_svc = MagicMock()
             mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=mrs)
             mock_svc.get_current_user_id = AsyncMock(return_value=BOT_USER_ID)
-            mock_svc.get_merge_request_notes = AsyncMock(return_value=existing_notes)
+            mock_svc.find_merge_request_notes = _matching_notes(existing_notes)
             mock_svc.update_merge_request_comment = AsyncMock(return_value=True)
             mock_svc.post_merge_request_comment = AsyncMock(return_value=True)
             MockService.return_value = mock_svc
@@ -466,7 +473,7 @@ class TestMrCommentTarget:
         svc = MagicMock()
         svc.get_merge_requests_for_commit = AsyncMock(return_value=mrs)
         svc.get_current_user_id = AsyncMock(return_value=bot_id)
-        svc.get_merge_request_notes = AsyncMock(return_value=notes)
+        svc.find_merge_request_notes = _matching_notes(notes)
         svc.update_merge_request_comment = AsyncMock(return_value=True)
         svc.post_merge_request_comment = AsyncMock(return_value=True)
         with patch("app.services.analysis.integrations.GitLabService", return_value=svc):
@@ -486,11 +493,10 @@ class TestMrCommentTarget:
         svc.post_merge_request_comment.assert_awaited_once()
 
     def test_the_oldest_own_marker_note_is_updated(self):
-        # GitLab lists notes newest first.
         notes = [
-            make_note(id=30, body=f"{_MARKER}\nforged", author_id=99),
-            make_note(id=20, body=f"{_MARKER}\nduplicate from a raced run"),
+            make_note(id=5, body=f"{_MARKER}\nforged", author_id=99),
             make_note(id=10, body=f"{_MARKER}\nfirst scan"),
+            make_note(id=20, body=f"{_MARKER}\nduplicate from a raced run"),
         ]
         svc = self._decorate([make_merge_request(iid=1)], notes)
 
@@ -500,7 +506,7 @@ class TestMrCommentTarget:
     def test_nothing_is_decorated_when_the_token_user_cannot_be_resolved(self):
         svc = self._decorate([make_merge_request(iid=1)], [], bot_id=None)
 
-        svc.get_merge_request_notes.assert_not_awaited()
+        svc.find_merge_request_notes.assert_not_awaited()
         svc.post_merge_request_comment.assert_not_awaited()
 
     def test_a_note_listing_that_failed_posts_no_second_note(self, caplog):
@@ -1151,7 +1157,6 @@ class TestGitLabPagination:
         [
             pytest.param(lambda service: service.list_branches(100), id="branches"),
             pytest.param(lambda service: service.get_group_members(42), id="members"),
-            pytest.param(lambda service: service.get_merge_request_notes(100, 7), id="notes"),
         ],
     )
     @pytest.mark.parametrize("with_totals", [True, False], ids=["with-totals", "past-10k-rows"])
