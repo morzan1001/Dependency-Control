@@ -17,17 +17,12 @@ from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.constants import (
     COUNTED_UPDATE_KINDS,
     RECENT_UPDATES_LIMIT,
-    RETENTION_ACTION_ARCHIVE,
-    RETENTION_ACTION_DELETE,
-    SETTINGS_MODE_GLOBAL,
     SLOWEST_PACKAGES_LIMIT,
     UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS,
     UPDATE_SAMPLE_RANK,
     UpdateKind,
 )
 from app.core.purl import parse_purl, parsed_package_identity
-from app.core.s3 import is_archive_enabled
-from app.models.system import SystemSettings
 from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -363,16 +358,6 @@ def window_cutoff(window_days: int | None) -> datetime | None:
     if window_days is None:
         return None
     return datetime.now(tz=timezone.utc) - timedelta(days=window_days)
-
-
-def retention_horizon(system: SystemSettings, project_days: int | None, project_action: str | None) -> int | None:
-    """Days of scans retention keeps, None where it deletes none; the head and released scans outlive it."""
-    if system.retention_mode == SETTINGS_MODE_GLOBAL:
-        days, action = system.global_retention_days, system.global_retention_action
-    else:
-        days, action = project_days or 0, project_action or RETENTION_ACTION_DELETE
-    deletes = action == RETENTION_ACTION_DELETE or (action == RETENTION_ACTION_ARCHIVE and is_archive_enabled())
-    return days if days > 0 and deletes else None
 
 
 def retained_window(window_days: int, horizon: int | None) -> int | None:

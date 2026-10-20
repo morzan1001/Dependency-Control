@@ -17,6 +17,7 @@ from app.api.v1.endpoints.analytics.update_frequency import (
     _comparison_cache_key,
     _lock_timings,
     _project_cache_key,
+    _retention_horizon,
     get_project_update_frequency,
     get_update_frequency_comparison,
     router,
@@ -26,6 +27,7 @@ from app.core.config import settings
 from app.core.constants import UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.project import Project
+from app.models.system import SystemSettings
 from app.models.user import User
 from app.schemas.analytics import ProjectUpdateSummary, UpdateFrequencyComparison, UpdateFrequencyMetrics
 from app.services.rescan import build_rescan
@@ -61,6 +63,25 @@ class TestProjectCacheKey:
 
     def test_no_branch_and_a_branch_named_auto_get_different_keys(self):
         assert _pkey(branch=None) != _pkey(branch="auto")
+
+
+class TestRetentionHorizon:
+    def test_project_mode_reads_the_projects_retention(self):
+        assert _retention_horizon(SystemSettings(), 30, "delete") == 30
+
+    def test_global_mode_overrides_the_projects_retention(self):
+        system = SystemSettings(retention_mode="global", global_retention_days=60, global_retention_action="delete")
+        assert _retention_horizon(system, 30, "none") == 60
+
+    @pytest.mark.parametrize(("days", "action"), [(0, "delete"), (30, "none"), (None, None)])
+    def test_retention_that_deletes_nothing_keeps_every_day(self, days, action):
+        assert _retention_horizon(SystemSettings(), days, action) is None
+
+    def test_archiving_deletes_only_once_storage_is_configured(self, monkeypatch):
+        assert _retention_horizon(SystemSettings(), 30, "archive") is None
+        monkeypatch.setattr(settings, "S3_ENDPOINT_URL", "http://s3.invalid")
+        monkeypatch.setattr(settings, "S3_ACCESS_KEY", "key")
+        assert _retention_horizon(SystemSettings(), 30, "archive") == 30
 
 
 def _ckey(scope: str = "scope-a", team: str | None = None, **overrides: Any) -> str:

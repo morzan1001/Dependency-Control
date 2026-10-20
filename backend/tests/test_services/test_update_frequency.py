@@ -13,8 +13,6 @@ import app.repositories.update_frequency as update_frequency_repository
 import app.services.update_frequency as update_frequency_module
 from app.core.purl import parse_purl
 from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
-from app.core.config import settings
-from app.models.system import SystemSettings
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -40,7 +38,6 @@ from app.services.update_frequency import (
     fold_scan_deps,
     load_outdated_entries,
     rank_summaries,
-    retention_horizon,
     select_primary_branch,
     summarise_window,
     window_cutoff,
@@ -1788,25 +1785,6 @@ class TestTheLiveWalkIsAlwaysFullyCovered:
         row = result.projects[0]
         assert (row.data_status, row.scan_count) == ("ready", 2)
         assert result.partial_projects == 0
-
-
-class TestRetentionHorizon:
-    def test_project_mode_reads_the_projects_retention(self):
-        assert retention_horizon(SystemSettings(), 30, "delete") == 30
-
-    def test_global_mode_overrides_the_projects_retention(self):
-        system = SystemSettings(retention_mode="global", global_retention_days=60, global_retention_action="delete")
-        assert retention_horizon(system, 30, "none") == 60
-
-    @pytest.mark.parametrize(("days", "action"), [(0, "delete"), (30, "none"), (None, None)])
-    def test_retention_that_deletes_nothing_keeps_every_day(self, days, action):
-        assert retention_horizon(SystemSettings(), days, action) is None
-
-    def test_archiving_deletes_only_once_storage_is_configured(self, monkeypatch):
-        assert retention_horizon(SystemSettings(), 30, "archive") is None
-        monkeypatch.setattr(settings, "S3_ENDPOINT_URL", "http://s3.invalid")
-        monkeypatch.setattr(settings, "S3_ACCESS_KEY", "key")
-        assert retention_horizon(SystemSettings(), 30, "archive") == 30
 
 
 class TestRetentionCappedRate:

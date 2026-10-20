@@ -19,7 +19,9 @@ from app.api.v1.helpers.teams import resolve_team_names, team_refs
 from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.config import settings
 from app.core.constants import UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS
+from app.core.housekeeping import effective_retention, retention_deletes
 from app.core.permissions import Permissions
+from app.models.system import SystemSettings
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.projects import ProjectRepository
@@ -50,7 +52,6 @@ from app.services.update_frequency import (
     placeholder_summary,
     rank_summaries,
     retained_window,
-    retention_horizon,
     select_primary_branch,
     spanned_days,
     walk_fetch_limit,
@@ -118,6 +119,12 @@ def _comparison_cache_key(
     """The read path is in the key: only the rollup sees a lagging ledger, so the paths disagree on data_status."""
     base = CacheKeys.update_frequency_comparison(scope_hash, team_id)
     return f"{base}:w{window_days}:r{int(use_rollup)}"
+
+
+def _retention_horizon(system: SystemSettings, project_days: int | None, project_action: str | None) -> int | None:
+    """Days of scans retention keeps, None where it deletes none; the head and released scans outlive it."""
+    days, action = effective_retention(system, project_days, project_action)
+    return days if days > 0 and retention_deletes(action) else None
 
 
 async def _branch_scan_token(
@@ -191,7 +198,7 @@ async def get_project_update_frequency(
             window_days=window_days,
             release_fetcher=DepsDevReleaseHistoryFetcher(),
             branch=analyzed_branch,
-            retention_days=retention_horizon(system, project.retention_days, project.retention_action),
+            retention_days=_retention_horizon(system, project.retention_days, project.retention_action),
         )
         return metrics.model_dump()
 
@@ -239,7 +246,7 @@ async def _scoped_projects(
     system = await SystemSettingsRepository(db).get()
     for p in projects_raw:
         p["teams"] = team_refs(p.get("team_ids") or [], team_names)
-        p["retention_horizon"] = retention_horizon(system, p.get("retention_days"), p.get("retention_action"))
+        p["retention_horizon"] = _retention_horizon(system, p.get("retention_days"), p.get("retention_action"))
     return projects_raw
 
 

@@ -44,6 +44,7 @@ from app.core.metrics import (
 from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
 from app.models.project import Project
+from app.models.system import SystemSettings
 from app.repositories.distributed_locks import DistributedLocksRepository, LockLost, new_lock_holder, run_holding_lock
 from app.repositories.scans import HAS_SBOM_MATCH, USABLE_BUILD_MATCH, ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
@@ -129,6 +130,18 @@ def resolve_rescan_interval(project: Project, system_settings: Any) -> int | Non
     if not interval_hours or interval_hours <= 0:
         return None
     return interval_hours
+
+
+def effective_retention(
+    system: SystemSettings, project_days: int | None, project_action: str | None
+) -> tuple[int, str]:
+    if system.retention_mode == SETTINGS_MODE_GLOBAL:
+        return system.global_retention_days, system.global_retention_action
+    return project_days or 0, project_action or RETENTION_ACTION_DELETE
+
+
+def retention_deletes(action: str) -> bool:
+    return action == RETENTION_ACTION_DELETE or (action == RETENTION_ACTION_ARCHIVE and is_archive_enabled())
 
 
 def _is_rescan_due(source_scan: dict, interval_hours: int) -> bool:
@@ -335,7 +348,7 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) ->
 
 
 def _retention_can_act(action: str, label: str) -> bool:
-    if action == RETENTION_ACTION_DELETE or (action == RETENTION_ACTION_ARCHIVE and is_archive_enabled()):
+    if retention_deletes(action):
         return True
     if action == RETENTION_ACTION_ARCHIVE:
         logger.warning(
