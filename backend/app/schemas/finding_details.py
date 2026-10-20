@@ -348,20 +348,25 @@ class MatchedRuleEntry(_DetailsModel):
     severity: str | None = None
 
 
-class CryptoRuleDetails(_DetailsModel):
+class CryptoAssetDetails(_DetailsModel):
+    """The asset every crypto finding flags; crypto analytics group findings by these fields."""
+
+    bom_ref: str | None = None
+    asset_name: str | None = None
+    asset_type: str | None = None
+    primitive: str | None = None
+    occurrence_count: int | None = None
+
+
+class CryptoRuleDetails(CryptoAssetDetails):
     """Details for crypto_weak_algorithm / crypto_weak_key / crypto_quantum_vulnerable."""
 
     rule_id: str | None = None
     rule_name: str | None = None
     policy_source: str | None = None
     matched_rules: list[MatchedRuleEntry] = []
-    bom_ref: str | None = None
-    asset_name: str | None = None
-    asset_type: str | None = None
     key_size_bits: int | None = None
-    primitive: str | None = None
     references: list[Any] = []
-    occurrence_count: int | None = None
 
 
 def all_rule_ids(details: Mapping[str, Any] | None) -> set[str]:
@@ -372,10 +377,9 @@ def all_rule_ids(details: Mapping[str, Any] | None) -> set[str]:
     return ids
 
 
-class CryptoCertificateDetails(_DetailsModel):
+class CryptoCertificateDetails(CryptoAssetDetails):
     """Details of the crypto_cert_* finding family."""
 
-    bom_ref: str | None = None
     subject_name: str | None = None
     issuer_name: str | None = None
     days_expired: int | None = None
@@ -391,13 +395,11 @@ class CryptoCertificateDetails(_DetailsModel):
     threshold: int | None = None
     rule_id: str | None = None
     matched_rules: list[MatchedRuleEntry] | None = None
-    occurrence_count: int | None = None
 
 
-class CryptoProtocolDetails(_DetailsModel):
+class CryptoProtocolDetails(CryptoAssetDetails):
     """Details of crypto_weak_protocol findings."""
 
-    bom_ref: str | None = None
     protocol_type: str | None = None
     protocol_version: str | None = None
     cipher_suite: str | None = None
@@ -410,4 +412,3 @@ class CryptoProtocolDetails(_DetailsModel):
     catalog_version: int | str | None = None
     rule_id: str | None = None
     matched_rules: list[MatchedRuleEntry] | None = None
-    occurrence_count: int | None = None

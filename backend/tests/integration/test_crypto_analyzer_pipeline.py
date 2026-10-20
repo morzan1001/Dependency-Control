@@ -1,15 +1,22 @@
+from collections import Counter
+
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
 from app.models.crypto_policy import CryptoPolicy
+from app.core.constants import SCAN_STATUS_COMPLETED
+from app.core.init_db import create_indexes
 from app.models.finding import FindingType, Severity
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
+from app.services.analysis import engine
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.cbom_parser import parse_crypto_components
-from tests.helpers.analyzers import evaluate_crypto
+from app.services.crypto_policy.seeder import load_seed_rules
+from tests.helpers.analyzers import evaluate_crypto, scan_cbom
+from tests.helpers.cbom import load_cbom
 
 _SHARED_PROJECT = "p4"
 _SHARED_SCAN = "s4"
@@ -255,3 +262,72 @@ def test_a_rule_finding_carries_the_first_twenty_locations_and_the_total():
     (finding,) = crypto_findings_for_assets([asset], [rule], scanner="crypto_weak_algorithm")
     assert finding["found_in"] == asset.occurrence_locations[:20]
     assert finding["details"]["occurrence_count"] == 25
+
+
+def test_every_crypto_finding_names_the_asset_it_flags():
+    assets, findings = scan_cbom(load_cbom("tls_service.json"))
+    by_ref = {asset.bom_ref: asset for asset in assets}
+
+    named = Counter(
+        (f["details"].get("asset_name"), f["details"].get("asset_type"), f["details"].get("primitive"))
+        for f in findings
+    )
+
+    assert named == {
+        ("api.example.com", "certificate", None): 4,
+        ("TLS", "protocol", None): 3,
+        ("SHA1withRSA", "algorithm", "signature"): 1,
+        ("RSA", "algorithm", "pke"): 1,
+        ("MD5", "algorithm", "hash"): 1,
+    }
+    assert all(f["details"]["asset_name"] == by_ref[f["details"]["bom_ref"]].name for f in findings)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_every_finding_of_a_scanned_cbom_counts_under_its_asset_in_the_hotspots(
+    client, db, api_key_headers, member_auth_headers
+):
+    await create_indexes(db)
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", rules=list(load_seed_rules()), version=1)
+    )
+    resp = await client.post(
+        "/api/v1/ingest/cbom", json={"branch": "main", "cbom": load_cbom("tls_service.json")}, headers=api_key_headers
+    )
+    scan_id = resp.json()["scan_id"]
+    scan = await db.scans.find_one_and_update(
+        {"_id": scan_id}, {"$set": {"status": "processing", "worker_id": "pod-a/worker-0"}}, return_document=True
+    )
+    status = await engine.run_analysis(
+        scan_id, [], [], db, worker_id="pod-a/worker-0", sbom_generation=scan["sbom_generation"]
+    )
+    assert status == SCAN_STATUS_COMPLETED
+
+    async def hotspots(group_by):
+        resp = await client.get(
+            "/api/v1/analytics/crypto/hotspots",
+            params={"scope": "project", "scope_id": "test-project-id", "group_by": group_by},
+            headers=member_auth_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        return {e["key"]: (e["asset_count"], e["finding_count"]) for e in resp.json()["items"]}
+
+    by_type = await hotspots("asset_type")
+    assert by_type == {
+        "algorithm": (4, 3),
+        "certificate": (1, 4),
+        "protocol": (1, 3),
+        "related-crypto-material": (1, 0),
+    }
+    assert sum(findings for _, findings in by_type.values()) == await db.findings.count_documents({"scan_id": scan_id})
+    assert await hotspots("name") == {
+        "api.example.com": (1, 4),
+        "TLS": (1, 3),
+        "SHA1withRSA": (1, 1),
+        "RSA": (1, 1),
+        "MD5": (1, 1),
+        "RSA-1024": (1, 0),
+        "AES": (1, 0),
+    }
+    assert await hotspots("primitive") == {"signature": (1, 1), "pke": (1, 1), "hash": (1, 1), "block-cipher": (1, 0)}

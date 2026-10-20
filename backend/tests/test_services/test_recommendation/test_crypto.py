@@ -8,6 +8,8 @@ from app.schemas.recommendation import Priority, RecommendationType
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.recommendation.crypto import _CRYPTO_CARDS, process_crypto
+from tests.helpers.analyzers import scan_cbom
+from tests.helpers.cbom import cbom_of, fixture_component, load_cbom
 
 
 def _md5_findings():
@@ -92,3 +94,33 @@ def test_only_rsa_and_dsa_keys_are_told_to_reach_3072_bits(name, primitive, bits
     [rec] = process_crypto([f for f in findings if f["type"] == FindingType.CRYPTO_WEAK_KEY])
 
     assert rec.action["suggested_replacement"] == suggested
+
+
+def test_certificate_and_protocol_cards_name_their_asset_like_every_crypto_card():
+    _, findings = scan_cbom(load_cbom("tls_service.json"))
+
+    cards = sorted((rec.action["finding_type"], rec.title) for rec in process_crypto(findings))
+
+    assert cards == [
+        ("crypto_cert_expired", "Rotate or fix certificate: api.example.com"),
+        ("crypto_cert_self_signed", "Rotate or fix certificate: api.example.com"),
+        ("crypto_cert_weak_key", "Rotate or fix certificate: api.example.com"),
+        ("crypto_cert_weak_signature", "Rotate or fix certificate: api.example.com"),
+        ("crypto_quantum_vulnerable", "Plan PQC migration for RSA"),
+        ("crypto_quantum_vulnerable", "Plan PQC migration for SHA1withRSA"),
+        ("crypto_weak_algorithm", "Replace weak algorithm: MD5"),
+        ("crypto_weak_algorithm", "Replace weak algorithm: TLS"),
+        ("crypto_weak_protocol", "Upgrade protocol/cipher: TLS"),
+    ]
+
+
+def test_two_protocols_of_one_name_share_a_card_as_two_algorithms_of_one_name_do():
+    endpoint = fixture_component("tls_service.json", "6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d")
+    other = {**endpoint, "bom-ref": "admin-endpoint", "evidence": {"occurrences": [{"location": "admin.yml"}]}}
+    assets, findings = scan_cbom(cbom_of([endpoint, other]))
+
+    [card] = process_crypto([f for f in findings if f["type"] == FindingType.CRYPTO_WEAK_PROTOCOL])
+
+    assert card.title == "Upgrade protocol/cipher: TLS"
+    assert card.action["bom_refs"] == sorted(asset.bom_ref for asset in assets)
+    assert card.description.startswith("TLS uses a deprecated protocol version or cipher suite (4 findings).")

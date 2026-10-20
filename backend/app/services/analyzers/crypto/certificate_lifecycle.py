@@ -10,7 +10,7 @@ from app.models.finding import FindingType, Severity
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoRule
 from app.schemas.finding_details import CryptoCertificateDetails
-from app.services.analyzers.crypto.base import MAX_FINDING_LOCATIONS, matched_rule_entry, strictest_rule
+from app.services.analyzers.crypto.base import MAX_FINDING_LOCATIONS, asset_details, matched_rule_entry, strictest_rule
 from app.services.analyzers.crypto.matcher import asset_in_rule_scope, rule_matches
 from app.services.crypto_policy.resolver import EffectivePolicy
 
@@ -287,10 +287,9 @@ def _build(
         "description": description,
         "scanners": ["crypto_certificate_lifecycle"],
         "details": CryptoCertificateDetails(
-            bom_ref=cert.bom_ref,
+            **asset_details(cert),
             subject_name=cert.subject_name,
             issuer_name=cert.issuer_name,
-            occurrence_count=len(cert.occurrence_locations),
             **details,
         ).model_dump(exclude_none=True),
         "found_in": cert.occurrence_locations[:MAX_FINDING_LOCATIONS],
