@@ -265,7 +265,6 @@ class TeamRepository:
         query: dict[str, Any],
         sort_by: str = "name",
         sort_order: int = 1,
-        limit: int | None = None,
         collation: Collation | None = None,
     ) -> list[dict[str, Any]]:
-        return await self.collection.find(query, collation=collation).sort(sort_by, sort_order).to_list(limit)
+        return await self.collection.find(query, collation=collation).sort(sort_by, sort_order).to_list(None)

@@ -103,7 +103,7 @@ async def read_teams(
     final_query = and_filters(search_query, visible)
 
     teams = await team_repo.find_many_raw(
-        final_query, sort_by, parse_sort_direction(sort_order), limit=1000, collation=CASE_INSENSITIVE
+        final_query, sort_by, parse_sort_direction(sort_order), collation=CASE_INSENSITIVE
     )
     await enrich_teams_with_usernames(teams, db)
     return teams
