@@ -5,9 +5,9 @@ import pytest
 
 from app.models.crypto_asset import CryptoAsset
 from app.models.release import Release
-from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.releases import ReleaseRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from tests.helpers.cbom import store_assets
 
 _SCOPE_PATH = "/api/v1/analytics/scope"
 _STAGING = "staging"
@@ -16,7 +16,8 @@ _OFF_SHAPE_ENVIRONMENT = "Prod.EU"
 
 @pytest.mark.asyncio
 async def test_hotspots_endpoint_project_scope(client, db, owner_auth_headers_proj):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -89,7 +90,8 @@ async def test_trends_endpoint(client, db, owner_auth_headers_proj):
 
 
 async def _seed_crypto_asset(db, scan_id: str, name: str) -> None:
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         scan_id,
         [

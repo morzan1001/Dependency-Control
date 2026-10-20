@@ -11,6 +11,7 @@ from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.analysis.engine import _carry_over_crypto_assets
+from tests.helpers.cbom import store_assets
 from tests.mocks.fake_mongo import FakeDatabase
 
 _PROJECT = "p1"
@@ -38,7 +39,7 @@ def _asset(bom_ref: str, scan_id: str, name: str = "MD5") -> CryptoAsset:
 
 
 async def _seed(repo: CryptoAssetRepository, scan_id: str, refs: list[str]) -> None:
-    await repo.bulk_upsert(_PROJECT, scan_id, [_asset(ref, scan_id) for ref in refs])
+    await store_assets(repo.db, _PROJECT, scan_id, [_asset(ref, scan_id) for ref in refs])
 
 
 @pytest.mark.asyncio
@@ -79,7 +80,7 @@ async def test_an_embedded_cbom_asset_overwrites_the_carried_copy(db):
     await _seed(repo, _ORIGINAL_SCAN, ["ref-a"])
     await repo.carry_over_to_scan(_PROJECT, _ORIGINAL_SCAN, _RESCAN)
 
-    await repo.bulk_upsert(_PROJECT, _RESCAN, [_asset("ref-a", _RESCAN, name="SHA-256")])
+    await store_assets(db, _PROJECT, _RESCAN, [_asset("ref-a", _RESCAN, name="SHA-256")])
 
     listed = await repo.list_by_scan(_PROJECT, _RESCAN, limit=10)
     assert [a.name for a in listed] == ["SHA-256"]
@@ -90,8 +91,8 @@ async def test_a_carry_over_keeps_the_assets_the_rescan_already_holds(db):
     repo = CryptoAssetRepository(db)
     source_b = _asset("ref-b", _ORIGINAL_SCAN)
     held = _asset("ref-a", _RESCAN, name="SHA-256")
-    await repo.bulk_upsert(_PROJECT, _ORIGINAL_SCAN, [_asset("ref-a", _ORIGINAL_SCAN), source_b])
-    await repo.bulk_upsert(_PROJECT, _RESCAN, [held])
+    await store_assets(db, _PROJECT, _ORIGINAL_SCAN, [_asset("ref-a", _ORIGINAL_SCAN), source_b])
+    await store_assets(db, _PROJECT, _RESCAN, [held])
 
     await repo.carry_over_to_scan(_PROJECT, _ORIGINAL_SCAN, _RESCAN)
 

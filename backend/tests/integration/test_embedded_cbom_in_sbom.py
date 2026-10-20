@@ -1,5 +1,7 @@
 import json
+import logging
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,6 +14,7 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.services.analysis import engine
 from app.services.analysis.registry import CRYPTO_ANALYZERS
+from app.services.cbom_parser import parse_cbom
 from app.services.crypto_policy.seeder import load_seed_rules
 from tests.helpers.analyzers import bundled_iana_catalog, process_sbom_document, run_context
 from tests.helpers.cbom import content_ref, fixture_component
@@ -47,6 +50,17 @@ async def test_cyclonedx_sbom_with_crypto_persists_crypto_assets(db):
 
     count = await CryptoAssetRepository(db).count_by_scan(project_id, scan_id)
     assert count == 1, f"Expected 1 CryptoAsset (SHA-1) from embedded CBOM, got {count}"
+
+
+@pytest.mark.asyncio
+async def test_embedded_crypto_assets_are_logged_as_the_assets_stored(db, caplog):
+    [asset] = parse_cbom(_load("cyclonedx_1_6_with_crypto_assets.json"))
+
+    with caplog.at_level(logging.INFO, logger=engine.__name__):
+        await engine._persist_embedded_crypto_assets(SimpleNamespace(crypto_assets=[asset, asset]), "p", "s", db)
+
+    assert "persisted 1 crypto assets" in caplog.text
+    assert await db.crypto_assets.count_documents({"scan_id": "s", "cbom_upload": False}) == 1
 
 
 @pytest.mark.asyncio

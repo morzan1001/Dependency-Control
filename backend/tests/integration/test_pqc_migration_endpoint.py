@@ -4,15 +4,15 @@ from unittest.mock import patch
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
-from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
+from tests.helpers.cbom import store_assets
 
 
 @pytest.mark.asyncio
 async def test_pqc_endpoint_returns_items(client, db, owner_auth_headers_proj):
-    repo = CryptoAssetRepository(db)
-    await repo.bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s1",
         [
@@ -77,7 +77,8 @@ async def test_one_users_plan_is_not_served_to_the_next_caller(
     owner_auth_headers_proj_p2,
 ):
     """scope=user carries no scope_id, so only the caller tells the two requests apart in the shared cache."""
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s1",
         [

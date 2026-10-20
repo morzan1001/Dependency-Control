@@ -1,6 +1,7 @@
 import copy
 import json
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +40,10 @@ def cbom_of(components: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def store_cbom(db: Any, project_id: str, scan_id: str, cbom: dict[str, Any]) -> None:
-    assets = parse_cbom(cbom)
-    await CryptoAssetRepository(db).bulk_upsert(
-        project_id, scan_id, [CryptoAsset(project_id=project_id, scan_id=scan_id, **a.model_dump()) for a in assets]
+    await CryptoAssetRepository(db).store_parsed(
+        project_id, scan_id, parse_cbom(cbom), cbom_upload=False, created_at=datetime.now(timezone.utc)
     )
+
+
+async def store_assets(db: Any, project_id: str, scan_id: str, assets: Iterable[CryptoAsset]) -> None:
+    await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, [a.model_dump(by_alias=True) for a in assets])

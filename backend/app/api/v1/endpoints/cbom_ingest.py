@@ -15,7 +15,6 @@ from app.core.constants import (
     WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
 )
 from app.core.metrics import cbom_ingests_total
-from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.cbom import ParsedCryptoAsset
@@ -119,19 +118,8 @@ async def _store_crypto_assets(
 ) -> dict[str, Any]:
     written_at = datetime.now(timezone.utc)
     repo = CryptoAssetRepository(db)
-    await repo.bulk_upsert(
-        project_id,
-        scan_id,
-        (
-            CryptoAsset(
-                project_id=project_id, scan_id=scan_id, cbom_upload=True, created_at=written_at, **a.model_dump()
-            )
-            for a in assets
-        ),
-    )
+    summary = await repo.store_parsed(project_id, scan_id, assets, cbom_upload=True, created_at=written_at)
     # Deleted after the upsert so a failed write keeps the previous upload's assets.
     await repo.delete_older_writes({"project_id": project_id, "scan_id": scan_id, "cbom_upload": True}, written_at)
-    # Counts persisted docs: bulk_upsert reports submitted ops, which would hide duplicate bom_refs in one payload.
-    summary: dict[str, Any] = await repo.summary_for_scan(project_id, scan_id)
     logger.info("cbom_ingest: persisted %d assets for scan %s", summary["total"], scan_id)
     return summary

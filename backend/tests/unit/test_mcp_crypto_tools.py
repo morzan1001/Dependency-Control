@@ -5,10 +5,10 @@ import pytest_asyncio
 
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.crypto_asset import CryptoAsset
-from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.auth import make_admin
+from tests.helpers.cbom import store_assets
 
 _PROJECT = "p-crypto"
 _SCAN = "s-crypto"
@@ -47,7 +47,8 @@ def _seed_head_scan(db, scan_type: str | None = None) -> None:
 @pytest_asyncio.fixture
 async def with_assets(db):
     _seed_head_scan(db)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         _PROJECT,
         _SCAN,
         [
@@ -97,8 +98,8 @@ async def test_an_unknown_report_framework_is_refused_rather_than_dropped(db):
 )
 async def test_the_crypto_tools_tell_an_empty_cbom_from_a_missing_one(db, tool, scan_type, assets, evaluated):
     _seed_head_scan(db, scan_type)
-    await CryptoAssetRepository(db).bulk_upsert(
-        _PROJECT, _SCAN, [_algorithm(f"ref-{name}", name, CryptoPrimitive.BLOCK_CIPHER) for name in assets]
+    await store_assets(
+        db, _PROJECT, _SCAN, [_algorithm(f"ref-{name}", name, CryptoPrimitive.BLOCK_CIPHER) for name in assets]
     )
 
     result = await ChatToolRegistry().execute_tool(tool, {"project_id": _PROJECT, "limit": 10}, make_admin(), db)

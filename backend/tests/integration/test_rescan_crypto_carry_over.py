@@ -16,7 +16,7 @@ from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.rescan import RESCAN_SOURCE_PROJECTION, build_rescan
 from app.services.scan_manager import ScanManager
-from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, store_cbom
+from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, store_assets, store_cbom
 from tests.helpers.sboms import sbom_ref, store_sbom
 
 _PROJECT_ID = "cbom-rescan-project"
@@ -46,7 +46,8 @@ _INGESTED_ASSETS = [
 
 
 async def _ingest_assets(db, scan_id: str) -> None:
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         _PROJECT_ID,
         scan_id,
         [
@@ -161,7 +162,7 @@ async def test_a_carry_over_past_the_old_asset_cap_copies_every_asset_once(db):
     assert await db.crypto_assets.find({"scan_id": "scan-rescan"}).sort("_id").to_list(None) == carried
     first = carried[0]
     embedded = CryptoAsset.model_validate({**first, "_id": "embedded", "name": "SHA-512"})
-    await repo.bulk_upsert(_PROJECT_ID, "scan-rescan", [embedded])
+    await store_assets(db, _PROJECT_ID, "scan-rescan", [embedded])
     assert await db.crypto_assets.count_documents({"scan_id": "scan-rescan"}) == OLD_ASSET_CAP + 1
     assert (await db.crypto_assets.find_one({"_id": first["_id"]}))["name"] == "SHA-512"
 

@@ -12,7 +12,7 @@ from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.cbom_parser import parse_crypto_components
 from tests.helpers.analyzers import evaluate_crypto, ingest_and_analyze_cbom, scan_cbom
-from tests.helpers.cbom import load_cbom
+from tests.helpers.cbom import load_cbom, store_assets
 
 _SHARED_PROJECT = "p4"
 _SHARED_SCAN = "s4"
@@ -36,8 +36,8 @@ def _rule(rule_id, ft, **extra):
 
 @pytest.mark.asyncio
 async def test_analyzer_emits_findings_for_matching_assets(db):
-    repo = CryptoAssetRepository(db)
-    await repo.bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -77,8 +77,8 @@ async def test_analyzer_emits_findings_for_matching_assets(db):
 
 @pytest.mark.asyncio
 async def test_analyzer_only_emits_for_its_finding_types(db):
-    repo = CryptoAssetRepository(db)
-    await repo.bulk_upsert(
+    await store_assets(
+        db,
         "p2",
         "s2",
         [
@@ -115,7 +115,8 @@ async def test_analyzer_only_emits_for_its_finding_types(db):
 
 @pytest.mark.asyncio
 async def test_analyzer_respects_disabled_rule(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p3",
         "s3",
         [
@@ -172,7 +173,7 @@ async def test_analyzer_adds_nothing_to_the_shared_rule_evaluation(db):
             primitive=CryptoPrimitive.HASH,
         ),
     ]
-    await CryptoAssetRepository(db).bulk_upsert(_SHARED_PROJECT, _SHARED_SCAN, stored)
+    await store_assets(db, _SHARED_PROJECT, _SHARED_SCAN, stored)
 
     owned = _rule("md5", FindingType.CRYPTO_WEAK_ALGORITHM, match_name_patterns=["MD5", "SHA-256"])
     await CryptoPolicyRepository(db).upsert_system_policy(

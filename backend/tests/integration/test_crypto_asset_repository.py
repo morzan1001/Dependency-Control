@@ -7,6 +7,8 @@ from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType
+from app.services.cbom_parser import parse_cbom
+from tests.helpers.cbom import load_cbom, store_assets
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 
@@ -38,8 +40,8 @@ class TestBulkUpsertAndListByScan:
             )
             for i in range(5)
         ]
-        inserted = asyncio.run(repo.bulk_upsert("p1", "s1", assets, chunk_size=2))
-        assert inserted == 5
+        asyncio.run(repo.bulk_upsert("p1", "s1", [a.model_dump(by_alias=True) for a in assets], chunk_size=2))
+        assert collection.bulk_write.await_count == 3
 
         listed = asyncio.run(repo.list_by_scan("p1", "s1", limit=100))
         assert len(listed) == 5
@@ -62,8 +64,8 @@ _SHARED_SCAN = "shared-scan-id"
 async def test_a_read_is_confined_to_the_project_that_was_authorised(db):
     """The endpoint checks access on project_id only, so a scan_id guessed from another tenant must return nothing."""
     repo = CryptoAssetRepository(db)
-    await repo.bulk_upsert("p-own", _SHARED_SCAN, [_asset("p-own", _SHARED_SCAN, "ref-own", "AES-128")])
-    await repo.bulk_upsert("p-other", _SHARED_SCAN, [_asset("p-other", _SHARED_SCAN, "ref-other", "AES-256")])
+    await store_assets(db, "p-own", _SHARED_SCAN, [_asset("p-own", _SHARED_SCAN, "ref-own", "AES-128")])
+    await store_assets(db, "p-other", _SHARED_SCAN, [_asset("p-other", _SHARED_SCAN, "ref-other", "AES-256")])
 
     listed = await repo.list_by_scan("p-own", _SHARED_SCAN, limit=100)
 
@@ -74,7 +76,8 @@ async def test_a_read_is_confined_to_the_project_that_was_authorised(db):
 @pytest.mark.asyncio
 async def test_paging_a_scan_walks_its_assets_name_ascending(db):
     repo = CryptoAssetRepository(db)
-    await repo.bulk_upsert(
+    await store_assets(
+        db,
         "p1",
         "s1",
         [
@@ -96,7 +99,7 @@ async def test_an_asset_is_found_by_the_id_its_listing_names_and_so_is_its_resca
     await create_indexes(db)
     repo = CryptoAssetRepository(db)
     ingested = _asset("p1", "s1", "ref-a", "AES-128")
-    await repo.bulk_upsert("p1", "s1", [ingested])
+    await store_assets(db, "p1", "s1", [ingested])
 
     (listed,) = await repo.list_by_scan("p1", "s1", limit=10)
     fetched = await repo.get("p1", listed.id)
@@ -123,3 +126,18 @@ async def test_a_read_by_scan_alone_walks_an_index(db):
     explain = await db.command({"explain": {"find": "crypto_assets", "filter": {"scan_id": {"$in": ["s1"]}}}})
 
     assert "COLLSCAN" not in str(explain["queryPlanner"]["winningPlan"])
+
+
+@pytest.mark.asyncio
+async def test_storing_parsed_assets_keeps_one_per_ref_and_counts_them_by_type(db):
+    written_at = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    algorithm, _, protocol = parse_cbom(load_cbom("legacy_crypto_mixed.json"))
+
+    summary = await CryptoAssetRepository(db).store_parsed(
+        "p1", "s1", [algorithm, protocol, algorithm], cbom_upload=True, created_at=written_at
+    )
+
+    stored = await db.crypto_assets.find({"scan_id": "s1"}).to_list(None)
+    assert summary == {"total": 2, "by_type": {"algorithm": 1, "protocol": 1}}
+    assert sorted(doc["bom_ref"] for doc in stored) == sorted([algorithm.bom_ref, protocol.bom_ref])
+    assert {(doc["cbom_upload"], doc["created_at"]) for doc in stored} == {(True, written_at)}

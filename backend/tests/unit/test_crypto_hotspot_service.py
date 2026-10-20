@@ -5,7 +5,6 @@ from unittest.mock import patch
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
-from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.analytics.crypto_hotspots import (
     _HEATMAP_COLUMNS,
@@ -13,6 +12,7 @@ from app.services.analytics.crypto_hotspots import (
     CryptoHotspotService,
 )
 from app.services.analytics.scopes import ResolvedScope
+from tests.helpers.cbom import store_assets
 
 
 def _asset(bom_ref, name, primitive=None, asset_type=CryptoAssetType.ALGORITHM, project_id="p1", scan_id="s1"):
@@ -28,7 +28,8 @@ def _asset(bom_ref, name, primitive=None, asset_type=CryptoAssetType.ALGORITHM, 
 
 @pytest.mark.asyncio
 async def test_hotspots_group_by_name(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p1",
         "s1",
         [
@@ -60,7 +61,7 @@ async def test_hotspots_group_by_name(db):
 @pytest.mark.asyncio
 async def test_hotspots_respects_limit(db):
     assets = [_asset(f"a{i}", f"algo-{i}", project_id="p2", scan_id="s2") for i in range(20)]
-    await CryptoAssetRepository(db).bulk_upsert("p2", "s2", assets)
+    await store_assets(db, "p2", "s2", assets)
     await db.projects.insert_one({"_id": "p2", "name": "p2", "latest_scan_id": "s2"})
     await db.scans.insert_one(
         {
@@ -83,7 +84,8 @@ async def test_hotspots_respects_limit(db):
 @pytest.mark.asyncio
 async def test_a_truncated_ranking_keeps_the_keys_carrying_the_most_assets(db):
     """Hotspots rank by asset_count, so the cut drops the smallest keys rather than the biggest."""
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "pr",
         "sr",
         [
@@ -109,8 +111,8 @@ async def test_a_truncated_ranking_keeps_the_keys_carrying_the_most_assets(db):
 @pytest.mark.asyncio
 async def test_the_total_counts_every_group_beyond_the_returned_page(db):
     names = ["MD5", "MD5", "MD5", "SHA-1", "SHA-1", "AES"]
-    await CryptoAssetRepository(db).bulk_upsert(
-        "pt", "st", [_asset(f"t{i}", name, project_id="pt", scan_id="st") for i, name in enumerate(names)]
+    await store_assets(
+        db, "pt", "st", [_asset(f"t{i}", name, project_id="pt", scan_id="st") for i, name in enumerate(names)]
     )
     resolved = ResolvedScope(scope="project", scope_id="pt", project_ids=["pt"])
 
@@ -122,7 +124,7 @@ async def test_the_total_counts_every_group_beyond_the_returned_page(db):
 @pytest.mark.asyncio
 async def test_assets_without_a_primitive_neither_take_a_place_nor_count_as_a_group(db):
     certificates = [_asset(f"c{i}", f"cert-{i}", asset_type=CryptoAssetType.CERTIFICATE) for i in range(3)]
-    await CryptoAssetRepository(db).bulk_upsert("p1", "s1", [*certificates, _asset("h", "MD5", CryptoPrimitive.HASH)])
+    await store_assets(db, "p1", "s1", [*certificates, _asset("h", "MD5", CryptoPrimitive.HASH)])
     resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
 
     result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="primitive", scan_id="s1", limit=1)
@@ -144,8 +146,8 @@ async def test_a_finding_dimension_total_counts_every_key_beyond_the_returned_pa
 @pytest.mark.asyncio
 async def test_a_key_lookup_returns_that_group_alone_whatever_its_rank(db):
     names = ["MD5", "MD5", "MD5", "SHA-1", "SHA-1", "AES"]
-    await CryptoAssetRepository(db).bulk_upsert(
-        "pk", "sk", [_asset(f"k{i}", name, project_id="pk", scan_id="sk") for i, name in enumerate(names)]
+    await store_assets(
+        db, "pk", "sk", [_asset(f"k{i}", name, project_id="pk", scan_id="sk") for i, name in enumerate(names)]
     )
     for f in [
         _crypto_finding("f1", asset_name="AES", project_id="pk", scan_id="sk", severity="LOW"),
@@ -185,7 +187,7 @@ async def test_an_entry_counts_every_project_but_names_only_the_heatmap_columns(
         assets = [_asset("md5", "MD5", project_id=project_id, scan_id="s")]
         if index >= len(projects) - 3:
             assets.append(_asset("aes", "AES", project_id=project_id, scan_id="s"))
-        await CryptoAssetRepository(db).bulk_upsert(project_id, "s", assets)
+        await store_assets(db, project_id, "s", assets)
     resolved = ResolvedScope(scope="user", scope_id=None, project_ids=projects)
 
     result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", scan_id="s")
@@ -201,8 +203,8 @@ async def test_an_entry_counts_every_project_but_names_only_the_heatmap_columns(
 @pytest.mark.asyncio
 async def test_keys_on_as_many_assets_rank_by_name_whatever_its_case(db):
     names = ["md5", "Ed25519", "bcrypt", "AES", "SHA-1", "SHA-1"]
-    await CryptoAssetRepository(db).bulk_upsert(
-        "pt", "st", [_asset(f"t{i}", name, project_id="pt", scan_id="st") for i, name in enumerate(names)]
+    await store_assets(
+        db, "pt", "st", [_asset(f"t{i}", name, project_id="pt", scan_id="st") for i, name in enumerate(names)]
     )
     await db.projects.insert_one({"_id": "pt", "name": "pt", "latest_scan_id": "st"})
     await db.scans.insert_one(
@@ -217,7 +219,8 @@ async def test_keys_on_as_many_assets_rank_by_name_whatever_its_case(db):
 
 @pytest.mark.asyncio
 async def test_hotspots_group_by_primitive(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p3",
         "s3",
         [
@@ -277,7 +280,8 @@ def _crypto_finding(
 @pytest.mark.asyncio
 async def test_group_by_name_enrichment_joins_on_bare_name_despite_variants(db):
     """Hotspot rows must key on the bare asset name so findings enrichment joins on details.asset_name."""
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "pv",
         "sv",
         [
@@ -308,7 +312,8 @@ async def test_group_by_name_enrichment_joins_on_bare_name_despite_variants(db):
 
 @pytest.mark.asyncio
 async def test_group_by_name_enrichment_excludes_waived_findings(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "pw",
         "sw",
         [_variant_asset("a1", "MD5", None, project_id="pw", scan_id="sw")],
@@ -441,7 +446,8 @@ async def test_severities_on_as_many_findings_rank_most_severe_first(db):
 
 @pytest.mark.asyncio
 async def test_no_completed_scans_returns_empty_not_all_history(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "pn",
         "srun",
         [_variant_asset("a1", "AES", "AES-256", project_id="pn", scan_id="srun")],
@@ -463,7 +469,8 @@ _SHARED_LOCATION = "/shared.py"
 
 
 async def _seed_locations(db, *, project_id, scan_id, assets):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         project_id,
         scan_id,
         [
@@ -545,9 +552,7 @@ async def test_concurrent_callers_of_one_view_share_one_aggregation(db):
 @pytest.mark.asyncio
 async def test_a_named_scan_cached_for_its_owner_is_not_served_to_an_outsider(db):
     """User-scope callers share scope and scope_id, so only their project sets tell their entries apart."""
-    await CryptoAssetRepository(db).bulk_upsert(
-        "po", "so", [_asset("a1", "MD5", CryptoPrimitive.HASH, project_id="po", scan_id="so")]
-    )
+    await store_assets(db, "po", "so", [_asset("a1", "MD5", CryptoPrimitive.HASH, project_id="po", scan_id="so")])
     service = CryptoHotspotService(db)
     owner = ResolvedScope(scope="user", scope_id=None, project_ids=["po"])
     outsider = ResolvedScope(scope="user", scope_id=None, project_ids=["elsewhere"])

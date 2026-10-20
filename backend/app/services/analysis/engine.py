@@ -375,15 +375,10 @@ def _parse_and_track_sbom(
 
 async def _persist_embedded_crypto_assets(parsed_sbom: Any, project_id: str, scan_id: str, db: Database) -> None:
     try:
-        crypto_assets = [
-            CryptoAsset(project_id=project_id, scan_id=scan_id, **a.model_dump()) for a in parsed_sbom.crypto_assets
-        ]
-        persisted = await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
-        logger.info(
-            "engine: persisted %d crypto assets from embedded CBOM (scan=%s)",
-            persisted,
-            scan_id,
+        summary = await CryptoAssetRepository(db).store_parsed(
+            project_id, scan_id, parsed_sbom.crypto_assets, cbom_upload=False, created_at=datetime.now(timezone.utc)
         )
+        logger.info("engine: persisted %d crypto assets from embedded CBOM (scan=%s)", summary["total"], scan_id)
     except Exception as cbom_err:
         logger.warning(
             "engine: failed to persist embedded CBOM crypto assets for scan %s: %s",
