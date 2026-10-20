@@ -638,13 +638,16 @@ async def test_an_upload_meeting_a_restore_is_told_to_retry_and_leaves_the_resto
 ):
     scan_id = deterministic_scan_id(_PROJECT_ID, _RUN["pipeline_id"], _RUN["commit_hash"])
     await db.scans.insert_one(_scan(scan_id, 200, restore_in_progress=True, commit_message="archived"))
-    restoring = await db.scans.find_one({"_id": scan_id}, {"updated_at": 0})
+    restoring = await db.scans.find_one({"_id": scan_id})
     path, body = _UPLOADS[upload]
 
     resp = await client.post(path, json={**_RUN, **body, "commit_message": "retried"}, headers=api_key_headers)
 
     assert resp.status_code == 409, resp.text
-    assert await db.scans.find_one({"_id": scan_id}, {"updated_at": 0}) == restoring
+    assert await db.scans.find_one({"_id": scan_id}) == restoring
+    assert await db.analysis_results.count_documents({"scan_id": scan_id}) == 0
+    assert await db.crypto_assets.count_documents({"scan_id": scan_id}) == 0
+    assert await db["fs.files"].count_documents({"metadata.scan_id": scan_id}) == 0
 
 
 @pytest.mark.parametrize("scanner", ["", "/trufflehog", "/opengrep", "/kics", "/bearer", "/cbom"])

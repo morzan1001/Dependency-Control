@@ -127,6 +127,7 @@ async def ingest_sbom(
         raise HTTPException(status_code=400, detail="No SBOM provided")
 
     scan_id = manager.run_scan_id(data)
+    await manager.refuse_while_restoring(scan_id)
     sbom_refs = await _upload_recognized_sboms(data.sboms, db, scan_id)
     if not sbom_refs:
         raise HTTPException(

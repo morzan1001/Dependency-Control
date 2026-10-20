@@ -25,6 +25,12 @@ from app.services.waivers.matching import record_matches, route_waiver, waiver_c
 logger = logging.getLogger(__name__)
 
 
+def _restoring_conflict() -> HTTPException:
+    return HTTPException(
+        status.HTTP_409_CONFLICT, "The scan is being restored from its archive; retry once the restore is done"
+    )
+
+
 def deterministic_scan_id(project_id: str, pipeline_id: int | None, commit_hash: str | None) -> str | None:
     """Shared by one CI run's SBOM, scanner results and callgraphs."""
     if not pipeline_id:
@@ -88,13 +94,16 @@ class ScanManager:
         # pipeline_id 0 derives nothing and still needs a scan of its own.
         return deterministic_scan_id(str(self.project.id), data.pipeline_id, data.commit_hash) or str(uuid.uuid4())
 
+    async def refuse_while_restoring(self, scan_id: str) -> None:
+        """Called before an upload's first scan-scoped write, since a rollback of the restore would delete it."""
+        if await self.db.scans.find_one({"_id": scan_id, "restore_in_progress": True}, {"_id": 1}):
+            raise _restoring_conflict()
+
     async def upsert_scan(self, scan_id: str, update: dict[str, Any]) -> None:
         try:
             await ScanRepository(self.db).upsert_unless_restoring(scan_id, update)
         except DuplicateKeyError:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "The scan is being restored from its archive; retry once the restore is done"
-            ) from None
+            raise _restoring_conflict() from None
 
     async def find_or_create_scan(self, data: BaseIngest, scan_id: str, scan_type: str | None = None) -> None:
         """scan_type is only set, never cleared, since the run's other scanners pass none."""

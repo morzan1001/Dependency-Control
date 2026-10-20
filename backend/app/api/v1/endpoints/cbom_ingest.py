@@ -74,6 +74,7 @@ async def ingest_cbom(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "CBOM components could not be read as cryptographic assets")
     project_id = str(project.id)
 
+    await manager.refuse_while_restoring(scan_id)
     try:
         await ScanRepository(db).touch(scan_id)
         summary = await _store_crypto_assets(db, project_id, scan_id, assets)
