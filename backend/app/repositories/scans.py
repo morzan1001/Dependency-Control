@@ -34,6 +34,8 @@ BRANCH_SCAN_FILTER: dict[str, Any] = {"$expr": {"$ne": ["$branch", "$commit_tag"
 HAS_SBOM_MATCH: dict[str, Any] = {"sbom_refs": {"$exists": True, "$ne": []}}
 # Builds with a non-empty tag; the scans_tag_builds index filters on this exact predicate, which a query must repeat.
 TAG_BUILD_MATCH: dict[str, Any] = {"commit_tag": {"$gt": ""}}
+# Every scan stores restored_at, null until a restore; the scans_restored index filters on this exact predicate.
+RESTORED_SCAN_MATCH: dict[str, Any] = {"restored_at": {"$type": "date"}}
 # Best first: a rescan, dated today over an older commit, ranks last, yet still heads a project with nothing else.
 _TIP_TIERS: tuple[dict[str, Any], ...] = tuple(
     {**sbom, **tier}

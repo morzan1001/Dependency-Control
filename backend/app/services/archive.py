@@ -61,6 +61,7 @@ from app.repositories.distributed_locks import (
     new_lock_holder,
     run_holding_lock,
 )
+from app.repositories.scans import RESTORED_SCAN_MATCH
 from app.schemas.archive import ArchiveRestoreResponse
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.analyzers.license_compliance.normalizer import BUNDLE_LICENSE_PARAMETER, strip_license_parameters
@@ -806,22 +807,14 @@ async def reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> 
     """Drops the metadata of scans restored since archiving, which leaves their S3 object to the orphan reaper."""
     lock_repo = DistributedLocksRepository(db)
 
-    async def _reap_batch(metas: list[dict[str, Any]]) -> int:
-        restored_at_by_scan = {
-            scan["_id"]: scan["restored_at"]
-            async for scan in db.scans.find(
-                {
-                    "_id": {"$in": [meta["scan_id"] for meta in metas]},
-                    "restored_at": {"$ne": None},
-                    "restore_in_progress": {"$ne": True},
-                },
-                {"restored_at": 1},
-            )
-        }
+    async def _reap_batch(scans: list[dict[str, Any]]) -> int:
+        restored_at_by_scan = {scan["_id"]: scan["restored_at"] for scan in scans}
         restored = [
             meta
-            for meta in metas
-            if meta["scan_id"] in restored_at_by_scan and restored_at_by_scan[meta["scan_id"]] > meta["archived_at"]
+            async for meta in db.archive_metadata.find(
+                {"scan_id": {"$in": list(restored_at_by_scan)}}, {"_id": 1, "scan_id": 1, "archived_at": 1}
+            )
+            if restored_at_by_scan[meta["scan_id"]] > meta["archived_at"]
         ]
         if not restored:
             return 0
@@ -844,9 +837,8 @@ async def reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> 
             logger.warning(f"Failed to delete stale metadata for scans {stale_scan_ids}: {e}")
             return 0
 
-    cursor = db.archive_metadata.find({}, {"_id": 1, "scan_id": 1, "archived_at": 1})
-    metas = (meta async for meta in cursor if meta.get("scan_id"))
-    return sum([await _reap_batch(batch) async for batch in abatched(metas, batch_size)])
+    restored_scans = db.scans.find({**RESTORED_SCAN_MATCH, "restore_in_progress": {"$ne": True}}, {"restored_at": 1})
+    return sum([await _reap_batch(batch) async for batch in abatched(restored_scans, batch_size)])
 
 
 async def _reap_orphan_page(db: Any, page: list[dict[str, Any]], bundle_key: re.Pattern[str], cutoff: datetime) -> int:

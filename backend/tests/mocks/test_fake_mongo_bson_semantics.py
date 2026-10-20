@@ -341,3 +341,21 @@ async def test_max_update_keeps_the_later_date_and_an_upsert_inserts_it():
     )
 
     assert [(d["_id"], d["created_at"]) async for d in db.dependencies.find({})] == [("d1", _LATE), ("d2", _EARLY)]
+
+
+@pytest.mark.asyncio
+async def test_type_matches_only_the_named_bson_type_and_never_a_missing_field():
+    db = FakeDatabase()
+    await _seed_mixed(db)
+    await db.scans.insert_one({"_id": "null", "branch": "main", "created_at": None})
+    await db.scans.insert_one({"_id": "flag", "branch": "main", "created_at": True})
+    await db.scans.insert_one({"_id": "count", "branch": "main", "created_at": _INTEGER_TRUE})
+
+    async def typed(alias) -> list[str]:
+        return sorted([doc["_id"] async for doc in db.scans.find({"created_at": {"$type": alias}})])
+
+    assert await typed("date") == ["early", "late"]
+    assert await typed("string") == ["text"]
+    assert await typed("null") == ["null"]
+    assert await typed("number") == ["count"]
+    assert await typed(["date", "bool"]) == ["early", "flag", "late"]

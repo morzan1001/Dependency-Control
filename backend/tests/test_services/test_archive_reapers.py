@@ -255,36 +255,41 @@ async def test_reap_stale_metadata_keeps_the_metadata_of_a_scan_re_archived_afte
 
 
 @pytest.mark.asyncio
-async def test_reap_stale_metadata_reads_scans_and_locks_once_per_batch():
+async def test_reap_stale_metadata_starts_from_the_restored_scans_and_reads_each_batch_once():
+    """Almost every archive_metadata row belongs to a scan that is gone, so walking the rows would nearly all miss."""
     db = FakeDatabase()
     for i in range(5):
         await _seed_archive(db, f"scan-{i}", restored_at=_ARCHIVED_AT + timedelta(hours=1))
+    for i in range(3):
+        await _seed_metadata(db, f"archived-{i}")
 
-    def spy(collection, calls: list):
+    def spy(collection, calls: list, field: str):
         find = collection.find
 
         def recording_find(query, *args, **kwargs):
-            calls.append(query["_id"]["$in"])
+            calls.append(query[field]["$in"])
             return find(query, *args, **kwargs)
 
         collection.find = recording_find
         collection.find_one = AsyncMock(side_effect=AssertionError("find_one would make the reap N+1"))
+        return find
 
-    scan_batches: list = []
+    metadata_batches: list = []
     lock_batches: list = []
-    spy(db.scans, scan_batches)
-    spy(db.distributed_locks, lock_batches)
+    read_metadata = spy(db.archive_metadata, metadata_batches, "scan_id")
+    spy(db.distributed_locks, lock_batches, "_id")
 
     reaped = await reap_stale_metadata(db, batch_size=2)
+    db.archive_metadata.find = read_metadata
 
     assert reaped == 5
-    assert scan_batches == [["scan-0", "scan-1"], ["scan-2", "scan-3"], ["scan-4"]]
+    assert metadata_batches == [["scan-0", "scan-1"], ["scan-2", "scan-3"], ["scan-4"]]
     assert lock_batches == [
         ["restore:scan-0", "restore:scan-1"],
         ["restore:scan-2", "restore:scan-3"],
         ["restore:scan-4"],
     ]
-    assert await _surviving_metadata(db) == []
+    assert await _surviving_metadata(db) == ["archived-0", "archived-1", "archived-2"]
 
 
 @pytest.mark.asyncio

@@ -119,6 +119,16 @@ def _bson_type_name(value: Any) -> str:
     return "object"
 
 
+_NUMBER_TYPES = frozenset({"int", "double"})
+
+
+def _matches_type(value: Any, present: bool, wanted: str | list[str]) -> bool:
+    """A missing field has no type, while a stored null is of type null."""
+    aliases = {wanted} if isinstance(wanted, str) else set(wanted)
+    name = _bson_type_name(value)
+    return (value is not None or present) and (name in aliases or ("number" in aliases and name in _NUMBER_TYPES))
+
+
 def _bson_sort_key(value: Any) -> tuple[int, Any]:
     """Mongo orders across BSON types instead of refusing to compare them: missing < string < date ascending."""
     rank = _bson_type_rank(value)
@@ -256,7 +266,7 @@ def _in_allowed(value: Any, allowed: list) -> bool:
 _PULL_ELEMENT = "__element__"
 _MATCH_TOP_LEVEL_OPERATORS = frozenset({"$or", "$and", "$nor", "$expr"})
 _MATCH_FIELD_OPERATORS = frozenset(
-    {"$exists", "$eq", "$in", "$nin", "$ne", "$regex", "$options", "$elemMatch", "$size", "$all", *_CMP}
+    {"$exists", "$type", "$eq", "$in", "$nin", "$ne", "$regex", "$options", "$elemMatch", "$size", "$all", *_CMP}
 )
 
 
@@ -363,6 +373,8 @@ def _match_doc(doc: dict, query: dict) -> bool:
             field_present = _resolve_dotted(doc, key) is not None or key in doc
             if bool(condition["$exists"]) != field_present:
                 return False
+        if "$type" in condition and not _matches_type(value, key in doc, condition["$type"]):
+            return False
         # $eq/$in/$nin/$ne compare an array field as a whole and element by element.
         if "$eq" in condition and not _matches_value(value, condition["$eq"]):
             return False
