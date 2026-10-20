@@ -33,7 +33,6 @@ from app.core.constants import (
     severity_rank_expr,
 )
 from app.core.permissions import Permissions
-from app.models.dependency import Dependency
 from app.models.finding import FindingType
 from app.models.finding_record import FindingRecord
 from app.models.user import User
@@ -116,14 +115,14 @@ async def _dependency_ids_by_vulnerability(
 
 
 # Every other result field carries the dependency's own field of the same name.
-_DEPENDENCY_FIELDS = DependencySearchResult.model_fields.keys() - {"project_name", "package"}
+_DEPENDENCY_PROJECTION = dict.fromkeys(
+    [*DependencySearchResult.model_fields.keys() - {"project_name", "package"}, "name"], 1
+)
 
 
-def _dep_to_search_result(dep: Dependency, project_name_map: dict[str, str]) -> DependencySearchResult:
+def _dep_to_search_result(dep: dict[str, Any], project_name_map: dict[str, str]) -> DependencySearchResult:
     return DependencySearchResult(
-        **dep.model_dump(include=_DEPENDENCY_FIELDS),
-        project_name=project_name_map.get(dep.project_id, "Unknown"),
-        package=dep.name,
+        **dep, project_name=project_name_map.get(dep["project_id"], "Unknown"), package=dep["name"]
     )
 
 
@@ -185,15 +184,16 @@ async def search_dependencies_advanced(
 
     if has_vulnerabilities is None:
         total_count = await dep_repo.count(query)
-        rows = await dep_repo.aggregate(
-            [{"$match": query}, *ordered, {"$skip": skip}, {"$limit": limit}, {"$project": {"_folded": 0}}], hint=hint
+        dependencies = await dep_repo.aggregate(
+            [{"$match": query}, *ordered, {"$skip": skip}, {"$limit": limit}, {"$project": _DEPENDENCY_PROJECTION}],
+            hint=hint,
         )
-        dependencies = [Dependency(**row) for row in rows]
     else:
         matching = await _dependency_ids_by_vulnerability(db, query, has_vulnerabilities, ordered, hint)
         total_count = len(matching)
         page = matching[skip : skip + limit]
-        by_id = {dep.id: dep for dep in await dep_repo.find_many({"_id": {"$in": page}}, limit=limit)}
+        rows = await dep_repo.find_many_raw({"_id": {"$in": page}}, limit=limit, projection=_DEPENDENCY_PROJECTION)
+        by_id = {dep["_id"]: dep for dep in rows}
         dependencies = [by_id[dep_id] for dep_id in page if dep_id in by_id]
 
     results = [_dep_to_search_result(dep, project_name_map) for dep in dependencies]

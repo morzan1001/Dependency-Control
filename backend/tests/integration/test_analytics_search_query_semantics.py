@@ -694,3 +694,53 @@ async def test_vulnerability_search_sorts_by_the_project_name(client, db, two_pr
     pages = await _pages(client, _VULN_SEARCH_PATH, two_projects, params, 2)
 
     assert [row["project_name"] for page in pages for row in page["items"]] == expected
+
+
+_DEPENDENCY_DETAILS = {
+    "license": "MIT",
+    "license_url": "https://opensource.org/licenses/MIT",
+    "purl": "pkg:npm/full-lib@1.0.0",
+    "source_type": "application",
+    "source_target": "package-lock.json",
+    "layer_digest": "sha256:abc",
+    "found_by": "javascript-lock-cataloger",
+    "locations": ["/app/package-lock.json"],
+    "cpes": ["cpe:2.3:a:full:lib:1.0.0:*:*:*:*:*:*:*"],
+    "description": "a full library",
+    "author": "Ada",
+    "publisher": "Acme",
+    "group": "acme",
+    "homepage": "https://full-lib.dev",
+    "repository_url": "https://github.com/acme/full-lib",
+    "download_url": "https://registry.npmjs.org/full-lib/-/full-lib-1.0.0.tgz",
+    "hashes": {"sha256": "abc"},
+    "properties": {"syft:package:foundBy": "javascript-lock-cataloger"},
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("has_vulnerabilities", [None, "true"])
+async def test_dependency_search_returns_every_field_of_the_dependency(client, db, scanned, has_vulnerabilities):
+    await db.dependencies.insert_one(
+        {**_dependency("full-lib"), **_DEPENDENCY_DETAILS, "parent_components": ["root"], "scope": "runtime"}
+    )
+    await db.findings.insert_one(_vulnerability("full-lib"))
+    params = {"q": "full-lib"}
+    if has_vulnerabilities:
+        params["has_vulnerabilities"] = has_vulnerabilities
+
+    resp = await client.get(_SEARCH_PATH, params=params, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items"] == [
+        {
+            "project_id": "p",
+            "project_name": "project-p",
+            "package": "full-lib",
+            "version": "1.0.0",
+            "type": "npm",
+            "direct": True,
+            **_DEPENDENCY_DETAILS,
+        }
+    ]
