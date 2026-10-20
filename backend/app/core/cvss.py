@@ -79,17 +79,10 @@ def _library_base_score(vector_class: type[CVSS2 | CVSS4], text: str) -> float |
         return None
 
 
-def cvss4_base_score(vector: str) -> float | None:
-    text = vector.strip()
-    if not text.startswith(_V4_PREFIX):
-        return None
-    return _library_base_score(CVSS4, text)
-
-
 def cvss_base_score(vector: str) -> float | None:
     text = vector.strip()
     if text.startswith(_V4_PREFIX):
-        return cvss4_base_score(text)
+        return _library_base_score(CVSS4, text)
     # A v2 vector carries no version prefix in OSV or NVD.
     if text.startswith(("AV:", _V2_PREFIX)):
         return _library_base_score(CVSS2, text.removeprefix(_V2_PREFIX))

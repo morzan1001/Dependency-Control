@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.core.cvss import cvss3_base_score, cvss4_base_score, cvss_base_score
+from app.core.cvss import cvss3_base_score, cvss_base_score
 
 
 @pytest.mark.parametrize(
@@ -81,7 +81,7 @@ _NVD_TAILED_V4 = (
     ],
 )
 def test_v4_scores_match_the_published_base_score(vector, expected):
-    assert cvss4_base_score(vector) == pytest.approx(expected)
+    assert cvss_base_score(vector) == pytest.approx(expected)
 
 
 @pytest.mark.parametrize(
@@ -90,18 +90,17 @@ def test_v4_scores_match_the_published_base_score(vector, expected):
         "CVSS:4.0/AV:N/AC:L",  # truncated, missing mandatory metrics
         "CVSS:4.0/AV:Z/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",  # unknown metric value
         "CVSS:4.0/",
-        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",  # v3 is not this function's job
         "",
     ],
 )
-def test_v4_adapter_returns_none_instead_of_raising(vector):
+def test_an_unscoreable_v4_vector_returns_none_instead_of_raising(vector):
     """`cvss` raises seven different exception types; _parse_cvss_score's contract is float|None."""
-    assert cvss4_base_score(vector) is None
+    assert cvss_base_score(vector) is None
 
 
-def test_v4_adapter_keeps_this_module_s_whitespace_tolerance():
+def test_v4_scoring_keeps_this_module_s_whitespace_tolerance():
     """`cvss` rejects a padded vector outright; the v3 path has always tolerated one."""
-    assert cvss4_base_score("  CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N  ") == pytest.approx(8.2)
+    assert cvss_base_score("  CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N  ") == pytest.approx(8.2)
 
 
 @pytest.mark.parametrize(
