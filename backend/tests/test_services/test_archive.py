@@ -189,6 +189,19 @@ async def test_archive_key_carries_the_archive_time(archive_env):
 
 
 @pytest.mark.asyncio
+async def test_archive_key_starts_with_the_configured_prefix(archive_env, monkeypatch):
+    monkeypatch.setattr("app.core.s3.settings.S3_KEY_PREFIX", "dc-a")
+    db = _make_mock_db(scan_doc=_make_scan_doc())
+
+    with _patch_repos()():
+        result = await archive_scan(db, "scan-1")
+
+    assert result is not None
+    assert result.s3_key.startswith("dc-a/proj-1/scan-1-")
+    assert set(archive_env.objects) == {result.s3_key}
+
+
+@pytest.mark.asyncio
 async def test_archive_scan_includes_crypto_assets(archive_env):
     scan_doc = _make_scan_doc()
     crypto_assets = [

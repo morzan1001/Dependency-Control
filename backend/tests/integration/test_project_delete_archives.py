@@ -17,7 +17,7 @@ def _archive(project_id: str, scan_id: str) -> dict:
         "_id": f"meta-{scan_id}",
         "project_id": project_id,
         "scan_id": scan_id,
-        "s3_key": f"{project_id}/{scan_id}.json.gz",
+        "s3_key": f"{project_id}/{scan_id}-1700000000.bundle",
         "s3_bucket": "archives",
         "archived_at": datetime.now(timezone.utc) - timedelta(days=30),
     }
@@ -31,8 +31,8 @@ async def test_project_delete_lets_the_reaper_remove_its_archive_bundles(client,
     bundles = [{"Key": meta["s3_key"], "LastModified": old_enough} async for meta in db.archive_metadata.find()]
     reaped: list[str] = []
 
-    async def list_objects():
-        return bundles
+    async def list_objects(_prefix=""):
+        yield bundles
 
     async def delete_object(key):
         reaped.append(key)
@@ -45,5 +45,5 @@ async def test_project_delete_lets_the_reaper_remove_its_archive_bundles(client,
     assert resp.status_code == 204
     await _reap_orphan_s3_objects(db)
 
-    assert reaped == [f"{_DELETED_PROJECT}/scan-archived.json.gz"]
+    assert reaped == [f"{_DELETED_PROJECT}/scan-archived-1700000000.bundle"]
     assert await db.archive_metadata.distinct("project_id") == [_SURVIVING_PROJECT]

@@ -305,6 +305,8 @@ spec:
               value: "{{ .Values.archiving.s3.region }}"
             - name: S3_USE_SSL
               value: "{{ .Values.archiving.s3.useSSL }}"
+            - name: S3_KEY_PREFIX
+              value: "{{ .Values.archiving.s3.keyPrefix }}"
             {{- $s3SecretName := .Values.archiving.s3.existingSecret | default (printf "%s-s3-credentials" (include "dependency-control.fullname" .)) }}
             - name: S3_ACCESS_KEY
               valueFrom:

@@ -46,6 +46,11 @@ def _bucket(bucket: str | None) -> str:
     return bucket or settings.S3_BUCKET_NAME
 
 
+def archive_key_prefix() -> str:
+    prefix = settings.S3_KEY_PREFIX.strip("/")
+    return f"{prefix}/" if prefix else ""
+
+
 async def ensure_bucket_exists() -> None:
     if not is_archive_enabled():
         return
@@ -127,20 +132,14 @@ async def delete_object(key: str, *, bucket: str | None = None) -> None:
         await s3.delete_object(Bucket=_bucket(bucket), Key=key)
 
 
-async def list_objects(prefix: str = "", *, bucket: str | None = None) -> list[dict[str, Any]]:
-    b = _bucket(bucket)
-    objects: list[dict[str, Any]] = []
-    token: str | None = None
+async def list_objects(prefix: str = "", *, bucket: str | None = None) -> AsyncIterator[list[dict[str, Any]]]:
+    """One listing page, at most 1000 objects, at a time."""
+    kwargs: dict[str, Any] = {"Bucket": _bucket(bucket), "Prefix": prefix}
     async with get_s3_client() as s3:
         while True:
-            kwargs: dict[str, Any] = {"Bucket": b, "Prefix": prefix}
-            if token is not None:
-                kwargs["ContinuationToken"] = token
             response = await s3.list_objects_v2(**kwargs)
-            objects.extend(response.get("Contents", []))
-            if not response.get("IsTruncated"):
-                break
+            yield response.get("Contents", [])
             token = response.get("NextContinuationToken")
-            if not token:
-                break
-    return objects
+            if not response.get("IsTruncated") or not token:
+                return
+            kwargs["ContinuationToken"] = token

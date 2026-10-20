@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from collections import Counter
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable
 from datetime import datetime, timedelta, timezone
@@ -13,6 +14,7 @@ from app.core.cache import update_cache_stats
 from app.core.config import settings
 from app.core.constants import (
     ARCHIVE_BATCH_SIZE,
+    ARCHIVE_KEY_PATTERN,
     ORPHAN_MIN_AGE_HOURS,
     ARCHIVE_RESTORE_LOCK_TEMPLATE,
     HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS,
@@ -41,7 +43,7 @@ from app.core.metrics import (
     update_archive_stats,
     update_db_stats,
 )
-from app.core.s3 import delete_object, is_archive_enabled, list_objects
+from app.core.s3 import archive_key_prefix, delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
 from app.models.project import Project
 from app.repositories.distributed_locks import DistributedLocksRepository, LockLost, new_lock_holder, run_holding_lock
@@ -249,40 +251,47 @@ async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) ->
     return sum([await _reap_batch(batch) async for batch in abatched(metas, batch_size)])
 
 
+async def _reap_orphan_page(db: Any, page: list[dict[str, Any]], bundle_key: re.Pattern[str], cutoff: datetime) -> int:
+    scan_id_by_key = {
+        obj["Key"]: match["scan_id"]
+        for obj in page
+        if (match := bundle_key.fullmatch(obj.get("Key") or "")) and obj.get("LastModified", cutoff) <= cutoff
+    }
+    if not scan_id_by_key:
+        return 0
+    known = {
+        meta.get("s3_key")
+        async for meta in db.archive_metadata.find(
+            {"scan_id": {"$in": sorted(set(scan_id_by_key.values()))}}, {"s3_key": 1}
+        )
+    }
+    deleted = 0
+    for key in sorted(scan_id_by_key.keys() - known):
+        try:
+            await delete_object(key)
+            deleted += 1
+            archive_housekeeping_scans_processed_total.labels(status="orphan_reaped").inc()
+            logger.info("Reaped orphan S3 object: %s", key)
+        except Exception as e:
+            logger.warning("Failed to delete orphan %s: %s", key, e)
+    return deleted
+
+
 async def _reap_orphan_s3_objects(db: Any) -> int:
     if not is_archive_enabled():
         return 0
 
     await _reap_stale_metadata(db)
 
-    try:
-        all_objects = await list_objects()
-    except Exception as e:
-        logger.warning(f"Orphan reaper: list_objects failed: {e}")
-        return 0
-
-    known_keys: set[str] = set()
-    async for meta in db.archive_metadata.find({}, {"s3_key": 1}):
-        key = meta.get("s3_key")
-        if key:
-            known_keys.add(key)
-
+    prefix = archive_key_prefix()
+    bundle_key = re.compile(re.escape(prefix) + ARCHIVE_KEY_PATTERN)
     cutoff = datetime.now(timezone.utc) - timedelta(hours=ORPHAN_MIN_AGE_HOURS)
     deleted = 0
-    for obj in all_objects:
-        key = obj.get("Key")
-        last_mod = obj.get("LastModified")
-        if not key or key in known_keys:
-            continue
-        if last_mod and last_mod > cutoff:
-            continue
-        try:
-            await delete_object(key)
-            deleted += 1
-            archive_housekeeping_scans_processed_total.labels(status="orphan_reaped").inc()
-            logger.info(f"Reaped orphan S3 object: {key}")
-        except Exception as e:
-            logger.warning(f"Failed to delete orphan {key}: {e}")
+    try:
+        async for page in list_objects(prefix):
+            deleted += await _reap_orphan_page(db, page, bundle_key, cutoff)
+    except Exception as e:
+        logger.warning("Orphan reaper stopped: %s", e)
     return deleted
 
 

@@ -38,6 +38,7 @@ from app.core.metrics import (
     count_archive_failure,
 )
 from app.core.s3 import (
+    archive_key_prefix,
     delete_object,
     download_stream,
     is_archive_enabled,
@@ -371,7 +372,9 @@ async def archive_scan(
 
         project_id = scan_doc["project_id"]
         archived_at_unix = int(archived_at.timestamp())
-        s3_key = ARCHIVE_PATH_TEMPLATE.format(project_id=project_id, scan_id=scan_id, archived_at_unix=archived_at_unix)
+        s3_key = archive_key_prefix() + ARCHIVE_PATH_TEMPLATE.format(
+            project_id=project_id, scan_id=scan_id, archived_at_unix=archived_at_unix
+        )
 
         renew_lock = partial(lock_repo.renew_lock, lock_name, holder, _ARCHIVE_LOCK_TTL_SECONDS)
         start_time = time.monotonic()

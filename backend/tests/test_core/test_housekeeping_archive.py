@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -365,46 +366,111 @@ async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch
     )
 
 
-@pytest.mark.asyncio
-async def test_reap_orphan_s3_objects_deletes_only_old_unknown_keys(monkeypatch):
-    from datetime import datetime, timedelta, timezone
+_OLD = datetime.now(timezone.utc) - timedelta(hours=48)
+_RECENT = datetime.now(timezone.utc) - timedelta(hours=2)
 
+
+async def _reap_listing(monkeypatch, db, *pages, prefix: str = "") -> tuple[int, list[str], list[str]]:
     from app.core.housekeeping import _reap_orphan_s3_objects
 
-    now = datetime.now(timezone.utc)
-    old_time = now - timedelta(hours=48)
-    recent_time = now - timedelta(hours=2)
+    listed_prefixes: list[str] = []
+    deleted: list[str] = []
 
-    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
-    monkeypatch.setattr(
-        "app.core.housekeeping.list_objects",
-        AsyncMock(
-            return_value=[
-                {"Key": "p1/scan-orphan-old.bundle", "Size": 100, "LastModified": old_time},
-                {"Key": "p1/scan-orphan-recent.bundle", "Size": 100, "LastModified": recent_time},
-                {"Key": "p1/scan-known.bundle", "Size": 100, "LastModified": old_time},
-            ]
-        ),
+    async def list_objects(prefix=""):
+        listed_prefixes.append(prefix)
+        for page in pages:
+            yield [{"Key": key, "Size": 1, "LastModified": modified} for key, modified in page]
+
+    async def delete_object(key, **_kwargs):
+        deleted.append(key)
+
+    monkeypatch.setattr(f"{MODULE}.is_archive_enabled", lambda: True)
+    monkeypatch.setattr(f"{MODULE}.list_objects", list_objects)
+    monkeypatch.setattr(f"{MODULE}.delete_object", delete_object)
+    monkeypatch.setattr("app.core.s3.settings", SimpleNamespace(S3_KEY_PREFIX=prefix))
+    reaped = await _reap_orphan_s3_objects(db)
+    return reaped, sorted(deleted), listed_prefixes
+
+
+async def _seed_bundle_metadata(db, scan_id: str, s3_key: str) -> None:
+    await db.archive_metadata.insert_one(
+        _make_archive_metadata(scan_id).model_copy(update={"s3_key": s3_key}).model_dump(by_alias=True)
     )
 
-    delete_calls: list[str] = []
 
-    async def fake_delete(key, **kw):
-        delete_calls.append(key)
+@pytest.mark.asyncio
+async def test_reap_orphan_s3_objects_deletes_only_old_unknown_bundles(monkeypatch):
+    db = FakeDatabase()
+    await _seed_bundle_metadata(db, "scan-known", "p1/scan-known-1700000500.bundle")
 
-    monkeypatch.setattr("app.core.housekeeping.delete_object", fake_delete)
+    reaped, deleted, _ = await _reap_listing(
+        monkeypatch,
+        db,
+        [
+            ("p1/scan-orphan-1700000000.bundle", _OLD),
+            ("p1/scan-fresh-1700000000.bundle", _RECENT),
+            ("p1/scan-known-1700000500.bundle", _OLD),
+            ("p1/scan-known-1700000000.bundle", _OLD),
+        ],
+    )
 
-    db = MagicMock()
+    assert reaped == 2
+    assert deleted == ["p1/scan-known-1700000000.bundle", "p1/scan-orphan-1700000000.bundle"]
 
-    async def metadata_cursor(*_args, **_kwargs):
-        yield {"s3_key": "p1/scan-known.bundle"}
 
-    db.archive_metadata.find = lambda *a, **kw: metadata_cursor()
+@pytest.mark.asyncio
+async def test_reap_orphan_s3_objects_spares_every_key_that_is_not_one_of_its_bundles(monkeypatch):
+    reaped, deleted, _ = await _reap_listing(
+        monkeypatch,
+        FakeDatabase(),
+        [
+            ("backups/mongo-1700000000.tar.gz", _OLD),
+            ("p1/notes.txt", _OLD),
+            ("p1/scan-legacy.bundle", _OLD),
+            ("other-dc/p1/scan-x-1700000000.bundle", _OLD),
+            ("scan-x-1700000000.bundle", _OLD),
+        ],
+    )
 
-    reaped = await _reap_orphan_s3_objects(db)
+    assert (reaped, deleted) == (0, [])
 
-    assert reaped == 1
-    assert delete_calls == ["p1/scan-orphan-old.bundle"]
+
+@pytest.mark.asyncio
+async def test_a_key_prefix_confines_the_reaper_to_its_own_instance(monkeypatch):
+    reaped, deleted, listed_prefixes = await _reap_listing(
+        monkeypatch,
+        FakeDatabase(),
+        [("dc-a/p1/scan-x-1700000000.bundle", _OLD), ("p1/scan-y-1700000000.bundle", _OLD)],
+        prefix="/dc-a/",
+    )
+
+    assert listed_prefixes == ["dc-a/"]
+    assert (reaped, deleted) == (1, ["dc-a/p1/scan-x-1700000000.bundle"])
+
+
+@pytest.mark.asyncio
+async def test_reap_orphan_s3_objects_looks_up_each_page_by_its_scan_ids(monkeypatch):
+    db = FakeDatabase()
+    await _seed_bundle_metadata(db, "scan-a", "p1/scan-a-1.bundle")
+    monkeypatch.setattr(f"{MODULE}._reap_stale_metadata", AsyncMock(return_value=0))
+    lookups: list[dict] = []
+    find = db.archive_metadata.find
+
+    def recording_find(query, *args, **kwargs):
+        lookups.append(query)
+        return find(query, *args, **kwargs)
+
+    monkeypatch.setattr(db.archive_metadata, "find", recording_find)
+
+    reaped, deleted, _ = await _reap_listing(
+        monkeypatch,
+        db,
+        [("p1/scan-a-1.bundle", _OLD), ("p1/scan-b-1.bundle", _OLD)],
+        [("p1/scan-c-1.bundle", _OLD)],
+    )
+
+    assert lookups == [{"scan_id": {"$in": ["scan-a", "scan-b"]}}, {"scan_id": {"$in": ["scan-c"]}}]
+    assert (reaped, deleted) == (2, ["p1/scan-b-1.bundle", "p1/scan-c-1.bundle"])
 
 
 @pytest.mark.asyncio
@@ -425,18 +491,21 @@ async def test_reap_orphan_skips_when_archive_disabled(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reap_orphan_tolerates_list_failure(monkeypatch):
+async def test_reap_orphan_tolerates_list_failure(monkeypatch, caplog):
     from app.core.housekeeping import _reap_orphan_s3_objects
 
-    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
-    monkeypatch.setattr(
-        "app.core.housekeeping.list_objects",
-        AsyncMock(side_effect=RuntimeError("S3 unavailable")),
-    )
+    async def list_objects(_prefix=""):
+        raise RuntimeError("S3 unavailable")
+        yield []
 
-    db = MagicMock()
-    reaped = await _reap_orphan_s3_objects(db)
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
+    monkeypatch.setattr("app.core.housekeeping.list_objects", list_objects)
+
+    with caplog.at_level(logging.WARNING, logger=MODULE):
+        reaped = await _reap_orphan_s3_objects(FakeDatabase())
+
     assert reaped == 0
+    assert [record.getMessage() for record in caplog.records] == ["Orphan reaper stopped: S3 unavailable"]
 
 
 _ARCHIVED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
@@ -605,23 +674,12 @@ async def test_reap_orphan_runs_stale_metadata_pass_first(monkeypatch):
 
     async def fake_list(*_a, **_kw):
         call_order.append("list_objects")
-        return []
+        yield []
 
     monkeypatch.setattr("app.core.housekeeping._reap_stale_metadata", fake_stale_reap)
     monkeypatch.setattr("app.core.housekeeping.list_objects", fake_list)
 
-    db = MagicMock()
-
-    class _EmptyAsyncGen:
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            raise StopAsyncIteration
-
-    db.archive_metadata.find = lambda *a, **kw: _EmptyAsyncGen()
-
-    await _reap_orphan_s3_objects(db)
+    await _reap_orphan_s3_objects(FakeDatabase())
 
     assert call_order == ["stale_metadata", "list_objects"]
 

@@ -293,6 +293,10 @@
               "type": "boolean",
               "description": "Use SSL/TLS for S3 connections"
             },
+            "keyPrefix": {
+              "type": "string",
+              "description": "Key prefix for a bucket shared with other writers; the orphan reaper only touches bundles under it"
+            },
             "accessKey": {
               "type": "string",
               "description": "S3 access key - leave empty if using existingSecret"

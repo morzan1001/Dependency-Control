@@ -167,7 +167,7 @@ def archive_env(monkeypatch):
     monkeypatch.setattr("app.core.s3.is_archive_enabled", lambda: True)
     monkeypatch.setattr("app.services.archive.is_archive_enabled", lambda: True)
     monkeypatch.setattr("app.services.archive.is_encryption_enabled", lambda: False)
-    monkeypatch.setattr("app.core.s3.settings", SimpleNamespace(S3_BUCKET_NAME="test-bucket"))
+    monkeypatch.setattr("app.core.s3.settings", SimpleNamespace(S3_BUCKET_NAME="test-bucket", S3_KEY_PREFIX=""))
     return fake
 
 

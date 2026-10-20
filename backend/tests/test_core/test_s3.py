@@ -1,6 +1,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.core.s3 import (
     delete_object,
     ensure_bucket_exists,
@@ -137,3 +139,16 @@ class TestDeleteObject:
             Bucket="dc-archives",
             Key="proj-1/scan-1.json.gz",
         )
+
+
+class TestArchiveKeyPrefix:
+    @pytest.mark.parametrize(
+        ("configured", "prefix"),
+        [("", ""), ("dc-a", "dc-a/"), ("/dc-a/", "dc-a/"), ("shared/dc-a", "shared/dc-a/")],
+    )
+    def test_the_configured_prefix_becomes_one_leading_path(self, configured, prefix):
+        from app.core.s3 import archive_key_prefix
+
+        with patch(f"{MODULE}.settings") as mock_settings:
+            mock_settings.S3_KEY_PREFIX = configured
+            assert archive_key_prefix() == prefix
