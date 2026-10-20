@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.api.v1.helpers.callgraph import parse_generic_format
+from app.core.constants import HIGH_RISK_SCORE_THRESHOLD
 from app.models.stats import Stats
 from app.schemas.projections import CallgraphMinimal
 from app.schemas.enrichment import EPSSData, KEVEntry
@@ -208,9 +209,25 @@ class TestBuildEpssKevSummaryRisk:
         assert cve["version"] == "3.0.0"
 
     def test_high_risk_cve_at_threshold_excluded(self):
-        findings = [_make_finding(risk_score=70.0)]
+        findings = [_make_finding(risk_score=HIGH_RISK_SCORE_THRESHOLD)]
         result = build_epss_kev_summary(findings, {})
         assert len(result["high_risk_cves"]) == 0
+
+    def test_a_critical_likely_exploited_cve_is_high_risk_without_kev(self):
+        """CVE-2021-44228's CVSS 10 and a 0.94 EPSS score 64.7, above any cut-off KEV alone could clear."""
+        entry = {"id": "CVE-2021-44228", "severity": "CRITICAL", "cvss_score": 10.0}
+        finding = {"component": "log4j-core", "version": "2.14.1", "details": {"vulnerabilities": [entry]}}
+        enrichments = {"CVE-2021-44228": _build_enrichment("CVE-2021-44228", None, _epss("CVE-2021-44228", 0.94))}
+        apply_enrichments(finding["details"], enrichments)
+
+        result = build_epss_kev_summary([finding], enrichments)
+
+        assert [(c["cve"], c["risk_score"], c["in_kev"]) for c in result["high_risk_cves"]] == [
+            ("CVE-2021-44228", 64.7, False)
+        ]
+
+    def test_the_summary_names_the_threshold_its_list_was_cut_at(self):
+        assert build_epss_kev_summary([], {})["high_risk_threshold"] == HIGH_RISK_SCORE_THRESHOLD
 
     def test_high_risk_cves_sorted_descending(self):
         findings = [

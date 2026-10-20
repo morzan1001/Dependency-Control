@@ -53,6 +53,7 @@ class EPSSKEVSummary(TypedDict):
     # high_risk_cves is the top-scoring sample; high_risk_total is how many cleared the threshold.
     high_risk_cves: list[HighRiskCVE]
     high_risk_total: int
+    high_risk_threshold: float
     timestamp: str
 
 

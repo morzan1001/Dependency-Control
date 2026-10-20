@@ -1,5 +1,6 @@
 import pytest
 
+from app.core.constants import EPSS_HIGH_THRESHOLD, HIGH_RISK_SCORE_THRESHOLD
 from app.core.risk_scoring import calculate_exploit_maturity
 from app.models.finding import Severity
 from app.services.enrichment.scoring import (
@@ -45,6 +46,11 @@ class TestCalculateRiskScore:
     )
     def test_score_for_cvss_and_kev_inputs(self, cvss, epss, kev, ransomware, expected):
         assert calculate_risk_score(cvss, epss, kev, ransomware) == expected
+
+    def test_a_critical_cve_at_the_epss_high_threshold_sits_on_the_high_risk_cut_off(self):
+        """Past the cut-off, KEV is not needed: the most a CVE without it scores is 65."""
+        assert calculate_risk_score(9.0, EPSS_HIGH_THRESHOLD, False, False) == pytest.approx(HIGH_RISK_SCORE_THRESHOLD)
+        assert calculate_risk_score(10.0, 1.0, False, False) > HIGH_RISK_SCORE_THRESHOLD
 
     def test_ransomware_adds_5_on_top_of_kev(self):
         score_kev = calculate_risk_score(None, None, True, False)

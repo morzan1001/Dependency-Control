@@ -149,6 +149,7 @@ def build_epss_kev_summary(
         "kev_details": [],
         "high_risk_cves": [],
         "high_risk_total": 0,
+        "high_risk_threshold": HIGH_RISK_SCORE_THRESHOLD,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
