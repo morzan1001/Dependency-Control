@@ -28,16 +28,15 @@ describe("FindingTypeBadge", () => {
     expect(screen.queryByText(type)).not.toBeInTheDocument();
   });
 
-  it("truncates a long label within its cell and keeps all of it in the title, like other truncated table text", () => {
+  it("wraps a long label on its word boundaries within its cell instead of cutting it off", () => {
     render(<FindingTypeBadge type="crypto_cert_validity_too_long" />);
 
     const label = screen.getByText("Certificate validity too long");
-    expect(label).toHaveClass("truncate");
+    expect(label).not.toHaveClass("truncate");
     expect(label.parentElement).toHaveClass("max-w-full");
-    expect(label.parentElement).toHaveAttribute("title", "Certificate validity too long");
   });
 
-  it("keeps its icon whole beside a truncated label", () => {
+  it("keeps its icon whole beside a wrapped label", () => {
     render(<FindingTypeBadge type="vulnerability" />);
 
     expect(screen.getByText("Vulnerability").parentElement?.querySelector("svg")).toHaveClass("shrink-0");

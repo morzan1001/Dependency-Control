@@ -49,9 +49,9 @@ describe("FindingDetailsModal header", () => {
   it("names the finding's type with the findings table's badge, like the other types beside it", () => {
     renderModal(finding({ type: "crypto_weak_algorithm", details: { additional_finding_types: [{ type: "outdated", severity: "INFO" }] } }));
 
-    expect(screen.getByText("Weak algorithm")).toHaveClass("truncate");
+    expect(screen.getByText("Weak algorithm")).toHaveClass("wrap-anywhere");
     expect(screen.queryByText("crypto_weak_algorithm")).not.toBeInTheDocument();
-    expect(screen.getByText("Outdated")).toHaveClass("truncate");
+    expect(screen.getByText("Outdated")).toHaveClass("wrap-anywhere");
   });
 });
 

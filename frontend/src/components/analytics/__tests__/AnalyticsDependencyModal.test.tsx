@@ -373,7 +373,7 @@ describe("AnalyticsDependencyModal findings list", () => {
 
     renderFindings();
 
-    expect(screen.getByText("Certificate expired")).toHaveClass("truncate");
+    expect(screen.getByText("Certificate expired")).toHaveClass("wrap-anywhere");
     expect(screen.queryByText("crypto_cert_expired")).not.toBeInTheDocument();
     expect(screen.getByText("Type", { selector: "th" })).toHaveClass("w-[160px]");
   });

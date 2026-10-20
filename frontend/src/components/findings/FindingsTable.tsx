@@ -1,5 +1,5 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { scanApi } from '@/api/scans'
 import { Finding } from '@/types/scan'
@@ -137,6 +137,18 @@ function TypeBadges({ finding }: TypeBadgesProps) {
             )}
         </div>
     )
+}
+
+function ScannerNames({ scanners }: Readonly<{ scanners?: string[] }>) {
+    const names = scanners?.join(', ')
+    if (!names) return 'Unknown'
+    // A snake_case analyzer name offers the browser no break point of its own.
+    return names.split(/(?<=_)/).map((part, i, parts) => (
+        <Fragment key={parts.slice(0, i).join('')}>
+            {i > 0 && <wbr />}
+            {part}
+        </Fragment>
+    ))
 }
 
 interface FindingsTableProps {
@@ -349,7 +361,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                         </div>
                                     </TableCell>
                                     <TableCell className="p-4 align-middle text-sm text-muted-foreground wrap-anywhere">
-                                        {finding.scanners?.join(', ') || 'Unknown'}
+                                        <ScannerNames scanners={finding.scanners} />
                                     </TableCell>
                                 </TableRow>
                             )
