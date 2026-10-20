@@ -33,14 +33,13 @@ async def store_scan_dependencies(
     project_id: str,
     scan_id: str,
     dep_repo: DependencyRepository,
-    copies: Mapping[CopyKey, dict[str, Any]] | None = None,
+    copies: Mapping[CopyKey, dict[str, Any]],
 ) -> int | None:
     """Writes nothing when an SBOM failed (None) so a re-run cannot replace a complete inventory with a partial one."""
     sboms = [sbom for sbom in parsed_sboms if sbom is not None]
     if not sboms or len(sboms) < len(parsed_sboms):
         return None
     merged, _ = merge_duplicate_dependencies([dep for sbom in sboms for dep in sbom.dependencies])
-    copies = copies or {}
     # Only rows no later write touched are deleted, so a failed or overlapping store keeps the newest rows.
     written_at = datetime.now(timezone.utc)
     fresh = not await dep_repo.exists({"scan_id": scan_id})

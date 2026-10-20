@@ -78,7 +78,7 @@ async def test_duplicate_across_sboms_is_merged_not_index_dropped(db):
     await create_indexes(db)
 
     inserted = await store_scan_dependencies(
-        [parse_sbom(_SBOM_APP_LAYER), parse_sbom(_SBOM_BASE_LAYER)], _PROJECT_ID, _SCAN_ID, DependencyRepository(db)
+        [parse_sbom(_SBOM_APP_LAYER), parse_sbom(_SBOM_BASE_LAYER)], _PROJECT_ID, _SCAN_ID, DependencyRepository(db), {}
     )
 
     assert inserted == 1, "the two SBOMs describe one package; it must be stored once"
@@ -102,7 +102,7 @@ async def test_the_same_sbom_uploaded_twice_stores_one_inventory(db):
     await create_indexes(db)
 
     inserted = await store_scan_dependencies(
-        [parse_sbom(_SBOM_APP_LAYER), parse_sbom(_SBOM_APP_LAYER)], _PROJECT_ID, _SCAN_ID, DependencyRepository(db)
+        [parse_sbom(_SBOM_APP_LAYER), parse_sbom(_SBOM_APP_LAYER)], _PROJECT_ID, _SCAN_ID, DependencyRepository(db), {}
     )
 
     assert inserted == 1
@@ -120,7 +120,7 @@ async def test_a_component_without_its_own_purl_is_still_merged(db):
     }
 
     inserted = await store_scan_dependencies(
-        [parse_sbom(no_purl), parse_sbom(no_purl)], _PROJECT_ID, _SCAN_ID, DependencyRepository(db)
+        [parse_sbom(no_purl), parse_sbom(no_purl)], _PROJECT_ID, _SCAN_ID, DependencyRepository(db), {}
     )
 
     assert inserted == 1
@@ -153,7 +153,7 @@ async def test_the_store_merges_duplicates_its_caller_did_not(db):
     second = ParsedDependency(name="libssl3", version="3.0.11", purl=_PURL, locations=["/usr/share/doc/libssl3"])
 
     stored = await store_scan_dependencies(
-        [_sbom(first), _sbom(second)], _PROJECT_ID, _SCAN_ID, DependencyRepository(db)
+        [_sbom(first), _sbom(second)], _PROJECT_ID, _SCAN_ID, DependencyRepository(db), {}
     )
 
     assert stored == 1
@@ -178,7 +178,7 @@ async def _inventory(db) -> dict[str, dict]:
 async def test_a_store_that_fails_part_way_keeps_the_previous_inventory(db, monkeypatch):
     await create_indexes(db)
     repo = DependencyRepository(db)
-    await store_scan_dependencies([_sbom(_dep("old-only"), _dep("shared"))], _PROJECT_ID, _SCAN_ID, repo)
+    await store_scan_dependencies([_sbom(_dep("old-only"), _dep("shared"))], _PROJECT_ID, _SCAN_ID, repo, {})
 
     build = dependency_store._parsed_dep_to_dependency
 
@@ -191,7 +191,7 @@ async def test_a_store_that_fails_part_way_keeps_the_previous_inventory(db, monk
     monkeypatch.setattr(dependency_store, "_parsed_dep_to_dependency", fail_on_second_chunk)
     with pytest.raises(ConnectionResetError):
         await store_scan_dependencies(
-            [_sbom(_dep("shared", scope="runtime"), _dep("new-a"), _dep("new-b"))], _PROJECT_ID, _SCAN_ID, repo
+            [_sbom(_dep("shared", scope="runtime"), _dep("new-a"), _dep("new-b"))], _PROJECT_ID, _SCAN_ID, repo, {}
         )
 
     assert sorted(await _inventory(db)) == ["new-a", "old-only", "shared"]
@@ -203,11 +203,13 @@ async def test_a_finished_store_leaves_exactly_the_new_inventory(db):
     await create_indexes(db)
     repo = DependencyRepository(db)
     unidentified = ParsedDependency(name="vendored-blob", version="1.0")
-    await store_scan_dependencies([_sbom(_dep("old-only"), _dep("shared"), unidentified)], _PROJECT_ID, _SCAN_ID, repo)
+    await store_scan_dependencies(
+        [_sbom(_dep("old-only"), _dep("shared"), unidentified)], _PROJECT_ID, _SCAN_ID, repo, {}
+    )
     kept_id = (await _inventory(db))["shared"]["_id"]
 
     stored = await store_scan_dependencies(
-        [_sbom(_dep("shared", scope="runtime"), _dep("new"), unidentified)], _PROJECT_ID, _SCAN_ID, repo
+        [_sbom(_dep("shared", scope="runtime"), _dep("new"), unidentified)], _PROJECT_ID, _SCAN_ID, repo, {}
     )
 
     inventory = await _inventory(db)
@@ -224,8 +226,8 @@ async def test_a_scan_without_rows_takes_inserts_and_a_stored_scan_upserts(db):
     repo = DependencyRepository(db)
     sbom = _sbom(_dep("a"), _dep("b"))
 
-    _, first = await profiled(db, store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo))
-    _, again = await profiled(db, store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo))
+    _, first = await profiled(db, store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo, {}))
+    _, again = await profiled(db, store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo, {}))
 
     assert (inserts_and_upserts(first, "dependencies"), inserts_and_upserts(again, "dependencies")) == ((1, 0), (0, 2))
 
@@ -269,10 +271,10 @@ async def test_a_first_store_that_fails_part_way_is_completed_by_its_retry(db, m
     monkeypatch.setattr(dependency_store, "_DEP_CHUNK_SIZE", 2)
     monkeypatch.setattr(dependency_store, "_parsed_dep_to_dependency", fail_on_second_chunk)
     with pytest.raises(ConnectionResetError):
-        await store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo)
+        await store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo, {})
     monkeypatch.setattr(dependency_store, "_parsed_dep_to_dependency", build)
 
-    stored = await store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo)
+    stored = await store_scan_dependencies([sbom], _PROJECT_ID, _SCAN_ID, repo, {})
 
     assert (stored, sorted(await _inventory(db))) == (3, ["a", "b", "c"])
 
@@ -302,10 +304,10 @@ async def test_overlapping_stores_of_one_scan_leave_the_later_inventory(db, earl
 
     async def later_store():
         await asyncio.sleep(0.01)  # a later millisecond, so the two writes carry distinct markers
-        await store_scan_dependencies([_sbom(*map(_dep, later))], _PROJECT_ID, _SCAN_ID, repo)
+        await store_scan_dependencies([_sbom(*map(_dep, later))], _PROJECT_ID, _SCAN_ID, repo, {})
 
     await asyncio.gather(
-        store_scan_dependencies([_sbom(*map(_dep, earlier))], _PROJECT_ID, _SCAN_ID, repo), later_store()
+        store_scan_dependencies([_sbom(*map(_dep, earlier))], _PROJECT_ID, _SCAN_ID, repo, {}), later_store()
     )
 
     assert sorted(await _inventory(db)) == sorted(later)
@@ -321,7 +323,7 @@ async def test_a_description_past_the_document_limit_is_stored_clipped(db):
     first["description"] = "An async networking library. " * (17 * _MIB // 29 + 1)
     parsed = parse_sbom(sbom)
 
-    stored = await store_scan_dependencies([parsed], _PROJECT_ID, _SCAN_ID, DependencyRepository(db))
+    stored = await store_scan_dependencies([parsed], _PROJECT_ID, _SCAN_ID, DependencyRepository(db), {})
 
     assert stored == len(parsed.dependencies) == await db.dependencies.count_documents({"scan_id": _SCAN_ID})
     row = await db.dependencies.find_one({"scan_id": _SCAN_ID, "name": first["name"]})

@@ -141,7 +141,7 @@ async def test_a_purl_less_operating_system_component_is_a_tree_node(client, db,
         "components": [{"type": "operating-system", "bom-ref": "os-debian", "name": "debian", "version": "12"}],
         "dependencies": [{"ref": "root", "dependsOn": ["os-debian"]}],
     }
-    await store_scan_dependencies([parse_sbom(syft_sbom)], _OWN_PROJECT, _OWN_SCAN, DependencyRepository(db))
+    await store_scan_dependencies([parse_sbom(syft_sbom)], _OWN_PROJECT, _OWN_SCAN, DependencyRepository(db), {})
 
     resp = await client.get(f"/api/v1/analytics/projects/{_OWN_PROJECT}/dependency-tree", headers=seeded)
 
