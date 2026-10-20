@@ -180,7 +180,11 @@ class ProjectRepository(BaseRepository[Project]):
         return bool(result.matched_count)
 
     async def remove_user_from_all(self, user_id: str) -> None:
-        await self.collection.update_many({_MEMBERS_USER_ID: user_id}, {"$pull": {"members": {"user_id": user_id}}})
+        override = f"notification_overrides.{user_id}"
+        await self.collection.update_many(
+            {"$or": [{_MEMBERS_USER_ID: user_id}, {override: {"$exists": True}}]},
+            {"$pull": {"members": {"user_id": user_id}}, "$unset": {override: ""}},
+        )
 
     async def update_member(
         self,
