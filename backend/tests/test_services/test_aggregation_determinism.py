@@ -3,6 +3,9 @@
 import itertools
 import json
 
+import pytest
+
+from app.models.finding import Finding, FindingType, Severity
 from app.services.aggregation import ResultAggregator
 from app.services.aggregation import aggregator as aggregator_module
 
@@ -321,6 +324,24 @@ class TestSurvivingSpelling:
 
     def test_the_quality_spelling_does_not_depend_on_sbom_order(self):
         assert self._quality(("left-pad", "Left-Pad")) == self._quality(("Left-Pad", "left-pad"))
+
+    @pytest.mark.parametrize("versions", [(None, ""), ("", None)])
+    def test_a_missing_and_an_empty_version_settle_on_one_id(self, versions):
+        aggregator = ResultAggregator()
+        for i, version in enumerate(versions):
+            aggregator.add_finding(
+                Finding(
+                    id=f"CVE-2024-000{i}",
+                    type=FindingType.VULNERABILITY,
+                    severity=Severity.HIGH,
+                    component="left-pad",
+                    version=version,
+                    description="",
+                    scanners=["trivy"],
+                )
+            )
+        [finding] = aggregator.get_findings()
+        assert (finding.id, finding.version) == ("left-pad:", "")
 
 
 _GRYPE_WITHOUT_CVE_LINK = {"matches": [{**GRYPE["matches"][0], "relatedVulnerabilities": []}]}

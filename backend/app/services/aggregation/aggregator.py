@@ -106,7 +106,7 @@ def _adopt_smallest_spelling(existing: Finding, finding: Finding, id_prefix: str
     existing.component, existing.version = min(
         (existing.component, existing.version),
         (finding.component, finding.version),
-        key=lambda cv: (cv[0], cv[1] or ""),
+        key=lambda cv: (cv[0], cv[1] or "", cv[1] is None),
     )
     existing.id = f"{id_prefix}{existing.component}:{existing.version}"
 
