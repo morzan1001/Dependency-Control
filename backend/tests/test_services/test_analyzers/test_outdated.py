@@ -146,6 +146,18 @@ class TestDefaultVersionSelection:
         assert result == {"outdated_dependencies": [], "ahead_of_default": []}
         assert client.urls == []
 
+    @pytest.mark.parametrize("purl", ["pkg:npm/", "pkg:maven/org.example/"], ids=["npm", "maven"])
+    @pytest.mark.asyncio
+    async def test_a_purl_without_a_package_name_is_not_looked_up(self, fake_cache, monkeypatch, purl) -> None:
+        client = _serve(monkeypatch, fake_cache, {})
+
+        result = await OutdatedAnalyzer().analyze(
+            {}, parsed_components=[{"name": "ghost", "version": "1.0.0", "purl": purl}]
+        )
+
+        assert result == {"outdated_dependencies": [], "ahead_of_default": []}
+        assert client.urls == []
+
 
 _SLF4J = [_v("2.0.16"), _v("2.0.17"), _v("2.1.0-alpha0"), _v("2.1.0-alpha1", default=True)]
 

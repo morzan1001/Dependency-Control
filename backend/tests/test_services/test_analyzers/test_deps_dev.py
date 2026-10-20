@@ -105,6 +105,19 @@ class TestIdentityOfCachedResults:
         assert result == {"scorecard_issues": [], "package_metadata": {}}
         assert cache.looked_up == []
 
+    @pytest.mark.parametrize("purl", ["pkg:npm/", "pkg:maven/org.example/"], ids=["npm", "maven"])
+    @pytest.mark.asyncio
+    async def test_a_purl_without_a_package_name_is_never_looked_up(self, monkeypatch, purl):
+        cache = _FakeCache({})
+        monkeypatch.setattr("app.services.analyzers.deps_dev.cache_service", cache)
+
+        result = await DepsDevAnalyzer().analyze(
+            {}, parsed_components=[{"name": "ghost", "version": "1.0.0", "purl": purl}]
+        )
+
+        assert result == {"scorecard_issues": [], "package_metadata": {}}
+        assert cache.looked_up == []
+
 
 class _NoClient:
     async def __aenter__(self):

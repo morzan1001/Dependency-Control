@@ -31,13 +31,16 @@ async def fetch_deps_dev_json(client: InstrumentedAsyncClient, url: str) -> dict
     return document
 
 
-def _lookup_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
+def deps_dev_coordinates(component: dict[str, Any]) -> tuple[str, str] | None:
     parsed = parse_purl(component.get("purl", ""))
-    version = component.get("version", "")
-    if not parsed or not parsed.deps_dev_system or not parsed.deps_dev_name or not has_known_version(version):
-        return None
-    system, name = parsed.deps_dev_system, parsed.deps_dev_name
-    return CacheKeys.deps_dev(system, name, version), system, name
+    if parsed and parsed.deps_dev_system and parsed.name and has_known_version(component.get("version", "")):
+        return parsed.deps_dev_system, parsed.deps_dev_name
+    return None
+
+
+def _lookup_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
+    coordinates = deps_dev_coordinates(component)
+    return (CacheKeys.deps_dev(*coordinates, component["version"]), *coordinates) if coordinates else None
 
 
 class DepsDevAnalyzer(Analyzer):

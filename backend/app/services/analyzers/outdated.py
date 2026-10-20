@@ -8,11 +8,10 @@ from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, DEPS_DEV_API_URL
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
-from app.schemas.sbom import has_known_version
 from app.services.aggregation.versions import is_stable_release, parse_version_key
 
 from .base import Analyzer
-from .deps_dev import fetch_deps_dev_json
+from .deps_dev import deps_dev_coordinates, fetch_deps_dev_json
 from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
@@ -105,11 +104,8 @@ class OutdatedAnalyzer(Analyzer):
 
     @staticmethod
     def _package_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
-        parsed = parse_purl(component.get("purl", ""))
-        if not parsed or not parsed.deps_dev_system or not has_known_version(component.get("version", "")):
-            return None
-        system, name = parsed.deps_dev_system, parsed.deps_dev_name
-        return CacheKeys.latest_version(system, name), system, name
+        coordinates = deps_dev_coordinates(component)
+        return (CacheKeys.latest_version(*coordinates), *coordinates) if coordinates else None
 
     async def _resolve_package_infos(
         self, components: list[dict[str, Any]]
