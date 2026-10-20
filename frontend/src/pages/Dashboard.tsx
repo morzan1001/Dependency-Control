@@ -14,7 +14,7 @@ import { formatDate, sharedNames, truncateLabel } from '@/lib/utils'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
-import { ProjectOwnerById } from '@/components/project/ProjectOwner'
+import { ChartProjectLabel, ProjectOwnerById } from '@/components/project/ProjectOwner'
 import type { Project } from '@/types/project'
 
 const DASHBOARD_STATS_SKELETON_IDS = ['ds1', 'ds2', 'ds3', 'ds4']
@@ -177,15 +177,7 @@ export default function Dashboard() {
                             }}
                             labelStyle={{ color: 'hsl(var(--popover-foreground))' }}
                             itemStyle={{ color: 'hsl(var(--popover-foreground))' }}
-                            labelFormatter={(id) => {
-                              const name = riskyNames.get(String(id)) ?? ''
-                              return riskyNamesakes.has(name) ? (
-                                <span className="flex items-center gap-2">
-                                  {name}
-                                  <ProjectOwnerById projectId={String(id)} namesakeIds={riskyNamesakes.get(name)} />
-                                </span>
-                              ) : name
-                            }}
+                            labelFormatter={(id) => <ChartProjectLabel projectId={String(id)} names={riskyNames} namesakes={riskyNamesakes} />}
                         />
                         <Bar
                           dataKey="risk"

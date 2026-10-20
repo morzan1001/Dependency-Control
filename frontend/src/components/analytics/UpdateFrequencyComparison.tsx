@@ -38,7 +38,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
-import { ProjectOwnerById } from '@/components/project/ProjectOwner'
+import { ChartProjectLabel, ProjectOwnerById } from '@/components/project/ProjectOwner'
 import { useUpdateFrequencyComparison } from '@/hooks/queries/use-analytics'
 import { useTeams } from '@/hooks/queries/use-teams'
 import { formatDate, formatCoveragePct, formatUpdatesPerMonth, sharedNames, truncateLabel } from '@/lib/utils'
@@ -356,15 +356,7 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
                   borderColor: 'hsl(var(--border))',
                 }}
                 itemStyle={{ color: 'hsl(var(--foreground))' }}
-                labelFormatter={(id) => {
-                  const name = names.get(String(id)) ?? ''
-                  return namesakes.has(name) ? (
-                    <span className="flex items-center gap-2">
-                      {name}
-                      <ProjectOwnerById projectId={String(id)} namesakeIds={namesakes.get(name)} />
-                    </span>
-                  ) : name
-                }}
+                labelFormatter={(id) => <ChartProjectLabel projectId={String(id)} names={names} namesakes={namesakes} />}
                 formatter={(value) =>
                   metric === 'coverage' ? `${value}%` : value
                 }

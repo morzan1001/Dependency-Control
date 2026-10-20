@@ -56,3 +56,14 @@ export function ProjectOwnerById({ projectId, namesakeIds = [] }: Readonly<{ pro
   const project = namesakes.find((namesake) => namesake.id === projectId)
   return project ? <ProjectOwner project={project} namesakes={namesakes} /> : null
 }
+
+// A chart keys its bars by project id, so its tooltip resolves the name and adds the owner of a namesake.
+export function ChartProjectLabel({ projectId, names, namesakes }: Readonly<{ projectId: string; names: ReadonlyMap<string, string>; namesakes: ReadonlyMap<string, string[]> }>) {
+  const name = names.get(projectId) ?? ''
+  return namesakes.has(name) ? (
+    <span className="flex items-center gap-2">
+      {name}
+      <ProjectOwnerById projectId={projectId} namesakeIds={namesakes.get(name)} />
+    </span>
+  ) : name
+}
