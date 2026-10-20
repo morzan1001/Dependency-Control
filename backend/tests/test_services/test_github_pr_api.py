@@ -37,16 +37,16 @@ def _json_response(payload, status_code=200):
 
 
 def _commit_payload(*parent_shas):
-    """Shape of GET /repos/{owner}/{repo}/commits/{sha} (fields we read)."""
+    """Shape of GET /repos/{owner}/{repo}/git/commits/{sha}, which carries no file list or patches."""
     return {
         "sha": _MERGE_SHA,
         "node_id": "C_kwDOABCDEF",
         # GitHub spells both SHAs out in full in a test-merge message.
-        "commit": {"message": f"Merge {_HEAD_SHA} into {_BASE_SHA}"},
+        "message": f"Merge {_HEAD_SHA} into {_BASE_SHA}",
         "parents": [
             {
                 "sha": sha,
-                "url": f"https://api.github.com/repos/acme/widget/commits/{sha}",
+                "url": f"https://api.github.com/repos/acme/widget/git/commits/{sha}",
                 "html_url": f"https://github.com/acme/widget/commit/{sha}",
             }
             for sha in parent_shas
@@ -111,7 +111,7 @@ class TestMergeCommitFallback:
         service = GitHubService(make_github_instance(access_token="ghp-x"))
         routes = {
             f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls": _json_response([]),
-            f"/repos/acme/widget/commits/{_MERGE_SHA}": _json_response(_commit_payload(_BASE_SHA, _HEAD_SHA)),
+            f"/repos/acme/widget/git/commits/{_MERGE_SHA}": _json_response(_commit_payload(_BASE_SHA, _HEAD_SHA)),
             f"/repos/acme/widget/commits/{_HEAD_SHA}/pulls": _json_response([_PULL_REQUEST]),
         }
         with patch.object(service, "_api_get", _routed_api_get(routes)) as api_get:
@@ -121,7 +121,7 @@ class TestMergeCommitFallback:
         assert [(p.number, p.state, p.draft) for p in prs] == [(42, "open", False)]
         assert _requested(api_get) == [
             f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls",
-            f"/repos/acme/widget/commits/{_MERGE_SHA}",
+            f"/repos/acme/widget/git/commits/{_MERGE_SHA}",
             f"/repos/acme/widget/commits/{_HEAD_SHA}/pulls",
         ]
 
@@ -137,7 +137,7 @@ class TestMergeCommitFallback:
         service = GitHubService(make_github_instance(access_token="ghp-x"))
         routes = {
             f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls": _json_response([]),
-            f"/repos/acme/widget/commits/{_MERGE_SHA}": _json_response(_commit_payload(*parents)),
+            f"/repos/acme/widget/git/commits/{_MERGE_SHA}": _json_response(_commit_payload(*parents)),
         }
         for sha in parents:
             routes[f"/repos/acme/widget/commits/{sha}/pulls"] = _json_response([_PULL_REQUEST])
@@ -148,7 +148,7 @@ class TestMergeCommitFallback:
         assert result == (_MERGE_SHA, [])
         assert _requested(api_get) == [
             f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls",
-            f"/repos/acme/widget/commits/{_MERGE_SHA}",
+            f"/repos/acme/widget/git/commits/{_MERGE_SHA}",
         ]
 
     def test_logs_the_fallback_hit_at_info_naming_both_shas(self, caplog):
@@ -156,7 +156,7 @@ class TestMergeCommitFallback:
         service = GitHubService(make_github_instance(access_token="ghp-x"))
         routes = {
             f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls": _json_response([]),
-            f"/repos/acme/widget/commits/{_MERGE_SHA}": _json_response(_commit_payload(_BASE_SHA, _HEAD_SHA)),
+            f"/repos/acme/widget/git/commits/{_MERGE_SHA}": _json_response(_commit_payload(_BASE_SHA, _HEAD_SHA)),
             f"/repos/acme/widget/commits/{_HEAD_SHA}/pulls": _json_response([_PULL_REQUEST]),
         }
         with patch.object(service, "_api_get", _routed_api_get(routes)):
@@ -174,7 +174,7 @@ class TestMergeCommitFallback:
         service = GitHubService(make_github_instance(access_token="ghp-x"))
         routes = {
             f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls": _json_response([]),
-            f"/repos/acme/widget/commits/{_MERGE_SHA}": _json_response(_commit_payload(_BASE_SHA, _HEAD_SHA)),
+            f"/repos/acme/widget/git/commits/{_MERGE_SHA}": _json_response(_commit_payload(_BASE_SHA, _HEAD_SHA)),
             f"/repos/acme/widget/commits/{_HEAD_SHA}/pulls": _json_response([]),
         }
         with patch.object(service, "_api_get", _routed_api_get(routes)):
@@ -212,9 +212,9 @@ class TestRejectedLookupsAreLoud:
 
     def test_a_rejected_commit_lookup_warns_with_endpoint_and_status(self, caplog):
         service = GitHubService(make_github_instance(access_token="ghp-x"))
-        endpoint = f"/repos/acme/widget/commits/{_MERGE_SHA}"
+        endpoint = f"/repos/acme/widget/git/commits/{_MERGE_SHA}"
         routes = {
-            f"{endpoint}/pulls": _json_response([]),
+            f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls": _json_response([]),
             endpoint: _json_response(_error_body("API rate limit exceeded for installation ID 1234."), 429),
         }
 
@@ -252,7 +252,7 @@ class TestNonJsonAnswers:
         service = GitHubService(make_github_instance(access_token="ghp-x"))
         routes = {
             f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls": _json_response([]),
-            f"/repos/acme/widget/commits/{_MERGE_SHA}": _html_page(),
+            f"/repos/acme/widget/git/commits/{_MERGE_SHA}": _html_page(),
         }
         with patch.object(service, "_api_get", _routed_api_get(routes)):
             result = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA, "42/merge"))

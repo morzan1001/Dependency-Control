@@ -804,7 +804,8 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
 
     async def _merge_commit_head_parent(self, owner: str, repo: str, commit_sha: str) -> str | None:
         """Parent order is a git convention, not an API guarantee."""
-        response = await self._get_ok(f"/repos/{owner}/{repo}/commits/{commit_sha}")
+        # The git object, not the REST commit, which also carries every changed file and its patch.
+        response = await self._get_ok(f"/repos/{owner}/{repo}/git/commits/{commit_sha}")
         if response is None:
             return None
         parents = json_document(response).get("parents") or []

@@ -207,7 +207,7 @@ class TestPullRequestWorkflowScans:
 
         routes = {
             f"/repos/acme/widget/commits/{_TEST_MERGE}/pulls": _json_response([]),
-            f"/repos/acme/widget/commits/{_TEST_MERGE}": _json_response(
+            f"/repos/acme/widget/git/commits/{_TEST_MERGE}": _json_response(
                 {"sha": _TEST_MERGE, "parents": [{"sha": _BASE}, {"sha": _HEAD}]}
             ),
             f"/repos/acme/widget/commits/{_HEAD}/pulls": _json_response(
