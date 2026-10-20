@@ -19,7 +19,6 @@ from app.core.constants import (
     PYPI_API_URL,
     TOP_PYPI_PACKAGES_URL,
 )
-from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType
 from app.models.system import SystemSettings
 from app.models.waiver import Waiver
@@ -123,8 +122,6 @@ _CRYPTO_RULES = "crypto_rules"
 _NO_CRYPTO_ASSETS = "no readable cryptographic-asset components in the SBOM"
 # normalize_crypto keeps each finding's own type, so one dispatch key covers every crypto finding type.
 _CRYPTO_DISPATCH_KEY = "crypto_weak_algorithm"
-# Names the assets within this request only; nothing here is stored or looked up by it.
-_ADHOC_SCOPE = "adhoc"
 
 _CRYPTO_ANALYZER_REPLACED = (
     "replaced ad-hoc by the 'crypto_rules' stage: the registered analyzer reads stored crypto "
@@ -364,11 +361,9 @@ def _aggregate_crypto_rules(
         return
 
     for parsed_input in parsed_inputs:
-        assets = [
-            CryptoAsset(project_id=_ADHOC_SCOPE, scan_id=_ADHOC_SCOPE, **asset.model_dump())
-            for asset in parsed_input.parsed.crypto_assets
-        ]
-        findings = crypto_findings_for_assets(assets, _ADHOC_CRYPTO_RULES, scanner=_CRYPTO_RULES)
+        findings = crypto_findings_for_assets(
+            parsed_input.parsed.crypto_assets, _ADHOC_CRYPTO_RULES, scanner=_CRYPTO_RULES
+        )
         if findings:
             aggregator.aggregate(
                 _CRYPTO_DISPATCH_KEY,

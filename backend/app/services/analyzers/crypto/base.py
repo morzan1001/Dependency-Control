@@ -6,7 +6,7 @@ from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType
 from app.schemas.crypto_policy import CryptoRule
 from app.schemas.finding_details import CryptoAssetDetails, CryptoRuleDetails, MatchedRuleEntry
-from app.services.analyzers.crypto.matcher import rule_matches
+from app.services.analyzers.crypto.matcher import AnyCryptoAsset, rule_matches
 from app.services.crypto_policy.resolver import EffectivePolicy
 
 # A crypto asset can occur in thousands of files; every finding on it would store the whole list.
@@ -14,7 +14,7 @@ MAX_FINDING_LOCATIONS = 20
 
 
 def crypto_findings_for_assets(
-    assets: Sequence[CryptoAsset], rules: Sequence[CryptoRule], *, scanner: str
+    assets: Sequence[AnyCryptoAsset], rules: Sequence[CryptoRule], *, scanner: str
 ) -> list[dict[str, Any]]:
     """All matched rules of the type go into details for cross-framework attribution."""
     findings: list[dict[str, Any]] = []
@@ -35,7 +35,7 @@ def protocol_label(protocol_type: str | None) -> str | None:
     return _PROTOCOL_NAMES.get(protocol_type.lower(), protocol_type) if protocol_type else None
 
 
-def asset_details(asset: CryptoAsset) -> dict[str, Any]:
+def asset_details(asset: AnyCryptoAsset) -> dict[str, Any]:
     return CryptoAssetDetails(
         bom_ref=asset.bom_ref,
         asset_name=asset.name,
@@ -66,7 +66,7 @@ def evaluate_rules(assets: list[CryptoAsset], policy: EffectivePolicy, *, findin
     return {"findings": crypto_findings_for_assets(assets, rules, scanner=finding_type.value)}
 
 
-def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule], scanner: str) -> dict[str, Any]:
+def _build_finding_dedup(asset: AnyCryptoAsset, rules: list[CryptoRule], scanner: str) -> dict[str, Any]:
     lead = strictest_rule(rules)
     ft = lead.finding_type
     component_label = f"{asset.name}" + (f" ({asset.variant})" if asset.variant else "") + f" [bom-ref:{asset.bom_ref}]"
