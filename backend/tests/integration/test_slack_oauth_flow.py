@@ -177,17 +177,12 @@ async def test_only_a_system_manager_gets_an_install_url(client, db):
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_an_expiring_token_is_refreshed_persisted_and_used(db, slack, monkeypatch):
+async def test_an_expiring_token_is_refreshed_persisted_and_used(db, slack):
     rotating = {**_SLACK_APP, "slack_refresh_token": "xoxe-current", "slack_token_expires_at": time.time()}
     system_settings = await SystemSettingsRepository(db).update(rotating)
-
-    async def _get_database():
-        return db
-
-    monkeypatch.setattr(slack_provider, "get_database", _get_database)
     before = time.time()
 
-    assert await SlackProvider().send("#alerts", "Subject", "Body", system_settings=system_settings)
+    assert await SlackProvider().send("#alerts", "Subject", "Body", db=db, system_settings=system_settings)
 
     refresh, post = slack
     assert (refresh["grant_type"], refresh["refresh_token"]) == ("refresh_token", "xoxe-current")
@@ -203,16 +198,11 @@ async def test_an_install_without_rotation_drops_the_rotation_fields_of_the_last
     rotating = {**_SLACK_APP, "slack_refresh_token": "xoxe-old", "slack_token_expires_at": time.time() - 60}
     await SystemSettingsRepository(db).update(rotating)
     monkeypatch.setitem(_SLACK_ANSWERS, _OAUTH_ACCESS, {"ok": True, "access_token": "xoxb-static"})
-
-    async def _get_database():
-        return db
-
-    monkeypatch.setattr(slack_provider, "get_database", _get_database)
     _, query = await _install_url(client)
     await client.get(_CALLBACK, params={"code": "admin-code", "state": query["state"]})
     stored = await SystemSettingsRepository(db).get()
 
-    assert await SlackProvider().send("#alerts", "Subject", "Body", system_settings=stored)
+    assert await SlackProvider().send("#alerts", "Subject", "Body", db=db, system_settings=stored)
 
     assert (stored.slack_bot_token, stored.slack_refresh_token, stored.slack_token_expires_at) == (
         "xoxb-static",
@@ -222,23 +212,19 @@ async def test_an_install_without_rotation_drops_the_rotation_fields_of_the_last
     assert [request["url"] for request in slack] == [_OAUTH_ACCESS, _POST_MESSAGE]
 
 
-async def _expiring_settings(db, monkeypatch):
-    async def _get_database():
-        return db
-
-    monkeypatch.setattr(slack_provider, "get_database", _get_database)
+async def _expiring_settings(db):
     rotating = {**_SLACK_APP, "slack_refresh_token": "xoxe-current", "slack_token_expires_at": time.time()}
     return await SystemSettingsRepository(db).update(rotating)
 
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_concurrent_sends_with_an_expiring_token_refresh_it_once(db, slack, monkeypatch):
-    system_settings = await _expiring_settings(db, monkeypatch)
+async def test_concurrent_sends_with_an_expiring_token_refresh_it_once(db, slack):
+    system_settings = await _expiring_settings(db)
     provider = SlackProvider()
 
     sent = await asyncio.gather(
-        *(provider.send("#alerts", "S", "B", system_settings=system_settings) for _ in range(20))
+        *(provider.send("#alerts", "S", "B", db=db, system_settings=system_settings) for _ in range(20))
     )
 
     assert all(sent)
@@ -249,7 +235,7 @@ async def test_concurrent_sends_with_an_expiring_token_refresh_it_once(db, slack
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 async def test_sends_waiting_on_another_pods_refresh_wait_side_by_side_and_use_its_token(db, slack, monkeypatch):
-    system_settings = await _expiring_settings(db, monkeypatch)
+    system_settings = await _expiring_settings(db)
     assert await DistributedLocksRepository(db).acquire_lock("slack_token_refresh", new_lock_holder(), 30)
     senders = 4
     all_waiting = asyncio.Barrier(senders)
@@ -264,7 +250,7 @@ async def test_sends_waiting_on_another_pods_refresh_wait_side_by_side_and_use_i
     provider = SlackProvider()
 
     sent = await asyncio.gather(
-        *(provider.send("#alerts", "S", "B", system_settings=system_settings) for _ in range(senders))
+        *(provider.send("#alerts", "S", "B", db=db, system_settings=system_settings) for _ in range(senders))
     )
 
     assert all(sent)

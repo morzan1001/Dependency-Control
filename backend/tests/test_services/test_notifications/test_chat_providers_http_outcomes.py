@@ -6,6 +6,7 @@ from app.models.system import SystemSettings
 from app.services.notifications import mattermost_provider, slack_provider
 from app.services.notifications.mattermost_provider import MattermostProvider
 from app.services.notifications.slack_provider import SlackProvider
+from tests.mocks.fake_mongo import FakeDatabase
 
 _BASE = "https://mm.example"
 
@@ -109,7 +110,9 @@ async def test_slack_send_succeeds_only_on_an_ok_answer(monkeypatch, status, pay
     client = _Client({"https://slack.com/api/chat.postMessage": _Response(status, payload)})
     _use_client(monkeypatch, slack_provider, client)
 
-    sent = await SlackProvider().send("#alerts", "Subj", "Body", system_settings=SystemSettings(slack_bot_token="xoxb"))
+    sent = await SlackProvider().send(
+        "#alerts", "Subj", "Body", db=FakeDatabase(), system_settings=SystemSettings(slack_bot_token="xoxb")
+    )
 
     assert sent is expected
     assert [payload["channel"] for _url, payload in client.posted] == ["#alerts"]
@@ -121,7 +124,11 @@ async def test_the_slack_fallback_text_keeps_a_version_range_out_of_slacks_contr
     _use_client(monkeypatch, slack_provider, client)
 
     await SlackProvider().send(
-        "#alerts", "a < b", "affected: <2.17.1 & >=2.0", system_settings=SystemSettings(slack_bot_token="xoxb")
+        "#alerts",
+        "a < b",
+        "affected: <2.17.1 & >=2.0",
+        db=FakeDatabase(),
+        system_settings=SystemSettings(slack_bot_token="xoxb"),
     )
 
     [(_url, payload)] = client.posted

@@ -76,6 +76,7 @@ class NotificationService:
                         user.slack_username.lstrip("@"),
                         subject,
                         message,
+                        db=db,
                         system_settings=system_settings,
                         blocks=slack_blocks,
                     )

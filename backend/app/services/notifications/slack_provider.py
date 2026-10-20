@@ -4,12 +4,12 @@ import time
 from typing import Any
 
 import httpx
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
 from app.core.constants import SLACK_TOKEN_EXPIRY_BUFFER_SECONDS
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import notifications_failed_total, notifications_sent_total
-from app.db.mongodb import get_database
 from app.models.system import SystemSettings
 from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.repositories.system_settings import SystemSettingsRepository
@@ -57,7 +57,7 @@ class SlackProvider:
         # Serialises this pod's refreshes; the distributed lock serialises the pods'.
         self._refresh_lock = asyncio.Lock()
 
-    async def _refresh_token(self, system_settings: SystemSettings) -> str | None:
+    async def _refresh_token(self, db: AsyncIOMotorDatabase, system_settings: SystemSettings) -> str | None:
         if (
             not system_settings.slack_client_id
             or not system_settings.slack_client_secret
@@ -77,15 +77,14 @@ class SlackProvider:
             logger.error("Slack token refresh failed: %s", e)
             return None
 
-        await SystemSettingsRepository(await get_database()).update(tokens)
+        await SystemSettingsRepository(db).update(tokens)
         logger.info("Successfully refreshed Slack token")
         access_token: str | None = tokens["slack_bot_token"]
         return access_token
 
-    async def _current_token(self, system_settings: SystemSettings) -> str | None:
+    async def _current_token(self, db: AsyncIOMotorDatabase, system_settings: SystemSettings) -> str | None:
         if not _expiring(system_settings):
             return system_settings.slack_bot_token
-        db = await get_database()
         settings_repo = SystemSettingsRepository(db)
         async with self._refresh_lock:
             locks = DistributedLocksRepository(db)
@@ -96,7 +95,7 @@ class SlackProvider:
                     fresh = await settings_repo.get()
                     if not _expiring(fresh):
                         return fresh.slack_bot_token
-                    return await self._refresh_token(fresh) or fresh.slack_bot_token
+                    return await self._refresh_token(db, fresh) or fresh.slack_bot_token
                 finally:
                     await locks.release_lock(_REFRESH_LOCK, holder)
         logger.info("Another pod is refreshing the Slack token, waiting...")
@@ -110,10 +109,11 @@ class SlackProvider:
         subject: str,
         message: str,
         *,
+        db: AsyncIOMotorDatabase,
         system_settings: SystemSettings,
         blocks: list[dict[str, Any]] | None = None,
     ) -> bool:
-        slack_token = await self._current_token(system_settings)
+        slack_token = await self._current_token(db, system_settings)
         if not slack_token:
             logger.warning("SLACK_BOT_TOKEN not configured. Skipping Slack notification.")
             return False
