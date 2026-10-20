@@ -4,6 +4,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api.v1.helpers.sorting import case_insensitive_key
 from app.models.project import Scan
 from app.repositories.dependencies import DependencyRepository
 from app.schemas.inventory import LicenseItem
@@ -35,10 +36,10 @@ async def build_license_rows(db: AsyncIOMotorDatabase, scan: Scan) -> list[Licen
                 category=info.category.value if info else None,
                 risks=info.risks if info else [],
                 component_count=len(names),
-                components=sorted(names),
+                components=sorted(names, key=case_insensitive_key),
             )
         )
-    items.sort(key=lambda item: (-item.component_count, item.license))
+    items.sort(key=lambda item: (-item.component_count, case_insensitive_key(item.license)))
     return items
 
 

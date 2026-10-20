@@ -471,6 +471,29 @@ async def test_licenses_export_contains_full_component_list(client, db, member_a
 
 
 @pytest.mark.asyncio
+async def test_the_licenses_card_and_csv_ignore_case_like_their_sibling_tables(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "Newtonsoft.Json", version="13", license_id="Zlib")
+    await _seed_dep(db, "s1", "axios", version="1", license_id="Zlib")
+    await _seed_dep(db, "s1", "zod", version="3")
+    await _seed_dep(db, "s1", "Autofac", version="8")
+
+    card = (await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)).json()
+    rows = _parse_csv(
+        await client.get(f"/api/v1/projects/{_PID}/inventory/licenses/export", headers=member_auth_headers)
+    )
+
+    assert [(i["license"], i["components"]) for i in card["items"]] == [
+        ("unknown", ["Autofac@8", "zod@3"]),
+        ("Zlib", ["axios@1", "Newtonsoft.Json@13"]),
+    ]
+    assert [(r["license"], r["components"]) for r in rows] == [
+        ("unknown", "Autofac@8; zod@3"),
+        ("Zlib", "axios@1; Newtonsoft.Json@13"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_licenses_tokenizes_composite_spdx_expressions(client, db, member_auth_headers):
     await _seed_scan(db)
     await _seed_dep(db, "s1", "a", license_id="LGPL-2.1-or-later AND BSD-3-Clause")
