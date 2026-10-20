@@ -111,6 +111,59 @@ async def _apply_live_threat_intel(
     return enrichments, []
 
 
+async def _dependency_window(
+    dep_repo: DependencyRepository, project_id: str, scan_id: str
+) -> tuple[list[dict[str, Any]], int]:
+    query = {"project_id": project_id, "scan_id": scan_id}
+    return await find_window(dep_repo.collection, query, SCAN_DEPENDENCY_READ_LIMIT, projection=_DEPENDENCY_PROJECTION)
+
+
+async def _join_dependencies(
+    dep_repo: DependencyRepository, project_id: str, scan_id: str, findings: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The dependency window can miss a finding's row; this reads exactly the rows the findings name."""
+    names = list(
+        {
+            n
+            for f in findings
+            if f["type"] in ("vulnerability", "outdated")
+            for n in component_name_candidates(f["component"])
+        }
+    )
+    query = {"project_id": project_id, "scan_id": scan_id, "name": {"$in": names}}
+    return [dep async for dep in dep_repo.iterate_raw(query, _JOIN_PROJECTION)]
+
+
+async def _previous_scan(finding_repo: FindingRepository, scan_id: str) -> trends.PreviousScan:
+    previous = trends.PreviousScan()
+    async for doc in finding_repo.iterate_raw(
+        {"scan_id": scan_id, "waived": {"$ne": True}}, trends.PREVIOUS_SCAN_PROJECTION
+    ):
+        previous.add(doc)
+    return previous
+
+
+async def _history(
+    scan_repo: ScanRepository,
+    finding_repo: FindingRepository,
+    dep_repo: DependencyRepository,
+    project_id: str,
+    scan_id: str,
+) -> tuple[trends.PreviousScan | None, list[dict[str, Any]] | None, dict[str, trends.CveRecurrence], int]:
+    """The previous scan's findings and dependencies, and CVE recurrence over the window the text names."""
+    preceding = await scan_repo.get_preceding_scans(scan_id, _RECURRENCE_WINDOW_SCANS - 1)
+    recent_scan_ids = [scan_id, *(scan.id for scan in preceding)]
+    recurrence = trends.build_cve_recurrence(finding_repo.iter_vulnerability_identities(recent_scan_ids))
+    if not preceding:
+        return None, None, await recurrence, len(recent_scan_ids)
+    previous, (previous_dependencies, _), cve_recurrence = await asyncio.gather(
+        _previous_scan(finding_repo, preceding[0].id),
+        _dependency_window(dep_repo, project_id, preceding[0].id),
+        recurrence,
+    )
+    return previous, previous_dependencies, cve_recurrence, len(recent_scan_ids)
+
+
 @router.get("/projects/{project_id}/recommendations", responses=RESP_AUTH_404)
 async def get_project_recommendations(
     project_id: str,
@@ -145,46 +198,19 @@ async def get_project_recommendations(
 
     async def _compute() -> dict[str, Any]:
         findings, findings_total = await finding_repo.find_raw_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
-        threat_intel, threat_intel_unavailable = await _apply_live_threat_intel(findings)
-
-        dependencies, dependencies_total = await find_window(
-            dep_repo.collection,
-            {"project_id": project_id, "scan_id": scan_id},
-            SCAN_DEPENDENCY_READ_LIMIT,
-            projection=_DEPENDENCY_PROJECTION,
+        (
+            (threat_intel, threat_intel_unavailable),
+            (dependencies, dependencies_total),
+            join_dependencies,
+            (previous, previous_scan_dependencies, cve_recurrence, recurrence_window_scans),
+            cross_project_data,
+        ) = await asyncio.gather(
+            _apply_live_threat_intel(findings),
+            _dependency_window(dep_repo, project_id, scan_id),
+            _join_dependencies(dep_repo, project_id, scan_id, findings),
+            _history(scan_repo, finding_repo, dep_repo, project_id, scan_id),
+            gather_cross_project_data(user_projects, project_id, db),
         )
-        # The window above can miss a finding's row; the join reads exactly the rows the findings name.
-        names = list(
-            {
-                n
-                for f in findings
-                if f["type"] in ("vulnerability", "outdated")
-                for n in component_name_candidates(f["component"])
-            }
-        )
-        join_query = {"project_id": project_id, "scan_id": scan_id, "name": {"$in": names}}
-        join_dependencies = [dep async for dep in dep_repo.iterate_raw(join_query, _JOIN_PROJECTION)]
-
-        previous = None
-        previous_scan_dependencies = None
-        preceding = await scan_repo.get_preceding_scans(scan_id, _RECURRENCE_WINDOW_SCANS - 1)
-        if preceding:
-            previous_scan = preceding[0]
-            previous = trends.PreviousScan()
-            previous_query = {"scan_id": previous_scan.id, "waived": {"$ne": True}}
-            async for doc in finding_repo.iterate_raw(previous_query, trends.PREVIOUS_SCAN_PROJECTION):
-                previous.add(doc)
-            previous_scan_dependencies, _ = await find_window(
-                dep_repo.collection,
-                {"project_id": project_id, "scan_id": previous_scan.id},
-                SCAN_DEPENDENCY_READ_LIMIT,
-                projection=_DEPENDENCY_PROJECTION,
-            )
-
-        recent_scan_ids = [scan_id, *(scan.id for scan in preceding)]
-        cve_recurrence = await trends.build_cve_recurrence(finding_repo.iter_vulnerability_identities(recent_scan_ids))
-
-        cross_project_data = await gather_cross_project_data(user_projects, project_id, db)
 
         recommendations = await asyncio.to_thread(
             generate_recommendations,
@@ -194,7 +220,7 @@ async def get_project_recommendations(
             previous_scan=previous,
             previous_scan_dependencies=previous_scan_dependencies,
             cve_recurrence=cve_recurrence,
-            recurrence_window_scans=len(recent_scan_ids),
+            recurrence_window_scans=recurrence_window_scans,
             cross_project_data=cross_project_data,
             threat_intel=threat_intel,
         )

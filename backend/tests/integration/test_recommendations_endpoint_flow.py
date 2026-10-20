@@ -674,3 +674,33 @@ async def test_the_engine_gets_findings_and_dependencies_without_the_payload_no_
     assert not set(_ADVISORY_PAYLOAD) & set(stored_advisory)
     assert (dependency["name"], dependency["license"]) == ("lodash", "MIT")
     assert not set(_DEPENDENCY_PAYLOAD) & set(dependency)
+
+
+@pytest.mark.asyncio
+async def test_the_reads_after_the_findings_wait_on_no_live_threat_intel_call(
+    client, db, owner_auth_headers_proj, monkeypatch
+):
+    await _insert_scan(db, "s")
+    finding = _finding("f1", "vulnerability")
+    finding["details"] = {"vulnerabilities": [{"id": "CVE-2023-0001"}]}
+    await db.findings.insert_one(finding)
+    events: list[str] = []
+
+    async def _slow_enrich(_cves):
+        await asyncio.sleep(0.05)
+        events.append("enriched")
+        return {}, []
+
+    gather_cross_project_data = rec_module.gather_cross_project_data
+
+    async def _cross_project(*args):
+        events.append("cross-project read")
+        return await gather_cross_project_data(*args)
+
+    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _slow_enrich)
+    monkeypatch.setattr(rec_module, "gather_cross_project_data", _cross_project)
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert events == ["cross-project read", "enriched"]

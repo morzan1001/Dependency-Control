@@ -152,6 +152,7 @@ def _run_hotspots(
     sort_by: str = "finding_count",
     skip: int = 0,
     enrich: Any = _no_enrichment,
+    type_rows: Any = None,
 ) -> tuple[Any, list[dict[str, Any]], list[dict[str, Any]]]:
     from app.api.v1.endpoints.analytics.risk import get_vulnerability_hotspots
 
@@ -175,7 +176,7 @@ def _run_hotspots(
     mock_finding_repo.aggregate = _fake_finding_aggregate
 
     mock_dep_repo = MagicMock()
-    mock_dep_repo.aggregate = AsyncMock(return_value=[])
+    mock_dep_repo.aggregate = type_rows or AsyncMock(return_value=[])
 
     with (
         patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
@@ -994,3 +995,29 @@ class TestThreatIntelOutage:
         [impact], _, _ = _run_impact(agg_results=_ONE_GROUP)
         [hotspot], _, _ = _run_hotspots(agg_results=_ONE_GROUP)
         assert impact.threat_intel_unavailable == hotspot.threat_intel_unavailable == []
+
+
+class TestHotspotReadsOverlap:
+    @staticmethod
+    def _first_two_events(sort_by: str) -> set[str]:
+        events: list[str] = []
+
+        async def _slow_enrich(_cves):
+            events.append("enrichment started")
+            await asyncio.sleep(0.02)
+            return {}, []
+
+        async def _slow_type_rows(_pipeline):
+            events.append("type read started")
+            await asyncio.sleep(0.02)
+            events.append("type read done")
+            return []
+
+        _run_hotspots(agg_results=_ONE_GROUP, sort_by=sort_by, enrich=_slow_enrich, type_rows=_slow_type_rows)
+        return set(events[:2])
+
+    def test_the_type_read_runs_beside_the_enrichment_of_the_page(self):
+        assert self._first_two_events("finding_count") == {"type read started", "enrichment started"}
+
+    def test_the_type_read_runs_beside_the_enrichment_an_epss_sort_ranks_by(self):
+        assert self._first_two_events("epss") == {"type read started", "enrichment started"}

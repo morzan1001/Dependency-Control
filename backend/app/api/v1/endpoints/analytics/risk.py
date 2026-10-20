@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
@@ -268,6 +269,22 @@ async def get_vulnerability_hotspots(
     )
 
 
+def _ranked_page(
+    groups: list[dict[str, Any]],
+    rank: Callable[[dict[str, Any], Mapping[str, VulnerabilityEnrichment]], float],
+    enrichments: Mapping[str, VulnerabilityEnrichment],
+    descending: bool,
+    skip: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    # $group emits its rows in no fixed order, so ties need an order of their own to page through.
+    ordered = sorted(
+        groups, key=lambda r: (case_insensitive_key(r["_id"]["component"]), r["_id"].get("version") or "unknown")
+    )
+    ordered.sort(key=lambda r: rank(r, enrichments), reverse=descending)
+    return ordered[skip : skip + limit]
+
+
 async def _hotspots(
     db: AsyncIOMotorDatabase,
     projects: list[ProjectWithScanId],
@@ -299,24 +316,26 @@ async def _hotspots(
             }
         },
     ]
+    rank = _PYTHON_RANKS.get(sort_by)
+    descending = sort_direction == -1
+    # Only an enrichment-ranked sort needs every group enriched; the others enrich their page alone.
+    ranked_by_enrichment = sort_by in ("epss", "risk")
+    if rank and not ranked_by_enrichment:
+        groups = _ranked_page(groups, rank, {}, descending, skip, limit)
+    type_rows, (enrichments, unavailable) = await asyncio.gather(
+        DependencyRepository(db).aggregate(type_pipeline), _enrich(groups)
+    )
+    if rank and ranked_by_enrichment:
+        groups = _ranked_page(groups, rank, enrichments, descending, skip, limit)
+
     types_by_version: dict[str, dict[str, set[str]]] = {}
     types_by_name: dict[str, set[str]] = {}
-    for row in await DependencyRepository(db).aggregate(type_pipeline):
+    for row in type_rows:
         name, version = row["_id"]["name"], normalize_version(row["_id"]["version"])
         types_by_version.setdefault(version, {}).setdefault(name, set()).update(row["types"])
         types_by_name.setdefault(name, set()).update(row["types"])
     type_index_by_version = {version: build_component_index(types) for version, types in types_by_version.items()}
     type_index = build_component_index(types_by_name)
-
-    # Only an enrichment-ranked sort needs every group enriched; the others enrich their page alone.
-    enriched = await _enrich(groups) if sort_by in ("epss", "risk") else None
-    if rank := _PYTHON_RANKS.get(sort_by):
-        ranked_by = enriched[0] if enriched else {}
-        # $group emits its rows in no fixed order, so ties need an order of their own to page through.
-        groups.sort(key=lambda r: (case_insensitive_key(r["_id"]["component"]), r["_id"].get("version") or "unknown"))
-        groups.sort(key=lambda r: rank(r, ranked_by), reverse=sort_direction == -1)
-        groups = groups[skip : skip + limit]
-    enrichments, unavailable = enriched or await _enrich(groups)
 
     return [
         _build_hotspot(
