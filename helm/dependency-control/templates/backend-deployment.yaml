@@ -243,9 +243,10 @@ spec:
             - name: TRUSTED_PROXY_IPS
               value: {{ . | quote }}
             {{- end }}
-            # Pod lifecycle: max uptime before automatic restart (helps manage memory)
+            # Pod lifecycle: max uptime before automatic restart (helps manage memory).
+            # hasKey, as `| default` would replace the 0 that disables the restart; 43200 is the app's own default.
             - name: MAX_POD_UPTIME_SECONDS
-              value: "{{ .Values.backend.env.maxPodUptimeSeconds | default 86400 }}"
+              value: "{{ if hasKey .Values.backend.env "maxPodUptimeSeconds" }}{{ .Values.backend.env.maxPodUptimeSeconds }}{{ else }}43200{{ end }}"
             # Update-frequency switches, all three flipped from the manifest, so turning
             # one off is a value change rather than an image build.
             # hasKey rather than `| default true`: Go templates treat false as empty, so
