@@ -1,6 +1,7 @@
 import base64
 import logging
 from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, NPM_REGISTRY_URL, PYPI_API_URL
@@ -27,6 +28,10 @@ class HashVerificationAnalyzer(Analyzer):
         "pypi": f"{PYPI_API_URL}/{{package}}/{{version}}/json",
         "npm": f"{NPM_REGISTRY_URL}/{{package}}/{{version}}",
     }
+    REGISTRY_HOSTS: ClassVar[dict[str, set[str]]] = {
+        "pypi": {"pypi.org", "files.pythonhosted.org"},
+        "npm": {"registry.npmjs.org", "registry.yarnpkg.com"},
+    }
 
     async def analyze(
         self,
@@ -38,9 +43,11 @@ class HashVerificationAnalyzer(Analyzer):
         checks = []
         for component in parsed_components:
             parsed = parse_purl(component.get("purl") or "")
-            registry = parsed.registry_system if parsed else None
             name, version, sbom_hashes = component.get("name"), component.get("version", ""), component.get("hashes")
-            if registry in self.REGISTRY_APIS and name and has_known_version(version) and sbom_hashes:
+            if not parsed or not name or not has_known_version(version) or not sbom_hashes:
+                continue
+            registry = parsed.registry_system
+            if registry in self.REGISTRY_APIS and self._served_by_registry(registry, parsed.qualifiers):
                 checks.append((CacheKeys.package_hash(registry, name, version), registry, name, version, sbom_hashes))
 
         registry_hashes, skipped = await self._registry_hashes(
@@ -67,6 +74,17 @@ class HashVerificationAnalyzer(Analyzer):
         if skipped:
             result["partial_components_skipped"] = skipped
         return result
+
+    @classmethod
+    def _served_by_registry(cls, registry: str, qualifiers: dict[str, str]) -> bool:
+        """A git checkout, a private registry or another download holds other bytes than the registry digests."""
+        if "vcs_url" in qualifiers:
+            return False
+        urls = [qualifiers[key] for key in ("download_url", "repository_url") if key in qualifiers]
+        try:
+            return {urlsplit(url).hostname for url in urls} <= cls.REGISTRY_HOSTS[registry]
+        except ValueError:
+            return False
 
     async def _registry_hashes(self, lookups: dict[str, tuple[str, str, str]]) -> tuple[dict[str, Any], int]:
         async with InstrumentedAsyncClient(
