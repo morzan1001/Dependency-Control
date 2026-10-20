@@ -4,7 +4,7 @@ import { AlertTriangle, Building, Calendar, ExternalLink, FileText, User } from 
 import { formatDate } from '@/lib/utils'
 
 // Fields rendered elsewhere; skip in this generic detail view.
-const skipFields = new Set(['license', 'severity', 'type', 'message', 'id', 'component', 'version', 'fixed_version'])
+const skipFields = new Set(['license', 'severity', 'type', 'message', 'id', 'component', 'version', 'fixed_version', 'additional_finding_types'])
 
 const rowGroupFields = new Set(['cycle', 'lts'])
 

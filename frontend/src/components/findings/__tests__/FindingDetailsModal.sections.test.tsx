@@ -53,6 +53,14 @@ describe("FindingDetailsModal header", () => {
     expect(screen.queryByText("crypto_weak_algorithm")).not.toBeInTheDocument();
     expect(screen.getByText("Outdated")).toHaveClass("wrap-anywhere");
   });
+
+  it("names the other types only as header badges, not again as raw chips under Additional Details", () => {
+    renderModal(finding({ type: "crypto_weak_algorithm", details: { algorithm: "MD5", additional_finding_types: [{ type: "outdated", severity: "INFO" }] } }));
+
+    expect(screen.getByText("MD5")).toBeInTheDocument();
+    expect(screen.queryByText("Additional Finding Types")).not.toBeInTheDocument();
+    expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
+  });
 });
 
 describe("FindingDetailsModal fixed version", () => {
