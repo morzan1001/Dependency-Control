@@ -243,6 +243,16 @@ describe("CryptoPolicyEditor rules table width", () => {
     expect(screen.getByText("System default")).toHaveClass("whitespace-nowrap");
   });
 
+  it("offers a read-only viewer of a project's policy neither Revert nor Remove", () => {
+    const sys = systemRule();
+    const custom = { ...sys, rule_id: "custom-des", name: "Block DES", source: "custom" as const };
+    render(<CryptoPolicyEditor initialRules={[{ ...sys, name: "Block RC4 now" }, custom]} systemRules={[sys]} readOnly onSave={vi.fn()} />);
+
+    expect(screen.getByText("Overridden")).toBeInTheDocument();
+    expect(screen.getByText("Custom")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Revert|Remove/ })).not.toBeInTheDocument();
+  });
+
   it("wraps a rule's name over as many lines as it needs instead of cutting it off", () => {
     const long = { ...systemRule(), name: "BSI requires RSA keys of at least 3000 bits from 2024 onwards" };
     render(<CryptoPolicyEditor initialRules={[long]} onSave={vi.fn()} />);
