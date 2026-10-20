@@ -92,6 +92,7 @@ export default function Dashboard() {
 
   const chartData = dashboardStats?.top_risky_projects || []
   const riskyNamesakes = sharedNames(chartData)
+  const riskyNames = new Map(chartData.map((project) => [project.id, project.name]))
 
   return (
     <div className="space-y-8">
@@ -149,13 +150,14 @@ export default function Dashboard() {
                     <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        {/* Keyed by id: projects of one name would share a category, and the second's tooltip showed the first. */}
                         <XAxis
-                        dataKey="name"
+                        dataKey="id"
                         stroke="#888888"
                         fontSize={12}
                         tickLine={false}
                         axisLine={false}
-                        tickFormatter={(name: string) => truncateLabel(name, 11)}
+                        tickFormatter={(id: string) => truncateLabel(riskyNames.get(id) ?? '', 11)}
                         />
                         <YAxis
                         stroke="#888888"
@@ -175,12 +177,12 @@ export default function Dashboard() {
                             }}
                             labelStyle={{ color: 'hsl(var(--popover-foreground))' }}
                             itemStyle={{ color: 'hsl(var(--popover-foreground))' }}
-                            labelFormatter={(name, payload) => {
-                              const projectId = payload[0]?.payload?.id
-                              return typeof name === 'string' && riskyNamesakes.has(name) && projectId ? (
+                            labelFormatter={(id) => {
+                              const name = riskyNames.get(String(id)) ?? ''
+                              return riskyNamesakes.has(name) ? (
                                 <span className="flex items-center gap-2">
                                   {name}
-                                  <ProjectOwnerById projectId={projectId} namesakeIds={riskyNamesakes.get(name)} />
+                                  <ProjectOwnerById projectId={String(id)} namesakeIds={riskyNamesakes.get(name)} />
                                 </span>
                               ) : name
                             }}

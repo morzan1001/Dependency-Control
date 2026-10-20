@@ -65,7 +65,7 @@ describe('Dashboard riskiest projects chart', () => {
     expect(ticks).toEqual(['…ent-gateway', 'search', '…strg/tm/app', '…strg/tm/web'])
   })
 
-  it('names the owner of a bar whose project name another bar shares in its tooltip, as the project picker does', async () => {
+  it('names the owner and the risk of each bar whose project name another bar shares in its tooltip', async () => {
     const saved = chart.projects
     chart.projects = [
       { id: 'c1', name: 'checkout-service', risk: 80 },
@@ -80,6 +80,11 @@ describe('Dashboard riskiest projects chart', () => {
 
       expect(await screen.findByText('Retail')).toBeInTheDocument()
       expect(screen.queryByText('Payments')).not.toBeInTheDocument()
+
+      fireEvent.keyDown(container.querySelector('.recharts-wrapper')!, { key: 'ArrowRight' })
+
+      expect(await screen.findByText('Payments')).toBeInTheDocument()
+      expect(container.querySelector('.recharts-tooltip-item-value')).toHaveTextContent('60')
     } finally {
       chart.projects = saved
     }

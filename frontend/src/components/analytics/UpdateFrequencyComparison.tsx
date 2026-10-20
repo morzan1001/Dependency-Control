@@ -309,6 +309,7 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
         .sort((a, b) => metricValue(b, metric) - metricValue(a, metric))
         .slice(0, CHART_TOP_N)
         .map((p) => ({
+          id: p.project_id,
           name: p.project_name,
           // An unmeasured value leaves a gap rather than a zero bar.
           value: (metric === 'coverage' ? p.update_coverage_pct : p.updates_per_month) ?? undefined,
@@ -317,6 +318,8 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
   )
 
   const metricLabel = metric === 'coverage' ? 'Update coverage percentage' : 'Updates per month'
+  const names = new Map(chartData.map((bar) => [bar.id, bar.name]))
+  const namesakes = sharedNames(chartData)
 
   return (
     <Card>
@@ -345,13 +348,23 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
             <BarChart data={chartData} layout="vertical" margin={{ left: 20 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
               <XAxis type="number" className="text-xs" />
-              <YAxis dataKey="name" type="category" width={150} className="text-xs" tickFormatter={(name: string) => truncateLabel(name)} />
+              {/* Keyed by id: projects of one name would share a category, and the second's tooltip showed the first. */}
+              <YAxis dataKey="id" type="category" width={150} className="text-xs" tickFormatter={(id: string) => truncateLabel(names.get(id) ?? '')} />
               <Tooltip
                 contentStyle={{
                   backgroundColor: 'hsl(var(--background))',
                   borderColor: 'hsl(var(--border))',
                 }}
                 itemStyle={{ color: 'hsl(var(--foreground))' }}
+                labelFormatter={(id) => {
+                  const name = names.get(String(id)) ?? ''
+                  return namesakes.has(name) ? (
+                    <span className="flex items-center gap-2">
+                      {name}
+                      <ProjectOwnerById projectId={String(id)} namesakeIds={namesakes.get(name)} />
+                    </span>
+                  ) : name
+                }}
                 formatter={(value) =>
                   metric === 'coverage' ? `${value}%` : value
                 }
