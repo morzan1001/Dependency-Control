@@ -229,6 +229,14 @@ def impact_pre_score(severity_counts: dict[str, int], affected_projects: int) ->
     return float(severity_score * reach_multiplier)
 
 
+def impact_pre_score_expr(counts: str, project_ids: str) -> dict[str, Any]:
+    """impact_pre_score as an aggregation expression over a severity-count document and a project-id array."""
+    severity_score = [
+        {"$multiply": [f"{counts}.{sev.lower()}", weight]} for sev, weight in IMPACT_SEVERITY_WEIGHTS.items()
+    ]
+    return {"$multiply": [{"$add": severity_score}, {"$min": [{"$size": project_ids}, IMPACT_REACH_MULTIPLIER_CAP]}]}
+
+
 def select_impact_candidates[T](scored: list[tuple[float, T]], limit: int) -> list[T]:
     """Payloads whose enrichment-boosted ceiling can still beat the limit-th pre-score; only these need enriching."""
     ranked = sorted(scored, key=lambda t: t[0], reverse=True)

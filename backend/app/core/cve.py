@@ -31,6 +31,19 @@ def counted_cves(entry: Mapping[str, Any]) -> list[str]:
     return entry_cves(entry) or ([ident] if ident else [])
 
 
+def counted_cves_expr(entry: str) -> dict[str, Any]:
+    """counted_cves as an aggregation expression, upper-cased: two ids match exactly when their advisory_id does."""
+
+    def ident(value: str) -> dict[str, Any]:
+        return {"$cond": [{"$eq": [{"$type": value}, "string"]}, {"$toUpper": {"$trim": {"input": value}}}, ""]}
+
+    listed = {"$concatArrays": [[f"{entry}.resolved_cve", f"{entry}.id"], {"$ifNull": [f"{entry}.aliases", []]}]}
+    ids = {"$map": {"input": listed, "as": "i", "in": ident("$$i")}}
+    cves = {"$setUnion": [{"$filter": {"input": ids, "cond": {"$eq": [{"$substrCP": ["$$this", 0, 4]}, "CVE-"]}}}]}
+    own = {"$filter": {"input": [ident(f"{entry}.id")], "cond": {"$ne": ["$$this", ""]}}}
+    return {"$let": {"vars": {"cves": cves}, "in": {"$cond": [{"$eq": ["$$cves", []]}, own, "$$cves"]}}}
+
+
 def canonical_cve(entry: Mapping[str, Any]) -> str | None:
     """An advisory naming no CVE, as in GHSA-only ecosystems, is shown under its own id."""
     return next(iter(counted_cves(entry)), None)

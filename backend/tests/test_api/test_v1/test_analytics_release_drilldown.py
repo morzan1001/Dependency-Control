@@ -42,7 +42,7 @@ _SCANNED_AT = datetime(2026, 8, 1, tzinfo=timezone.utc)
 
 _SKIP = 0
 _LIMIT = 20
-_SORT_BY = "finding_count"
+_SORT_BY = "risk"
 _SORT_ORDER = "desc"
 _ONE = 1
 

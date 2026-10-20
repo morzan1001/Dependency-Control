@@ -18,7 +18,7 @@ from app.api.v1.helpers.analytics import (
     extract_fix_versions,
     get_projects_with_scans,
     get_user_projects,
-    impact_pre_score,
+    impact_pre_score_expr,
     process_cve_enrichments,
     require_analytics_permission,
     select_impact_candidates,
@@ -34,7 +34,8 @@ from app.api.v1.helpers.sorting import (
     parse_sort_direction,
 )
 from app.core.cache import scope_digest
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, SEVERITY_ORDER, severity_rank_expr
+from app.core.cve import counted_cves_expr
 from app.core.permissions import Permissions
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
@@ -70,18 +71,72 @@ _CVES_SHOWN = 5
 _FIRST_SEEN = {"$min": {"$ifNull": ["$first_seen_at", "$scan_created_at"]}}
 
 HotspotSort = Literal["finding_count", "component", "first_seen", "epss", "risk"]
-_MONGO_SORTS = {"component": "_id.component", "first_seen": "first_seen"}
-# The other keys derive from the advisories and their enrichment, so they rank in Python.
+_MONGO_SORTS = {"component": "_id.component", "first_seen": "first_seen", "finding_count": "cve_count"}
+# The other keys derive from the live enrichment of every advisory, so they rank in Python.
 _PYTHON_RANKS: dict[str, Callable[[dict[str, Any], Mapping[str, VulnerabilityEnrichment]], float]] = {
-    "finding_count": lambda r, _enrichments: sum(severity_counts_from_details(r["details_list"]).values()),
     "epss": lambda r, enrichments: process_cve_enrichments(r["details_list"], enrichments).max_epss or 0,
     "risk": lambda r, enrichments: process_cve_enrichments(r["details_list"], enrichments).max_risk or 0,
 }
 
+_LIVE_VULNERABILITIES = {"type": "vulnerability", "waived": {"$ne": True}}
 
-def _vulnerable_groups(scan_ids: list[str]) -> list[dict[str, Any]]:
+
+def _counted_groups(scan_ids: list[str]) -> list[dict[str, Any]]:
+    """Each (component, version) group with severity_counts_from_details' counts, but without its advisory lists."""
+    live = {
+        "$filter": {"input": {"$ifNull": ["$details.vulnerabilities", []]}, "cond": {"$ne": ["$$this.waived", True]}}
+    }
+    advisory = {"cves": counted_cves_expr("$$v"), "rank": severity_rank_expr({"$toUpper": "$$v.severity"})}
     return [
-        {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability", "waived": {"$ne": True}}},
+        {"$match": {"scan_id": {"$in": scan_ids}, **_LIVE_VULNERABILITIES}},
+        {
+            "$project": {
+                "component": 1,
+                "version": 1,
+                "project_id": 1,
+                "first_seen_at": 1,
+                "scan_created_at": 1,
+                "advisories": {"$map": {"input": live, "as": "v", "in": advisory}},
+            }
+        },
+        # Preserved, so a finding whose advisories are all waived still counts its project and age.
+        {"$unwind": {"path": "$advisories", "preserveNullAndEmptyArrays": True}},
+        {"$unwind": {"path": "$advisories.cves", "preserveNullAndEmptyArrays": True}},
+        {
+            "$group": {
+                "_id": {"component": "$component", "version": "$version", "cve": "$advisories.cves"},
+                "rank": {"$max": "$advisories.rank"},
+                "project_ids": {"$addToSet": "$project_id"},
+                "first_seen": _FIRST_SEEN,
+            }
+        },
+        {
+            "$group": {
+                "_id": {"component": "$_id.component", "version": "$_id.version"},
+                "project_ids": {"$push": "$project_ids"},
+                "first_seen": {"$min": "$first_seen"},
+                "ranks": {"$push": {"$cond": [{"$eq": [{"$type": "$_id.cve"}, "string"]}, "$rank", "$$REMOVE"]}},
+            }
+        },
+        {
+            "$project": {
+                "project_ids": {
+                    "$reduce": {"input": "$project_ids", "initialValue": [], "in": {"$setUnion": ["$$value", "$$this"]}}
+                },
+                "first_seen": 1,
+                "cve_count": {"$size": "$ranks"},
+                "counts": {
+                    label.lower(): {"$size": {"$filter": {"input": "$ranks", "cond": {"$eq": ["$$this", rank]}}}}
+                    for label, rank in SEVERITY_ORDER.items()
+                },
+            }
+        },
+    ]
+
+
+def _vulnerable_groups(match: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {"$match": {**match, **_LIVE_VULNERABILITIES}},
         {
             "$project": {
                 "component": 1,
@@ -103,6 +158,23 @@ def _vulnerable_groups(scan_ids: list[str]) -> list[dict[str, Any]]:
             }
         },
     ]
+
+
+async def _with_advisories(
+    repo: FindingRepository, scan_ids: list[str], groups: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The full rows, advisory lists included, of these counted groups alone and in their order."""
+    keys = [(group["_id"]["component"], group["_id"].get("version")) for group in groups]
+    if not keys:
+        return []
+    match = {
+        "scan_id": {"$in": scan_ids},
+        "component": {"$in": list({component for component, _ in keys})},
+        "version": {"$in": list({version for _, version in keys})},
+    }
+    rows = await repo.aggregate(_vulnerable_groups(match), allow_disk_use=True)
+    by_key = {(row["_id"]["component"], row["_id"].get("version")): row for row in rows}
+    return [by_key[key] for key in keys if key in by_key]
 
 
 async def _enrich(groups: Iterable[dict[str, Any]]) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
@@ -142,18 +214,23 @@ async def _impact(
     if not scan_ids:
         return []
 
-    pipeline = [*_vulnerable_groups(scan_ids), {"$limit": ANALYTICS_MAX_QUERY_LIMIT}]
-    results = await FindingRepository(db).aggregate(pipeline, allow_disk_use=True)
-
-    # Severity/vuln counts come from the advisory lists (finding_id is only component:version).
-    counted = [(r, severity_counts_from_details(r["details_list"])) for r in results]
-    candidates = select_impact_candidates(
-        [(impact_pre_score(counts, len(r["project_ids"])), (r, counts)) for r, counts in counted], limit
+    repo = FindingRepository(db)
+    pipeline = [
+        *_counted_groups(scan_ids),
+        {"$addFields": {"pre_score": impact_pre_score_expr("$counts", "$project_ids")}},
+        {"$sort": {"pre_score": -1, "_id": 1}},
+        {"$limit": ANALYTICS_MAX_QUERY_LIMIT},
+    ]
+    counted = await repo.aggregate(pipeline, allow_disk_use=True)
+    candidates = await _with_advisories(
+        repo, scan_ids, select_impact_candidates([(group["pre_score"], group) for group in counted], limit)
     )
-    enrichments, unavailable = await _enrich(r for r, _ in candidates)
+    enrichments, unavailable = await _enrich(candidates)
 
     impact_results = []
-    for r, severity_counts in candidates:
+    for r in candidates:
+        # Severity/vuln counts come from the advisory lists (finding_id is only component:version).
+        severity_counts = severity_counts_from_details(r["details_list"])
         intel, enrichment = _threat_intel(r, severity_counts, enrichments, unavailable)
         affected_projects = len(r["project_ids"])
         impact_results.append(
@@ -299,11 +376,15 @@ async def _hotspots(
         return []
 
     sort_direction = parse_sort_direction(sort_order)
-    pipeline = _vulnerable_groups(scan_ids)
-    if sort_by in _MONGO_SORTS:
-        order = [(_MONGO_SORTS[sort_by], sort_direction), ("_id", 1)]
-        pipeline += [*case_insensitive_sort(order, {"_id.component"}), {"$skip": skip}, {"$limit": limit}]
-    groups = await FindingRepository(db).aggregate(pipeline, allow_disk_use=True)
+    repo = FindingRepository(db)
+    rank = _PYTHON_RANKS.get(sort_by)
+    if rank:
+        groups = await repo.aggregate(_vulnerable_groups({"scan_id": {"$in": scan_ids}}), allow_disk_use=True)
+    else:
+        order = [(_MONGO_SORTS[sort_by], sort_direction), ("_id.component", 1), ("_id", 1)]
+        page = [*case_insensitive_sort(order, {"_id.component"}), {"$skip": skip}, {"$limit": limit}]
+        counted = await repo.aggregate([*_counted_groups(scan_ids), *page], allow_disk_use=True)
+        groups = await _with_advisories(repo, scan_ids, counted)
 
     # A component may be group-qualified while the inventory keeps the bare artifact name, so both spellings match.
     candidates = list({name for r in groups for name in component_name_candidates(r["_id"]["component"])})
@@ -316,17 +397,12 @@ async def _hotspots(
             }
         },
     ]
-    rank = _PYTHON_RANKS.get(sort_by)
-    descending = sort_direction == -1
     # Only an enrichment-ranked sort needs every group enriched; the others enrich their page alone.
-    ranked_by_enrichment = sort_by in ("epss", "risk")
-    if rank and not ranked_by_enrichment:
-        groups = _ranked_page(groups, rank, {}, descending, skip, limit)
     type_rows, (enrichments, unavailable) = await asyncio.gather(
         DependencyRepository(db).aggregate(type_pipeline), _enrich(groups)
     )
-    if rank and ranked_by_enrichment:
-        groups = _ranked_page(groups, rank, enrichments, descending, skip, limit)
+    if rank:
+        groups = _ranked_page(groups, rank, enrichments, sort_direction == -1, skip, limit)
 
     types_by_version: dict[str, dict[str, set[str]]] = {}
     types_by_name: dict[str, set[str]] = {}
