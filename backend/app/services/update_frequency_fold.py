@@ -4,7 +4,6 @@ import logging
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from itertools import dropwhile
 from typing import Any, Literal, get_args
 
 from app.core.constants import COUNTED_UPDATE_KINDS, UpdateKind
@@ -69,10 +68,7 @@ def commit_coverage(
         token for token, seen in unmeasurable.items() if token not in measured and seen >= scans_per_commit[token]
     }
 
-    covered = dropwhile(lambda delta: delta["_id"] != window[0]["_id"], deltas)
-    accounted = {
-        _commit_token(d) for d in covered if not d.get("error") and _commit_token(d) in scans_per_commit
-    } - skipped
+    accounted = {token for delta in window if (token := _commit_token(delta)) in scans_per_commit}
     return CommitCoverage(len(accounted), len(scans_per_commit) - len(skipped))
 
 

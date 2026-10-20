@@ -418,6 +418,16 @@ class TestCommitCoverage:
         )
         assert self._over(deltas, 2) == (2, 2, "ready")
 
+    def test_an_sbom_less_retry_does_not_account_for_the_scan_that_still_owes_its_delta(self) -> None:
+        deltas = _chain(
+            [
+                _delta("s0", 0, commit_hash="c1"),
+                _delta("s1", 10, patch=1, commit_hash="c2"),
+                _delta("s2", 20, dep_count=0, commit_hash="c3"),
+            ]
+        )
+        assert self._over(deltas, undelivered={"c3": 1}) == (2, 3, "partial")
+
     def test_a_scan_naming_no_commit_stands_for_itself(self) -> None:
         deltas = _chain([_delta("s0", 0, commit_hash=""), _delta("s1", 10, patch=1, commit_hash="")])
         assert self._over(deltas, 2) == (2, 2, "ready")
