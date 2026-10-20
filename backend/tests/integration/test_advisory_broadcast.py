@@ -217,6 +217,19 @@ async def test_the_advisory_text_says_which_versions_could_not_be_compared(clien
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
+async def test_the_advisory_email_is_branded_with_the_instance_name(client, db, headers, monkeypatch):
+    sent = AsyncMock()
+    monkeypatch.setattr(notification_service, "notify_users", sent)
+    await db.system_settings.insert_one({"_id": "current", "instance_name": "Acme Deps"})
+
+    await _broadcast(client, headers, {"name": "lodash", "version": "4.17.21"}, dry_run=False)
+
+    [call] = sent.await_args_list
+    assert "<h1>Acme Deps</h1>" in call.kwargs["html_message"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
 async def test_a_type_that_is_no_purl_type_is_rejected(client, headers):
     resp = await client.post(
         "/api/v1/notifications/broadcast",

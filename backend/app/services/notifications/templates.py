@@ -6,7 +6,6 @@ import nh3
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from markupsafe import Markup
 
-from app.core.config import settings
 from app.core.constants import PASSWORD_RESET_TOKEN_EXPIRE_HOURS
 from app.core.epss import HIGH_EPSS_LABEL
 from app.schemas.notification import PRIORITY_VULNS_LABEL
@@ -14,28 +13,28 @@ from app.schemas.notification import PRIORITY_VULNS_LABEL
 current_dir = os.path.dirname(os.path.abspath(__file__))
 template_dir = os.path.join(current_dir, "../../templates/email")
 env = Environment(loader=FileSystemLoader(template_dir), autoescape=True, undefined=StrictUndefined)
-env.globals["project_name"] = settings.PROJECT_NAME
 
 
-def render_template(template_name: str, context: dict[str, Any]) -> str:
-    template = env.get_template(template_name)
-    return template.render(**context)
+def render_template(template_name: str, brand: str, context: dict[str, Any]) -> str:
+    return env.get_template(template_name).render(project_name=brand, **context)
 
 
-def get_verification_email_template(verification_link: str) -> str:
-    return render_template("verification.html", {"link": verification_link})
+def get_verification_email_template(verification_link: str, *, brand: str) -> str:
+    return render_template("verification.html", brand, {"link": verification_link})
 
 
-def get_email_change_template(confirmation_link: str) -> str:
-    return render_template("email_change.html", {"link": confirmation_link})
+def get_email_change_template(confirmation_link: str, *, brand: str) -> str:
+    return render_template("email_change.html", brand, {"link": confirmation_link})
 
 
-def get_password_reset_template(link: str) -> str:
-    return render_template("password_reset.html", {"link": link, "valid_hours": PASSWORD_RESET_TOKEN_EXPIRE_HOURS})
+def get_password_reset_template(link: str, *, brand: str) -> str:
+    return render_template(
+        "password_reset.html", brand, {"link": link, "valid_hours": PASSWORD_RESET_TOKEN_EXPIRE_HOURS}
+    )
 
 
-def get_system_invitation_template(invitation_link: str, inviter_name: str) -> str:
-    return render_template("system_invitation.html", {"link": invitation_link, "inviter_name": inviter_name})
+def get_system_invitation_template(invitation_link: str, inviter_name: str, *, brand: str) -> str:
+    return render_template("system_invitation.html", brand, {"link": invitation_link, "inviter_name": inviter_name})
 
 
 def get_vulnerability_found_template(
@@ -46,9 +45,12 @@ def get_vulnerability_found_template(
     kev_count: int = 0,
     kev_vulnerabilities: list | None = None,
     high_epss_count: int = 0,
+    *,
+    brand: str,
 ) -> str:
     return render_template(
         "vulnerability_found.html",
+        brand,
         {
             "link": report_link,
             "project_name_scanned": project_name_scanned,
@@ -73,9 +75,12 @@ def get_analysis_completed_template(
     severity_medium: int = 0,
     severity_low: int = 0,
     results_summary: list | None = None,
+    *,
+    brand: str,
 ) -> str:
     return render_template(
         "analysis_completed.html",
+        brand,
         {
             "link": analysis_link,
             "project_name_scanned": project_name_scanned,
@@ -94,29 +99,34 @@ def _markdown_html(text: str) -> Markup:
     return Markup(nh3.clean(markdown.markdown(text), url_schemes={"http", "https", "mailto"}))
 
 
-def get_advisory_template(message: str, projects: list[dict[str, Any]], link: str) -> str:
-    return render_template("advisory.html", {"message": _markdown_html(message), "projects": projects, "link": link})
+def get_advisory_template(message: str, projects: list[dict[str, Any]], link: str, *, brand: str) -> str:
+    return render_template(
+        "advisory.html", brand, {"message": _markdown_html(message), "projects": projects, "link": link}
+    )
 
 
-def get_announcement_template(message: str, link: str = "#") -> str:
-    return render_template("announcement.html", {"message": _markdown_html(message), "link": link})
+def get_announcement_template(message: str, link: str = "#", *, brand: str) -> str:
+    return render_template("announcement.html", brand, {"message": _markdown_html(message), "link": link})
 
 
-def get_password_changed_template(username: str, login_link: str) -> str:
-    return render_template("password_changed.html", {"username": username, "login_link": login_link})
+def get_password_changed_template(username: str, login_link: str, *, brand: str) -> str:
+    return render_template("password_changed.html", brand, {"username": username, "login_link": login_link})
 
 
-def get_2fa_enabled_template(username: str) -> str:
-    return render_template("2fa_enabled.html", {"username": username})
+def get_2fa_enabled_template(username: str, *, brand: str) -> str:
+    return render_template("2fa_enabled.html", brand, {"username": username})
 
 
-def get_2fa_disabled_template(username: str) -> str:
-    return render_template("2fa_disabled.html", {"username": username})
+def get_2fa_disabled_template(username: str, *, brand: str) -> str:
+    return render_template("2fa_disabled.html", brand, {"username": username})
 
 
-def get_project_member_added_template(target_project_name: str, inviter_name: str, role: str, link: str) -> str:
+def get_project_member_added_template(
+    target_project_name: str, inviter_name: str, role: str, link: str, *, brand: str
+) -> str:
     return render_template(
         "project_member_added.html",
+        brand,
         {
             "target_project_name": target_project_name,
             "inviter_name": inviter_name,

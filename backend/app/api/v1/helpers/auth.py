@@ -44,9 +44,9 @@ def send_verification_email(background_tasks: BackgroundTasks, email: str, syste
         background_tasks,
         system_settings,
         email,
-        f"Verify your email for {settings.PROJECT_NAME}",
+        f"Verify your email for {system_settings.brand}",
         f"Please verify your email by clicking this link: {link}",
-        templates.get_verification_email_template(link),
+        templates.get_verification_email_template(link, brand=system_settings.brand),
     )
 
 
@@ -59,9 +59,9 @@ def send_email_change_email(
         background_tasks,
         system_settings,
         new_email,
-        f"Confirm your new email for {settings.PROJECT_NAME}",
+        f"Confirm your new email for {system_settings.brand}",
         f"Confirm your new email address by clicking this link: {link}",
-        templates.get_email_change_template(link),
+        templates.get_email_change_template(link, brand=system_settings.brand),
     )
 
 
@@ -74,9 +74,9 @@ def send_password_reset_email(
         background_tasks,
         system_settings,
         user["email"],
-        f"Reset your password for {settings.PROJECT_NAME}",
+        f"Reset your password for {system_settings.brand}",
         f"Reset your password by clicking this link: {link}",
-        templates.get_password_reset_template(link),
+        templates.get_password_reset_template(link, brand=system_settings.brand),
     )
 
 
@@ -91,9 +91,11 @@ def send_system_invitation_email(
         background_tasks,
         system_settings,
         email,
-        f"Invitation to join {settings.PROJECT_NAME}",
-        f"You have been invited to join {settings.PROJECT_NAME}. Click here to accept: {invitation_link}",
-        templates.get_system_invitation_template(invitation_link=invitation_link, inviter_name=inviter_name),
+        f"Invitation to join {system_settings.brand}",
+        f"You have been invited to join {system_settings.brand}. Click here to accept: {invitation_link}",
+        templates.get_system_invitation_template(
+            invitation_link=invitation_link, inviter_name=inviter_name, brand=system_settings.brand
+        ),
     )
 
 
@@ -117,6 +119,7 @@ def send_project_member_added_email(
             inviter_name=inviter_name,
             role=role,
             link=f"{settings.FRONTEND_BASE_URL}/projects/{project_id}",
+            brand=system_settings.brand,
         ),
     )
 
@@ -129,9 +132,11 @@ def send_password_changed_email(
         system_settings,
         email,
         "Security Alert: Password Changed",
-        f"Hello {username},\n\nYour password for {settings.PROJECT_NAME} was successfully changed.\n\n"
+        f"Hello {username},\n\nYour password for {system_settings.brand} was successfully changed.\n\n"
         f"If you did not initiate this change, {_CONTACT_ADMIN}",
-        templates.get_password_changed_template(username=username, login_link=f"{settings.FRONTEND_BASE_URL}/login"),
+        templates.get_password_changed_template(
+            username=username, login_link=f"{settings.FRONTEND_BASE_URL}/login", brand=system_settings.brand
+        ),
     )
 
 
@@ -145,7 +150,7 @@ def send_2fa_enabled_email(
         "Security Alert: 2FA Enabled",
         f"Hello {username},\n\nTwo-Factor Authentication (2FA) has been enabled for your account.\n\n"
         f"If you did not initiate this change, {_CONTACT_ADMIN}",
-        templates.get_2fa_enabled_template(username=username),
+        templates.get_2fa_enabled_template(username=username, brand=system_settings.brand),
     )
 
 
@@ -163,5 +168,5 @@ def send_2fa_disabled_email(
         f"Security Alert: 2FA Disabled{subject}",
         f"Hello {username},\n\nTwo-Factor Authentication (2FA) has been disabled for your account{actor}.\n\n"
         f"{unexpected}, {_CONTACT_ADMIN}",
-        templates.get_2fa_disabled_template(username=username),
+        templates.get_2fa_disabled_template(username=username, brand=system_settings.brand),
     )

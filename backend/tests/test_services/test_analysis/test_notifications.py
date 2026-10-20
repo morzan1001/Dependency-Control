@@ -251,6 +251,33 @@ class TestAnalysisCompletedSeverityCounts:
         assert build_blocks.call_args.kwargs["severity_counts"] == {"CRITICAL": 1, "HIGH": 0, "MEDIUM": 0, "LOW": 2}
 
 
+class TestScanMailsCarryTheInstanceName:
+    @pytest.mark.asyncio
+    async def test_the_completion_and_the_vulnerability_mail_are_branded_with_the_instance_name(self):
+        db = await _db_with_scan()
+        await db.system_settings.insert_one({"_id": "current", "instance_name": "Acme Deps"})
+        fake_notify = SimpleNamespace(notify_project_members=AsyncMock())
+        fake_webhook = SimpleNamespace(trigger_scan_completed=AsyncMock(), trigger_vulnerability_found=AsyncMock())
+        with (
+            patch.object(notifications, "notification_service", fake_notify),
+            patch.object(notifications, "webhook_service", fake_webhook),
+        ):
+            await send_scan_notifications(
+                scan_id="scan-abc-123",
+                project=Project(id="proj-1", name="MyProject"),
+                findings=[_finding("CVE-1", "CRITICAL")],
+                db=db,
+                **_outcome(),
+            )
+
+        mails = {
+            call.kwargs["event_type"]: call.kwargs["html_message"]
+            for call in fake_notify.notify_project_members.await_args_list
+        }
+        assert set(mails) == {"analysis_completed", "vulnerability_found"}
+        assert all("<h1>Acme Deps</h1>" in html for html in mails.values())
+
+
 class TestAnalysisCompletedAnalyzers:
     @pytest.mark.asyncio
     async def test_every_channel_lists_and_counts_each_analyzer_once(self):

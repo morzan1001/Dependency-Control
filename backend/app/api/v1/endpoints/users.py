@@ -36,7 +36,6 @@ from app.api.v1.helpers.responses import (
 )
 from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, parse_sort_direction
 from app.core import security
-from app.core.config import settings
 from app.core.constants import AUTH_PROVIDER_LOCAL
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User, is_local_account
@@ -389,7 +388,8 @@ async def setup_2fa(
     user_repo = UserRepository(db)
     await user_repo.update_raw(current_user.id, {"$set": {"totp_secret": secret}, "$unset": {"totp_last_step": ""}})
 
-    totp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=current_user.email, issuer_name=settings.PROJECT_NAME)
+    issuer = (await deps.get_system_settings(db)).brand
+    totp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=current_user.email, issuer_name=issuer)
 
     return {"secret": secret, "qr_code": await asyncio.to_thread(_qr_png_base64, totp_uri)}
 

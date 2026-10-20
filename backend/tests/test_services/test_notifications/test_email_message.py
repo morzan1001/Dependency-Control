@@ -20,7 +20,7 @@ def test_a_mail_without_logo_is_a_flat_alternative_of_plain_and_html():
 
 
 def test_a_templated_mail_nests_the_alternative_inside_a_related_part_with_the_logo():
-    msg = _build(html_message=get_verification_email_template("https://dc.example/verify"))
+    msg = _build(html_message=get_verification_email_template("https://dc.example/verify", brand=SETTINGS.brand))
 
     assert msg.get_content_subtype() == "related"
     alternative, logo = msg.get_payload()
@@ -41,7 +41,7 @@ def test_a_text_only_mail_carries_no_image():
 
 
 def test_the_logo_is_sized_for_mail():
-    msg = _build(html_message=get_verification_email_template("https://dc.example/verify"))
+    msg = _build(html_message=get_verification_email_template("https://dc.example/verify", brand=SETTINGS.brand))
 
     assert len(flatten_message(msg)) < 64 * 1024
 
@@ -55,7 +55,7 @@ def test_every_message_carries_a_date_and_a_message_id_of_the_sender_domain():
 
 def test_a_long_announcement_paragraph_goes_out_in_lines_a_relay_accepts():
     paragraph = "word " * 600
-    msg = _build(message=paragraph, html_message=get_announcement_template(message=paragraph))
+    msg = _build(message=paragraph, html_message=get_announcement_template(message=paragraph, brand=SETTINGS.brand))
 
     assert max(len(line) for line in flatten_message(msg).splitlines()) <= 998
 

@@ -17,6 +17,7 @@ from app.core.cve import canonical_cve
 from app.core.epss import HIGH_EPSS_LABEL, bucket_epss
 from app.models.project import Project
 from app.models.stats import Stats
+from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.notification import PRIORITY_VULNS_LABEL, AlertVulnerability
 from app.services.analysis.registry import POST_PROCESSOR_ANALYZERS
 from app.services.analysis.runner import AnalyzerOutcome
@@ -150,6 +151,7 @@ async def send_scan_notifications(
         results_summary = [str(outcome) for outcome in analyzer_outcomes]
         analyzer_count = sum(1 for outcome in analyzer_outcomes if outcome.name not in POST_PROCESSOR_ANALYZERS)
         try:
+            brand = (await SystemSettingsRepository(db).get()).brand
             html_content = get_analysis_completed_template(
                 analysis_link=link,
                 project_name_scanned=project.name,
@@ -160,6 +162,7 @@ async def send_scan_notifications(
                 severity_medium=stats.medium,
                 severity_low=stats.low,
                 results_summary=results_summary,
+                brand=brand,
             )
 
             results_text = "\n".join(results_summary) if results_summary else "No analyzer details available."
@@ -226,6 +229,7 @@ async def send_scan_notifications(
             link,
         )
 
+        brand = (await SystemSettingsRepository(db).get()).brand
         vuln_html = get_vulnerability_found_template(
             report_link=link,
             project_name_scanned=project.name,
@@ -234,6 +238,7 @@ async def send_scan_notifications(
             kev_count=len(kev_vulns),
             kev_vulnerabilities=kev_vulns,
             high_epss_count=len(high_epss_vulns),
+            brand=brand,
         )
 
         vulnerability_card: dict[str, Any] = {

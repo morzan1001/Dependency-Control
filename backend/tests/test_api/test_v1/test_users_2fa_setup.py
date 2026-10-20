@@ -1,5 +1,6 @@
 import base64
 import threading
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 import pytest
@@ -34,3 +35,22 @@ async def test_the_qr_code_is_rendered_off_the_event_loop():
     assert rendered_on
     assert loop_thread not in rendered_on
     assert base64.b64decode(result["qr_code"]).startswith(b"\x89PNG")
+
+
+@pytest.mark.asyncio
+async def test_the_authenticator_entry_is_issued_by_the_instance_name():
+    db = FakeDatabase()
+    await db.system_settings.insert_one({"_id": "current", "instance_name": "Acme Deps"})
+    encoded = []
+    real_make = qrcode.make
+
+    def make(data):
+        encoded.append(data)
+        return real_make(data)
+
+    with patch.object(qrcode, "make", side_effect=make):
+        await _setup(db)
+
+    [uri] = encoded
+    assert parse_qs(urlparse(uri).query)["issuer"] == ["Acme Deps"]
+    assert urlparse(uri).path == "/Acme%20Deps:alice%40corp.example"

@@ -1,7 +1,6 @@
 import pytest
 from jinja2 import UndefinedError
 
-from app.core.config import settings
 from app.core.constants import PASSWORD_RESET_TOKEN_EXPIRE_HOURS
 from app.schemas.notification import AlertVulnerability
 from app.services.notifications import templates
@@ -24,45 +23,39 @@ def _vuln(**fields):
     return AlertVulnerability(**fields)
 
 
-@pytest.fixture
-def renamed(monkeypatch):
-    monkeypatch.setitem(templates.env.globals, "project_name", "Acme Deps")
+_BRAND = "Acme Deps"
 
 
-class TestProjectName:
-    def test_every_mail_carries_the_configured_project_name(self):
-        assert settings.PROJECT_NAME in get_verification_email_template("https://example.com/verify")
-
-    @pytest.mark.parametrize(
-        "render",
-        [
-            lambda: get_verification_email_template("https://example.com/verify"),
-            lambda: get_announcement_template(message="Platform upgrade complete"),
-            lambda: get_2fa_enabled_template(username="alice"),
-            lambda: get_project_member_added_template(
-                target_project_name="p", inviter_name="i", role="r", link="https://example.com/p"
-            ),
-        ],
-    )
-    def test_a_renamed_deployment_is_named_in_every_mail(self, renamed, render):
-        assert "Acme Deps" in render()
+@pytest.mark.parametrize(
+    "render",
+    [
+        lambda: get_verification_email_template("https://example.com/verify", brand=_BRAND),
+        lambda: get_announcement_template(message="Platform upgrade complete", brand=_BRAND),
+        lambda: get_2fa_enabled_template(username="alice", brand=_BRAND),
+        lambda: get_project_member_added_template(
+            target_project_name="p", inviter_name="i", role="r", link="https://example.com/p", brand=_BRAND
+        ),
+    ],
+)
+def test_every_mail_is_headed_by_the_brand_it_is_given(render):
+    assert f"<h1>{_BRAND}</h1>" in render()
 
 
 def test_a_context_value_no_caller_passes_fails_the_render_instead_of_going_out_blank():
     with pytest.raises(UndefinedError):
-        templates.render_template("password_reset.html", {"username": "u", "link": "https://example.com/reset"})
+        templates.render_template("password_reset.html", _BRAND, {"username": "u", "link": "https://example.com/reset"})
 
 
 class TestGetVerificationEmailTemplate:
     def test_contains_verification_link(self):
         link = "https://example.com/verify?token=abc123"
-        result = get_verification_email_template(link)
+        result = get_verification_email_template(link, brand=_BRAND)
         assert link in result
 
 
 class TestGetPasswordResetTemplate:
     def _render(self, **overrides):
-        defaults = {"link": "https://example.com/reset?token=xyz"}
+        defaults = {"link": "https://example.com/reset?token=xyz", "brand": _BRAND}
         defaults.update(overrides)
         return get_password_reset_template(**defaults)
 
@@ -81,6 +74,7 @@ class TestGetSystemInvitationTemplate:
         defaults = {
             "invitation_link": "https://example.com/sys-invite?token=abc",
             "inviter_name": "Admin",
+            "brand": _BRAND,
         }
         defaults.update(overrides)
         return get_system_invitation_template(**defaults)
@@ -102,6 +96,7 @@ class TestGetVulnerabilityFoundTemplate:
             "project_name_scanned": "my-app",
             "vulnerabilities": [_vuln(id="CVE-2024-001", severity="HIGH")],
             "priority_count": 1,
+            "brand": _BRAND,
         }
         defaults.update(overrides)
         return get_vulnerability_found_template(**defaults)
@@ -158,6 +153,7 @@ class TestGetAnalysisCompletedTemplate:
             "project_name_scanned": "my-service",
             "total_findings": 5,
             "analyzer_count": 1,
+            "brand": _BRAND,
         }
         defaults.update(overrides)
         return get_analysis_completed_template(**defaults)
@@ -186,7 +182,12 @@ _ADVISED_PROJECT = {"id": "p1", "name": "billing", "findings": ["log4j-core (2.1
 
 class TestGetAdvisoryTemplate:
     def _render(self, **overrides):
-        defaults = {"message": "Rotate **now**", "projects": [_ADVISED_PROJECT], "link": "https://dc.example.com"}
+        defaults = {
+            "message": "Rotate **now**",
+            "projects": [_ADVISED_PROJECT],
+            "link": "https://dc.example.com",
+            "brand": _BRAND,
+        }
         defaults.update(overrides)
         return get_advisory_template(**defaults)
 
@@ -211,21 +212,23 @@ class TestGetAdvisoryTemplate:
 
 class TestGetAnnouncementTemplate:
     def test_contains_message(self):
-        result = get_announcement_template(message="Platform upgrade complete")
+        result = get_announcement_template(message="Platform upgrade complete", brand=_BRAND)
         assert "Platform upgrade complete" in result
 
     def test_markdown_is_rendered_once_not_shown_as_tags(self):
-        result = get_announcement_template(message="Maintenance **tonight** & tomorrow\n\n- item one")
+        result = get_announcement_template(message="Maintenance **tonight** & tomorrow\n\n- item one", brand=_BRAND)
 
         assert "<strong>tonight</strong> &amp; tomorrow" in result
         assert "<li>item one</li>" in result
         assert "&lt;p&gt;" not in result
 
     def test_a_version_range_in_a_code_span_reads_as_written(self):
-        assert "<code>&gt;= 2.0, &lt; 2.17.1</code>" in get_announcement_template(message="`>= 2.0, < 2.17.1`")
+        assert "<code>&gt;= 2.0, &lt; 2.17.1</code>" in get_announcement_template(
+            message="`>= 2.0, < 2.17.1`", brand=_BRAND
+        )
 
     def test_a_quote_and_an_autolink_keep_their_markdown_meaning(self):
-        result = get_announcement_template(message="> vendor note\n\n<https://vendor.example/advisory>")
+        result = get_announcement_template(message="> vendor note\n\n<https://vendor.example/advisory>", brand=_BRAND)
 
         assert "<blockquote>" in result
         assert 'href="https://vendor.example/advisory"' in result
@@ -236,6 +239,7 @@ class TestGetPasswordChangedTemplate:
         defaults = {
             "username": "testuser",
             "login_link": "https://example.com/login",
+            "brand": _BRAND,
         }
         defaults.update(overrides)
         return get_password_changed_template(**defaults)
@@ -248,7 +252,7 @@ class TestGetPasswordChangedTemplate:
 
 class TestGet2faDisabledTemplate:
     def test_contains_username(self):
-        assert "bob" in get_2fa_disabled_template(username="bob")
+        assert "bob" in get_2fa_disabled_template(username="bob", brand=_BRAND)
 
 
 class TestGetProjectMemberAddedTemplate:
@@ -258,6 +262,7 @@ class TestGetProjectMemberAddedTemplate:
             "inviter_name": "Charlie",
             "role": "developer",
             "link": "https://example.com/project/my-project",
+            "brand": _BRAND,
         }
         defaults.update(overrides)
         return get_project_member_added_template(**defaults)
@@ -289,7 +294,7 @@ class TestTemplateEscaping:
 
     def test_an_inviters_display_name_is_escaped_into_the_invitation(self):
         result = get_system_invitation_template(
-            invitation_link="https://example.com/invite?token=abc", inviter_name=_HTML_INJECTION
+            invitation_link="https://example.com/invite?token=abc", inviter_name=_HTML_INJECTION, brand=_BRAND
         )
 
         assert _HTML_INJECTION not in result
@@ -301,6 +306,7 @@ class TestTemplateEscaping:
             project_name_scanned=_HTML_INJECTION,
             vulnerabilities=[_vuln(id="CVE-2024-001", severity="HIGH")],
             priority_count=1,
+            brand=_BRAND,
         )
 
         assert _HTML_INJECTION not in result
@@ -312,20 +318,21 @@ class TestTemplateEscaping:
             project_name_scanned="my-app",
             vulnerabilities=[_vuln(id=_HTML_INJECTION, severity="HIGH")],
             priority_count=1,
+            brand=_BRAND,
         )
 
         assert _HTML_INJECTION not in result
         assert _ESCAPED_INJECTION in result
 
     def test_raw_html_in_an_announcement_is_dropped(self):
-        result = get_announcement_template(message=f"before {_HTML_INJECTION} after")
+        result = get_announcement_template(message=f"before {_HTML_INJECTION} after", brand=_BRAND)
 
         assert "<script" not in result
         assert "xss" not in result
 
     @pytest.mark.parametrize("href", ["javascript:alert(1)", "data:text/html,x"])
     def test_a_link_outside_http_https_mailto_loses_its_target(self, href):
-        result = get_announcement_template(message=f"[click]({href})")
+        result = get_announcement_template(message=f"[click]({href})", brand=_BRAND)
 
         assert href not in result
         assert ">click</a>" in result
