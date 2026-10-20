@@ -1236,6 +1236,30 @@ async def read_scan_findings(
     return build_pagination_response(data, total, skip, limit)
 
 
+@router.get(
+    "/scans/{scan_id}/findings/{finding_id:path}",
+    response_model=ScanFindingItem,
+    summary="Get one finding of a scan",
+    responses=RESP_AUTH_404,
+)
+async def read_scan_finding(
+    scan_id: str,
+    finding_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+) -> dict[str, Any]:
+    """The finding as a row of the findings page; several can share an id (a license's), and the most severe is read."""
+    await _require_scan_access(scan_id, current_user, db)
+    rows = await FindingRepository(db).aggregate(
+        _build_scan_findings_pipeline(
+            {"scan_id": scan_id, "finding_id": finding_id}, sort_by="severity", sort_dir=-1, skip=0, limit=1
+        )
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    return rows[0]
+
+
 @router.get("/scans/{scan_id}/stats", responses=RESP_AUTH_404)
 async def get_scan_stats(
     scan_id: str,

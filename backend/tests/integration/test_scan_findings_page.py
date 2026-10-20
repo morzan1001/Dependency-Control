@@ -1,4 +1,4 @@
-"""A findings page streams its rows instead of building them into one document."""
+"""A findings page streams its rows instead of building them into one document, and one finding reads on its own."""
 
 import pytest
 
@@ -7,6 +7,8 @@ from tests.helpers.databases import DATABASES
 pytestmark = pytest.mark.asyncio
 
 _SCAN = "scan-page"
+_GO_MODULE = "github.com/docker/docker"
+_GO_VERSION = "v20.10.7+incompatible"
 
 
 def _finding(i: int, **overrides) -> dict:
@@ -60,3 +62,63 @@ async def test_the_direct_only_total_counts_after_the_dependency_join(client, db
     # lib0 and lib1 are transitive; lib4 has no inventory row, so its finding stays.
     assert (every["total"], len(every["items"])) == (5, 2)
     assert (direct["total"], len(direct["items"])) == (3, 2)
+
+
+@pytest.mark.parametrize("database", DATABASES)
+async def test_one_finding_reads_with_the_columns_of_its_page_row(client, db, database, owner_auth_headers_proj):
+    await _seed_scan(db)
+    finding_id = f"{_GO_MODULE}:{_GO_VERSION}"
+    await db.findings.insert_many(
+        [
+            _finding(1, finding_id=finding_id, component=_GO_MODULE, version=_GO_VERSION),
+            _finding(2),
+        ]
+    )
+    await db.dependencies.insert_one(
+        {
+            "_id": "d-go",
+            "scan_id": _SCAN,
+            "name": _GO_MODULE,
+            "version": _GO_VERSION,
+            "purl": f"pkg:golang/{_GO_MODULE}@{_GO_VERSION}",
+            "direct": True,
+        }
+    )
+
+    one = await client.get(f"/api/v1/projects/scans/{_SCAN}/findings/{finding_id}", headers=owner_auth_headers_proj)
+    [row] = (
+        await client.get(
+            f"/api/v1/projects/scans/{_SCAN}/findings", params={"search": _GO_MODULE}, headers=owner_auth_headers_proj
+        )
+    ).json()["items"]
+
+    assert one.status_code == 200, one.text
+    assert one.json() == row
+    assert (one.json()["id"], one.json()["purl"]) == (finding_id, f"pkg:golang/{_GO_MODULE}@{_GO_VERSION}")
+
+
+@pytest.mark.parametrize("database", DATABASES)
+async def test_of_findings_sharing_an_id_the_most_severe_is_read(client, db, database, owner_auth_headers_proj):
+    """A license id names every package under that license."""
+    await _seed_scan(db)
+    shared = {"finding_id": "LIC-GPL-3.0", "type": "license"}
+    await db.findings.insert_many(
+        [
+            _finding(1, severity="LOW", component="alpha", **shared),
+            _finding(2, severity="CRITICAL", component="beta", **shared),
+        ]
+    )
+
+    resp = await client.get(f"/api/v1/projects/scans/{_SCAN}/findings/LIC-GPL-3.0", headers=owner_auth_headers_proj)
+
+    assert (resp.status_code, resp.json()["component"]) == (200, "beta")
+
+
+@pytest.mark.parametrize("database", DATABASES)
+async def test_an_unknown_finding_is_not_found(client, db, database, owner_auth_headers_proj):
+    await _seed_scan(db)
+    await db.findings.insert_one(_finding(1))
+
+    resp = await client.get(f"/api/v1/projects/scans/{_SCAN}/findings/CVE-1999-0001", headers=owner_auth_headers_proj)
+
+    assert (resp.status_code, resp.json()["detail"]) == (404, "Finding not found")
