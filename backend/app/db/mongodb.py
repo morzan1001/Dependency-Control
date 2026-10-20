@@ -17,6 +17,8 @@ DEFAULT_MIN_POOL_SIZE = 5
 DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 30000
 DEFAULT_CONNECT_TIMEOUT_MS = 20000
 DEFAULT_SOCKET_TIMEOUT_MS = 30000
+# Below the socket timeout, so mongod aborts a runaway read, which is not retried, before the driver resends it.
+DEFAULT_MAX_TIME_MS = 25000
 
 
 async def open_gridfs_download_with_retry(

@@ -9,6 +9,7 @@ from pymongo import ReplaceOne
 from pymongo.collation import Collation
 from pymongo.errors import BulkWriteError
 
+from app.db.mongodb import DEFAULT_MAX_TIME_MS
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +209,9 @@ class BaseRepository[T: BaseModel]:
             options["allowDiskUse"] = True
         if hint:
             options["hint"] = hint
-        return await self.collection.aggregate(pipeline, collation=collation, **options).to_list(limit)
+        return await self.collection.aggregate(
+            pipeline, collation=collation, maxTimeMS=DEFAULT_MAX_TIME_MS, **options
+        ).to_list(limit)
 
     async def iterate(self, query: dict[str, Any] | None = None) -> AsyncGenerator[T, None]:
         async for doc in self.collection.find(query or {}):

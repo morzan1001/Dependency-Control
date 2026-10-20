@@ -20,6 +20,7 @@ from app.core.constants import (
     SCANS_TIP_SORT,
     ScanStatus,
 )
+from app.db.mongodb import DEFAULT_MAX_TIME_MS
 from app.models.project import Scan
 from app.models.stats import Stats
 from app.schemas.projections import ScanMinimal, ScanWithStats
@@ -501,7 +502,7 @@ class ScanRepository:
             yield doc
 
     async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
-        return await self.collection.aggregate(pipeline).to_list(limit)
+        return await self.collection.aggregate(pipeline, maxTimeMS=DEFAULT_MAX_TIME_MS).to_list(limit)
 
     async def distinct(self, field: str, query: dict[str, Any] | None = None) -> list[Any]:
         return await self.collection.distinct(field, query or {})
