@@ -1,9 +1,11 @@
+import asyncio
 import time
 
 import httpx
 import pytest
 
 from app.core.cache import CacheKeys
+from app.core.config import settings
 from app.services.enrichment.service import vulnerability_enrichment_service
 from tests.helpers.enrichment import CISA_HOST, Upstreams, serve_enrichment
 
@@ -96,3 +98,17 @@ async def test_a_catalog_that_never_loaded_is_not_asked_for_again_within_the_min
     asked = len(seen)
     assert await _load() is None
     assert len(seen) == asked
+
+
+@pytest.mark.asyncio
+async def test_callers_arriving_together_share_one_refresh(fake_cache, monkeypatch):
+    monkeypatch.setattr(settings, "ENRICHMENT_MAX_RETRIES", 0)
+
+    async def slow_outage(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.01)
+        return httpx.Response(503)
+
+    seen = serve_enrichment(monkeypatch, fake_cache, slow_outage)
+
+    assert await asyncio.gather(_load(), _load(), _load()) == [None] * 3
+    assert len(seen) == 1

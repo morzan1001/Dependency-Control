@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from typing import Any
@@ -46,16 +47,18 @@ class KEVProvider:
     def __init__(self) -> None:
         self._memo: dict[str, KEVEntry] = {}
         self._memo_expires = 0.0
+        self._refresh = asyncio.Lock()
 
     async def load_kev_catalog(self) -> dict[str, KEVEntry] | None:
         """After a failed refresh the last catalog stays in use."""
-        if time.monotonic() >= self._memo_expires:
-            cached = await cache_service.get_or_fetch_with_lock(
-                key=CacheKeys.kev_catalog(),
-                fetch_fn=_fetch_kev_catalog,
-                ttl_seconds=CacheTTL.KEV_CATALOG,
-            )
-            if cached:
-                self._memo = {cve: KEVEntry(**entry) for cve, entry in cached.items()}
-            self._memo_expires = time.monotonic() + (_MEMO_SECONDS if cached else _FAILED_REFRESH_RETRY_SECONDS)
-        return self._memo or None
+        async with self._refresh:
+            if time.monotonic() >= self._memo_expires:
+                cached = await cache_service.get_or_fetch_with_lock(
+                    key=CacheKeys.kev_catalog(),
+                    fetch_fn=_fetch_kev_catalog,
+                    ttl_seconds=CacheTTL.KEV_CATALOG,
+                )
+                if cached:
+                    self._memo = {cve: KEVEntry(**entry) for cve, entry in cached.items()}
+                self._memo_expires = time.monotonic() + (_MEMO_SECONDS if cached else _FAILED_REFRESH_RETRY_SECONDS)
+            return self._memo or None
