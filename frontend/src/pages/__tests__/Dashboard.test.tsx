@@ -112,6 +112,20 @@ describe('Dashboard recent activity namesakes', () => {
     expect(useProjectMock).not.toHaveBeenCalledWith('p3')
   })
 
+  it('truncates a long name inside the card and sets the owner hint in normal weight, as the project picker does', () => {
+    useProjectMock.mockImplementation((id: string) => ({ data: owners[id] }))
+    useRecentScansMock.mockReturnValue({
+      data: [scan('s1', 'p1', 'shared-lib'), scan('s2', 'p2', 'shared-lib')],
+      isLoading: false,
+    })
+    renderDashboard([])
+
+    const [name] = screen.getAllByText('shared-lib')
+    expect(name).toHaveClass('truncate', 'font-medium')
+    expect(name.closest('.space-y-1')).toHaveClass('min-w-0')
+    expect(screen.getByText('Payments').closest('.font-medium')).toBeNull()
+  })
+
   it('looks no owner up for two runs of the same project', () => {
     useRecentScansMock.mockReturnValue({
       data: [scan('s1', 'p1', 'shared-lib'), scan('s2', 'p1', 'shared-lib')],

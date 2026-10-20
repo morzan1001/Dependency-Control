@@ -212,9 +212,9 @@ export default function Dashboard() {
                         <>
                             {scanList.map((scan) => (
                                 <div key={scan.id} className="flex items-center gap-4">
-                                    <div className="space-y-1">
-                                        <p className="flex min-w-0 items-center gap-2 text-sm font-medium leading-none">
-                                            <span className="truncate">{scan.project_name}</span>
+                                    <div className="min-w-0 space-y-1">
+                                        <p className="flex items-center gap-2 text-sm leading-none">
+                                            <span className="truncate font-medium">{scan.project_name}</span>
                                             {namesakes.has(scan.project_name ?? '') && <ProjectOwnerById projectId={scan.project_id} />}
                                         </p>
                                         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
