@@ -9,6 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
+    CVEEnrichmentResult,
     ReleaseEnvironmentQuery,
     build_priority_reasons,
     calculate_days_known,
@@ -152,56 +153,22 @@ async def _impact(
 
     impact_results = []
     for r, severity_counts in candidates:
-        version = r["_id"].get("version")
+        intel, enrichment = _threat_intel(r, severity_counts, enrichments)
         affected_projects = len(r["project_ids"])
-        fix_versions = extract_fix_versions(r["details_list"], version)
-        has_fix = len(fix_versions) > 0
-
-        enrichment_data = process_cve_enrichments(r["details_list"], enrichments)
-
-        days_known = calculate_days_known(r["first_seen"])
-
-        base_impact = calculate_impact_score(
-            severity_counts,
-            affected_projects,
-            enrichment_data,
-            has_fix,
-            days_known,
-        )
-
-        priority_reasons = build_priority_reasons(
-            severity_counts,
-            enrichment_data,
-            affected_projects,
-            has_fix,
-            days_known,
-        )
-
         impact_results.append(
             ImpactAnalysisResult(
+                **intel,
                 component=r["_id"]["component"],
-                version=version or "unknown",
+                version=r["_id"].get("version") or "unknown",
                 affected_projects=affected_projects,
                 total_findings=sum(severity_counts.values()),
                 findings_by_severity=SeverityBreakdown.from_counts(severity_counts),
-                fix_impact_score=base_impact,
+                fix_impact_score=calculate_impact_score(
+                    severity_counts, affected_projects, enrichment, intel["has_fix"], intel["days_known"]
+                ),
                 affected_project_names=[
                     project_name_map.get(pid, "Unknown") for pid in r["project_ids"][:_AFFECTED_PROJECTS_SHOWN]
                 ],
-                max_epss_score=enrichment_data.max_epss,
-                epss_percentile=enrichment_data.max_percentile,
-                has_kev=enrichment_data.has_kev,
-                kev_count=enrichment_data.kev_count,
-                kev_ransomware_use=enrichment_data.kev_ransomware_use,
-                kev_due_date=enrichment_data.kev_due_date,
-                days_until_due=enrichment_data.days_until_due,
-                exploit_maturity=enrichment_data.exploit_maturity,
-                max_risk_score=enrichment_data.max_risk,
-                days_known=days_known,
-                has_fix=has_fix,
-                fix_versions=newest_first(fix_versions)[:_FIX_VERSIONS_SHOWN],
-                fix_version_count=len(fix_versions),
-                priority_reasons=priority_reasons,
             )
         )
 
@@ -217,58 +184,60 @@ def _format_first_seen(first_seen: Any) -> str:
     return str(first_seen)
 
 
+def _threat_intel(
+    r: dict[str, Any], severity_counts: dict[str, int], enrichments: Mapping[str, VulnerabilityEnrichment]
+) -> tuple[dict[str, Any], CVEEnrichmentResult]:
+    details_list = r["details_list"]
+    fix_versions = extract_fix_versions(details_list, r["_id"].get("version"))
+    days_known = calculate_days_known(r.get("first_seen"))
+    enrichment = process_cve_enrichments(details_list, enrichments)
+    intel = {
+        "max_epss_score": enrichment.max_epss,
+        "epss_percentile": enrichment.max_percentile,
+        "has_kev": enrichment.has_kev,
+        "kev_count": enrichment.kev_count,
+        "kev_ransomware_use": enrichment.kev_ransomware_use,
+        "kev_due_date": enrichment.kev_due_date,
+        "days_until_due": enrichment.days_until_due,
+        "exploit_maturity": enrichment.exploit_maturity,
+        "max_risk_score": enrichment.max_risk,
+        "days_known": days_known,
+        "has_fix": bool(fix_versions),
+        "fix_versions": newest_first(fix_versions)[:_FIX_VERSIONS_SHOWN],
+        "fix_version_count": len(fix_versions),
+        "priority_reasons": build_priority_reasons(
+            severity_counts, enrichment, len(r["project_ids"]), bool(fix_versions), days_known
+        ),
+    }
+    return intel, enrichment
+
+
 def _build_hotspot(
     r: dict[str, Any],
-    enrichments: dict[str, Any],
+    enrichments: Mapping[str, VulnerabilityEnrichment],
     version_type_index: dict[str, set[str]],
     type_index: dict[str, set[str]],
     project_name_map: dict[str, str],
 ) -> VulnerabilityHotspot:
-    details_list = r["details_list"]
-    severity_counts = severity_counts_from_details(details_list)
-    fix_versions = extract_fix_versions(details_list, r["_id"].get("version"))
-    has_fix = len(fix_versions) > 0
+    severity_counts = severity_counts_from_details(r["details_list"])
     component = r["_id"]["component"]
     # One name at one version can ship in several ecosystems (a deb and an apk openssl); name them all.
     types = lookup_component(version_type_index, component) or lookup_component(type_index, component)
-    dep_type = "/".join(sorted(types)) if types else "unknown"
-
-    first_seen_str = _format_first_seen(r.get("first_seen"))
-    days_known = calculate_days_known(r.get("first_seen"))
-
-    cves = live_cves(details_list)
-    top_cves = cves[:_CVES_SHOWN]
-
-    enrichment_data = process_cve_enrichments(details_list, enrichments)
-    priority_reasons = build_priority_reasons(
-        severity_counts, enrichment_data, len(r["project_ids"]), has_fix, days_known
-    )
+    cves = live_cves(r["details_list"])
+    intel, _ = _threat_intel(r, severity_counts, enrichments)
 
     return VulnerabilityHotspot(
-        component=r["_id"]["component"],
+        **intel,
+        component=component,
         version=r["_id"].get("version") or "unknown",
-        type=dep_type,
+        type="/".join(sorted(types)) if types else "unknown",
         finding_count=sum(severity_counts.values()),
         severity_breakdown=SeverityBreakdown.from_counts(severity_counts),
         affected_projects=[project_name_map.get(pid, "Unknown") for pid in r["project_ids"][:_HOTSPOT_PROJECTS_SHOWN]],
         affected_project_count=len(r["project_ids"]),
-        first_seen=first_seen_str,
-        max_epss_score=enrichment_data.max_epss,
-        epss_percentile=enrichment_data.max_percentile,
-        has_kev=enrichment_data.has_kev,
-        kev_count=enrichment_data.kev_count,
-        kev_ransomware_use=enrichment_data.kev_ransomware_use,
-        kev_due_date=enrichment_data.kev_due_date,
-        days_until_due=enrichment_data.days_until_due,
-        exploit_maturity=enrichment_data.exploit_maturity,
-        max_risk_score=enrichment_data.max_risk,
-        days_known=days_known,
-        has_fix=has_fix,
-        fix_versions=newest_first(fix_versions)[:_FIX_VERSIONS_SHOWN],
-        fix_version_count=len(fix_versions),
-        top_cves=top_cves,
+        first_seen=_format_first_seen(r.get("first_seen")),
+        top_cves=cves[:_CVES_SHOWN],
         cve_count=len(cves),
-        priority_reasons=priority_reasons,
     )
 
 

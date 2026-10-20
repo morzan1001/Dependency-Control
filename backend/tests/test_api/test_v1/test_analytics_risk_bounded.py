@@ -4,6 +4,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.api.v1.helpers.analytics import (
+    CVEEnrichmentResult,
     build_priority_reasons,
     calculate_impact_score,
     impact_pre_score,
@@ -13,7 +14,7 @@ from app.api.v1.helpers.analytics import (
 from app.core.constants import BLAST_RADIUS_THRESHOLD, DAYS_KNOWN_OVERDUE_THRESHOLD, IMPACT_MAX_SCORE_BOOST
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
-from app.schemas.analytics import CVEEnrichmentResult, SeverityBreakdown
+from app.schemas.analytics import SeverityBreakdown
 from tests.helpers.analytics_scope import projections
 
 MODULE = "app.api.v1.endpoints.analytics.risk"

@@ -4,6 +4,7 @@ from typing import Annotated, Any
 
 from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import BaseModel
 
 from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.core.constants import (
@@ -17,6 +18,7 @@ from app.core.constants import (
     EPSS_VERY_HIGH_BOOST,
     EPSS_VERY_HIGH_THRESHOLD,
     EXPLOIT_MATURITY_BOOST,
+    ExploitMaturity,
     IMPACT_AGE_BOOST,
     IMPACT_FIX_AVAILABLE_BOOST,
     IMPACT_MAX_SCORE_BOOST,
@@ -38,7 +40,6 @@ from app.models.user import User
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
-from app.schemas.analytics import CVEEnrichmentResult
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.projections import ProjectWithScanId
 from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
@@ -153,6 +154,18 @@ def extract_fix_versions(details_list: list[Any], installed_version: str | None)
     if fixes_all:
         return set(split_fixed_versions(fixes_all))
     return {part for vuln in advisories for part in split_fixed_versions(vuln.get("fixed_version"))}
+
+
+class CVEEnrichmentResult(BaseModel):
+    max_epss: float | None = None
+    max_percentile: float | None = None
+    max_risk: float | None = None
+    has_kev: bool = False
+    kev_count: int = 0
+    kev_ransomware_use: bool = False
+    kev_due_date: str | None = None
+    exploit_maturity: ExploitMaturity = "unknown"
+    days_until_due: int | None = None
 
 
 def process_cve_enrichments(

@@ -4,21 +4,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.core.constants import ExploitMaturity, ScopeName
+from app.core.constants import ScopeName
 from app.schemas.pagination import Page
 from app.schemas.team import TeamRef
-
-
-class CVEEnrichmentResult(BaseModel):
-    max_epss: float | None = None
-    max_percentile: float | None = None
-    max_risk: float | None = None
-    has_kev: bool = False
-    kev_count: int = 0
-    kev_ransomware_use: bool = False
-    kev_due_date: str | None = None
-    exploit_maturity: ExploitMaturity = "unknown"
-    days_until_due: int | None = None
 
 
 class SeverityBreakdown(BaseModel):
@@ -82,7 +70,24 @@ class DependencyGraph(BaseModel):
     dependencies_total: int = 0
 
 
-class ImpactAnalysisResult(BaseModel):
+class ThreatIntelFields(BaseModel):
+    max_epss_score: float | None = None
+    epss_percentile: float | None = None
+    has_kev: bool = False
+    kev_count: int = 0
+    kev_ransomware_use: bool = False
+    kev_due_date: str | None = None  # Earliest CISA remediation deadline
+    days_until_due: int | None = None  # negative when overdue
+    exploit_maturity: str = "unknown"
+    max_risk_score: float | None = None
+    days_known: int | None = None
+    has_fix: bool = False
+    fix_versions: list[str] = []
+    fix_version_count: int = 0
+    priority_reasons: list[str] = []
+
+
+class ImpactAnalysisResult(ThreatIntelFields):
     component: str
     version: str
     affected_projects: int
@@ -90,23 +95,9 @@ class ImpactAnalysisResult(BaseModel):
     findings_by_severity: SeverityBreakdown
     fix_impact_score: float
     affected_project_names: list[str]
-    max_epss_score: float | None = None
-    fix_version_count: int = 0
-    epss_percentile: float | None = None
-    has_kev: bool = False
-    kev_count: int = 0
-    kev_ransomware_use: bool = False
-    kev_due_date: str | None = None  # Earliest CISA remediation deadline
-    days_until_due: int | None = None  # negative when overdue
-    exploit_maturity: str = "unknown"
-    max_risk_score: float | None = None
-    days_known: int | None = None
-    has_fix: bool = False
-    fix_versions: list[str] = []
-    priority_reasons: list[str] = []
 
 
-class VulnerabilityHotspot(BaseModel):
+class VulnerabilityHotspot(ThreatIntelFields):
     component: str
     version: str
     type: str
@@ -114,23 +105,9 @@ class VulnerabilityHotspot(BaseModel):
     severity_breakdown: SeverityBreakdown
     affected_projects: list[str]
     affected_project_count: int = 0
-    fix_version_count: int = 0
     cve_count: int = 0
     first_seen: str
-    max_epss_score: float | None = None
-    epss_percentile: float | None = None
-    has_kev: bool = False
-    kev_count: int = 0
-    kev_ransomware_use: bool = False
-    kev_due_date: str | None = None  # Earliest CISA remediation deadline
-    days_until_due: int | None = None  # negative when overdue
-    exploit_maturity: str = "unknown"
-    max_risk_score: float | None = None
-    days_known: int | None = None
-    has_fix: bool = False
-    fix_versions: list[str] = []
     top_cves: list[str] = []
-    priority_reasons: list[str] = []
 
 
 class DependencyTypeStats(BaseModel):
