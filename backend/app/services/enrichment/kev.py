@@ -11,6 +11,8 @@ from app.schemas.enrichment import KEVEntry
 logger = logging.getLogger(__name__)
 
 _MEMO_SECONDS = 15 * 60
+# A CISA outage would otherwise cost every caller a fresh 3-30 s download attempt.
+_FAILED_REFRESH_RETRY_SECONDS = 60
 
 
 async def _fetch_kev_catalog() -> dict[str, Any]:
@@ -46,15 +48,14 @@ class KEVProvider:
         self._memo_expires = 0.0
 
     async def load_kev_catalog(self) -> dict[str, KEVEntry] | None:
-        if self._memo and time.monotonic() < self._memo_expires:
-            return self._memo
-        cached = await cache_service.get_or_fetch_with_lock(
-            key=CacheKeys.kev_catalog(),
-            fetch_fn=_fetch_kev_catalog,
-            ttl_seconds=CacheTTL.KEV_CATALOG,
-        )
-        if not cached:
-            return None
-        self._memo = {cve: KEVEntry(**entry) for cve, entry in cached.items()}
-        self._memo_expires = time.monotonic() + _MEMO_SECONDS
-        return self._memo
+        """After a failed refresh the last catalog stays in use."""
+        if time.monotonic() >= self._memo_expires:
+            cached = await cache_service.get_or_fetch_with_lock(
+                key=CacheKeys.kev_catalog(),
+                fetch_fn=_fetch_kev_catalog,
+                ttl_seconds=CacheTTL.KEV_CATALOG,
+            )
+            if cached:
+                self._memo = {cve: KEVEntry(**entry) for cve, entry in cached.items()}
+            self._memo_expires = time.monotonic() + (_MEMO_SECONDS if cached else _FAILED_REFRESH_RETRY_SECONDS)
+        return self._memo or None
