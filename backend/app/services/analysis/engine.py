@@ -53,6 +53,7 @@ from app.core.metrics import (
     analysis_scans_total,
     analysis_waivers_applied_total,
 )
+from app.core.purl import CopyKey, dependency_copy_key
 from app.db.mongodb import open_gridfs_download_with_retry
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import Finding, FindingType
@@ -95,7 +96,7 @@ from app.services.analysis.types import Database
 from app.services.analyzers.cli_base import TEMP_SBOM_PREFIX
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, load_iana_catalog
 from app.services.crypto_policy.resolver import CryptoPolicyResolver, EffectivePolicy
-from app.services.dependency_store import CopyKey, dependency_copy_key, store_scan_dependencies
+from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment.service import vulnerability_enrichment_service
 from app.services.github import installation_github_token
 from app.services.gridfs_maintenance import gridfs_ref_id

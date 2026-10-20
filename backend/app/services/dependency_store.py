@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
-from app.core.purl import canonical_purl
+from app.core.purl import CopyKey, dependency_copy_key
 from app.models.dependency import Dependency
 from app.repositories.dependencies import DependencyRepository
 from app.schemas.sbom import ParsedDependency, ParsedSBOM
@@ -11,13 +11,6 @@ from app.services.sbom_parser import merge_duplicate_dependencies
 _DEP_CHUNK_SIZE = 500
 _FREE_TEXT_MAX_CHARS = 2048
 _CLIP = ("license", "license_url", "description", "author", "publisher", "homepage", "repository_url", "download_url")
-
-CopyKey = str | tuple[str, str]
-
-
-def dependency_copy_key(purl: str | None, name: str, version: str) -> CopyKey:
-    """A purl takes in its qualifier variants; a purl-less dependency answers only to its name and version."""
-    return canonical_purl(purl) if purl else (name, version)
 
 
 def _parsed_dep_to_dependency(

@@ -204,6 +204,14 @@ def canonical_purl(purl: str) -> str:
     return purl
 
 
+CopyKey = str | tuple[str, str]
+
+
+def dependency_copy_key(purl: str | None, name: str, version: str) -> CopyKey:
+    """A purl takes in its qualifier variants; a purl-less dependency answers only to its name and version."""
+    return canonical_purl(purl) if purl else (name, version)
+
+
 def get_purl_type(purl: str | None) -> str | None:
     if not purl or not purl.startswith("pkg:"):
         return None
