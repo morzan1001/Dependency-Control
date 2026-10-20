@@ -25,12 +25,14 @@ async def find_window(
     *,
     stages: list[dict[str, Any]] | None = None,
     max_time_ms: int | None = None,
+    count_limit: int | None = None,
     **find_kwargs: Any,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Counts only once the read saturates, the one case where the total can exceed what was read."""
+    """Counts only once the read saturates, the one case where the total can exceed what was read; at most count_limit."""
     time_limit: dict[str, Any] = {"maxTimeMS": max_time_ms} if max_time_ms else {}
+    count_options = {**time_limit, "limit": count_limit} if count_limit else time_limit
     if limit <= 0:
-        return [], await collection.count_documents(query, **time_limit)
+        return [], await collection.count_documents(query, **count_options)
     cursor = (
         collection.aggregate([{"$match": query}, *stages, {"$limit": limit}], **time_limit)
         if stages
@@ -39,7 +41,7 @@ async def find_window(
     rows: list[dict[str, Any]] = await cursor.to_list(length=limit)
     if len(rows) < limit:
         return rows, len(rows)
-    return rows, await collection.count_documents(query, **time_limit)
+    return rows, await collection.count_documents(query, **count_options)
 
 
 def and_filters(*filters: dict[str, Any]) -> dict[str, Any]:

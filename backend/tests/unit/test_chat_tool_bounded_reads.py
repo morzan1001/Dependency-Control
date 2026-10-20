@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.services.chat.tools import ChatToolRegistry
+from app.services.chat.tools import ChatToolRegistry, registry
 from app.services.chat.tools.registry import (
     _CVE_OCCURRENCE_READ,
     _EXPIRING_WAIVER_READ,
@@ -359,3 +359,41 @@ async def test_a_capped_listing_names_the_population_it_was_cut_from(
     assert len(result[rows_key]) == _PROJECT_PAGE
     assert result[f"{rows_key}_total"] == population + already_seeded
     assert result["_bounded_read"] is True
+
+
+_USAGE_PAGE = 2
+_USAGE_COUNT_CAP = 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stored", "total", "capped", "named_total"),
+    [
+        (_USAGE_COUNT_CAP - 1, _USAGE_COUNT_CAP - 1, False, "4"),
+        (_USAGE_COUNT_CAP + 4, _USAGE_COUNT_CAP, True, "more than 5"),
+    ],
+    ids=["inside-the-cap", "past-the-cap"],
+)
+async def test_a_component_s_usage_is_counted_exactly_up_to_the_cap_and_past_it_as_a_lower_bound(
+    seeded, admin_user, monkeypatch, stored, total, capped, named_total
+):
+    monkeypatch.setattr(registry, "_COMPONENT_USAGE_READ", _USAGE_PAGE)
+    monkeypatch.setattr(registry, "_COMPONENT_USAGE_COUNT_CAP", _USAGE_COUNT_CAP)
+    _fill(
+        seeded.dependencies,
+        stored,
+        lambda i: {
+            "_id": f"row-{i}",
+            "scan_id": _SCAN,
+            "project_id": _PROJECT,
+            "name": "log4j-core",
+            "version": f"2.{i}",
+        },
+    )
+
+    result = await ChatToolRegistry().execute_tool(
+        "find_component_usage", {"component_name": "log4j"}, admin_user, seeded
+    )
+
+    assert (result["count"], result["matches_total"], result["matches_total_capped"]) == (_USAGE_PAGE, total, capped)
+    assert f"{_USAGE_PAGE} of {named_total} dependency rows naming this component" in result["_bounded_read_note"]

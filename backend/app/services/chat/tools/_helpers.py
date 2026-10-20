@@ -77,7 +77,9 @@ RANKED_FINDING_PROJECTION = dict.fromkeys(
 _CLAMPED_LIMITS: ContextVar[list[tuple[int, int]] | None] = ContextVar("chat_tool_clamped_limits", default=None)
 
 # An LLM relaying a list has no chart beside it from which a reader could tell the list stops short.
-_BOUNDED_READS: ContextVar[list[tuple[str, int, int]] | None] = ContextVar("chat_tool_bounded_reads", default=None)
+_BOUNDED_READS: ContextVar[list[tuple[str, int, int | str]] | None] = ContextVar(
+    "chat_tool_bounded_reads", default=None
+)
 
 
 def begin_limit_ledger() -> None:
@@ -91,13 +93,16 @@ async def bounded_read(
     *,
     subject: str,
     limit: int,
+    count_cap: int | None = None,
     **find_kwargs: Any,
 ) -> tuple[list[dict[str, Any]], int]:
     """A truncated read is recorded so the answer says so even where the caller never named a limit."""
-    rows, total = await find_window(collection, query, limit, **find_kwargs)
+    # Counting one past the cap tells a total above it from one that lands on it.
+    count_limit = count_cap + 1 if count_cap else None
+    rows, total = await find_window(collection, query, limit, count_limit=count_limit, **find_kwargs)
     ledger = _BOUNDED_READS.get()
     if ledger is not None and total > len(rows):
-        ledger.append((subject, len(rows), total))
+        ledger.append((subject, len(rows), f"more than {count_cap}" if count_cap and total > count_cap else total))
     return rows, total
 
 

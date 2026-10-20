@@ -208,6 +208,8 @@ _WEBHOOK_READ = 20
 _WEBHOOK_DELIVERY_READ = 20
 _REMEDIATION_FINDING_READ = 500
 _COMPONENT_USAGE_READ = 100
+# A common package's rows past this are only counted as "more than", so its count stops walking the head's keys.
+_COMPONENT_USAGE_COUNT_CAP = 10 * _COMPONENT_USAGE_READ
 _CVE_OCCURRENCE_READ = 25
 _WAIVER_STATE_READ = 50
 _EXPIRING_WAIVER_READ = 25
@@ -1200,7 +1202,7 @@ class ChatToolRegistry:
             return {"matches": [], "message": "No accessible projects"}
         wanted = ctx.args["component_name"].strip()
         if not wanted:
-            return {"matches": [], "count": 0, "matches_total": 0}
+            return {"matches": [], "count": 0, "matches_total": 0, "matches_total_capped": False}
         by_name: list[dict[str, Any]] = [{"name": {"$regex": re.escape(wanted), "$options": "i"}}]
         segment = artifact_segment(wanted)
         if segment != wanted:
@@ -1215,6 +1217,7 @@ class ChatToolRegistry:
             dep_query,
             subject="dependency rows naming this component",
             limit=_COMPONENT_USAGE_READ,
+            count_cap=_COMPONENT_USAGE_COUNT_CAP,
             projection={
                 "name": 1,
                 "version": 1,
@@ -1238,7 +1241,12 @@ class ChatToolRegistry:
             }
             for r in rows
         ]
-        return {"matches": matches, "count": len(matches), "matches_total": rows_total}
+        return {
+            "matches": matches,
+            "count": len(matches),
+            "matches_total": min(rows_total, _COMPONENT_USAGE_COUNT_CAP),
+            "matches_total_capped": rows_total > _COMPONENT_USAGE_COUNT_CAP,
+        }
 
     async def _tool_get_findings_by_cve(self, ctx: _ToolContext) -> dict[str, Any]:
         cve = advisory_id(ctx.args["cve_id"]) or ""
