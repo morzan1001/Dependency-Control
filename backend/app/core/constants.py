@@ -867,6 +867,9 @@ JWKS_URI_CACHE_TTL = 86400
 # GitLab answers a non-admin token's GET /users/:id 300 times per 10 minutes, and public emails rarely change.
 GITLAB_USER_EMAIL_CACHE_TTL = 86400
 
+# Spares the binding picker's walk of up to ten /groups pages per dialog open and search term; new groups show within it.
+GITLAB_GROUP_PICKER_CACHE_TTL = 60
+
 # One workflow run fans out into many jobs; without this every job refetches the same three lists.
 GITHUB_TEAM_SYNC_CACHE_TTL = 300
 

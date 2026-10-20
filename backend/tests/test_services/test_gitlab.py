@@ -336,6 +336,13 @@ class TestMergeRequestNotes:
             assert asyncio.run(service.get_merge_request_notes(100, 7)) is None
 
 
+@pytest.fixture
+def group_cache(fake_cache, monkeypatch):
+    monkeypatch.setattr("app.services.gitlab.cache_service", fake_cache)
+    return fake_cache
+
+
+@pytest.mark.usefixtures("group_cache")
 class TestGroupListing:
     def test_the_search_term_is_passed_to_gitlab(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
@@ -354,6 +361,40 @@ class TestGroupListing:
             asyncio.run(service.get_groups())
 
         assert "search" not in paginated.await_args[1]["params"]
+
+    def test_the_picker_reopened_within_the_minute_walks_nothing_again(self, gitlab_instance_a, group_cache):
+        """Each dialog open and debounced search term walked up to ten pages of 100 groups."""
+        service = GitLabService(gitlab_instance_a)
+
+        async def _pick_twice():
+            return [await service.get_groups("edge"), await service.get_groups("edge")]
+
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[{"id": 77}])) as paginated:
+            first, second = asyncio.run(_pick_twice())
+
+        assert first == second == [{"id": 77}]
+        paginated.assert_awaited_once()
+        [key] = asyncio.run(group_cache._client.keys("*group_picker*"))
+        assert 0 < asyncio.run(group_cache._client.ttl(key)) <= 60
+
+    def test_each_search_term_is_listed_on_its_own(self, gitlab_instance_a):
+        service = GitLabService(gitlab_instance_a)
+
+        async def _pick():
+            return [await service.get_groups("edge"), await service.get_groups("core"), await service.get_groups()]
+
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(side_effect=[[{"id": 1}], [{"id": 2}], []])):
+            assert asyncio.run(_pick()) == [[{"id": 1}], [{"id": 2}], []]
+
+    def test_a_refused_listing_is_asked_again_rather_than_remembered(self, gitlab_instance_a):
+        """An admin who fixes the token must not keep seeing the refusal."""
+        service = GitLabService(gitlab_instance_a)
+
+        async def _pick_twice():
+            return [await service.get_groups(), await service.get_groups()]
+
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(side_effect=[None, [{"id": 1}]])):
+            assert asyncio.run(_pick_twice()) == [None, [{"id": 1}]]
 
 
 class TestGetCurrentUserId:

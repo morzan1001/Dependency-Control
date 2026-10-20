@@ -6,8 +6,10 @@ from typing import Any, NamedTuple
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.cache import cache_service
 from app.core.constants import (
     GITLAB_ADMIN_MIN_ACCESS,
+    GITLAB_GROUP_PICKER_CACHE_TTL,
     GITLAB_TEAM_MEMBER_MIN_ACCESS,
     GITLAB_USER_EMAIL_CACHE_TTL,
     MAX_PROJECT_TEAMS,
@@ -153,10 +155,17 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
 
     async def get_groups(self, search: str | None = None) -> list[dict[str, Any]] | None:
         """/groups covers the token's memberships (all for an admin); search reaches past the pagination cap."""
+        cache_key = self._get_cache_key(f"group_picker:{search or ''}")
+        cached: list[dict[str, Any]] | None = await cache_service.get(cache_key)
+        if cached is not None:
+            return cached
         params: dict[str, Any] = {"order_by": "path", "sort": "asc"}
         if search:
             params["search"] = search
-        return await self._api_get_paginated("/groups", params=params, max_pages=10)
+        groups = await self._api_get_paginated("/groups", params=params, max_pages=10)
+        if groups is not None:
+            await cache_service.set(cache_key, groups, ttl_seconds=GITLAB_GROUP_PICKER_CACHE_TTL)
+        return groups
 
     async def get_group(self, ref: int | str) -> GitLabGroupLookup:
         endpoint = f"/groups/{urllib.parse.quote(str(ref), safe='')}"
