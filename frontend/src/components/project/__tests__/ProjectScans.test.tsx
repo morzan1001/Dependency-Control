@@ -1,4 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react'
+
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ProjectScans } from '../ProjectScans'
@@ -460,5 +461,13 @@ describe('ProjectScans - on a narrow screen', () => {
     renderScans([])
 
     expect((await screen.findByText('No scans found.')).closest('table')).toBeNull()
+  })
+})
+
+describe('ProjectScans accessible names', () => {
+  it('names its branch filter, which has no visible label', () => {
+    renderScans([])
+
+    expect(screen.getByRole('combobox', { name: 'Branch' })).toBeInTheDocument()
   })
 })

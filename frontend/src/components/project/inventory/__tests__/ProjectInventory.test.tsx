@@ -1,4 +1,5 @@
 import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react'
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProjectInventory } from '../ProjectInventory'
@@ -153,5 +154,21 @@ describe('ProjectInventory', () => {
 
     const licensesCard = (await screen.findByRole('heading', { name: 'Licenses' })).closest('.rounded-lg')
     expect(licensesCard?.parentElement).toHaveClass('grid-cols-1', 'lg:grid-cols-2')
+  })
+})
+
+describe('ProjectInventory accessible names', () => {
+  afterEach(() => { cleanup(); vi.clearAllMocks() })
+
+  it('names its branch dropdown and the component search', async () => {
+    vi.mocked(projectHooks.useProjectBranches).mockReturnValue({
+      data: [{ name: 'main', is_active: true }],
+    } as ReturnType<typeof projectHooks.useProjectBranches>)
+    vi.mocked(inventoryApiModule.inventoryApi.getStats).mockResolvedValue(stats)
+
+    renderInventory()
+
+    expect(screen.getByRole('combobox', { name: 'Branch' })).toBeInTheDocument()
+    expect(await screen.findByRole('textbox', { name: 'Search components' })).toBeInTheDocument()
   })
 })

@@ -587,6 +587,12 @@ describe('ProjectSettings notifications', () => {
     )
   })
 
+  it('links the enforce switch to its label', () => {
+    renderSettings(githubProject())
+
+    expect(screen.getByRole('switch', { name: 'Enforce Notification Settings' })).toBeInTheDocument()
+  })
+
   it('keeps the checked channels of the events it names', () => {
     renderSettings(githubProject())
 

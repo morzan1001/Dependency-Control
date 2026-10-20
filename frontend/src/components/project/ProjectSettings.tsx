@@ -601,12 +601,13 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
             {isAdmin && (
                 <div className="flex flex-row items-center justify-between rounded-lg border p-4">
                     <div className="space-y-0.5">
-                        <Label className="text-base">Enforce Notification Settings</Label>
+                        <Label htmlFor="enforce-notification-settings" className="text-base">Enforce Notification Settings</Label>
                         <div className="text-sm text-muted-foreground">
                             If enabled, these settings will be applied to all project members. Members will not be able to change them.
                         </div>
                     </div>
                     <Switch
+                        id="enforce-notification-settings"
                         checked={enforceNotificationSettings}
                         onCheckedChange={setEnforceNotificationSettings}
                     />

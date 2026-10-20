@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import { expectEveryFieldNamed } from '@/test/form-field'
 import { describe, it, expect, vi } from 'vitest'
 
 import { AnalyzerSettingsDialog } from '../AnalyzerSettingsDialog'
@@ -46,5 +47,23 @@ describe('AnalyzerSettingsDialog', () => {
     fireEvent.change(screen.getByLabelText('HIGH Severity Above'), { target: { value: '0.93' } })
 
     expect(save(onSave)).toEqual({ similarity_threshold: 0.85, high_similarity: 0.93 })
+  })
+})
+
+describe('AnalyzerSettingsDialog accessible names', () => {
+  it('links each switch setting to its label', () => {
+    render(
+      <AnalyzerSettingsDialog
+        open
+        onOpenChange={vi.fn()}
+        schema={ANALYZER_SETTINGS_SCHEMAS.license_compliance}
+        currentValues={{}}
+        onSave={vi.fn()}
+        canEdit
+      />
+    )
+
+    expectEveryFieldNamed()
+    expect(screen.getByRole('switch', { name: 'Allow Strong Copyleft' })).toBeInTheDocument()
   })
 })

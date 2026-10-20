@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -95,5 +96,14 @@ describe("TeamMembersDialog sync source", () => {
 
     expect(screen.getByText("Synced from auth-shepherd")).toBeInTheDocument();
     expect(screen.getAllByText(/Synced from/)).toHaveLength(1);
+  });
+});
+
+describe("TeamMembersDialog accessible names", () => {
+  it("names each role dropdown by its member, as the notification matrix names its boxes", () => {
+    auth.permissions = ["team:update"];
+    renderDialog();
+
+    expect(screen.getByRole("combobox", { name: "Bob Example: Role" })).toBeInTheDocument();
   });
 });

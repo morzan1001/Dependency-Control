@@ -118,12 +118,13 @@ function FieldRenderer({ field, value, onChange, disabled }: Readonly<FieldRende
     return (
       <div className="flex flex-row items-center justify-between rounded-lg border p-4">
         <div className="space-y-0.5 pr-4">
-          <Label className="text-base">{field.label}</Label>
+          <Label htmlFor={`field-${field.key}`} className="text-base">{field.label}</Label>
           {field.description && (
             <div className="text-sm text-muted-foreground">{field.description}</div>
           )}
         </div>
         <Switch
+          id={`field-${field.key}`}
           checked={shown === true}
           onCheckedChange={onChange}
           disabled={disabled}

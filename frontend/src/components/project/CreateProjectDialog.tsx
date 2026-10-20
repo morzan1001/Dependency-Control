@@ -138,7 +138,7 @@ export function CreateProjectDialog({
                 value={form.team_id || "none"}
                 onValueChange={(team_id) => set({ team_id })}
               >
-                <SelectTrigger>
+                <SelectTrigger id="team">
                   <SelectValue placeholder="Select a team" />
                 </SelectTrigger>
                 <SelectContent>

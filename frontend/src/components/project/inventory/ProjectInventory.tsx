@@ -44,7 +44,7 @@ export function ProjectInventory({ projectId, defaultBranch }: Readonly<ProjectI
           )}
         </div>
         <Select value={branch} onValueChange={setSelectedBranch}>
-          <SelectTrigger className="w-[220px]">
+          <SelectTrigger className="w-[220px]" aria-label="Branch">
             <GitBranch className="mr-2 h-4 w-4 text-muted-foreground" />
             <SelectValue placeholder="Select branch" />
           </SelectTrigger>

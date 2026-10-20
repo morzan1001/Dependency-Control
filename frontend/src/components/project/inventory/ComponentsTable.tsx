@@ -66,6 +66,7 @@ export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableP
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Input
+            aria-label="Search components"
             placeholder="Search components…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
