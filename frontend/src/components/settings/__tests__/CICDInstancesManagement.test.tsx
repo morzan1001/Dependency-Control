@@ -151,25 +151,24 @@ describe('CICDInstancesManagement GitHub team sync', () => {
     expect(within(screen.getByRole('table')).getByText('Sync Teams')).toBeInTheDocument()
   })
 
-  it('badges each provider whose instance holds no token', () => {
+  it('badges an instance of either provider that holds no token alike', () => {
     mockUseGitLabInstances.mockReturnValue(gitlabInstance({ token_configured: false }))
     mockUseGitHubInstances.mockReturnValue(githubInstance({ token_configured: false }))
 
     renderManagement()
 
-    const table = within(screen.getByRole('table'))
-    expect(table.getByText('No Token')).toBeInTheDocument()
-    expect(table.getByText('No PAT')).toBeInTheDocument()
+    const badges = within(screen.getByRole('table')).getAllByText('No Token')
+    expect(badges).toHaveLength(2)
+    expect(badges[0].className).toBe(badges[1].className)
   })
 
   it('badges no instance that holds a token', () => {
     mockUseGitLabInstances.mockReturnValue(gitlabInstance())
+    mockUseGitHubInstances.mockReturnValue(githubInstance())
 
     renderManagement()
 
-    const table = within(screen.getByRole('table'))
-    expect(table.queryByText('No Token')).toBeNull()
-    expect(table.queryByText('No PAT')).toBeNull()
+    expect(within(screen.getByRole('table')).queryByText('No Token')).toBeNull()
   })
 
   // GHES has no IdP team sync, so its teams may be hand-maintained and less authoritative than expected.

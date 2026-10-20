@@ -300,14 +300,9 @@ export function CICDInstancesManagement() {
                           Sync Teams
                         </Badge>
                       )}
-                      {instance._type === "gitlab" && !instance.token_configured && (
-                        <Badge variant="destructive" className="text-xs">
-                          No Token
-                        </Badge>
-                      )}
-                      {instance._type === "github" && !instance.token_configured && (
+                      {!instance.token_configured && (
                         <Badge variant="secondary" className="text-xs">
-                          No PAT
+                          No Token
                         </Badge>
                       )}
                     </div>
