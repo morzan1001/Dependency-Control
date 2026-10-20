@@ -55,6 +55,7 @@ from app.models.stats import Stats
 from app.models.user import User
 from app.models.waiver import is_waiver_active
 from app.models.webhook import Webhook
+from app.db.mongodb import DEFAULT_SOCKET_TIMEOUT_MS
 from app.repositories.base import and_filters
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
@@ -666,12 +667,14 @@ class ChatToolRegistry:
             query["severity"] = ctx.args["severity"]
         if ctx.args.get("type"):
             query["type"] = ctx.args["type"]
+        # Unanchored regexes read every head finding; past the socket timeout nobody waits for the answer.
         findings, findings_total = await bounded_read(
             ctx.db["findings"],
             query,
             subject="matching findings",
             limit=ctx.args["limit"],
             projection=RANKED_FINDING_PROJECTION,
+            max_time_ms=DEFAULT_SOCKET_TIMEOUT_MS,
         )
         return {
             "findings": _slim_with_project(findings, names),

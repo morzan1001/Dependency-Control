@@ -3,10 +3,12 @@ from datetime import datetime, timezone
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED
+from app.db.mongodb import DEFAULT_SOCKET_TIMEOUT_MS
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools._helpers import _inject_urls, _serialize_finding_for_llm
 from tests.helpers.auth import make_admin
 from tests.helpers.databases import DATABASES
+from tests.helpers.profiler import profiled
 
 pytestmark = pytest.mark.asyncio
 
@@ -114,3 +116,18 @@ async def test_a_search_row_shows_all_the_stored_finding_holds(db, database):
     expected = {**_serialize_finding_for_llm(stored), "project_name": "search-project"}
     _inject_urls(expected)
     assert result["findings"] == [expected]
+
+
+@pytest.mark.live_mongo
+async def test_the_search_and_its_total_stop_on_the_server_when_the_client_socket_gives_up(db):
+    await _seed(db)
+
+    _, entries = await profiled(
+        db, ChatToolRegistry().execute_tool("search_findings", {"query": "CVE-2021", "limit": 1}, make_admin(), db)
+    )
+
+    reads = [e["command"] for e in entries if e["ns"].endswith(".findings") and e["op"] in ("query", "command")]
+    assert [("find" in c, c.get("maxTimeMS")) for c in reads] == [
+        (True, DEFAULT_SOCKET_TIMEOUT_MS),
+        (False, DEFAULT_SOCKET_TIMEOUT_MS),
+    ]
