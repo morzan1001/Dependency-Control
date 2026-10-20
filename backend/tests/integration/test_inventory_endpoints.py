@@ -6,6 +6,7 @@ import pytest
 
 from app.api.v1.helpers.sorting import case_insensitive_key
 from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
+from app.services.chat.tools.crypto_tools import list_crypto_assets
 
 _PID = "test-project-id"
 _NOW = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
@@ -542,6 +543,24 @@ async def test_crypto_page_and_export(client, db, member_auth_headers):
     rows = _parse_csv(await client.get(f"/api/v1/projects/{_PID}/inventory/crypto/export", headers=member_auth_headers))
     assert {r["name"] for r in rows} == {"AES-256-GCM", "MD5"}
     assert next(r for r in rows if r["name"] == "AES-256-GCM")["locations"] == "src/a.py; src/b.py"
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_crypto_page_export_and_chat_list_names_whatever_their_case(client, db, member_auth_headers):
+    await _seed_scan(db)
+    names = ("sha-256", "RSA", "AES-128-GCM", "ecdsa", "Ed25519")
+    for name in names:
+        await _seed_crypto(db, "s1", name)
+    expected = sorted(names, key=case_insensitive_key)
+
+    page = (await client.get(f"/api/v1/projects/{_PID}/inventory/crypto", headers=member_auth_headers)).json()
+    rows = _parse_csv(await client.get(f"/api/v1/projects/{_PID}/inventory/crypto/export", headers=member_auth_headers))
+    listed = await list_crypto_assets(db, project_id=_PID, scan_id="s1", limit=10)
+
+    assert [i["name"] for i in page["items"]] == expected
+    assert [r["name"] for r in rows] == expected
+    assert [i["name"] for i in listed["items"]] == expected
 
 
 @pytest.mark.asyncio

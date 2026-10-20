@@ -28,7 +28,7 @@ def _asset_doc(**overrides):
 class TestBulkUpsertAndListByScan:
     def test_bulk_upsert_and_list_by_scan(self):
         assets_data = [_asset_doc(_id=f"asset-{i}", bom_ref=f"c{i}", name=f"algo-{i}") for i in range(5)]
-        collection = create_mock_collection(find=assets_data)
+        collection = create_mock_collection(aggregate=assets_data)
         db = create_mock_db({"crypto_assets": collection})
         repo = CryptoAssetRepository(db)
 

@@ -85,4 +85,4 @@ async def test_the_crypto_page_breaks_name_ties_on_the_bom_ref():
 
     await repo.list_by_scan("p1", "s1", limit=25, skip=25)
 
-    assert assets.find.return_value.sort.call_args.args == ([("name", 1), ("bom_ref", 1)],)
+    assert _sort_stage(assets) == [("_folded.name", 1), ("name", 1), ("bom_ref", 1)]

@@ -3,13 +3,14 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
+from app.repositories.crypto_asset import SCAN_ORDER, CryptoAssetRepository, scan_query
 from app.schemas.inventory import CryptoItem
 
 CRYPTO_COLUMNS = ["name", "asset_type", "primitive", "variant", "key_size_bits", "location_count", "locations"]
 
 _EXPORT_PROJECTION = {
     "name": 1,
+    "bom_ref": 1,
     "asset_type": 1,
     "primitive": 1,
     "variant": 1,
@@ -50,6 +51,6 @@ async def get_crypto_page(
 
 async def iter_crypto_rows(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) -> AsyncIterator[dict[str, Any]]:
     # A stream instead of list_by_scan: the export must not be capped by the list limit.
-    docs = CryptoAssetRepository(db).iterate_raw(scan_query(project_id, scan_id), _EXPORT_PROJECTION, [("name", 1)])
-    async for doc in docs:
+    pipeline = [{"$match": scan_query(project_id, scan_id)}, {"$project": _EXPORT_PROJECTION}, *SCAN_ORDER]
+    async for doc in CryptoAssetRepository(db).collection.aggregate(pipeline):
         yield _to_item(doc).model_dump()
