@@ -69,8 +69,19 @@ def name_matches(asset: CryptoAsset, patterns: list[str]) -> bool:
 
 # A qualifier names one family with the next part: EC-DSA is ECDSA and ML_DSA is ML-DSA, not DSA; EC P-256 stays EC.
 _QUALIFIER = re.compile(r"\b(ec(?= +(?:dh|dhe|dsa|mqv)\b)|ml|slh|fn|hashml|hashslh) +")
-# A post-quantum or hybrid name (X25519-MLKEM768) holds no classic family on its own.
-_POST_QUANTUM_FAMILIES = ("mlkem", "mldsa", "slhdsa", "fndsa", "hashmldsa", "hashslhdsa")
+# A post-quantum or hybrid name (X25519-MLKEM768, pre-standard X25519-Kyber768) holds no classic family on its own.
+_POST_QUANTUM_FAMILIES = (
+    "mlkem",
+    "mldsa",
+    "slhdsa",
+    "fndsa",
+    "hashmldsa",
+    "hashslhdsa",
+    "kyber",
+    "dilithium",
+    "falcon",
+    "sphincs",
+)
 # The JCA (DESede) and OpenSSL (DES-EDE3) names of three-key 3DES, which is not single DES.
 _TRIPLE_DES_TOKENS = {"desede", "ede3"}
 # A family name runs up to a digit (RSA2048), and CycloneDX names RSA's schemes RSASSA-PSS, RSAES-OAEP, RSA-KEM.
