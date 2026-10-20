@@ -18,18 +18,21 @@ from .constants import (
 
 
 def classify_license(member: str, license_id: str | None = None) -> LicenseInfo | None:
-    base = normalizer.license_base(member)
-    license_info = LICENSE_DATABASE.get(license_id or base)
-    if license_info and base != member and license_info.category == LicenseCategory.STRONG_COPYLEFT:
-        return replace(
-            license_info,
-            category=LicenseCategory.WEAK_COPYLEFT,
-            description="The exception lets code that only links to this library keep its own license; "
-            "changes to the library itself stay under its copyleft.",
-            obligations=[SHARE_SOURCE_OF_MODIFICATIONS, INCLUDE_LICENSE_TEXT],
-            risks=[],
-        )
-    return license_info
+    license_info = LICENSE_DATABASE.get(license_id or normalizer.license_base(member))
+    return _with_exception(license_info, member) if license_info else None
+
+
+def _with_exception(license_info: LicenseInfo, member: str) -> LicenseInfo:
+    if normalizer.license_base(member) == member or license_info.category != LicenseCategory.STRONG_COPYLEFT:
+        return license_info
+    return replace(
+        license_info,
+        category=LicenseCategory.WEAK_COPYLEFT,
+        description="The exception lets code that only links to this library keep its own license; "
+        "changes to the library itself stay under its copyleft.",
+        obligations=[SHARE_SOURCE_OF_MODIFICATIONS, INCLUDE_LICENSE_TEXT],
+        risks=[],
+    )
 
 
 class LicenseAnalyzer(Analyzer):
@@ -196,8 +199,9 @@ class LicenseAnalyzer(Analyzer):
             issues.append(evaluator.create_undeterminable_issue(component, unreadable, rejected))
             return []
 
-        for lic_id in selected:
-            self._record_license(component, lic_id, LICENSE_DATABASE[lic_id], spdx_expr, stats, component_licenses)
+        for lic_id, member in selected.items():
+            license_info = _with_exception(LICENSE_DATABASE[lic_id], member)
+            self._record_license(component, lic_id, license_info, spdx_expr, stats, component_licenses)
         for issue in member_issues:
             self._emit_policy_issue(issue, spdx_expr, is_transitive, issues)
         return [lic_id for lic_id, member in selected.items() if member == lic_id]
@@ -211,11 +215,12 @@ class LicenseAnalyzer(Analyzer):
         """A consumer may take any OR alternative, so the least severe, then least restrictive, one is chosen."""
         candidates: list[tuple[tuple[int, int], dict[str, str], list[dict[str, Any]]]] = []
         for and_group in readable_groups:
-            verdicts = [evaluator.evaluate_license(component, LICENSE_DATABASE[lic_id], policy) for lic_id in and_group]
+            infos = [_with_exception(LICENSE_DATABASE[lic_id], member) for lic_id, member in and_group.items()]
+            verdicts = [evaluator.evaluate_license(component, info, policy) for info in infos]
             rank = (
                 # No issue ranks below every severity, INFO included.
                 max(get_severity_value(issue["severity"]) if issue else -1 for issue in verdicts),
-                max(CATEGORY_RESTRICTIVENESS[LICENSE_DATABASE[lic_id].category] for lic_id in and_group),
+                max(CATEGORY_RESTRICTIVENESS[info.category] for info in infos),
             )
             candidates.append((rank, and_group, [issue for issue in verdicts if issue]))
 

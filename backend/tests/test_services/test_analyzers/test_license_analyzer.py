@@ -496,6 +496,16 @@ class TestLicenseException:
         assert [entry["category"] for entry in result["component_licenses"]] == ["weak_copyleft"]
 
     @pytest.mark.asyncio
+    async def test_an_excepted_alternative_of_a_disjunction_is_weak_copyleft(self):
+        result = await self._analyze("(GPL-2.0-only WITH Classpath-exception-2.0) OR AGPL-3.0-only")
+        assert [(e["license"], e["category"]) for e in result["component_licenses"]] == [
+            ("GPL-2.0-only", "weak_copyleft")
+        ]
+        assert [(i["severity"], i["category"]) for i in result["license_issues"]] == [
+            (Severity.INFO.value, "weak_copyleft")
+        ]
+
+    @pytest.mark.asyncio
     async def test_a_bare_licence_beside_its_excepted_form_governs_once(self):
         result = await self._analyze("GPL-2.0-only WITH Classpath-exception-2.0 AND GPL-2.0-only")
         assert [(e["license"], e["category"]) for e in result["component_licenses"]] == [
