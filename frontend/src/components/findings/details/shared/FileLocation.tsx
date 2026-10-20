@@ -2,14 +2,8 @@ import { FileCode, ExternalLink } from "lucide-react"
 import { buildFileUrl } from "@/lib/scm-links"
 import { shortCommitHash } from "@/lib/utils"
 import type { FindingLocation } from "@/types/scan"
+import type { ScanContext } from "../SastDetailsView"
 import { DetailSection } from "./DetailSection"
-
-type ScmContext = {
-    projectUrl?: string | null
-    pipelineUrl?: string | null
-    commitHash?: string | null
-    branch?: string | null
-} | null
 
 interface FileLocationProps {
     readonly filePath: string
@@ -17,7 +11,7 @@ interface FileLocationProps {
     readonly endLine?: number | null
     readonly startCol?: number | null
     readonly endCol?: number | null
-    readonly scmContext?: ScmContext
+    readonly scmContext?: ScanContext | null
 }
 
 function buildLocationString(
@@ -38,7 +32,7 @@ function buildLocationString(
     return str
 }
 
-function buildScmFileUrl(filePath: string, scmContext: ScmContext | undefined, startLine?: number | null, endLine?: number | null) {
+function buildScmFileUrl(filePath: string, scmContext: ScanContext | null | undefined, startLine?: number | null, endLine?: number | null) {
     return scmContext ? buildFileUrl({
         projectUrl: scmContext.projectUrl,
         pipelineUrl: scmContext.pipelineUrl,
@@ -99,7 +93,7 @@ export function FileLocation({
 interface AdditionalLocationsProps {
     readonly filePath: string
     readonly locations?: FindingLocation[]
-    readonly scmContext?: ScmContext
+    readonly scmContext?: ScanContext | null
 }
 
 export function AdditionalLocations({ filePath, locations, scmContext }: AdditionalLocationsProps) {
