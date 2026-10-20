@@ -7,6 +7,7 @@ import yaml
 
 from app.core import ensure_utc
 from app.models.crypto_asset import CryptoAsset
+from app.services.analyzers.crypto.matcher import family_tokens
 
 _MAPPINGS_PATH = Path(__file__).resolve().parent / "mappings.yaml"
 
@@ -77,7 +78,11 @@ def normalise_family(name: str | None, mappings: PQCMappings) -> str:
 
 
 def resolve_family(asset: CryptoAsset, mappings: PQCMappings) -> str:
-    for candidate in (asset.name, asset.variant):
+    candidates = [c for c in (asset.name, asset.variant) if c]
+    for candidate in candidates:
         if (family := normalise_family(candidate, mappings)) in mappings.canonical:
             return family
-    return ""
+    # RSA-1024 and SHA1withRSA hold the family as one part; of several, the one mapped for the asset's primitive wins.
+    parts = {normalise_family(part, mappings) for c in candidates for part in family_tokens(c.lower())}
+    by_primitive = sorted(mappings.mappings, key=lambda m: m.source_primitive != asset.primitive)
+    return next((m.source_family for m in by_primitive if m.source_family in parts), "")

@@ -256,3 +256,23 @@ def test_repeated_occurrence_locations_are_kept_once_in_order():
     [asset] = parse_crypto_components([_rsa_component(evidence={"occurrences": occurrences})])
 
     assert asset.occurrence_locations == ["b.py", "a.py"]
+
+
+def test_a_cyclonedx_1_7_algorithm_family_is_read_as_the_variant():
+    comp = {
+        "type": "cryptographic-asset",
+        "bom-ref": "rsa-1024",
+        "name": "RSA-1024",
+        "cryptoProperties": {
+            "assetType": "algorithm",
+            "algorithmProperties": {
+                "primitive": "pke",
+                "algorithmFamily": "RSAES-OAEP",
+                "parameterSetIdentifier": "1024",
+            },
+        },
+    }
+
+    [asset] = parse_crypto_components([comp])
+
+    assert (asset.variant, asset.key_size_bits) == ("RSAES-OAEP", 1024)

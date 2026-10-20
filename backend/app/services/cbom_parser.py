@@ -142,7 +142,8 @@ _KEY_SIZE_PROPERTY_NAMES = ("cryptography:key_size", "cryptography:keySize", "ke
 
 def _populate_algorithm(asset: ParsedCryptoAsset, props: dict[str, Any]) -> None:
     asset.primitive = _parse_primitive(props.get("primitive"))
-    asset.variant = props.get("variant")
+    # CycloneDX 1.7 names the family (RSASSA-PSS, ECDH) in algorithmFamily.
+    asset.variant = props.get("variant") or props.get("algorithmFamily")
     asset.parameter_set_identifier = props.get("parameterSetIdentifier")
     asset.mode = props.get("mode")
     asset.padding = props.get("padding")

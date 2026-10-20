@@ -60,7 +60,7 @@ def name_matches(asset: CryptoAsset, patterns: list[str]) -> bool:
     lowered = [pat.lower() for pat in patterns]
     for candidate in candidates:
         c_lower = candidate.lower()
-        tokens = _family_tokens(c_lower)
+        tokens = family_tokens(c_lower)
         # Tokens hold no glob characters, so only a glob-free pattern can equal one.
         if any(pat == c_lower or pat in tokens or fnmatchcase(c_lower, pat) for pat in lowered):
             return True
@@ -88,7 +88,7 @@ _TRIPLE_DES_TOKENS = {"desede", "ede3"}
 _FAMILY_PREFIX = re.compile(r"(rsa)(?:ssa|es|kem)|([a-z]+)\d")
 
 
-def _family_tokens(name: str) -> set[str]:
+def family_tokens(name: str) -> set[str]:
     tokens = set(_QUALIFIER.sub(r"\1", " ".join(re.split(r"[^a-z0-9]+|with", name))).split())
     if any(token.startswith(_POST_QUANTUM_FAMILIES) for token in tokens):
         return set()

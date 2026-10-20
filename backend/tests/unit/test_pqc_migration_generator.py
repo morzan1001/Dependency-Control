@@ -7,6 +7,7 @@ from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED
 from app.models.crypto_asset import CryptoAsset
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.analytics.scopes import ResolvedScope
+from app.services.cbom_parser import parse_crypto_components
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -263,3 +264,38 @@ async def test_an_asset_whose_name_is_no_family_resolves_it_from_the_variant():
     assert item.source_family == "RSA"
     assert item.asset_name == "sha256WithRSAEncryption"
     assert item.use_case == "digital-signature"
+
+
+def _cbom_1_7_algorithm(name, primitive, **algorithm_properties):
+    return {
+        "type": "cryptographic-asset",
+        "bom-ref": name,
+        "name": name,
+        "cryptoProperties": {
+            "assetType": "algorithm",
+            "algorithmProperties": {"primitive": primitive, **algorithm_properties},
+        },
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("component", "family", "recommended"),
+    [
+        (_cbom_1_7_algorithm("RSA-1024", "pke", parameterSetIdentifier="1024"), "RSA", "ML-KEM-768"),
+        (_cbom_1_7_algorithm("signing", "signature", algorithmFamily="RSASSA-PSS"), "RSA", "ML-DSA-65"),
+        (_cbom_1_7_algorithm("ECDSA-P256", "signature"), "ECDSA", "ML-DSA-65"),
+        (_cbom_1_7_algorithm("SHA1withRSA", "signature"), "RSA", "ML-DSA-65"),
+        (_cbom_1_7_algorithm("ECDHE-RSA-AES128-GCM-SHA256", "key-agree"), "ECDH", "ML-KEM-768"),
+    ],
+    ids=["size-suffixed-name", "algorithm-family-only", "curve-suffixed-name", "signature-scheme-name", "suite-name"],
+)
+async def test_an_asset_whose_family_is_one_part_of_its_name_or_algorithm_family_enters_the_plan(
+    component, family, recommended
+):
+    [parsed] = parse_crypto_components([component])
+
+    items = await _plan_for([CryptoAsset(project_id="p1", scan_id="s1", **parsed.model_dump())])
+
+    [item] = items.values()
+    assert (item.source_family, item.recommended_pqc) == (family, recommended)
