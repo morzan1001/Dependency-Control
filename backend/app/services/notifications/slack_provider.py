@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 SLACK_OAUTH_URL = "https://slack.com/api/oauth.v2.access"
 _REFRESH_LOCK = "slack_token_refresh"
+# Without it every send of a fan-out retries a refused refresh in turn, under the lock the delivery workers wait on.
+_REFRESH_RETRY_SECONDS = 60
 
 
 class SlackOAuthError(Exception):
@@ -56,6 +58,7 @@ class SlackProvider:
     def __init__(self) -> None:
         # Serialises this pod's refreshes; the distributed lock serialises the pods'.
         self._refresh_lock = asyncio.Lock()
+        self._refresh_failed_at = float("-inf")
 
     async def _refresh_token(self, db: AsyncIOMotorDatabase, system_settings: SystemSettings) -> str | None:
         if (
@@ -87,6 +90,8 @@ class SlackProvider:
             return system_settings.slack_bot_token
         settings_repo = SystemSettingsRepository(db)
         async with self._refresh_lock:
+            if time.monotonic() - self._refresh_failed_at < _REFRESH_RETRY_SECONDS:
+                return system_settings.slack_bot_token
             locks = DistributedLocksRepository(db)
             holder = new_lock_holder()
             if await locks.acquire_lock(_REFRESH_LOCK, holder, ttl_seconds=30):
@@ -95,7 +100,10 @@ class SlackProvider:
                     fresh = await settings_repo.get()
                     if not _expiring(fresh):
                         return fresh.slack_bot_token
-                    return await self._refresh_token(db, fresh) or fresh.slack_bot_token
+                    refreshed = await self._refresh_token(db, fresh)
+                    if refreshed is None:
+                        self._refresh_failed_at = time.monotonic()
+                    return refreshed or fresh.slack_bot_token
                 finally:
                     await locks.release_lock(_REFRESH_LOCK, holder)
         logger.info("Another pod is refreshing the Slack token, waiting...")

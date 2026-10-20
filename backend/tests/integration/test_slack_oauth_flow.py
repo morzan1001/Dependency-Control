@@ -234,6 +234,27 @@ async def test_concurrent_sends_with_an_expiring_token_refresh_it_once(db, slack
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
+async def test_a_failed_refresh_is_tried_once_per_window_not_once_per_send(db, slack, monkeypatch):
+    monkeypatch.setitem(_SLACK_ANSWERS, _OAUTH_ACCESS, {"ok": False, "error": "invalid_refresh_token"})
+    system_settings = await _expiring_settings(db)
+    provider = SlackProvider()
+
+    sent = await asyncio.gather(
+        *(provider.send("#alerts", "S", "B", db=db, system_settings=system_settings) for _ in range(20))
+    )
+
+    assert all(sent)
+    assert [r["url"] for r in slack].count(_OAUTH_ACCESS) == 1
+    assert [r["authorization"] for r in slack if r["url"] == _POST_MESSAGE] == ["Bearer xoxb-current"] * 20
+
+    monkeypatch.setattr(slack_provider, "_REFRESH_RETRY_SECONDS", 0)
+    await provider.send("#alerts", "S", "B", db=db, system_settings=system_settings)
+
+    assert [r["url"] for r in slack].count(_OAUTH_ACCESS) == 2
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
 async def test_sends_waiting_on_another_pods_refresh_wait_side_by_side_and_use_its_token(db, slack, monkeypatch):
     system_settings = await _expiring_settings(db)
     assert await DistributedLocksRepository(db).acquire_lock("slack_token_refresh", new_lock_holder(), 30)
