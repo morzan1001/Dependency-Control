@@ -1574,6 +1574,9 @@ class FakeCollection:
         count = sum(1 for doc in self._docs.values() if _match_doc(doc, query))
         return min(count, limit) if limit else count
 
+    async def estimated_document_count(self, **_kwargs):
+        return len(self._docs)
+
     async def distinct(self, field: str, filter: dict | None = None, **_kwargs):
         seen: list = []
         for doc in self._docs.values():

@@ -686,7 +686,7 @@ async def update_archive_stats(database: Any, summed_at_count: int | None) -> in
     archives = database["archive_metadata"]
     count: int = await archives.estimated_document_count()
     archive_count_total.set(count)
-    # Archives are only inserted or deleted, so the summed bytes are re-read whenever the count moves.
+    # Re-summed when the count moves; the loop also forces a daily re-sum for inserts and deletes that cancel out.
     if count == summed_at_count:
         return count
     pipeline = [{"$group": {"_id": None, "total_bytes": {"$sum": {"$ifNull": ["$compressed_size_bytes", 0]}}}}]

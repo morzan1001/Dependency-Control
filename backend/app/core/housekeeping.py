@@ -665,5 +665,6 @@ async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
         if _reconcile_due(now, last_update_frequency_reconcile):
             await reconcile_update_frequency_ledger()
             last_update_frequency_reconcile = now
+            archives_summed_at = None
 
         await asyncio.sleep(HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS)
