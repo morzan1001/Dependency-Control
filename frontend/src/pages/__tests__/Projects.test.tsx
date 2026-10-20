@@ -97,7 +97,7 @@ describe('ProjectsPage namesakes', () => {
     ])
 
     expect(screen.getByText('Payments')).toBeInTheDocument()
-    expect(screen.getByText('Unassigned')).toBeInTheDocument()
+    expect(screen.getByText('platform/shared-lib')).toBeInTheDocument()
     expect(screen.queryByText('Retail')).not.toBeInTheDocument()
   })
 })

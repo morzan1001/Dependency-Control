@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { githubInstancesApi } from '@/api/github-instances'
@@ -17,14 +17,14 @@ vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ hasPermission: (p: strin
 const page = <T,>(items: T[]) => ({ items, total: items.length, page: 1, size: 100, pages: 1 })
 
 // CI auto-creation names a project after its repository path, so namesakes of one path differ only by instance.
-function ciProject(id: string, instanceId: string, gitlabProjectId: number, team = 'Payments'): Project {
+function ciProject(id: string, instanceId: string, gitlabProjectId: number, teams = ['Payments']): Project {
   return {
     id,
     name: 'aufstrg/tm/app',
     gitlab_project_path: 'aufstrg/tm/app',
     gitlab_instance_id: instanceId,
     gitlab_project_id: gitlabProjectId,
-    teams: [{ id: `t-${team}`, name: team }],
+    teams: teams.map((team) => ({ id: `t-${team}`, name: team })),
   }
 }
 
@@ -69,11 +69,25 @@ describe('ProjectOwner', () => {
   })
 
   it('names the owning teams when they differ, even where the instances differ too', () => {
-    renderOwners([ciProject('p1', 'gl-prod', 11, 'Payments'), ciProject('p2', 'gl-dev', 22, 'Platform')])
+    renderOwners([ciProject('p1', 'gl-prod', 11, ['Payments']), ciProject('p2', 'gl-dev', 22, ['Platform'])])
 
     expect(screen.getByText('Payments')).toBeInTheDocument()
     expect(screen.getByText('Platform')).toBeInTheDocument()
     expect(screen.queryByText(/GitLab project/)).not.toBeInTheDocument()
+  })
+
+  it('tells namesakes apart by their GitLab project where their owner cells read alike, a first team and +1', () => {
+    renderOwners([ciProject('p1', 'gl-prod', 11, ['Payments', 'Platform']), ciProject('p2', 'gl-dev', 22, ['Payments', 'Retail'])])
+
+    expect(screen.getByText('GitLab project 11')).toBeInTheDocument()
+    expect(screen.getByText('GitLab project 22')).toBeInTheDocument()
+  })
+
+  it('names the owner of a namesake that lacks the trait telling the others apart', () => {
+    renderOwners([ciProject('p1', 'gl-prod', 11, []), { id: 'p2', name: 'aufstrg/tm/app', teams: [] }])
+
+    expect(within(screen.getByTestId('p1')).getByText('aufstrg/tm/app')).toBeInTheDocument()
+    expect(within(screen.getByTestId('p2')).getByText('Unassigned')).toBeInTheDocument()
   })
 
   it('names the repository path of unowned namesakes whose paths differ, capped like an owner so the name keeps its room', () => {

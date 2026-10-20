@@ -109,7 +109,7 @@ describe('Dashboard recent activity namesakes', () => {
     renderDashboard([])
 
     expect(screen.getByText('Payments')).toBeInTheDocument()
-    expect(screen.getByText('Unassigned')).toBeInTheDocument()
+    expect(screen.getByText('org/shared-lib')).toBeInTheDocument()
     expect(useProjectDetailsMock).toHaveBeenCalledWith(['p1', 'p2'])
     expect(useProjectDetailsMock).not.toHaveBeenCalledWith(expect.arrayContaining(['p3']))
   })

@@ -16,7 +16,11 @@ function vcsLink(project: Project) {
 }
 
 const TRAITS = {
-  owner: (project: Project) => (project.teams ?? []).map((team) => team.name).join(', '),
+  // OwningTeamsCell lays out the first team and a count, so owners behind +N tell no namesake apart.
+  owner: (project: Project) => {
+    const teams = project.teams ?? []
+    return teams.length ? `${teams[0].name} +${teams.length - 1}` : ''
+  },
   path: (project: Project) => project.gitlab_project_path ?? project.github_repository_path ?? '',
   instance: (project: Project, instanceNames: ReadonlyMap<string, string>) => {
     const link = vcsLink(project)
@@ -39,13 +43,15 @@ function distinguishingTrait(namesakes: readonly Project[], instanceNames: Reado
 export function ProjectOwner({ project, namesakes }: Readonly<{ project: Project; namesakes: readonly Project[] }>) {
   const instanceNames = useInstanceNames(new Set(namesakes.map((namesake) => vcsLink(namesake)?.instanceId)).size > 1)
   const trait = distinguishingTrait(namesakes, instanceNames)
-  const label = TRAITS[trait](project, instanceNames)
+  // Where owners tell namesakes apart, a teamless one says more by its path than by Unassigned.
+  const shown = trait === 'owner' && !project.teams?.length && TRAITS.path(project) ? 'path' : trait
+  const label = TRAITS[shown](project, instanceNames)
   return (
     <span className="min-w-0 max-w-[50%] shrink-0 text-xs text-muted-foreground">
-      {trait === 'owner' ? (
+      {shown === 'owner' || !label ? (
         <OwningTeamsCell teams={project.teams} />
       ) : (
-        <span className={cn('block truncate', trait === 'path' && 'font-mono')} title={label}>{label}</span>
+        <span className={cn('block truncate', shown === 'path' && 'font-mono')} title={label}>{label}</span>
       )}
     </span>
   )
