@@ -374,10 +374,16 @@ def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> li
         {MONGO_MATCH: {"scan_id": {"$in": scan_ids}}},
         {
             MONGO_GROUP: {
-                "_id": package_identity_expr(),
-                "versions": {"$addToSet": "$version"},
-                # One head scan per compared project, so distinct scans count the projects.
+                "_id": {"package": package_identity_expr(), "version": "$version"},
                 "scan_ids": {"$addToSet": "$scan_id"},
+            }
+        },
+        {
+            MONGO_GROUP: {
+                "_id": "$_id.package",
+                "versions": {"$push": "$_id.version"},
+                "scan_ids": {"$push": "$scan_ids"},
+                "least_shared": {"$min": {"$size": "$scan_ids"}},
             }
         },
         {
@@ -385,10 +391,22 @@ def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> li
                 "name": "$_id.path",
                 "versions": 1,
                 "version_count": {"$size": "$versions"},
-                "project_count": {"$size": "$scan_ids"},
+                # One head scan per compared project, so distinct scans count the projects.
+                "project_count": {
+                    "$size": {
+                        "$reduce": {
+                            "input": "$scan_ids",
+                            "initialValue": [],
+                            "in": {"$setUnion": ["$$value", "$$this"]},
+                        }
+                    }
+                },
+                "least_shared": 1,
             }
         },
-        {MONGO_MATCH: {"version_count": {"$gt": 1}, "project_count": {"$gte": min_projects}}},
+        # Projects holding the same version set (nested copies included) agree; a version some project lacks differs.
+        {MONGO_MATCH: {"project_count": {"$gte": min_projects}, "$expr": {"$lt": ["$least_shared", "$project_count"]}}},
+        {"$unset": "least_shared"},
         *case_insensitive_sort([("version_count", -1), ("name", 1)], {"name"}),
     ]
 

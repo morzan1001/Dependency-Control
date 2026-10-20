@@ -188,3 +188,29 @@ def test_packages_on_as_many_versions_are_listed_by_name_whatever_its_case():
         "github.com/google/uuid",
         "github.com/Masterminds/semver",
     ]
+
+
+def test_projects_holding_the_same_nested_copies_are_not_reported():
+    col = FakeCollection()
+    docs = [
+        _dep(f"d-{scan}-{version}", scan, project, "requests", version)
+        for scan, project in (("s1", "p1"), ("s2", "p2"))
+        for version in ("2.28.0", "2.31.0")
+    ]
+    col._docs = {d["_id"]: d for d in docs}
+
+    assert _run(col, ["s1", "s2"]) == []
+
+
+def test_a_project_holding_a_copy_the_other_lacks_reports_every_version():
+    col = FakeCollection()
+    docs = [
+        _dep("d1", "s1", "p1", "requests", "2.28.0"),
+        _dep("d2", "s1", "p1", "requests", "2.31.0"),
+        _dep("d3", "s2", "p2", "requests", "2.31.0"),
+    ]
+    col._docs = {d["_id"]: d for d in docs}
+
+    [row] = _run(col, ["s1", "s2"])
+
+    assert (sorted(row["versions"]), row["version_count"], row["project_count"]) == (["2.28.0", "2.31.0"], 2, 2)
