@@ -205,6 +205,20 @@ class TestDirectnessOfRealGraphs:
         ingested = {dep.purl for dep in result.dependencies}
         assert all(set(dep.parent_components) <= ingested for dep in result.dependencies)
 
+    def test_trivy_multi_module_maven_skips_every_own_module_wherever_it_appears(self):
+        # trivy 0.76.0 output: a parent pom listing modules core and app, each with a pom.xml node of its own.
+        result = parse_sbom(_fixture("mvnmulti.trivy.cdx.json"))
+
+        assert sorted((dep.name, dep.version, dep.direct, dep.direct_inferred) for dep in result.dependencies) == [
+            ("logback-classic", "1.5.6", True, False),
+            ("logback-core", "1.5.6", False, False),
+            ("slf4j-api", "2.0.13", False, False),
+            ("slf4j-api", "2.0.16", True, False),
+        ]
+        assert result.skipped_reasons["root-component"] == 7
+        ingested = {dep.purl for dep in result.dependencies}
+        assert all(set(dep.parent_components) <= ingested for dep in result.dependencies)
+
     @pytest.mark.parametrize(
         ("fixture", "expected"),
         [

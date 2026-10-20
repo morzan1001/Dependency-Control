@@ -452,12 +452,15 @@ class SBOMParser:
     ) -> tuple[set[Any], set[Any], set[Any]]:
         packages: set[str] = set()
         trivy_roots: set[Any] = set()
+        refs_by_purl: dict[str, list[str]] = {}
         syft_roots_by_lock: dict[str, list[str]] = {}
         targets = set().union(*forward.values())
         for comp in components:
             ref, comp_type = comp.get("bom-ref") or comp.get("purl"), comp.get("type")
             if not isinstance(ref, str) or comp_type in cls._NON_PACKAGE_COMPONENT_TYPES:
                 continue
+            if isinstance(purl := comp.get("purl"), str) and purl:
+                refs_by_purl.setdefault(purl, []).append(ref)
             raw_props = comp.get("properties")
             entries = raw_props if isinstance(raw_props, list) else []
             props = [(p.get("name"), p.get("value")) for p in entries if isinstance(p, dict)]
@@ -476,6 +479,8 @@ class SBOMParser:
             if forward.get(ref) and ref not in targets and any(prop in _SYFT_PROJECT_ROOT_PROPERTIES for prop in props):
                 lock = next((value for name, value in props if name == "syft:location:0:path"), None)
                 syft_roots_by_lock.setdefault(str(lock), []).append(ref)
+        # A module of the project roots its own lock-file node, so its copies elsewhere are the project too.
+        trivy_roots.update(*(refs for refs in refs_by_purl.values() if trivy_roots.intersection(refs)))
         # A second root in one lock file (an unlinked npm peer, a uv dev group) leaves the project ambiguous.
         project = {roots[0] for roots in syft_roots_by_lock.values() if len(roots) == 1}
         return set(forward).union(targets) - packages, trivy_roots, project
