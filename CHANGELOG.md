@@ -1,3 +1,11 @@
+# Release 1.9.59
+
+## 📦 Build & CI
+
+- chore(release): 1.9.59 counts certificate and protocol crypto findings, compares outdated packages with stable releases, closes crypto rule gaps, sorts the remaining lists without regard to case and adds custom MongoDB roles to the chart (#0)
+
+
+
 # Upgrade notes
 
 These notes cover the upgrade from 1.9.58. Nothing has to happen before the rollout; there is no migration and no index change.
