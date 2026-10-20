@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import re
+from typing import NamedTuple
 
 from app.core.constants import LICENSE_ALIASES, LICENSE_URL_PATTERNS, UNKNOWN_LICENSE_PATTERNS
 
@@ -93,7 +94,7 @@ def split_license_list(raw: str) -> list[str]:
 
 _WORD = re.compile(r"[()]|[^\s()]+")
 _SYNTAX = frozenset({"AND", "OR", "WITH", "(", ")"})
-# Bounds on SBOM-supplied input; past them the expression reads as one unrecognised term.
+# Bounds on SBOM-supplied input; past them the expression reads as one unrecognised term beside its certain licences.
 _MAX_ALTERNATIVES = 64
 _MAX_NESTING = 32
 
@@ -102,6 +103,13 @@ _Groups = list[list[str]]
 
 class _Unparseable(Exception):
     pass
+
+
+class _Parsed(NamedTuple):
+    # None once the expansion passes _MAX_ALTERNATIVES.
+    groups: _Groups | None
+    # Members every alternative binds, computed without expanding.
+    mandatory: dict[str, None]
 
 
 def _tokens(raw: str) -> list[str]:
@@ -132,49 +140,76 @@ def _term_ids(term: str) -> list[str]:
     return list(dict.fromkeys(lic for lic in ids if lic and lic.upper() not in UNKNOWN_LICENSE_PATTERNS))
 
 
-def _parse_atom(tokens: list[str], pos: int, depth: int) -> tuple[_Groups, int]:
+def _bound(members: list[str]) -> _Parsed:
+    return _Parsed([members], dict.fromkeys(members))
+
+
+def _parse_atom(tokens: list[str], pos: int, depth: int) -> tuple[_Parsed, int]:
     if pos == len(tokens):
         raise _Unparseable
     token = tokens[pos]
     if token == "(":
         if depth == _MAX_NESTING:
             raise _Unparseable
-        groups, pos = _parse_or(tokens, pos + 1, depth + 1)
+        parsed, pos = _parse_or(tokens, pos + 1, depth + 1)
         if pos == len(tokens) or tokens[pos] != ")":
             raise _Unparseable
-        return groups, pos + 1
+        return parsed, pos + 1
     if token in _SYNTAX:
         raise _Unparseable
     if pos + 2 < len(tokens) and tokens[pos + 1] == "WITH" and tokens[pos + 2] not in _SYNTAX:
-        return [[f"{normalize_license(token)} WITH {tokens[pos + 2]}"]], pos + 3
-    return [_term_ids(token)], pos + 1
+        return _bound([f"{normalize_license(token)} WITH {tokens[pos + 2]}"]), pos + 3
+    return _bound(_term_ids(token)), pos + 1
 
 
-def _parse_and(tokens: list[str], pos: int, depth: int) -> tuple[_Groups, int]:
+def _expand_and(parts: list[_Parsed]) -> _Groups | None:
+    expanded: list[_Groups] = []
+    combinations = 1
+    for part in parts:
+        if part.groups is None:
+            return None
+        combinations *= len(part.groups)
+        if combinations > _MAX_ALTERNATIVES:
+            return None
+        expanded.append(part.groups)
+    return [list(dict.fromkeys(itertools.chain.from_iterable(combo))) for combo in itertools.product(*expanded)]
+
+
+def _parse_and(tokens: list[str], pos: int, depth: int) -> tuple[_Parsed, int]:
     part, pos = _parse_atom(tokens, pos, depth)
     parts = [part]
-    combinations = len(part)
     while pos < len(tokens) and tokens[pos] == "AND":
         part, pos = _parse_atom(tokens, pos + 1, depth)
         parts.append(part)
-        combinations *= len(part)
-        if combinations > _MAX_ALTERNATIVES:
-            raise _Unparseable
-    return [list(dict.fromkeys(itertools.chain.from_iterable(combo))) for combo in itertools.product(*parts)], pos
+    mandatory = dict.fromkeys(itertools.chain.from_iterable(part.mandatory for part in parts))
+    return _Parsed(_expand_and(parts), mandatory), pos
 
 
-def _parse_or(tokens: list[str], pos: int, depth: int) -> tuple[_Groups, int]:
-    alternatives: dict[tuple[str, ...], None] = {}
+def _expand_or(alternatives: list[_Parsed]) -> _Groups | None:
+    groups: dict[tuple[str, ...], None] = {}
+    for alternative in alternatives:
+        if alternative.groups is None:
+            return None
+        groups.update(dict.fromkeys(map(tuple, alternative.groups)))
+        if len(groups) > _MAX_ALTERNATIVES:
+            return None
+    return [list(group) for group in groups if group] or [[]]
+
+
+def _parse_or(tokens: list[str], pos: int, depth: int) -> tuple[_Parsed, int]:
+    alternatives: list[_Parsed] = []
     while True:
-        groups, pos = _parse_and(tokens, pos, depth)
-        alternatives.update(dict.fromkeys(map(tuple, groups)))
-        if len(alternatives) > _MAX_ALTERNATIVES:
-            raise _Unparseable
+        parsed, pos = _parse_and(tokens, pos, depth)
+        alternatives.append(parsed)
         if pos == len(tokens) or tokens[pos] != "OR":
             break
         pos += 1
     # A placeholder alternative such as 'MIT OR NOASSERTION' offers no licence to choose.
-    return [list(group) for group in alternatives if group] or [[]], pos
+    offered = [alternative for alternative in alternatives if alternative.groups != [[]]]
+    mandatory = dict(offered[0].mandatory) if offered else {}
+    for alternative in offered[1:]:
+        mandatory = {member: None for member in mandatory if member in alternative.mandatory}
+    return _Parsed(_expand_or(alternatives), mandatory), pos
 
 
 def license_base(member: str) -> str:
@@ -199,11 +234,16 @@ def parse_license_expression(raw: str) -> list[list[str]]:
     """OR-alternatives, each a list of AND-bound normalized ids."""
     tokens = _tokens(raw)
     try:
-        groups, pos = _parse_or(tokens, 0, 0)
+        parsed, pos = _parse_or(tokens, 0, 0)
         if pos != len(tokens):
             raise _Unparseable
     except _Unparseable:
-        groups = [_term_ids(raw.strip())]
+        parsed = _Parsed(None, {})
+    groups = parsed.groups
+    if groups is None:
+        # The raw term keeps the expression undeterminable; no OR choice becomes an obligation.
+        recognised = [member for member in parsed.mandatory if license_base(member) in LICENSE_DATABASE]
+        groups = [[*recognised, *_term_ids(raw.strip())]]
     return [group for group in groups if group]
 
 
