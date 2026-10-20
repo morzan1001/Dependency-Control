@@ -80,7 +80,7 @@ async def _handle_tool_call(
         raise _RpcError(_RATE_LIMITED, f"Rate limit exceeded, retry in {retry_after} seconds")
 
     result = await registry.execute_tool(name, arguments, user, db)
-    text = json.dumps(result, default=str, ensure_ascii=False, indent=2)
+    text = json.dumps(result, default=str, ensure_ascii=False)
     is_error = isinstance(result, dict) and "error" in result
     return {
         "content": [{"type": "text", "text": text}],
