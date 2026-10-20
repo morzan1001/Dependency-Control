@@ -94,7 +94,7 @@ from app.services.analysis.types import Database
 from app.services.analyzers.cli_base import TEMP_SBOM_PREFIX
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, load_iana_catalog
 from app.services.crypto_policy.resolver import CryptoPolicyResolver, EffectivePolicy
-from app.services.dependency_store import store_scan_dependencies
+from app.services.dependency_store import CopyKey, dependency_copy_key, store_scan_dependencies
 from app.services.enrichment.service import vulnerability_enrichment_service
 from app.services.github import installation_github_token
 from app.services.gridfs_maintenance import gridfs_ref_id
@@ -442,55 +442,52 @@ def _track_findings_metrics(aggregated_findings: list[Finding]) -> None:
 
 
 _DEP_ENRICHMENT_COPY_KEYS = ("license", "license_expression", "license_category", "license_risks")
-_LICENSE_MISSING = {"$in": [None, ""]}
-_LICENSE_PRESENT = {"$nin": [None, ""]}
 
 
-def _dependency_update_ops(scan_id: str, entry: dict[str, Any]) -> list[UpdateMany]:
-    slim = {key: entry["data"][key] for key in _DEP_ENRICHMENT_COPY_KEYS if key in entry["data"]}
-    if not slim:
-        return []
+def _dependency_copies(enrichment_entries: list[dict[str, Any]]) -> dict[CopyKey, dict[str, Any]]:
+    copies: dict[CopyKey, dict[str, Any]] = {}
+    for entry in enrichment_entries:
+        if copied := {key: entry["data"][key] for key in _DEP_ENRICHMENT_COPY_KEYS if key in entry["data"]}:
+            copies[dependency_copy_key(entry["purl"], entry["name"], entry["version"])] = copied
+    return copies
 
-    if entry["purl"]:
+
+def _dependency_update(scan_id: str, copy_key: CopyKey, copied: dict[str, Any]) -> UpdateMany:
+    if isinstance(copy_key, str):
         # Prefix match keeps qualifier variants; a lookahead, unlike an alternation, keeps the index range tight.
-        dep_filter: dict[str, Any] = {"scan_id": scan_id, "purl": {"$regex": f"^{re.escape(entry['purl'])}(?![^?#])"}}
+        dep_filter: dict[str, Any] = {"scan_id": scan_id, "purl": {"$regex": f"^{re.escape(copy_key)}(?![^?#])"}}
     else:
+        name, version = copy_key
         # Purl-less docs only, so it cannot stamp a same-named package of another ecosystem with its licence.
-        dep_filter = {
-            "scan_id": scan_id,
-            "name": entry["name"],
-            "version": entry["version"],
-            "purl": {"$in": [None, ""]},
-        }
-
-    if "license" not in slim:
-        return [UpdateMany(dep_filter, {"$set": slim})]
-
-    # The SBOM-declared license is authoritative; enrichment only fills docs that lack one.
-    ops = [UpdateMany({**dep_filter, "license": _LICENSE_MISSING}, {"$set": slim})]
-    without_license = {key: value for key, value in slim.items() if key != "license"}
-    if without_license:
-        ops.append(UpdateMany({**dep_filter, "license": _LICENSE_PRESENT}, {"$set": without_license}))
-    return ops
+        dep_filter = {"scan_id": scan_id, "name": name, "version": version, "purl": {"$in": [None, ""]}}
+    fields: dict[str, Any] = {key: {"$literal": value} for key, value in copied.items()}
+    if "license" in fields:
+        # The SBOM-declared license is authoritative; enrichment only fills docs that lack one.
+        declared = {"$ifNull": ["$license", ""]}
+        fields["license"] = {"$cond": [{"$eq": [declared, ""]}, fields["license"], "$license"]}
+    return UpdateMany(dep_filter, [{"$set": fields}])
 
 
-async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id: str, db: Database) -> None:
-    if not enrichment_entries:
-        return
-
-    logger.info(f"Enriching {len(enrichment_entries)} dependencies with aggregated metadata")
-
-    ops = (op for entry in enrichment_entries for op in _dependency_update_ops(scan_id, entry))
-    total_updated = 0
-    for chunk in batched(ops, _BULK_CHUNK_SIZE, strict=False):
-        try:
-            await db.dependencies.bulk_write(list(chunk), ordered=False)
-            total_updated += len(chunk)
-        except Exception as e:
-            logger.exception("Failed to bulk update dependencies: %s", e)
-
+async def _store_dependencies(
+    payload: list[ParsedSBOM | None],
+    project_id: str,
+    scan_id: str,
+    db: Database,
+    enrichment_entries: list[dict[str, Any]],
+) -> None:
+    copies = _dependency_copies(enrichment_entries)
+    stored = await store_scan_dependencies(payload, project_id, scan_id, DependencyRepository(db), copies)
+    if stored is not None:
+        logger.info(f"Stored {stored} dependencies for scan {scan_id}")
+    else:
+        # The inventory an earlier write left in place takes the copies as updates.
+        ops = (_dependency_update(scan_id, copy_key, copied) for copy_key, copied in copies.items())
+        for chunk in batched(ops, _BULK_CHUNK_SIZE, strict=False):
+            try:
+                await db.dependencies.bulk_write(list(chunk), ordered=False)
+            except Exception as e:
+                logger.exception("Failed to bulk update dependencies: %s", e)
     persisted = await DependencyEnrichmentRepository(db).upsert_many(enrichment_entries)
-    logger.info(f"Bulk updated {total_updated} dependencies.")
     logger.info(f"Upserted {persisted} dependency enrichments.")
 
 
@@ -961,9 +958,8 @@ async def run_analysis(
     if not await _still_claimed(ctx):
         return None
 
-    stored = await store_scan_dependencies(payload, ctx.project_id, scan_id, DependencyRepository(db))
-    if stored is not None:
-        logger.info(f"Stored {stored} dependencies for scan {scan_id}")
+    # External results enrich no dependency, so the enrichments are complete here.
+    await _store_dependencies(payload, ctx.project_id, scan_id, db, aggregator.get_dependency_enrichments())
     del payload
 
     external_load_start = datetime.now(timezone.utc)
@@ -971,11 +967,7 @@ async def run_analysis(
 
     aggregated_findings = aggregator.get_findings()
     _track_findings_metrics(aggregated_findings)
-    dependency_enrichments = aggregator.get_dependency_enrichments()
     del aggregator
-
-    await _enrich_dependencies(dependency_enrichments, scan_id, db)
-    del dependency_enrichments
 
     findings_to_insert, vulnerability_findings = _prepare_finding_records(
         aggregated_findings, scan_id, ctx.project_id, scan_doc.created_at

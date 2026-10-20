@@ -20,6 +20,10 @@ class Dependency(MongoDocument):
     license: str | None = Field(None, description="License expression or name")
     license_url: str | None = Field(None, description="URL to license text")
     license_category: str | None = Field(None, description="License category the analysis copies from the license scan")
+    license_expression: str | None = Field(
+        None, description="SPDX expression the analysis copies from the license scan"
+    )
+    license_risks: list[str] | None = Field(None, description="License risks the analysis copies from the license scan")
 
     scope: str | None = Field(None, description="Dependency scope (e.g. runtime, dev, optional)")
     direct: bool = Field(False, description="True if direct dependency, False if transitive")

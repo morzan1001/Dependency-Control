@@ -237,9 +237,9 @@ async def test_rows_a_concurrent_store_inserted_first_are_written_over_once(db):
     repo = DependencyRepository(db)
     earlier_at = datetime.now(timezone.utc).replace(microsecond=0)
     later_at = earlier_at + timedelta(seconds=1)
-    earlier = [dependency_store._parsed_dep_to_dependency(_dep(n), _PROJECT_ID, _SCAN_ID, earlier_at) for n in "ab"]
+    earlier = [dependency_store._parsed_dep_to_dependency(_dep(n), _PROJECT_ID, _SCAN_ID, earlier_at, {}) for n in "ab"]
     later = [
-        dependency_store._parsed_dep_to_dependency(_dep(n, scope="runtime"), _PROJECT_ID, _SCAN_ID, later_at)
+        dependency_store._parsed_dep_to_dependency(_dep(n, scope="runtime"), _PROJECT_ID, _SCAN_ID, later_at, {})
         for n in "abc"
     ]
 
