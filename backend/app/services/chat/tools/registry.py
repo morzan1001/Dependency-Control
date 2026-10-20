@@ -49,13 +49,13 @@ from app.core.risk_scoring import (
     is_deprioritized_vulnerability,
     reachability_display_tier,
 )
+from app.db.mongodb import DEFAULT_SOCKET_TIMEOUT_MS
 from app.models.finding import Severity
 from app.models.project import Project
 from app.models.stats import Stats
 from app.models.user import User
 from app.models.waiver import is_waiver_active
 from app.models.webhook import Webhook
-from app.db.mongodb import DEFAULT_SOCKET_TIMEOUT_MS
 from app.repositories.base import and_filters
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
