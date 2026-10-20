@@ -422,6 +422,7 @@ export interface ScanStats {
   sast?: number;
   compliance?: number;
   quality?: number;
+  crypto?: number;
   other?: number;
   by_type?: Record<string, number>;
   [key: string]: number | Record<string, number> | undefined;

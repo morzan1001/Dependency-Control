@@ -703,13 +703,13 @@ describe('ScanDetails distribution charts', () => {
     expect(item.querySelector('path')).toHaveAttribute('fill', SEVERITY_CHART_COLORS.UNKNOWN)
   })
 
-  it('lists the categories in the order of the finding tabs', async () => {
+  it('lists the categories in the order of the finding tabs, crypto before other', async () => {
     mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })
-    categories.stats = { security: 1, secret: 1, sast: 1, compliance: 1, quality: 1, other: 1 }
+    categories.stats = { security: 1, secret: 1, sast: 1, compliance: 1, quality: 1, crypto: 1, other: 1 }
 
     renderPage()
 
-    expect(await legendOf('Category Distribution')).toEqual(['Security', 'Secrets', 'SAST', 'Compliance', 'Quality', 'Other'])
+    expect(await legendOf('Category Distribution')).toEqual(['Security', 'Secrets', 'SAST', 'Compliance', 'Quality', 'Crypto', 'Other'])
   })
 
   it("leaves the legend its own height, like the project overview's pie, so a legend wrapped on a phone stays in its card", async () => {
