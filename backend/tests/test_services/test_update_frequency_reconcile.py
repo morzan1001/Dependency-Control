@@ -248,7 +248,7 @@ class TestRecordedFailure:
         assert _metric("error", "resolved") == exported + 1
         assert (await _delta(db, "s1") or {}).get("error") is None
         assert await _folded_window(db) == ["s1", "s2"]
-        assert "1 previously failed" in caplog.text
+        assert "1 error" in caplog.text
 
     @pytest.mark.asyncio
     async def test_a_delta_demoted_for_lost_dependencies_is_derived_again(self, spy: list[str]):
@@ -641,7 +641,7 @@ class TestCaps:
 
 class TestDriftMetric:
     @pytest.mark.asyncio
-    async def test_every_kind_of_drift_reaches_prometheus(self, spy: list[str]):
+    async def test_every_kind_of_drift_reaches_prometheus(self, spy: list[str], caplog: pytest.LogCaptureFixture):
         """A kind the warning line counts but the metric drops would understate the drift."""
         db = FakeDatabase()
         await _seed_project(db)
@@ -652,12 +652,15 @@ class TestDriftMetric:
         kinds = ("missing", "stale", "orphan", "dependent")
         before = {kind: _metric(kind, "resolved") for kind in kinds}
 
-        report = await run_update_frequency_reconcile(db)
+        with caplog.at_level(logging.WARNING, logger=reconcile_module.__name__):
+            report = await run_update_frequency_reconcile(db)
 
         assert report.resolved == {"missing": 1, "stale": 1, "orphan": 1, "dependent": 1}
         assert {kind: _metric(kind, "resolved") for kind in kinds} == {
             kind: value + 1 for kind, value in before.items()
         }
+        # The warning names each kind by its metric label, so a log line and a dashboard read alike.
+        assert all(f"1 {kind}" in caplog.text for kind in kinds)
 
 
 class TestFailedRepairs:

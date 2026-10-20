@@ -6,6 +6,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from enum import StrEnum
 from itertools import pairwise
 from typing import Any
 
@@ -37,11 +38,21 @@ _REPAIR_PAUSE_SECONDS = 0.1
 _MAX_ORPHAN_DELETES = 5000
 
 
+class RepairKind(StrEnum):
+    MISSING = "missing"
+    STALE = "stale"
+    ERROR = "error"
+    SEVERED = "severed"
+    RELINK = "relink"
+    DEPENDENT = "dependent"
+    ORPHAN = "orphan"
+
+
 @dataclass(frozen=True)
 class _Repair:
     scan_id: str
     scan_created_at: datetime
-    kind: str
+    kind: RepairKind
 
 
 @dataclass(frozen=True)
@@ -58,17 +69,18 @@ class _ChainDrift:
 class ReconcileReport:
     chains: int = 0
     drifted_chains: int = 0
-    resolved: Counter = field(default_factory=Counter)
+    resolved: Counter[RepairKind] = field(default_factory=Counter)
     # Derivations that wrote no delta: an error document, a scan gone or no longer usable, an aborted run.
-    failed: Counter = field(default_factory=Counter)
-    deferred: Counter = field(default_factory=Counter)
+    failed: Counter[RepairKind] = field(default_factory=Counter)
+    deferred: Counter[RepairKind] = field(default_factory=Counter)
 
     def totals(self) -> tuple[int, int, int]:
         return sum(self.resolved.values()), sum(self.failed.values()), sum(self.deferred.values())
 
     def repairs_spent(self) -> int:
         """Orphans are excluded: a bulk delete costs nothing like a re-derivation."""
-        return sum(count for kind, count in self.resolved.items() if kind != "orphan") + sum(self.failed.values())
+        rederived = sum(self.resolved.values()) - self.resolved[RepairKind.ORPHAN]
+        return rederived + sum(self.failed.values())
 
 
 async def run_update_frequency_reconcile(db: Any) -> ReconcileReport | None:
@@ -112,16 +124,16 @@ def _classify(scans: Sequence[tuple[str, datetime]], ledger: dict[str, LedgerEnt
     for scan_id, created_at in scans:
         entry = ledger.get(scan_id)
         if entry is None:
-            repairs.append(_Repair(scan_id, created_at, "missing"))
+            repairs.append(_Repair(scan_id, created_at, RepairKind.MISSING))
         elif entry.schema_version != UPDATE_DELTA_SCHEMA_VERSION:
-            repairs.append(_Repair(scan_id, created_at, "stale"))
+            repairs.append(_Repair(scan_id, created_at, RepairKind.STALE))
         elif entry.failed:
             # The scan is usable, so a writer failure or a demotion is worth another derivation.
-            repairs.append(_Repair(scan_id, created_at, "error"))
+            repairs.append(_Repair(scan_id, created_at, RepairKind.ERROR))
         elif _severed(entry, owed, ledger, since):
-            repairs.append(_Repair(scan_id, created_at, "severed"))
+            repairs.append(_Repair(scan_id, created_at, RepairKind.SEVERED))
         elif scan_id in skipping:
-            repairs.append(_Repair(scan_id, created_at, "relink"))
+            repairs.append(_Repair(scan_id, created_at, RepairKind.RELINK))
     # A delta whose scan lost its usable status is an orphan too, as it describes deleted dependencies.
     orphans = tuple(sorted(delta_id for delta_id in ledger if delta_id not in owed))
     return _ChainDrift(tuple(repairs), orphans, owed)
@@ -170,10 +182,10 @@ async def _repair_chain(
 async def _delete_orphans(
     db: Any, chain: tuple[str, str], orphans: tuple[str, ...], report: ReconcileReport, since: datetime
 ) -> set[str]:
-    room = max(_MAX_ORPHAN_DELETES - report.resolved["orphan"], 0)
+    room = max(_MAX_ORPHAN_DELETES - report.resolved[RepairKind.ORPHAN], 0)
     doomed = list(orphans[:room])
     if len(doomed) < len(orphans):
-        report.deferred["orphan"] += len(orphans) - len(doomed)
+        report.deferred[RepairKind.ORPHAN] += len(orphans) - len(doomed)
     if not doomed:
         return set()
     project_id, branch = chain
@@ -190,7 +202,7 @@ async def _delete_orphans(
         {"_id": {"$in": doomed}, "project_id": project_id, "branch": branch}
     )
     await ScanOutdatedSetRepository(db).delete_many({"_id": {"$in": doomed}})
-    report.resolved["orphan"] += len(doomed)
+    report.resolved[RepairKind.ORPHAN] += len(doomed)
     return set(doomed)
 
 
@@ -201,7 +213,11 @@ async def _dependents_of(
     project_id, branch = chain
     # A dependent is newer than the in-window orphan it names, so the window bounds the index scan.
     docs = await ScanUpdateDeltaRepository(db).find_dependents(project_id, branch, sorted(deleted), since)
-    return [_Repair(doc["_id"], doc["scan_created_at"], "dependent") for doc in docs if doc["_id"] in owed]
+    return [_Repair(doc["_id"], doc["scan_created_at"], RepairKind.DEPENDENT) for doc in docs if doc["_id"] in owed]
+
+
+def _tally(counts: Counter[RepairKind]) -> str:
+    return ", ".join(f"{counts[kind]} {kind}" for kind in RepairKind)
 
 
 def _publish(report: ReconcileReport) -> None:
@@ -216,41 +232,20 @@ def _publish(report: ReconcileReport) -> None:
         logger.info("Update-frequency reconcile: %d chain(s) in step with the ledger", report.chains)
         return
     logger.warning(
-        "Update-frequency reconcile found drift in %d of %d chain(s): derived %d missing, %d outdated, "
-        "%d severed, %d relinked, %d previously failed and %d successor delta(s), deleted %d orphan(s)",
+        "Update-frequency reconcile found drift in %d of %d chain(s) and resolved %s",
         report.drifted_chains,
         report.chains,
-        report.resolved["missing"],
-        report.resolved["stale"],
-        report.resolved["severed"],
-        report.resolved["relink"],
-        report.resolved["error"],
-        report.resolved["dependent"],
-        report.resolved["orphan"],
+        _tally(report.resolved),
     )
     if failed:
         logger.warning(
-            "Update-frequency reconcile could not derive %d missing, %d outdated, %d severed, %d relink, "
-            "%d previously failed and %d successor delta(s); the rollup writer logged why",
-            report.failed["missing"],
-            report.failed["stale"],
-            report.failed["severed"],
-            report.failed["relink"],
-            report.failed["error"],
-            report.failed["dependent"],
+            "Update-frequency reconcile could not derive %s; the rollup writer logged why", _tally(report.failed)
         )
     if deferred:
         logger.warning(
-            "Update-frequency reconcile hit its per-run caps (%d repairs, %d orphan deletes) and left "
-            "%d missing, %d outdated, %d severed, %d relink, %d previously failed, %d successor and %d orphan "
-            "delta(s) for the next run",
+            "Update-frequency reconcile hit its per-run caps (%d repairs, %d orphan deletes) "
+            "and left %s for the next run",
             _MAX_REPAIRS,
             _MAX_ORPHAN_DELETES,
-            report.deferred["missing"],
-            report.deferred["stale"],
-            report.deferred["severed"],
-            report.deferred["relink"],
-            report.deferred["error"],
-            report.deferred["dependent"],
-            report.deferred["orphan"],
+            _tally(report.deferred),
         )
