@@ -25,12 +25,13 @@ export function SecuritySettingsTab({
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between space-x-2">
             <div className="space-y-0.5">
-              <Label className="text-base">Allow Public Registration</Label>
+              <Label htmlFor="allow-public-registration" className="text-base">Allow Public Registration</Label>
               <p className="text-sm text-muted-foreground">
                 If enabled, anyone can sign up with a password. SSO accounts follow the OIDC setting below.
               </p>
             </div>
             <Switch 
+              id="allow-public-registration"
               checked={formData.allow_public_registration || false}
               onCheckedChange={(checked) => handleInputChange('allow_public_registration', checked)}
             />
@@ -38,12 +39,13 @@ export function SecuritySettingsTab({
           <hr className="my-4" />
           <div className="flex items-center justify-between space-x-2">
             <div className="space-y-0.5">
-              <Label className="text-base">Enforce 2FA</Label>
+              <Label htmlFor="enforce-2fa" className="text-base">Enforce 2FA</Label>
               <p className="text-sm text-muted-foreground">
                 Require local users to set up Two-Factor Authentication. OIDC/SSO users are exempt.
               </p>
             </div>
             <Switch 
+              id="enforce-2fa"
               checked={formData.enforce_2fa || false}
               onCheckedChange={(checked) => handleInputChange('enforce_2fa', checked)}
             />
@@ -51,12 +53,13 @@ export function SecuritySettingsTab({
           <hr className="my-4" />
           <div className="flex items-center justify-between space-x-2">
             <div className="space-y-0.5">
-              <Label className="text-base">Enforce Email Verification</Label>
+              <Label htmlFor="enforce-email-verification" className="text-base">Enforce Email Verification</Label>
               <p className="text-sm text-muted-foreground">
                 Require local users to verify their email address before accessing the system. OIDC/SSO users are exempt.
               </p>
             </div>
             <Switch 
+              id="enforce-email-verification"
               checked={formData.enforce_email_verification || false}
               onCheckedChange={(checked) => handleInputChange('enforce_email_verification', checked)}
             />
@@ -79,12 +82,13 @@ export function SecuritySettingsTab({
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between space-x-2">
             <div className="space-y-0.5">
-              <Label className="text-base">Enable OIDC Login</Label>
+              <Label htmlFor="oidc-enabled" className="text-base">Enable OIDC Login</Label>
               <p className="text-sm text-muted-foreground">
                 Allow users to log in using an external provider.
               </p>
             </div>
             <Switch 
+              id="oidc-enabled"
               checked={formData.oidc_enabled || false}
               onCheckedChange={(checked) => handleInputChange('oidc_enabled', checked)}
             />

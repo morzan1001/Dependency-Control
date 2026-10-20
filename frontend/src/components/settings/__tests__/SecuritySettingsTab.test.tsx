@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { expectEveryFieldNamed } from '@/test/form-field'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SecuritySettingsTab } from '../SecuritySettingsTab'
 
@@ -34,5 +35,24 @@ describe('SecuritySettingsTab', () => {
     expect(toggle).toBeChecked()
     fireEvent.click(toggle)
     expect(handleInputChange).toHaveBeenCalledWith('oidc_auto_provision', false)
+  })
+})
+
+describe('SecuritySettingsTab accessible names', () => {
+  it('links every switch label to its switch', () => {
+    render(
+      <SecuritySettingsTab
+        formData={{ oidc_enabled: true }}
+        handleInputChange={() => {}}
+        handleSave={() => {}}
+        hasPermission={() => true}
+        isPending={false}
+      />,
+    )
+
+    expectEveryFieldNamed()
+    for (const name of ['Allow Public Registration', 'Enforce 2FA', 'Enforce Email Verification', 'Enable OIDC Login']) {
+      expect(screen.getByRole('switch', { name })).toBeInTheDocument()
+    }
   })
 })
