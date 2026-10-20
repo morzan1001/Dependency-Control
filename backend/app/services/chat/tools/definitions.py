@@ -511,10 +511,13 @@ _tool(
 _tool(
     "get_project_crypto_policy",
     "Get the effective cryptographic policy rules for a project: the system rules with "
-    "the project's override merged in. override_locked=true means a global policy "
-    "disables project overrides, so suggest none for this project.",
+    "the project's override merged in, one compact row per rule; overridden=true marks a rule "
+    "the override changed or added. Pass rule_id for that rule's description, matchers and "
+    "references. override_locked=true means a global policy disables project overrides, so "
+    "suggest none for this project.",
     required=["project_id"],
     project_id=_PROJECT_ID,
+    rule_id=_string("Optional: one rule's full definition instead of the compact list."),
 )
 _tool(
     "suggest_crypto_policy_override",

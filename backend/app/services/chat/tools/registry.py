@@ -1627,7 +1627,7 @@ class ChatToolRegistry:
 
     async def _tool_get_project_crypto_policy(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        return await get_project_crypto_policy(ctx.db, project_id=project["_id"])
+        return await get_project_crypto_policy(ctx.db, project_id=project["_id"], rule_id=ctx.args.get("rule_id"))
 
     async def _tool_suggest_crypto_policy_override(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)

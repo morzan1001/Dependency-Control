@@ -16,6 +16,7 @@ from app.repositories.policy_audit_entry import NEWEST_ENTRY_FIRST, PolicyAuditR
 from app.schemas.analytics import GroupBy, Metric
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.compliance import ReportFramework
+from app.schemas.crypto_policy import CryptoRule
 from app.schemas.finding_details import all_rule_ids
 from app.services.analytics.crypto_hotspots import CryptoHotspotService
 from app.services.analytics.crypto_trends import CryptoTrendService, auto_bucket
@@ -29,6 +30,8 @@ from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 from ._helpers import bounded_read
 
 _NOISY_RULE_SAMPLE = 10
+# Every rule in full is ~21 KB; rows this narrow keep the whole policy under the result cap.
+_RULE_ROW_FIELDS = {"rule_id", "name", "enabled", "default_severity", "finding_type"}
 
 
 async def list_crypto_assets(
@@ -81,13 +84,27 @@ async def get_project_crypto_policy(
     db: AsyncIOMotorDatabase,
     *,
     project_id: str,
+    rule_id: str | None = None,
 ) -> dict[str, Any]:
     effective = await CryptoPolicyResolver(db).resolve(project_id)
-    return {
+    system_rules = {rule.rule_id: rule for rule in effective.system_rules}
+
+    def overridden(rule: CryptoRule) -> bool:
+        return rule != system_rules.get(rule.rule_id)
+
+    header = {
         "system_version": effective.system_version,
         "override_version": effective.override_version,
         "override_locked": effective.override_locked,
-        "rules": [r.model_dump() for r in effective.rules],
+    }
+    if rule_id:
+        rule = next((r for r in effective.rules if r.rule_id == rule_id), None)
+        if rule is None:
+            return {"error": f"Rule {rule_id} is not in this project's policy"}
+        return {**header, "rule": {**rule.model_dump(), "overridden": overridden(rule)}}
+    return {
+        **header,
+        "rules": [{**r.model_dump(include=_RULE_ROW_FIELDS), "overridden": overridden(r)} for r in effective.rules],
     }
 
 
