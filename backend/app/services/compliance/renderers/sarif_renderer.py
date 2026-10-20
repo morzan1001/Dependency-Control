@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 from app.core.metrics import APP_VERSION
 from app.models.compliance_report import ComplianceReport
@@ -22,7 +23,6 @@ _SEVERITY_TO_LEVEL = {
 # SARIF's "open" kind means evaluated with too little information to decide.
 _STATUS_TO_RESULT: dict[str, dict[str, str]] = {
     ControlStatus.PASSED.value: {"kind": "pass"},
-    ControlStatus.WAIVED.value: {"kind": "pass", "baselineState": "unchanged"},
     ControlStatus.NOT_APPLICABLE.value: {"kind": "notApplicable"},
     ControlStatus.NOT_EVALUATED.value: {"kind": "open"},
 }
@@ -58,14 +58,24 @@ class SarifRenderer:
             )
 
             message = ctrl.description if not ctrl.status_reason else f"{ctrl.description} {ctrl.status_reason}"
-            result_entry = {
+            result_entry: dict[str, Any] = {
                 "ruleId": ctrl.control_id,
                 "message": {"text": message},
             }
-            if ctrl.status == ControlStatus.FAILED:
+            if ctrl.status in (ControlStatus.FAILED, ControlStatus.WAIVED):
                 result_entry["level"] = _SEVERITY_TO_LEVEL.get(ctrl.severity, "warning")
+                result_entry["properties"] = {
+                    "evidence_finding_ids": ctrl.evidence_finding_ids,
+                    "evidence_asset_bom_refs": ctrl.evidence_asset_bom_refs,
+                }
             else:
                 result_entry.update(_STATUS_TO_RESULT.get(ctrl.status, {}))
+            if ctrl.status == ControlStatus.WAIVED:
+                # A waived control still fails the rule; SARIF marks such a result suppressed, not passed.
+                justification = "; ".join(ctrl.waiver_reasons)
+                result_entry["suppressions"] = [
+                    {"kind": "external", "status": "accepted", "justification": justification}
+                ]
             results.append(result_entry)
 
         fw_name = evaluation.framework_name

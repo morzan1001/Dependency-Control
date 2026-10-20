@@ -1,7 +1,7 @@
 import json
 
 from app.core.metrics import APP_VERSION
-from app.schemas.compliance import EvaluationCoverage
+from app.schemas.compliance import ControlStatus, EvaluationCoverage
 from app.services.compliance.renderers.sarif_renderer import SarifRenderer
 from tests.unit.test_renderer_json import _evaluation, _report
 
@@ -93,3 +93,27 @@ def test_the_sarif_driver_reports_the_version_of_the_running_release():
     driver = json.loads(SarifRenderer().render(_evaluation(), _report()))["runs"][0]["tool"]["driver"]
 
     assert driver["semanticVersion"] == APP_VERSION
+
+
+def _result_for(status, **fields) -> dict:
+    evaluation = _evaluation()
+    evaluation.controls = [evaluation.controls[0].model_copy(update={"status": status, **fields})]
+    return json.loads(SarifRenderer().render(evaluation, _report()))["runs"][0]["results"][0]
+
+
+def test_a_waived_control_is_a_suppressed_finding_with_its_waiver_reasons_rather_than_a_pass():
+    """A consumer counting passes would otherwise read a waived MD5 control as compliant, with no justification."""
+    result = _result_for(ControlStatus.WAIVED, waiver_reasons=["checksum only", "legacy partner"])
+
+    assert "kind" not in result
+    assert result["level"] == "error"
+    assert result["suppressions"] == [
+        {"kind": "external", "status": "accepted", "justification": "checksum only; legacy partner"}
+    ]
+
+
+def test_failed_and_waived_results_name_their_evidence():
+    for status in (ControlStatus.FAILED, ControlStatus.WAIVED):
+        properties = _result_for(status)["properties"]
+
+        assert (properties["evidence_finding_ids"], properties["evidence_asset_bom_refs"]) == (["f1"], ["a1"])
