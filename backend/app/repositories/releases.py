@@ -22,6 +22,11 @@ class ReleaseRepository(BaseRepository[Release]):
             grouped.setdefault(doc["scan_id"], []).append(Release(**doc))
         return grouped
 
+    async def page(self, query: dict[str, Any], skip: int, limit: int) -> list[dict[str, Any]]:
+        cursor = self.collection.find(query, sort=RELEASES_LATEST_SORT).skip(skip).limit(limit)
+        rows: list[dict[str, Any]] = await cursor.to_list(limit)
+        return rows
+
     async def record(self, release: Release) -> dict[str, Any] | None:
         """A re-deploy refreshes its record, a rollback adds its own; None only if a concurrent withdraw removed it."""
         key = {field: getattr(release, field) for field in RELEASES_UPSERT_KEY_FIELDS}

@@ -2,7 +2,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
-import pymongo
 from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -176,10 +175,7 @@ async def list_releases(
 
     release_repo = ReleaseRepository(db)
     total = await release_repo.count(query)
-    # The paged find breaks released_at ties on _id ascending, as RELEASES_LATEST_SORT does.
-    rows = await release_repo.find_many_raw(
-        query, skip=skip, limit=limit, sort_by="released_at", sort_order=pymongo.DESCENDING
-    )
+    rows = await release_repo.page(query, skip, limit)
     return Page[ReleaseItem](items=await _to_items(db, rows), **page_meta(total, skip, limit))
 
 
