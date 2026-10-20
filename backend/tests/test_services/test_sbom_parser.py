@@ -2979,6 +2979,36 @@ class TestSyftJsonRealShapes:
     def test_hashes_come_from_every_syft_metadata_shape(self, name, expected):
         assert self.deps[name].hashes == expected
 
+    def test_an_rpm_vendor_is_the_publisher(self):
+        rpm = {
+            "id": "2c128a357aa75768",
+            "name": "bash",
+            "version": "5.1.8-9.el9",
+            "type": "rpm",
+            "foundBy": "rpm-db-cataloger",
+            "locations": [{"path": "/var/lib/rpm/rpmdb.sqlite", "accessPath": "/var/lib/rpm/rpmdb.sqlite"}],
+            "licenses": [],
+            "language": "",
+            "cpes": [],
+            "purl": "pkg:rpm/almalinux/bash@5.1.8-9.el9?arch=aarch64&distro=almalinux-9.8",
+            "metadataType": "rpm-db-entry",
+            "metadata": {
+                "name": "bash",
+                "version": "5.1.8",
+                "epoch": None,
+                "architecture": "aarch64",
+                "release": "9.el9",
+                "sourceRpm": "bash-5.1.8-9.el9.src.rpm",
+                "size": 7716567,
+                "vendor": "AlmaLinux",
+                "modularityLabel": "",
+            },
+        }
+
+        [dependency] = parse_sbom(_syft_142_json([rpm])).dependencies
+
+        assert dependency.publisher == "AlmaLinux"
+
     def test_composer_object_authors_keep_the_package(self):
         assert self.result.skipped_reasons == {}
         assert self.deps["monolog/monolog"].author == "Jordi Boggiano"

@@ -975,6 +975,8 @@ class SBOMParser:
             cpes=cpes,
             description=metadata.get("description") or metadata.get("summary"),
             author=_people_to_str(metadata.get("authors") or metadata.get("author") or metadata.get("maintainer")),
+            # Syft's CycloneDX and SPDX writers name an RPM's vendor as its publisher.
+            publisher=_people_to_str(metadata.get("vendor")),
             group=_group_for(None, purl),
             homepage=homepage,
             repository_url=repository_url,

@@ -541,6 +541,51 @@ class TestDistroBuilds:
         assert (issue["severity"], issue["distro_build"]) == (Severity.HIGH.value, False)
         assert issue["eol_info"]["recommended_version"] == "1.29.1"
 
+    @pytest.mark.parametrize(
+        "vendor",
+        [
+            pytest.param({"publisher": "Nginx, Inc."}, id="syft-publisher"),
+            pytest.param({"supplier": {"name": "Nginx, Inc."}}, id="trivy-supplier"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_a_vendor_rpm_built_for_a_distribution_keeps_the_upstream_severity(self, serve, vendor):
+        serve({"nginx": _NGINX})
+        purl = "pkg:rpm/rocky/nginx@1.22.1-1.el9.ngx?arch=x86_64&distro=rocky-9.4"
+
+        [issue] = await _issues([_component("nginx", "1:1.22.1-1.el9.ngx", purl, **vendor)])
+
+        assert (issue["severity"], issue["distro_build"]) == (Severity.HIGH.value, False)
+        assert issue["eol_info"]["recommended_version"] == "1.29.1"
+
+    @pytest.mark.parametrize(
+        ("component", "vendor"),
+        [
+            pytest.param(
+                _component("nginx", "1:1.22.1-1.el9", "pkg:rpm/rocky/nginx@1.22.1-1.el9?distro=rocky-9.4"),
+                {"publisher": "Rocky Enterprise Software Foundation"},
+                id="rpm-of-the-distribution",
+            ),
+            pytest.param(
+                _component("nginx", "1:1.22.1-1.el9", "pkg:rpm/rocky/nginx@1.22.1-1.el9?distro=rocky-9.4"),
+                {},
+                id="rpm-without-a-recorded-vendor",
+            ),
+            pytest.param(
+                _component("nginx", "1.22.1-9+deb12u1", "pkg:deb/debian/nginx@1.22.1-9%2Bdeb12u1?distro=debian-12"),
+                {"publisher": "Debian Nginx Maintainers <pkg-nginx-maintainers@alioth-lists.debian.net>"},
+                id="deb-names-its-maintainer-not-a-vendor",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_a_distribution_rebuild_stays_capped_at_low(self, serve, component, vendor):
+        serve({"nginx": _NGINX})
+
+        [issue] = await _issues([component | vendor])
+
+        assert (issue["severity"], issue["distro_build"]) == (Severity.LOW.value, True)
+
 
 class TestRecommendation:
     @pytest.mark.asyncio
