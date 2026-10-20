@@ -15,11 +15,12 @@ vi.mock('@/api/compliance', () => ({
   deleteReport: vi.fn(),
 }))
 vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ hasPermission: () => false }) }))
-const { useProjectMock } = vi.hoisted(() => ({ useProjectMock: vi.fn((_id: string) => ({ data: undefined as Project | undefined })) }))
+const { useProjectDetailsMock } = vi.hoisted(() => ({ useProjectDetailsMock: vi.fn((_ids: readonly string[]): Project[] => []) }))
 vi.mock('@/hooks/queries/use-projects', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/hooks/queries/use-projects')>()),
-  useProject: (id: string) => useProjectMock(id),
+  useProjectDetails: (ids: readonly string[]) => useProjectDetailsMock(ids),
 }))
+vi.mock('@/hooks/queries/use-instances', () => ({ useInstanceNames: () => new Map() }))
 vi.mock('@/hooks/queries/use-users', () => ({ useCurrentUser: () => ({ data: { id: 'lena' } }) }))
 
 function report(status: ReportStatus): ComplianceReportMeta {
@@ -53,7 +54,7 @@ describe('ComplianceReportsPanel', () => {
       .mockResolvedValue({ reports: [report('completed')] })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: /nist-sp-800-131a/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /NIST SP 800-131A/ }))
     expect(within(screen.getByRole('dialog')).getByText('Generating…')).toBeInTheDocument()
     await act(() => vi.advanceTimersByTimeAsync(3_000))
 
@@ -101,7 +102,7 @@ describe('ComplianceReportsPanel', () => {
     })
     renderPanel()
 
-    const rows = await screen.findAllByRole('button', { name: /nist-sp-800-131a/ })
+    const rows = await screen.findAllByRole('button', { name: /NIST SP 800-131A/ })
     expect(rows.map((row) => row.lastElementChild?.textContent)).toEqual(['team: Core', 'project: p-gone', 'user'])
   })
 
@@ -110,7 +111,7 @@ describe('ComplianceReportsPanel', () => {
       p1: { id: 'p1', name: 'shared-lib', teams: [{ id: 't1', name: 'Payments' }] },
       p2: { id: 'p2', name: 'shared-lib', teams: [{ id: 't2', name: 'Platform' }] },
     }
-    useProjectMock.mockImplementation((id: string) => ({ data: owners[id] }))
+    useProjectDetailsMock.mockImplementation((ids) => ids.map((id) => owners[id]))
     vi.mocked(listReports).mockResolvedValue({
       reports: [
         { ...report('completed'), _id: 'r1', scope: 'project', scope_id: 'p1', scope_name: 'shared-lib' },
@@ -123,13 +124,13 @@ describe('ComplianceReportsPanel', () => {
 
     expect(await screen.findAllByText('Payments')).toHaveLength(2)
     expect(screen.getByText('Platform')).toBeInTheDocument()
-    expect(useProjectMock).not.toHaveBeenCalledWith('p3')
+    expect(useProjectDetailsMock).not.toHaveBeenCalledWith(expect.arrayContaining(['p3']))
   })
 
   it('names the owner of a namesake scope in the report dialog too', async () => {
-    useProjectMock.mockImplementation((id: string) => ({
-      data: { id, name: 'shared-lib', teams: [{ id: `t-${id}`, name: id === 'p1' ? 'Payments' : 'Platform' }] },
-    }))
+    useProjectDetailsMock.mockImplementation((ids) =>
+      ids.map((id) => ({ id, name: 'shared-lib', teams: [{ id: `t-${id}`, name: id === 'p1' ? 'Payments' : 'Platform' }] })),
+    )
     vi.mocked(listReports).mockResolvedValue({
       reports: [
         { ...report('completed'), _id: 'r1', scope: 'project', scope_id: 'p1', scope_name: 'shared-lib' },
@@ -141,6 +142,18 @@ describe('ComplianceReportsPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Platform/ }))
 
     expect(within(screen.getByRole('dialog')).getByText('Platform')).toBeInTheDocument()
+  })
+
+  it('names the framework as the create dialog does, in the list and the report dialog title', async () => {
+    vi.mocked(listReports).mockResolvedValue({ reports: [{ ...report('completed'), framework: 'cve-remediation-sla' }] })
+    renderPanel()
+
+    const row = await screen.findByRole('button', { name: /CVE Remediation SLA/ })
+    expect(screen.queryByText('cve-remediation-sla')).not.toBeInTheDocument()
+    expect(row.firstElementChild).not.toHaveClass('font-mono')
+    fireEvent.click(row)
+
+    expect(within(screen.getByRole('dialog')).getByRole('heading', { name: 'CVE Remediation SLA' })).not.toHaveClass('font-mono')
   })
 
   it('opens an empty form again after a cancelled draft', async () => {
@@ -162,7 +175,7 @@ describe('ComplianceReportsPanel on a narrow screen', () => {
     vi.mocked(listReports).mockResolvedValue({ reports: [report('completed')] })
     renderPanel()
 
-    const table = (await screen.findByRole('button', { name: /nist-sp-800-131a/ })).closest('table')
+    const table = (await screen.findByRole('button', { name: /NIST SP 800-131A/ })).closest('table')
     expect(table).toHaveClass('min-w-[680px]')
     expect(table?.parentElement).toHaveClass('overflow-x-auto')
   })

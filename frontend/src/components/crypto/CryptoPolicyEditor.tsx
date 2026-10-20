@@ -1,7 +1,6 @@
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -242,13 +241,12 @@ export function CryptoPolicyEditor({
                     />
                   </td>
                   <td className="p-2">
-                    <Textarea
+                    <Input
                       aria-label={`${r.rule_id}: Rule`}
                       disabled={readOnly}
                       value={r.name}
                       title={r.name}
-                      onChange={(e) => updateRule(idx, { name: e.target.value.replaceAll(/\s*\n\s*/g, " ") })}
-                      className="min-h-10 resize-none field-sizing-content"
+                      onChange={(e) => updateRule(idx, { name: e.target.value })}
                     />
                     <div className="mt-1 font-mono text-xs text-muted-foreground">{r.source}</div>
                   </td>

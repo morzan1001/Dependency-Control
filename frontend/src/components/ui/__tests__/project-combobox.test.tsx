@@ -7,6 +7,7 @@ vi.mock('@/hooks/queries/use-projects', () => ({
   useProjects: vi.fn(),
   useProject: vi.fn(),
 }))
+vi.mock('@/hooks/queries/use-instances', () => ({ useInstanceNames: () => new Map() }))
 
 import { useProjects, useProject } from '@/hooks/queries/use-projects'
 import { ProjectCombobox } from '../project-combobox'
@@ -118,6 +119,20 @@ describe('ProjectCombobox namesakes', () => {
 
     expect(screen.getByText('group-a/app')).toBeInTheDocument()
     expect(screen.getByText('org-b/app')).toBeInTheDocument()
+  })
+
+  it('tells CI-created namesakes of one path and one team apart by their GitLab project', () => {
+    const ciProject = (id: string, instance: string, gitlabId: number): Project => ({
+      ...inTeam(id, 'aufstrg/tm/app', 'Payments'),
+      gitlab_project_path: 'aufstrg/tm/app',
+      gitlab_instance_id: instance,
+      gitlab_project_id: gitlabId,
+    })
+    openWith([ciProject('p1', 'gl-prod', 11), ciProject('p2', 'gl-dev', 22)])
+
+    expect(screen.getByText('GitLab project 11')).toBeInTheDocument()
+    expect(screen.getByText('GitLab project 22')).toBeInTheDocument()
+    expect(screen.queryByText('Payments')).not.toBeInTheDocument()
   })
 
   it('names the owner of the chosen namesake on the closed picker too', () => {

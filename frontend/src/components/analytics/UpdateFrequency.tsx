@@ -411,7 +411,7 @@ export function UpdateFrequency() {
               onValueChange={setSelectedProjectId}
               className="w-[350px]"
             />
-            <WindowSelect value={windowDays} onChange={setWindowDays} />
+            <WindowSelect value={windowDays} onChange={setWindowDays} label="Project time window" />
           </div>
         </CardContent>
       </Card>

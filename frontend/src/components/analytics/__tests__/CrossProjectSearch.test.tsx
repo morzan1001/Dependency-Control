@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, it, expect, vi } from "vitest";
@@ -14,6 +14,8 @@ vi.mock("@/api/analytics", () => ({
 vi.mock("@/api/projects", () => ({
   projectApi: { getAll: vi.fn(async () => ({ items: [], total: 0, page: 1, size: 50, pages: 0 })), getOne: vi.fn() },
 }));
+
+vi.mock("@/hooks/queries/use-instances", () => ({ useInstanceNames: () => new Map() }));
 
 import { analyticsApi } from "@/api/analytics";
 import { projectApi } from "@/api/projects";
@@ -210,6 +212,39 @@ describe("CrossProjectSearch on a narrow screen", () => {
     expect(table).toHaveClass("table-fixed", "min-w-[820px]");
     expect(table?.parentElement).toHaveClass("overflow-auto");
   });
+
+  it("hands assistive technology each result as a row of five cells under the header, and opens it from the keyboard", async () => {
+    search.mockReset();
+    search.mockResolvedValue({
+      items: [{ project_id: "p", project_name: "P", package: "lodash", version: "4.17.21", type: "npm", direct: true }],
+      total: 1,
+      page: 1,
+      size: 50,
+      pages: 1,
+    });
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+    const onSelectResult = vi.fn();
+    const main = document.createElement("main");
+    Object.defineProperty(main, "offsetHeight", { value: 800, configurable: true });
+    document.body.appendChild(main);
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <CrossProjectSearch onSelectResult={onSelectResult} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+      { container: main },
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Search for a package name/), { target: { value: "lodash" } });
+
+    const table = (await screen.findByText("lodash")).closest("table")!;
+    const [, result, ...rest] = within(table).getAllByRole("row");
+    expect(rest).toHaveLength(0);
+    expect(within(result).getAllByRole("cell")).toHaveLength(5);
+    fireEvent.keyDown(result, { key: "Enter" });
+    expect(onSelectResult).toHaveBeenCalledWith(expect.objectContaining({ package: "lodash" }));
+  });
 });
 
 describe("CrossProjectSearch accessible names", () => {
@@ -248,5 +283,45 @@ describe("CrossProjectSearch accessible names", () => {
       const field = screen.getByRole("combobox", { name });
       expect(document.querySelector(`label[for="${field.id}"]`)?.textContent).toBe(name);
     }
+  });
+});
+
+describe("CrossProjectSearch namesakes", () => {
+  it("names the owner of each result project whose name another result project shares, as the project picker does", async () => {
+    search.mockReset();
+    search.mockResolvedValue({
+      items: [
+        { project_id: "p-retail", project_name: "checkout-service", package: "lodash", version: "4.17.21", type: "npm", direct: true },
+        { project_id: "p-pay", project_name: "checkout-service", package: "lodash", version: "4.17.20", type: "npm", direct: true },
+        { project_id: "p-search", project_name: "search", package: "lodash", version: "4.17.21", type: "npm", direct: true },
+      ],
+      total: 3,
+      page: 1,
+      size: 50,
+      pages: 1,
+    });
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+    vi.mocked(projectApi.getOne).mockImplementation(async (id: string) => ({
+      id,
+      name: id === "p-search" ? "search" : "checkout-service",
+      teams: [{ id: `t-${id}`, name: id === "p-retail" ? "Retail" : "Payments" }],
+    }));
+    const main = document.createElement("main");
+    Object.defineProperty(main, "offsetHeight", { value: 800, configurable: true });
+    document.body.appendChild(main);
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <CrossProjectSearch />
+        </MemoryRouter>
+      </QueryClientProvider>,
+      { container: main },
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Search for a package name/), { target: { value: "lodash" } });
+
+    expect(await screen.findByText("Retail")).toBeInTheDocument();
+    expect(screen.getByText("Payments")).toBeInTheDocument();
+    expect(projectApi.getOne).not.toHaveBeenCalledWith("p-search");
   });
 });

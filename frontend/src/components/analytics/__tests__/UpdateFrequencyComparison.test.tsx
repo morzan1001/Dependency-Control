@@ -17,9 +17,10 @@ vi.mock("@/hooks/queries/use-teams", () => ({
 
 // Radix Select isn't driveable in jsdom (pointer capture); use a native select.
 vi.mock("../WindowSelect", () => ({
-  WindowSelect: ({ value, onChange }: { value: number | undefined; onChange: (v: number) => void }) => (
+  WindowSelect: ({ value, onChange, label }: { value: number | undefined; onChange: (v: number) => void; label: string }) => (
     <select
       data-testid="window-select"
+      aria-label={label}
       value={String(value)}
       onChange={(e) => onChange(Number(e.target.value))}
     >
@@ -28,6 +29,13 @@ vi.mock("../WindowSelect", () => ({
     </select>
   ),
 }));
+
+vi.mock("@/api/projects", () => ({
+  projectApi: {
+    getOne: vi.fn(async (id: string) => ({ id, name: "checkout-service", teams: [{ id: `t-${id}`, name: id === "p-retail" ? "Retail" : "Payments" }] })),
+  },
+}));
+vi.mock("@/hooks/queries/use-instances", () => ({ useInstanceNames: () => new Map() }));
 
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
@@ -402,11 +410,54 @@ describe("UpdateFrequencyComparison accessible names", () => {
     mockedComparison.mockResolvedValue(makeComparison(3));
   });
 
-  it("names its team and metric dropdowns, which have no visible label", async () => {
+  it("names its team, time window and metric dropdowns, which have no visible label", async () => {
     renderComparison();
 
     expect(screen.getByRole("combobox", { name: "Team" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Comparison time window" })).toBeInTheDocument();
     clickLoad();
     expect(await screen.findByRole("combobox", { name: "Comparison metric" })).toBeInTheDocument();
+  });
+});
+
+describe("UpdateFrequencyComparison namesakes", () => {
+  it("names the owner of a best or worst project whose name another project in scope shares, as the project cards do", async () => {
+    mockedComparison.mockResolvedValue(
+      makeComparison(0, {
+        projects: [
+          { ...makeProject(9), project_id: "p-retail", project_name: "checkout-service" },
+          { ...makeProject(5), project_id: "p-search", project_name: "search" },
+          { ...makeProject(2), project_id: "p-pay", project_name: "checkout-service" },
+        ],
+        best_project: "checkout-service",
+        worst_project: "checkout-service",
+      }),
+    );
+    renderComparison();
+    clickLoad();
+
+    const card = (title: string) => screen.getByText(title).closest(".rounded-lg") as HTMLElement;
+    await screen.findByText("Best Project");
+    expect(await within(card("Best Project")).findByText("Retail")).toBeInTheDocument();
+    expect(await within(card("Needs Attention")).findByText("Payments")).toBeInTheDocument();
+  });
+
+  it("names the owner of a ranked project whose name another project in scope shares, as the best and worst cards do", async () => {
+    mockedComparison.mockResolvedValue(
+      makeComparison(0, {
+        projects: [
+          { ...makeProject(9), project_id: "p-retail", project_name: "checkout-service" },
+          { ...makeProject(5), project_id: "p-search", project_name: "search" },
+          { ...makeProject(2), project_id: "p-pay", project_name: "checkout-service" },
+        ],
+      }),
+    );
+    renderComparison();
+    clickLoad();
+
+    const ranking = (await screen.findByText("Project Ranking")).closest(".rounded-lg") as HTMLElement;
+    const projectCell = (name: string) => within(ranking).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell")[1]).filter((cell) => cell.textContent?.startsWith(name));
+    await waitFor(() => expect(projectCell("checkout-service").map((cell) => cell.textContent)).toEqual(["checkout-serviceRetail", "checkout-servicePayments"]));
+    expect(projectCell("search").map((cell) => cell.textContent)).toEqual(["search"]);
   });
 });

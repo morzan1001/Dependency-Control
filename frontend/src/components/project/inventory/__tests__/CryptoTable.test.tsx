@@ -109,8 +109,8 @@ describe('CryptoTable', () => {
     vi.mocked(inventoryApiModule.inventoryApi.getCrypto).mockResolvedValue({ ...page, items: [], total: 0 })
     renderTable()
 
-    await waitFor(() => expect(inventoryApiModule.inventoryApi.getCrypto).toHaveBeenCalled())
-    expect(screen.queryByText(/No CBOM|No cryptography/)).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getAllByRole('row')).toHaveLength(1))
+    expect(screen.queryByText(/No CBOM|No cryptograph/)).not.toBeInTheDocument()
   })
 
   it('shows a failure and its retry under the table the same way', async () => {

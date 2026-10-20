@@ -38,9 +38,10 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
+import { ChartProjectLabel, ProjectOwnerById } from '@/components/project/ProjectOwner'
 import { useUpdateFrequencyComparison } from '@/hooks/queries/use-analytics'
 import { useTeams } from '@/hooks/queries/use-teams'
-import { formatDate, formatCoveragePct, formatUpdatesPerMonth, truncateLabel } from '@/lib/utils'
+import { formatDate, formatCoveragePct, formatUpdatesPerMonth, sharedNames, truncateLabel, type Named } from '@/lib/utils'
 import type {
   ProjectUpdateSummary,
   UpdateDataStatus,
@@ -226,8 +227,24 @@ function PartialBanner({ count }: Readonly<{ count: number }>) {
   )
 }
 
+function RankedProjectName({ project, namesakes }: Readonly<{ project?: ProjectUpdateSummary; namesakes: ReadonlyMap<string, readonly Named[]> }>) {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <div className="text-lg font-bold truncate" title={project?.project_name}>
+        {project?.project_name || NO_VALUE}
+      </div>
+      {project && namesakes.has(project.project_name) && (
+        <ProjectOwnerById projectId={project.project_id} namesakes={namesakes.get(project.project_name)} />
+      )}
+    </div>
+  )
+}
+
 function ComparisonSummaryCards({ data, measuredCount }: Readonly<{ data: Comparison; measuredCount: number }>) {
   const unmeasured = unmeasuredNote(data)
+  // The backend lists the covered "ready" rows first, best to worst, and names its best and worst from them.
+  const ranked = data.projects.filter((project) => isMeasured(project) && project.update_coverage_pct !== null)
+  const namesakes = sharedNames(data.projects.map((project) => ({ id: project.project_id, name: project.project_name })))
 
   return (
     <div className="grid gap-4 md:grid-cols-4">
@@ -264,9 +281,7 @@ function ComparisonSummaryCards({ data, measuredCount }: Readonly<{ data: Compar
           <Trophy className="h-4 w-4 text-green-500" />
         </CardHeader>
         <CardContent>
-          <div className="text-lg font-bold truncate" title={data.best_project ?? undefined}>
-            {data.best_project || NO_VALUE}
-          </div>
+          <RankedProjectName project={data.best_project ? ranked[0] : undefined} namesakes={namesakes} />
           <p className="text-xs text-muted-foreground">highest measured coverage</p>
         </CardContent>
       </Card>
@@ -277,9 +292,7 @@ function ComparisonSummaryCards({ data, measuredCount }: Readonly<{ data: Compar
           <AlertTriangle className="h-4 w-4 text-amber-500" />
         </CardHeader>
         <CardContent>
-          <div className="text-lg font-bold truncate" title={data.worst_project ?? undefined}>
-            {data.worst_project || NO_VALUE}
-          </div>
+          <RankedProjectName project={data.worst_project ? ranked[ranked.length - 1] : undefined} namesakes={namesakes} />
           <p className="text-xs text-muted-foreground">lowest measured coverage</p>
         </CardContent>
       </Card>
@@ -296,6 +309,7 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
         .sort((a, b) => metricValue(b, metric) - metricValue(a, metric))
         .slice(0, CHART_TOP_N)
         .map((p) => ({
+          id: p.project_id,
           name: p.project_name,
           // An unmeasured value leaves a gap rather than a zero bar.
           value: (metric === 'coverage' ? p.update_coverage_pct : p.updates_per_month) ?? undefined,
@@ -304,6 +318,8 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
   )
 
   const metricLabel = metric === 'coverage' ? 'Update coverage percentage' : 'Updates per month'
+  const names = new Map(chartData.map((bar) => [bar.id, bar.name]))
+  const namesakes = sharedNames(chartData)
 
   return (
     <Card>
@@ -332,13 +348,14 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
             <BarChart data={chartData} layout="vertical" margin={{ left: 20 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
               <XAxis type="number" className="text-xs" />
-              <YAxis dataKey="name" type="category" width={150} className="text-xs" tickFormatter={(name: string) => truncateLabel(name)} />
+              <YAxis dataKey="id" type="category" width={150} className="text-xs" tickFormatter={(id: string) => truncateLabel(names.get(id) ?? '')} />
               <Tooltip
                 contentStyle={{
                   backgroundColor: 'hsl(var(--background))',
                   borderColor: 'hsl(var(--border))',
                 }}
                 itemStyle={{ color: 'hsl(var(--foreground))' }}
+                labelFormatter={(id) => <ChartProjectLabel projectId={String(id)} names={names} namesakes={namesakes} />}
                 formatter={(value) =>
                   metric === 'coverage' ? `${value}%` : value
                 }
@@ -399,6 +416,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
   const visible = projects.slice(offset, offset + TABLE_PAGE_SIZE)
   // Ranked rows lead the list, so a row's position is its rank up to that count.
   const rankedCount = projects.filter(isMeasured).length
+  const namesakes = sharedNames(projects.map((p) => ({ id: p.project_id, name: p.project_name })))
 
   return (
     <Card>
@@ -445,6 +463,9 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                   <TableCell className="font-medium">
                     <span className="inline-flex flex-wrap items-center gap-2">
                       {project.project_name}
+                      {namesakes.has(project.project_name) && (
+                        <ProjectOwnerById projectId={project.project_id} namesakes={namesakes.get(project.project_name)} />
+                      )}
                       {project.data_status === 'partial' && <PartialBadge scanCount={project.scan_count} />}
                       {project.window_scan_cap !== null && (
                         <CappedBadge cap={project.window_scan_cap} windowDays={project.window_days} />
@@ -530,7 +551,7 @@ export function UpdateFrequencyComparison() {
                 ))}
               </SelectContent>
             </Select>
-            <WindowSelect value={windowDays} onChange={setWindowDays} allowScans={false} />
+            <WindowSelect value={windowDays} onChange={setWindowDays} label="Comparison time window" allowScans={false} />
             <Button
               variant="outline"
               disabled={isFetching}

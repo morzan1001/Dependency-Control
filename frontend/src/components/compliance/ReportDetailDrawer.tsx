@@ -11,12 +11,13 @@ import { useCurrentUser } from "@/hooks/queries/use-users";
 import { useDialogState } from "@/hooks/use-dialog-state";
 import { downloadServerFile } from "@/lib/download";
 import { Permissions } from "@/lib/permissions";
-import { formatDateTime } from "@/lib/utils";
+import { REPORT_FRAMEWORK_LABELS } from "@/lib/constants";
+import { formatDateTime, type Named } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import { ReportScope } from "./ReportScope";
 import type { ComplianceReportMeta, ControlStatus } from "@/types/compliance";
 
-interface Props { report: ComplianceReportMeta | null; namesake?: boolean; onClose: () => void; }
+interface Props { report: ComplianceReportMeta | null; namesakes?: readonly Named[]; onClose: () => void; }
 
 function CoverageNotice({ report }: { readonly report: ComplianceReportMeta }) {
   const plan = report.coverage?.plan_items;
@@ -53,7 +54,7 @@ function SummaryRow({ statusKey, value }: { readonly statusKey: string; readonly
   );
 }
 
-export function ReportDetailDrawer({ report, namesake = false, onClose }: Readonly<Props>) {
+export function ReportDetailDrawer({ report, namesakes, onClose }: Readonly<Props>) {
   const qc = useQueryClient();
   const confirm = useDialogState();
   const { hasPermission } = useAuth();
@@ -86,14 +87,14 @@ export function ReportDetailDrawer({ report, namesake = false, onClose }: Readon
           {report && (
             <>
               <DialogHeader>
-                <DialogTitle className="font-mono">{report.framework}</DialogTitle>
+                <DialogTitle>{REPORT_FRAMEWORK_LABELS[report.framework] ?? report.framework}</DialogTitle>
               </DialogHeader>
               <div className="space-y-2 text-sm">
                 <div>
                   Status: <ReportStatusBadge status={report.status} />
                 </div>
                 <div>
-                  Scope: <ReportScope report={report} namesake={namesake} />
+                  Scope: <ReportScope report={report} namesakes={namesakes} />
                 </div>
                 <div className="text-muted-foreground">
                   Requested {formatDateTime(report.requested_at)} by {report.requested_by_name ?? report.requested_by}

@@ -53,6 +53,14 @@ describe("FindingDetailsModal header", () => {
     expect(screen.queryByText("crypto_weak_algorithm")).not.toBeInTheDocument();
     expect(screen.getByText("Outdated")).toHaveClass("wrap-anywhere");
   });
+
+  it("names the other types only as header badges, not again as raw chips under Additional Details", () => {
+    renderModal(finding({ type: "crypto_weak_algorithm", details: { technology: ["openssl"], additional_finding_types: [{ type: "outdated", severity: "INFO" }] } }));
+
+    expect(screen.getByText("openssl")).toBeInTheDocument();
+    expect(screen.queryByText("Additional Finding Types")).not.toBeInTheDocument();
+    expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
+  });
 });
 
 describe("FindingDetailsModal fixed version", () => {
@@ -486,7 +494,7 @@ describe("FindingDetailsModal advisory description", () => {
       details: { vulnerabilities: [{ id: "CVE-2021-44228", severity: "CRITICAL", description: "### Impact\n\nRemote code execution." }] },
     }));
 
-    expect(screen.getByRole("heading", { level: 3, name: "Impact" })).toHaveClass("font-semibold");
+    expect(screen.getByRole("heading", { name: "Impact" })).toHaveClass("font-semibold");
     expect(screen.getByText("Remote code execution.")).not.toHaveClass("font-semibold");
   });
 

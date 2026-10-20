@@ -207,10 +207,10 @@ describe("UpdateFrequency on a phone", () => {
 });
 
 describe("UpdateFrequency accessible names", () => {
-  it("names its time window dropdown, which has no visible label", () => {
+  it("names its time window dropdown apart from the comparison's above it, as neither has a visible label", () => {
     mockedFrequency.mockResolvedValue(metrics);
     renderFrequency();
 
-    expect(screen.getByRole("combobox", { name: "Time window" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Project time window" })).toBeInTheDocument();
   });
 });

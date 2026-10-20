@@ -4,10 +4,12 @@ import type { Components } from 'react-markdown'
 const HEADING_LEVELS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const
 
 // Preflight resets heading sizes and weights and no typography plugin restores them.
+// Markdown renders under a page or dialog title, so each level moves one down and a # opens no second h1.
 export const MARKDOWN_HEADINGS: Components = Object.fromEntries(
-  HEADING_LEVELS.map((tag) => [
+  HEADING_LEVELS.map((tag, index) => [
     tag,
-    ({ children }: { children?: ReactNode }) => createElement(tag, { className: 'mb-2 mt-4 text-sm font-semibold first:mt-0' }, children),
+    ({ children }: { children?: ReactNode }) =>
+      createElement(HEADING_LEVELS[Math.min(index + 1, HEADING_LEVELS.length - 1)], { className: 'mb-2 mt-4 text-sm font-semibold first:mt-0' }, children),
   ]),
 )
 

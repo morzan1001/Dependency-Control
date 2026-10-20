@@ -91,8 +91,17 @@ describe('ChatMessage typography', () => {
   it("sets an answer's headings apart from its text, like the headings of an advisory or a SAST rule", () => {
     renderAssistant('### Impact\n\nUpgrade to 2.17.1.');
 
-    expect(screen.getByRole('heading', { level: 3, name: 'Impact' })).toHaveClass('font-semibold');
+    expect(screen.getByRole('heading', { name: 'Impact' })).toHaveClass('font-semibold');
     expect(screen.getByText('Upgrade to 2.17.1.')).not.toHaveClass('font-semibold');
+  });
+
+  it("ranks an answer's headings below the page's h1, so a # in the answer opens no second top-level heading", () => {
+    renderAssistant('# Summary\n\n## Impact\n\n###### Note');
+
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'Summary' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Impact' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 6, name: 'Note' })).toBeInTheDocument();
   });
 
   it("keeps an assistant table's muted header", () => {

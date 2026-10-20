@@ -40,9 +40,10 @@ export function VirtualRows<T>({ list, scrollContainer, tableOffsetRef, estimate
     if (lastIndex !== -1 && lastIndex >= rows.length - 1) loadMore()
   }, [lastIndex, rows.length, loadMore])
 
+  // Every row is an absolutely placed div inside this one cell, so the wrapper steps aside for the roles the rows carry.
   return (
-    <tr>
-      <td colSpan={colSpan} className="p-0">
+    <tr role="presentation">
+      <td role="presentation" colSpan={colSpan} className="p-0">
         <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
           {virtualItems.map((item) => {
             const style: CSSProperties = { position: 'absolute', top: `${item.start}px`, left: 0, right: 0, height: `${item.size}px` }

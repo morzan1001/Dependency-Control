@@ -63,6 +63,15 @@ describe('ProjectArchives rows', () => {
     }
   })
 
+  it('edges the coloured high pill in its own hue instead of the neutral badge outline', () => {
+    mockUseProjectArchives.mockReturnValue({ data: makeResponse([ARCHIVE]), isLoading: false })
+    render(<ProjectArchives projectId="p1" />)
+
+    const high = screen.getByText('5 H')
+    expect(high).toHaveClass('border-orange-200', 'dark:border-orange-800')
+    expect(high).not.toHaveClass('border-foreground/45')
+  })
+
   it('downloads the archive of the row', async () => {
     mockUseProjectArchives.mockReturnValue({ data: makeResponse([ARCHIVE]), isLoading: false })
     render(<ProjectArchives projectId="p1" />)

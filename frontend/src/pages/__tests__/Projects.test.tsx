@@ -10,6 +10,7 @@ const VISIBLE_PROJECTS = 5
 const { useProjectsMock } = vi.hoisted(() => ({ useProjectsMock: vi.fn() }))
 vi.mock('@/hooks/queries/use-projects', () => ({ useProjects: (...args: unknown[]) => useProjectsMock(...args) }))
 vi.mock('@/hooks/queries/use-teams', () => ({ useTeams: () => ({ data: [] }) }))
+vi.mock('@/hooks/queries/use-instances', () => ({ useInstanceNames: () => new Map() }))
 vi.mock('@/hooks/queries/use-system', () => ({
   useAppConfig: () => ({ data: { project_limit_per_user: 1 } }),
 }))

@@ -27,6 +27,8 @@ import { useInfiniteRows } from '@/hooks/use-infinite-rows'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { useScrollContainer } from '@/hooks/use-scroll-container'
 import { getSourceInfo } from '@/lib/finding-utils'
+import { sharedNames } from '@/lib/utils'
+import { ProjectOwnerById } from '@/components/project/ProjectOwner'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
 interface CrossProjectSearchProps {
@@ -85,6 +87,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
   const { isLoading, error } = results
   const list = useInfiniteRows(results, (page) => page.items)
   const allResults = list.rows
+  const namesakes = sharedNames(allResults.map((result) => ({ id: result.project_id, name: result.project_name })))
   const totalCount = results.data?.pages[0]?.total ?? 0
 
   const clearFilters = () => {
@@ -273,28 +276,28 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                     renderRow={(result, style) => (
                       <div
                         className="flex items-center border-b cursor-pointer hover:bg-muted transition-colors"
-                        role="button"
+                        role="row"
                         tabIndex={0}
                         style={style}
                         onClick={() => onSelectResult?.(result)}
                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectResult?.(result); } }}
                       >
-                        <div className="w-[250px] px-4 py-2 truncate">
+                        <div role="cell" className="w-[250px] px-4 py-2 truncate">
                           <div className="flex items-center gap-2 min-w-0">
                             <Package className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                             <span className="font-medium truncate">{result.package}</span>
                           </div>
                         </div>
-                        <div className="w-[120px] px-4 py-2 truncate">
+                        <div role="cell" className="w-[120px] px-4 py-2 truncate">
                           <Badge variant="outline" className="truncate max-w-full">{result.version}</Badge>
                         </div>
-                        <div className="w-[100px] px-4 py-2">
+                        <div role="cell" className="w-[100px] px-4 py-2">
                           <Badge variant="secondary" className="truncate">{result.type}</Badge>
                         </div>
-                        <div className="w-[150px] px-4 py-2 truncate">
+                        <div role="cell" className="w-[150px] px-4 py-2 truncate">
                           <span className="truncate block">{result.license || <span className="text-muted-foreground">-</span>}</span>
                         </div>
-                        <div className="flex-1 min-w-0 px-4 py-2 truncate">
+                        <div role="cell" className="flex flex-1 min-w-0 items-center gap-2 px-4 py-2">
                           <Link
                             to={`/projects/${result.project_id}`}
                             className="hover:underline text-primary truncate block"
@@ -302,6 +305,9 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                           >
                             {result.project_name}
                           </Link>
+                          {namesakes.has(result.project_name) && (
+                            <ProjectOwnerById projectId={result.project_id} namesakes={namesakes.get(result.project_name)} />
+                          )}
                         </div>
                       </div>
                     )}

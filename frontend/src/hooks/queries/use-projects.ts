@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient, keepPreviousData, type MutationMeta } from '@tanstack/react-query';
+import { useQuery, useQueries, useMutation, useQueryClient, keepPreviousData, type MutationMeta } from '@tanstack/react-query';
 import { projectApi } from '@/api/projects';
 import { ProjectCreate, ProjectNotificationSettings } from '@/types/project';
 import type { ArchiveFilters } from '@/types/archive';
@@ -53,13 +53,17 @@ export const useProjectNameTaken = (name: string, current?: Named) => {
   return isNameTaken(data?.items, name, current);
 };
 
+const projectDetail = (id: string) => ({ queryKey: projectKeys.detail(id), queryFn: () => projectApi.getOne(id) });
+
 export const useProject = (id: string) => {
-  return useQuery({
-    queryKey: projectKeys.detail(id),
-    queryFn: () => projectApi.getOne(id),
-    enabled: !!id,
-  });
+  return useQuery({ ...projectDetail(id), enabled: !!id });
 };
+
+export const useProjectDetails = (ids: readonly string[]) =>
+  useQueries({
+    queries: ids.map(projectDetail),
+    combine: (results) => results.flatMap((result) => (result.data ? [result.data] : [])),
+  });
 
 export const useCreateProject = (meta?: MutationMeta) => {
   const queryClient = useQueryClient();

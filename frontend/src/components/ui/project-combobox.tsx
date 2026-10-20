@@ -111,7 +111,7 @@ export function ProjectCombobox({
                 <>
                   <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
                   <span className="truncate">{selectedProject.name}</span>
-                  {listedSelection && namesakes.has(listedSelection.name) && <ProjectOwner project={listedSelection} />}
+                  {listedSelection && namesakes.has(listedSelection.name) && <ProjectOwner project={listedSelection} namesakes={namesakes.get(listedSelection.name)!} />}
                 </>
               ) : (
                 <span className="text-muted-foreground">Select a project...</span>
@@ -175,7 +175,7 @@ export function ProjectCombobox({
                     />
                     <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
                     <span className="truncate flex-1 text-left">{project.name}</span>
-                    {namesakes.has(project.name) && <ProjectOwner project={project} />}
+                    {namesakes.has(project.name) && <ProjectOwner project={project} namesakes={namesakes.get(project.name)!} />}
                   </button>
                 ))}
                 {projectsData && projectsData.total > projects.length && (

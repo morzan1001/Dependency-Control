@@ -121,7 +121,7 @@ export function ArchiveSummaryCells({ archive }: Readonly<{ archive: ArchiveList
             </Badge>
           )}
           {archive.high_findings_count > 0 && (
-            <Badge variant="secondary" className="text-xs px-1.5 py-0 whitespace-nowrap bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+            <Badge variant="secondary" className="text-xs px-1.5 py-0 whitespace-nowrap border-orange-200 bg-orange-100 text-orange-800 dark:border-orange-800 dark:bg-orange-900 dark:text-orange-200">
               {archive.high_findings_count} H
             </Badge>
           )}

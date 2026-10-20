@@ -14,7 +14,7 @@ import { formatDate, sharedNames, truncateLabel } from '@/lib/utils'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
-import { ProjectOwnerById } from '@/components/project/ProjectOwner'
+import { ChartProjectLabel, ProjectOwnerById } from '@/components/project/ProjectOwner'
 import type { Project } from '@/types/project'
 
 const DASHBOARD_STATS_SKELETON_IDS = ['ds1', 'ds2', 'ds3', 'ds4']
@@ -91,6 +91,8 @@ export default function Dashboard() {
   ]
 
   const chartData = dashboardStats?.top_risky_projects || []
+  const riskyNamesakes = sharedNames(chartData)
+  const riskyNames = new Map(chartData.map((project) => [project.id, project.name]))
 
   return (
     <div className="space-y-8">
@@ -149,12 +151,12 @@ export default function Dashboard() {
                     <BarChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
                         <XAxis
-                        dataKey="name"
+                        dataKey="id"
                         stroke="#888888"
                         fontSize={12}
                         tickLine={false}
                         axisLine={false}
-                        tickFormatter={(name: string) => truncateLabel(name, 11)}
+                        tickFormatter={(id: string) => truncateLabel(riskyNames.get(id) ?? '', 11)}
                         />
                         <YAxis
                         stroke="#888888"
@@ -174,6 +176,7 @@ export default function Dashboard() {
                             }}
                             labelStyle={{ color: 'hsl(var(--popover-foreground))' }}
                             itemStyle={{ color: 'hsl(var(--popover-foreground))' }}
+                            labelFormatter={(id) => <ChartProjectLabel projectId={String(id)} names={riskyNames} namesakes={riskyNamesakes} />}
                         />
                         <Bar
                           dataKey="risk"
@@ -215,7 +218,7 @@ export default function Dashboard() {
                                     <div className="min-w-0 space-y-1">
                                         <p className="flex items-center gap-2 text-sm leading-none">
                                             <span className="truncate font-medium">{scan.project_name}</span>
-                                            {namesakes.has(scan.project_name ?? '') && <ProjectOwnerById projectId={scan.project_id} />}
+                                            {namesakes.has(scan.project_name ?? '') && <ProjectOwnerById projectId={scan.project_id} namesakes={namesakes.get(scan.project_name ?? '')} />}
                                         </p>
                                         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                                             <span className="wrap-anywhere">{scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan'} on {scan.branch}</span>
