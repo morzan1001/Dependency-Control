@@ -112,32 +112,34 @@ _SEVERITY_TO_PRIORITY: dict[str, Priority] = {
 
 
 def process_crypto(findings: list[ModelOrDict]) -> list[Recommendation]:
-    grouped: dict[tuple[str, str], list[ModelOrDict]] = defaultdict(list)
+    grouped: dict[tuple[_CryptoCard, str], list[ModelOrDict]] = defaultdict(list)
     for f in findings:
-        asset_name = get_attr(f, "details", {}).get("asset_name") or get_attr(f, "component") or "unknown"
-        grouped[(get_attr(f, "type"), asset_name)].append(f)
-    return [
-        _build_recommendation(finding_type, asset_name, group) for (finding_type, asset_name), group in grouped.items()
-    ]
+        finding_type = FindingType(get_attr(f, "type"))
+        details = get_attr(f, "details", {})
+        asset_name = details.get("asset_name") or get_attr(f, "component") or "unknown"
+        version = details.get("protocol_version") if finding_type == FindingType.CRYPTO_WEAK_PROTOCOL else None
+        grouped[(_CRYPTO_CARDS[finding_type], f"{asset_name} {version}" if version else asset_name)].append(f)
+    return [_build_recommendation(card, label, group) for (card, label), group in grouped.items()]
 
 
-def _build_recommendation(finding_type: str, asset_name: str, findings: list[ModelOrDict]) -> Recommendation:
-    card = _CRYPTO_CARDS[FindingType(finding_type)]
+def _build_recommendation(card: _CryptoCard, label: str, findings: list[ModelOrDict]) -> Recommendation:
+    # Only certificate types share a card, and none of them has a suggested replacement.
+    finding_type = min(FindingType(get_attr(f, "type")).value for f in findings)
     severities = [str(get_attr(f, "severity", "UNKNOWN")) for f in findings]
 
     bom_refs = sorted({ref for ref in (_bom_ref(f) for f in findings) if ref})
     rule_ids = sorted({rid for f in findings for rid in all_rule_ids(get_attr(f, "details", {}))})
     descriptions = sorted({str(get_attr(f, "description", "")).strip() for f in findings if get_attr(f, "description")})
-    wording = {"asset": asset_name, "count": len(findings), "s": "" if len(findings) == 1 else "s"}
+    wording = {"asset": label, "count": len(findings), "s": "" if len(findings) == 1 else "s"}
 
     action: dict[str, object] = {
-        "asset_name": asset_name,
+        "asset_name": label,
         "finding_type": finding_type,
         **sampled("bom_refs", bom_refs, AFFECTED_COMPONENTS_SHOWN),
         **sampled("rule_ids", rule_ids, AFFECTED_COMPONENTS_SHOWN),
         **sampled("evidence", descriptions, _EVIDENCE_SAMPLED),
     }
-    suggested = _suggested_replacement(finding_type, asset_name, findings)
+    suggested = _suggested_replacement(finding_type, label, findings)
     if suggested:
         action["suggested_replacement"] = suggested
 
@@ -148,7 +150,7 @@ def _build_recommendation(finding_type: str, asset_name: str, findings: list[Mod
         title=card.title.format(**wording),
         description=card.description.format(**wording),
         impact=severity_impact(severities),
-        components=[asset_name],
+        components=[label],
         action=action,
         effort=card.effort,
     )
