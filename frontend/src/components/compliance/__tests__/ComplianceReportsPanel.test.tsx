@@ -126,6 +126,23 @@ describe('ComplianceReportsPanel', () => {
     expect(useProjectMock).not.toHaveBeenCalledWith('p3')
   })
 
+  it('names the owner of a namesake scope in the report dialog too', async () => {
+    useProjectMock.mockImplementation((id: string) => ({
+      data: { id, name: 'shared-lib', teams: [{ id: `t-${id}`, name: id === 'p1' ? 'Payments' : 'Platform' }] },
+    }))
+    vi.mocked(listReports).mockResolvedValue({
+      reports: [
+        { ...report('completed'), _id: 'r1', scope: 'project', scope_id: 'p1', scope_name: 'shared-lib' },
+        { ...report('completed'), _id: 'r2', scope: 'project', scope_id: 'p2', scope_name: 'shared-lib' },
+      ],
+    })
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: /Platform/ }))
+
+    expect(within(screen.getByRole('dialog')).getByText('Platform')).toBeInTheDocument()
+  })
+
   it('opens an empty form again after a cancelled draft', async () => {
     vi.mocked(listReports).mockResolvedValue({ reports: [] })
     renderPanel()

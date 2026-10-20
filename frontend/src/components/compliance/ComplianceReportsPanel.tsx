@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { listReports } from "@/api/compliance";
 import { useDialogState } from "@/hooks/use-dialog-state";
 import { formatDateTime, sharedNames } from "@/lib/utils";
-import type { ReportFramework } from "@/types/compliance";
+import type { ComplianceReportMeta, ReportFramework } from "@/types/compliance";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import { NewReportDialog } from "./NewReportDialog";
 import { ReportDetailDrawer } from "./ReportDetailDrawer";
@@ -29,6 +29,7 @@ export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultF
   const namesakes = sharedNames(
     reports.flatMap((r) => (r.scope === "project" && r.scope_id && r.scope_name ? [{ id: r.scope_id, name: r.scope_name }] : [])),
   );
+  const isNamesake = (r: ComplianceReportMeta) => r.scope === "project" && namesakes.has(r.scope_name ?? "");
   const selected = reports.find((r) => r._id === selectedId) ?? null;
 
   return (
@@ -72,7 +73,7 @@ export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultF
                 <td className="p-2">{r.format.toUpperCase()}</td>
                 <td className="p-2"><ReportStatusBadge status={r.status} /></td>
                 <td className="p-2 text-xs">{formatDateTime(r.requested_at)}</td>
-                <td className="p-2 text-xs"><ReportScope report={r} namesake={r.scope === "project" && namesakes.has(r.scope_name ?? "")} /></td>
+                <td className="p-2 text-xs"><ReportScope report={r} namesake={isNamesake(r)} /></td>
               </tr>
             ))}
           </tbody>
@@ -87,7 +88,7 @@ export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultF
       {newReportDialog.open && (
         <NewReportDialog onClose={newReportDialog.closeDialog} defaultFramework={prefillFramework} />
       )}
-      <ReportDetailDrawer report={selected} onClose={() => setSelectedId(null)} />
+      <ReportDetailDrawer report={selected} namesake={selected !== null && isNamesake(selected)} onClose={() => setSelectedId(null)} />
     </div>
   );
 }

@@ -16,7 +16,7 @@ import { ReportStatusBadge } from "./ReportStatusBadge";
 import { ReportScope } from "./ReportScope";
 import type { ComplianceReportMeta, ControlStatus } from "@/types/compliance";
 
-interface Props { report: ComplianceReportMeta | null; onClose: () => void; }
+interface Props { report: ComplianceReportMeta | null; namesake?: boolean; onClose: () => void; }
 
 function CoverageNotice({ report }: { readonly report: ComplianceReportMeta }) {
   const plan = report.coverage?.plan_items;
@@ -53,7 +53,7 @@ function SummaryRow({ statusKey, value }: { readonly statusKey: string; readonly
   );
 }
 
-export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
+export function ReportDetailDrawer({ report, namesake = false, onClose }: Readonly<Props>) {
   const qc = useQueryClient();
   const confirm = useDialogState();
   const { hasPermission } = useAuth();
@@ -93,7 +93,7 @@ export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
                   Status: <ReportStatusBadge status={report.status} />
                 </div>
                 <div>
-                  Scope: <ReportScope report={report} />
+                  Scope: <ReportScope report={report} namesake={namesake} />
                 </div>
                 <div className="text-muted-foreground">
                   Requested {formatDateTime(report.requested_at)} by {report.requested_by_name ?? report.requested_by}
