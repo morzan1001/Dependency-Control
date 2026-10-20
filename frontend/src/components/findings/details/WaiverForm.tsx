@@ -95,8 +95,9 @@ export function WaiverForm({
         </div>
       )}
       <div className="space-y-2">
-        <Label>Reason for Waiver</Label>
+        <Label htmlFor="waiver-reason">Reason for Waiver</Label>
         <Textarea
+          id="waiver-reason"
           className="min-h-[100px]"
           placeholder="Why is this finding being ignored? (e.g. False positive, Mitigating controls in place...)"
           value={reason}
@@ -107,8 +108,8 @@ export function WaiverForm({
 
       {supportsScopes && (
         <div className="rounded-md border p-3 space-y-3">
-          <Label className="font-medium">Scope</Label>
-          <RadioGroup value={scope} onValueChange={(v) => setScope(v as WaiverScope)}>
+          <Label id="waiver-scope-label" className="font-medium">Scope</Label>
+          <RadioGroup aria-labelledby="waiver-scope-label" value={scope} onValueChange={(v) => setScope(v as WaiverScope)}>
             <div className="flex items-start gap-3">
               <RadioGroupItem value="finding" id="scope-finding" className="mt-0.5" />
               <Label htmlFor="scope-finding" className="cursor-pointer font-normal">
@@ -144,9 +145,9 @@ export function WaiverForm({
       )}
 
       <div className="space-y-2">
-        <Label>Status</Label>
+        <Label htmlFor="waiver-status">Status</Label>
         <Select value={status} onValueChange={(v) => setStatus(v as WaiverStatus)}>
-          <SelectTrigger>
+          <SelectTrigger id="waiver-status">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -157,8 +158,9 @@ export function WaiverForm({
       </div>
 
       <div className="space-y-2 flex flex-col">
-        <Label>Expiration Date (Optional)</Label>
+        <Label htmlFor="waiver-expiration">Expiration Date (Optional)</Label>
         <Input
+          id="waiver-expiration"
           type="date"
           value={date}
           onChange={(e) => setDate(e.target.value)}

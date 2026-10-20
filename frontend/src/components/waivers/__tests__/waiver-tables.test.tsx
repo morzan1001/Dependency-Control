@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { expectEveryFieldNamed } from "@/test/form-field";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -60,5 +61,14 @@ describe("waiver tables", () => {
 
     expect(screen.getByText("CVE-2020-7598")).toHaveAttribute("title", "CVE-2020-7598");
     expect(screen.queryByText("Any")).toBeNull();
+  });
+});
+
+describe("waiver tables accessible names", () => {
+  it("name the search box of the waiver list", () => {
+    renderWithClient(<GlobalWaivers />);
+
+    expectEveryFieldNamed();
+    expect(screen.getByRole("textbox", { name: "Search waivers" })).toBeInTheDocument();
   });
 });

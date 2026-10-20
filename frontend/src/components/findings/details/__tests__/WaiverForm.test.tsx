@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { expectEveryFieldNamed } from '@/test/form-field'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -128,5 +129,22 @@ describe('WaiverForm', () => {
     await waitFor(() => expect(onSuccess).toHaveBeenCalled())
     await waitFor(() => expect(client.isFetching()).toBe(0))
     expect(waiverApi.getAll).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('WaiverForm accessible names', () => {
+  it('links every label to its field and names the scope choices by their legend', () => {
+    const sast = finding('sast', { file: 'app/handlers.py', line: 12, rule_id: 'python.eval' })
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <WaiverForm finding={sast} vulnId={null} projectId="p1" onCancel={() => {}} onSuccess={() => {}} />
+      </QueryClientProvider>,
+    )
+
+    expectEveryFieldNamed()
+    expect(screen.getByRole('textbox', { name: 'Reason for Waiver' })).toBeInTheDocument()
+    expect(screen.getByRole('radiogroup', { name: 'Scope' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Status' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Expiration Date (Optional)')).toHaveAttribute('type', 'date')
   })
 })
