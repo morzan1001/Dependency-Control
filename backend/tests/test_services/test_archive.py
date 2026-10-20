@@ -175,6 +175,24 @@ async def test_archive_metadata_keeps_critical_and_high_counts_apart(archive_env
 
 
 @pytest.mark.asyncio
+async def test_archive_metadata_counts_the_findings_the_scan_stats_count(archive_env):
+    """A waived finding or a scanner error is no open finding, as StatsAccumulator counts them."""
+    findings = [
+        {"_id": "f1", "scan_id": "scan-1", "type": "vulnerability", "severity": "CRITICAL"},
+        {"_id": "f2", "scan_id": "scan-1", "type": "vulnerability", "severity": "HIGH"},
+        {"_id": "f3", "scan_id": "scan-1", "type": "vulnerability", "severity": "CRITICAL", "waived": True},
+        {"_id": "f4", "scan_id": "scan-1", "type": "license", "severity": "HIGH", "waived": True},
+        {"_id": "f5", "scan_id": "scan-1", "type": "system_warning", "severity": "HIGH"},
+    ]
+    db = _make_mock_db(scan_doc=_make_scan_doc(), findings=findings)
+
+    with _patch_repos()():
+        result = await archive_scan(db, "scan-1")
+
+    assert (result.findings_count, result.critical_findings_count, result.high_findings_count) == (2, 1, 1)
+
+
+@pytest.mark.asyncio
 async def test_archive_key_carries_the_archive_time(archive_env):
     """Two archives of one scan would otherwise collide on the same key."""
     db = _make_mock_db(scan_doc=_make_scan_doc())

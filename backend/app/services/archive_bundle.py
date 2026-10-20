@@ -10,6 +10,7 @@ from typing import Any, NamedTuple
 from bson import json_util
 
 from app.core.constants import ARCHIVE_BUNDLE_VERSION
+from app.models.finding import FindingType
 
 
 class BundleVersionError(ValueError):
@@ -60,8 +61,11 @@ class BundleFrames:
             yield emit(json_line({"collection": coll_name}))
             async for doc in doc_iter:
                 yield emit(json_line(doc))
-                # severity is canonicalized uppercase by the scan pipeline; other cases miss the tallies.
                 if coll_name == "findings":
+                    # Counted as StatsAccumulator.add counts, so the archive list shows the scan's open findings.
+                    if doc.get("waived") is True or doc.get("type") == FindingType.SYSTEM_WARNING:
+                        continue
+                    # severity is canonicalized uppercase by the scan pipeline; other cases miss the tallies.
                     severity = doc.get("severity", "")
                     if severity == "CRITICAL":
                         stats.critical_findings += 1
