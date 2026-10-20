@@ -19,6 +19,7 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.cbom import ParsedCryptoAsset
 from app.schemas.ingest import BaseIngest
+from app.services.analysis.runner import sbom_name
 from app.services.cbom_parser import flatten_cyclonedx_components, parse_cbom
 from app.services.notifications.service import safe_notify_project_event
 from app.services.scan_manager import ScanManager
@@ -70,10 +71,12 @@ async def ingest_cbom(
     ):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "CBOM components could not be read as cryptographic assets")
     project_id = str(project.id)
+    serial = payload.cbom.get("serialNumber")
+    source = str(serial) if serial else sbom_name(payload.cbom)
 
     try:
         await ScanRepository(db).touch(scan_id)
-        summary = await _store_crypto_assets(db, project_id, scan_id, assets)
+        summary = await _store_crypto_assets(db, project_id, scan_id, assets, source)
     except Exception as exc:
         logger.exception("cbom_ingest failed for scan %s: %s", scan_id, exc)
         cbom_ingests_total.labels(status="error").inc()
@@ -114,12 +117,17 @@ async def ingest_cbom(
 
 
 async def _store_crypto_assets(
-    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, assets: list[ParsedCryptoAsset]
+    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, assets: list[ParsedCryptoAsset], source: str | None
 ) -> dict[str, Any]:
+    """The CBOMs of one pipeline run add up; a retried one replaces its own earlier assets."""
     written_at = datetime.now(timezone.utc)
     repo = CryptoAssetRepository(db)
-    summary = await repo.store_parsed(project_id, scan_id, assets, cbom_upload=True, created_at=written_at)
+    summary = await repo.store_parsed(
+        project_id, scan_id, assets, cbom_upload=True, created_at=written_at, cbom_source=source
+    )
     # Deleted after the upsert so a failed write keeps the previous upload's assets.
-    await repo.delete_older_writes({"project_id": project_id, "scan_id": scan_id, "cbom_upload": True}, written_at)
+    await repo.delete_older_writes(
+        {"project_id": project_id, "scan_id": scan_id, "cbom_upload": True, "cbom_source": source}, written_at
+    )
     logger.info("cbom_ingest: persisted %d assets for scan %s", summary["total"], scan_id)
     return summary

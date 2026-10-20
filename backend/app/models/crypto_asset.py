@@ -64,7 +64,10 @@ class CryptoAsset(MongoDocument):
         default_factory=dict, description="Passthrough of additional CycloneDX properties"
     )
     cbom_upload: bool = Field(
-        False, description="Stored by a CBOM upload, which replaces the scan's earlier uploaded assets"
+        False, description="Stored by a CBOM upload, which replaces the scan's earlier assets of the same CBOM"
+    )
+    cbom_source: str | None = Field(
+        None, description="The uploaded CBOM's serialNumber, else its metadata.component name"
     )
 
     created_at: datetime = Field(

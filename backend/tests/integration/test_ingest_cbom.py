@@ -283,6 +283,34 @@ async def test_a_retried_cbom_upload_replaces_its_own_assets_and_keeps_the_embed
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    "source",
+    [lambda name: {"serialNumber": f"urn:uuid:{name}"}, lambda name: {"metadata": {"component": {"name": name}}}],
+    ids=["serial-number", "metadata-component-name"],
+)
+async def test_cboms_of_one_pipeline_run_add_up_and_a_retry_replaces_only_its_own_assets(
+    client, db, api_key_headers, source
+):
+    pipeline = {"pipeline_id": 18, "commit_hash": "abc123", "branch": "main"}
+    service = {**_load("legacy_crypto_mixed.json"), **source("service")}
+    library = {**_load("modern_crypto.json"), **source("library")}
+    for cbom in (service, library):
+        await client.post("/api/v1/ingest/cbom", json={**pipeline, "cbom": cbom}, headers=api_key_headers)
+
+    retry = await client.post(
+        "/api/v1/ingest/cbom",
+        json={**pipeline, "cbom": {**service, "components": service["components"][:1]}},
+        headers=api_key_headers,
+    )
+
+    assert retry.status_code == 202, retry.text
+    stored = await db.crypto_assets.find({"scan_id": retry.json()["scan_id"]}).to_list(None)
+    kept = [content_ref(c) for c in (service["components"][0], *library["components"])]
+    assert sorted(a["bom_ref"] for a in stored) == sorted(kept)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_an_earlier_upload_finishing_last_keeps_the_later_uploads_assets(db):
     from app.services.cbom_parser import parse_cbom
 

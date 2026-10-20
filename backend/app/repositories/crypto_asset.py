@@ -57,10 +57,11 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         *,
         cbom_upload: bool,
         created_at: datetime,
+        cbom_source: str | None = None,
     ) -> dict[str, Any]:
         """Stores one asset per bom_ref, the last given; returns how many, in total and per asset type."""
         unique = list({a.bom_ref: a for a in assets}.values())
-        fields = {"cbom_upload": cbom_upload, "created_at": created_at}
+        fields = {"cbom_upload": cbom_upload, "cbom_source": cbom_source, "created_at": created_at}
         # Built off the event loop, as a CBOM may carry any number of assets.
         documents = await asyncio.to_thread(_documents, project_id, scan_id, unique, fields)
         await self.bulk_upsert(project_id, scan_id, documents)
