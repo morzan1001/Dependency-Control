@@ -2,7 +2,6 @@ from collections.abc import Sequence
 from typing import Any, get_args
 
 from app.core.constants import (
-    DEFAULT_PQC_PLAN_ITEMS,
     MAX_COMPLIANCE_REPORT_PAGE,
     MAX_CRYPTO_HOTSPOT_PAGE,
     MAX_POLICY_AUDIT_PAGE,
@@ -489,7 +488,7 @@ _tool(
     },
     name_search=_string("Optional substring filter on asset name"),
     skip={"type": "integer", "description": "Number of items to skip (default 0)"},
-    limit=_bounded(100, MAX_CRYPTO_ASSET_PAGE, "Max assets"),
+    limit=_bounded(15, MAX_CRYPTO_ASSET_PAGE, "Max assets"),
 )
 _tool(
     "get_crypto_asset_details",
@@ -553,7 +552,7 @@ _tool(
     "Generate a PQC migration plan for one project.",
     required=["project_id"],
     project_id=_PROJECT_ID,
-    limit=_bounded(DEFAULT_PQC_PLAN_ITEMS, MAX_PQC_PLAN_ITEMS, "Max plan items"),
+    limit=_bounded(20, MAX_PQC_PLAN_ITEMS, "Max plan items"),
 )
 _tool(
     "list_compliance_reports",
