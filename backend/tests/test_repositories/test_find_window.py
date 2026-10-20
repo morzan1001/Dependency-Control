@@ -39,7 +39,7 @@ async def test_a_read_that_exactly_fills_its_limit_carries_no_caveat():
     db = await _seeded(_LIMIT)
     begin_limit_ledger()
 
-    await bounded_read(db.webhooks, {"project_id": "p1"}, subject="webhooks", limit=_LIMIT)
+    await bounded_read(db.webhooks, {"project_id": "p1"}, subject="webhooks", limit=_LIMIT, sort=[("_id", 1)])
 
     assert bounded_read_note() is None
 
@@ -49,6 +49,6 @@ async def test_a_truncated_read_still_says_so():
     db = await _seeded(_LIMIT + 2)
     begin_limit_ledger()
 
-    await bounded_read(db.webhooks, {"project_id": "p1"}, subject="webhooks", limit=_LIMIT)
+    await bounded_read(db.webhooks, {"project_id": "p1"}, subject="webhooks", limit=_LIMIT, sort=[("_id", 1)])
 
     assert "3 of 5 webhooks" in (bounded_read_note() or "")
