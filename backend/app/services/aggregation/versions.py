@@ -34,6 +34,9 @@ _PRERELEASE_RANK = {
 }
 # Maven's spellings of a plain release: 4.1.100.Final is 4.1.100.
 _RELEASE_QUALIFIERS = frozenset({"final", "ga", "release"})
+_TOKEN = re.compile(r"[a-z]+|\d+")
+# A Go pseudo-version's commit hash would read as numbers and tags such as c1 (rc1); its timestamp orders it.
+_PSEUDO_VERSION_HASH = re.compile(r"(?<=[.-]\d{14})-[0-9a-f]{12}(?=$|\+)")
 
 
 def _token_key(token: str, prev_char: str, next_char: str) -> tuple[int, int | str]:
@@ -49,12 +52,16 @@ def _token_key(token: str, prev_char: str, next_char: str) -> tuple[int, int | s
     return (_PRERELEASE, rank)
 
 
+def _version_text(v: str) -> str:
+    return _PSEUDO_VERSION_HASH.sub("", v.lower().split(":", 1)[-1].removeprefix("v"))
+
+
 def parse_version_key(v: str) -> VersionKey:
     """Its first two pairs, major and minor, name the release line (a bare 2 ranks as 2.0)."""
-    text = v.lower().split(":", 1)[-1].removeprefix("v")
+    text = _version_text(v)
     parts = [
         _token_key(m.group(), text[m.start() - 1 : m.start()], text[m.end() : m.end() + 1])
-        for m in re.finditer(r"[a-z]+|\d+", text)
+        for m in _TOKEN.finditer(text)
         if m.group() not in _RELEASE_QUALIFIERS
     ]
     release = next((i for i, (flag, _) in enumerate(parts) if flag != _NUMBER), len(parts))
@@ -103,6 +110,12 @@ def _upgrade_candidates(fixed_version: Any, installed_key: VersionKey) -> list[t
     return [(key, c) for key, c in candidates if key >= installed_key] or candidates
 
 
+def _release_line(key: VersionKey, version: str) -> int | str:
+    """A non-numeric start names its own line, so a hash such as a1b2 never joins the major its tag rank equals."""
+    flag, value = key[0]
+    return value if flag == _NUMBER else next(_TOKEN.finditer(_version_text(version))).group()
+
+
 def _major_sort_key(major: int | str) -> tuple[bool, int, str]:
     return isinstance(major, str), major if isinstance(major, int) else 0, str(major)
 
@@ -113,7 +126,7 @@ def aggregate_fixed_version(entries: Iterable[Mapping[str, Any]], installed_vers
     by_major: dict[int | str, dict[int, list[tuple[VersionKey, str]]]] = {}
     for index, candidates in enumerate(advisories):
         for key, candidate in candidates:
-            by_major.setdefault(key[0][1], {}).setdefault(index, []).append((key, candidate))
+            by_major.setdefault(_release_line(key, candidate), {}).setdefault(index, []).append((key, candidate))
     # A prerelease fix counts only where the line offers no release fix.
     line_fixes = [
         (

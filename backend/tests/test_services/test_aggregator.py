@@ -45,6 +45,15 @@ class TestParseVersionKey:
             pytest.param("2", "2.0.0", id="bare-major"),
             pytest.param("1.0pre1", "1.0rc1", id="pep440-pre-spells-rc"),
             pytest.param("1.0.0-preview1", "1.0.0-rc1", id="pep440-preview-spells-rc"),
+            pytest.param("0.0.0-20220314234659-c1aeb04d8e3f", "0.0.0-20220314234659", id="go-pseudo-version-hash"),
+            pytest.param(
+                "1.2.4-0.20220314234659-a1b2c3d4e5f6", "1.2.4-0.20220314234659", id="go-pseudo-version-after-a-tag"
+            ),
+            pytest.param(
+                "2.0.0-20190101000000-b1c2d3e4f5a6+incompatible",
+                "2.0.0-20190101000000+incompatible",
+                id="go-incompatible-pseudo-version-hash",
+            ),
         ],
     )
     def test_spellings_of_one_release_share_a_key(self, spelling, same):
@@ -226,6 +235,15 @@ class TestAggregateFixedVersion:
     )
     def test_fixes_below_the_installed_release_are_not_upgrade_targets(self, installed, fixes, expected):
         assert aggregate_fixed_version(_entries(*fixes), installed) == expected
+
+    @pytest.mark.parametrize("commit", ["1baeb04d8e3f", "c1aeb04d8e3f"])
+    def test_a_go_pseudo_versions_hash_does_not_decide_whether_it_is_a_prerelease(self, commit):
+        pseudo_version = f"0.0.0-20220314234659-{commit}"
+        assert aggregate_fixed_version(_entries(f"{pseudo_version}, 0.1.0"), None) == pseudo_version
+
+    @pytest.mark.parametrize("hash_like", ["a1b2c3d4", "c3f00d"])
+    def test_a_fix_with_a_non_numeric_start_is_no_release_line_of_its_rank(self, hash_like):
+        assert aggregate_fixed_version(_entries(hash_like, "1.2.3, 5.0.1"), None) is None
 
     def test_mixed_numeric_and_named_majors_sort_numerically(self):
         assert aggregate_fixed_version(_entries("9.1.0, 10.2.0, r5"), None) == "9.1.0, 10.2.0, r5"
