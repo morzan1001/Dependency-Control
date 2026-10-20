@@ -58,9 +58,9 @@ export function ComponentsDeltaTab(props: DeltaTabProps) {
                     : item.version ?? ""}
                 </TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">
-                  {item.change === "license_changed"
-                    ? `${item.from_license} → ${item.to_license}`
-                    : item.license ?? ""}
+                  {(item.from_license ?? "") !== (item.to_license ?? "")
+                    ? `${item.from_license ?? ""} → ${item.to_license ?? ""}`
+                    : item.license ?? item.to_license ?? ""}
                 </TableCell>
               </TableRow>
             ))}
