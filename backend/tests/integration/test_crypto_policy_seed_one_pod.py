@@ -56,4 +56,6 @@ async def test_a_start_that_finds_the_seed_current_leaves_the_next_seed_bump_unb
     monkeypatch.setattr("app.services.crypto_policy.seeder.CURRENT_SEED_VERSION", CURRENT_SEED_VERSION + 1)
     await seed_crypto_policies(db)
 
-    assert await _history(db) == [("seed", 1), ("seed", 2)]
+    assert (await CryptoPolicyRepository(db).get_system_policy()).seed_version == CURRENT_SEED_VERSION + 1
+    # The bump changed no rule, so it records no revision.
+    assert await _history(db) == [("seed", 1)]

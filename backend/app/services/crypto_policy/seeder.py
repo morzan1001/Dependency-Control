@@ -61,10 +61,13 @@ async def write_policy(
     if (
         current is not None
         and rules is not None
-        and action != PolicyAuditAction.SEED
         and [r.model_dump() for r in current.rules] == [r.model_dump() for r in rules]
     ):
-        return current
+        if action != PolicyAuditAction.SEED:
+            return current
+        # The stamp alone is what spares this policy on the seeder's next start.
+        await repo.upsert({"scope": scope, "project_id": project_id}, {"seed_version": CURRENT_SEED_VERSION})
+        return current.model_copy(update={"seed_version": CURRENT_SEED_VERSION})
     # The audit history outlives a deleted override, so a recreated one continues its numbering.
     audited = await PolicyAuditRepository(db).max_version(
         policy_scope=scope, project_id=project_id, policy_type="crypto"
