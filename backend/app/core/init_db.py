@@ -221,6 +221,11 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
     await database["scans"].create_index(SCANS_TIP_INDEX_KEY)
+    # The project scan list's pipeline and findings sorts page straight off these.
+    for sort_field in ("pipeline_iid", "findings_count"):
+        await database["scans"].create_index(
+            [("project_id", pymongo.ASCENDING), (sort_field, pymongo.ASCENDING), *SCANS_TIP_SORT]
+        )
     await database["scans"].create_index(
         [("project_id", pymongo.ASCENDING), ("branch", pymongo.ASCENDING), *SCANS_TIP_SORT]
     )

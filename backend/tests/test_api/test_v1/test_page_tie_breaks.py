@@ -26,9 +26,10 @@ _USER = User(id="u1", username="u1", email="u1@test.com", permissions=[])
     [
         ("status", "asc", [("status", 1), ("created_at", -1), ("_id", 1)]),
         ("status", "desc", [("status", -1), ("created_at", 1), ("_id", -1)]),
-        ("findings_count", "desc", [("findings_count", -1), ("created_at", -1), ("_id", 1)]),
+        ("findings_count", "desc", [("findings_count", -1), ("created_at", 1), ("_id", -1)]),
         ("pipeline_iid", "asc", [("pipeline_iid", 1), ("created_at", -1), ("_id", 1)]),
         ("branch", "asc", [("branch", 1), ("created_at", -1), ("_id", 1)]),
+        ("branch", "desc", [("branch", -1), ("created_at", 1), ("_id", -1)]),
         ("created_at", "desc", [("created_at", -1), ("_id", 1)]),
         ("created_at", "asc", [("created_at", 1), ("_id", -1)]),
     ],

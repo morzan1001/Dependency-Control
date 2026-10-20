@@ -30,7 +30,9 @@ async def test_no_scan_list_page_needs_an_in_memory_sort(db):
                 "_id": f"s-{i:02d}",
                 "project_id": "p",
                 "branch": f"b-{i % 3}",
-                "status": "completed",
+                "status": ("completed", "failed")[i % 2],
+                "pipeline_iid": i // 4,
+                "findings_count": i % 5,
                 "created_at": _T0 + timedelta(minutes=i // 2),
             }
             for i in range(20)
@@ -39,7 +41,7 @@ async def test_no_scan_list_page_needs_an_in_memory_sort(db):
 
     in_memory = {}
     for sort_order in ("asc", "desc"):
-        for sort_by in ("created_at", "branch"):
+        for sort_by in ("created_at", "branch", "status", "pipeline_iid", "findings_count"):
             page = read_project_scans("p", _READER, db, skip=5, limit=5, sort_by=sort_by, sort_order=sort_order)
             scans, entries = await profiled(db, page)
             assert len(scans) == 5
