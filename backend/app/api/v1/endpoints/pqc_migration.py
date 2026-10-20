@@ -13,7 +13,7 @@ from app.schemas.pqc_migration import MigrationPlanResponse
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ScopeResolver
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
-from app.services.pqc_migration.mappings_loader import CURRENT_MAPPINGS_VERSION
+from app.services.pqc_migration.mappings_loader import load_mappings
 
 router = CustomAPIRouter(prefix="/analytics/crypto", tags=["pqc-migration"])
 
@@ -37,7 +37,7 @@ async def get_pqc_migration_plan(
         resolved.scope_id,
         scope_digest(resolved.project_ids),
         limit,
-        CURRENT_MAPPINGS_VERSION,
+        load_mappings().version,
     )
     return await get_analytics_cache().get_or_compute(
         key, lambda: PQCMigrationPlanGenerator(db).generate(resolved=resolved, limit=limit)

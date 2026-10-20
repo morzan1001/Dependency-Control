@@ -13,7 +13,6 @@ from app.schemas.pqc_migration import (
 )
 from app.services.analytics.scopes import ResolvedScope
 from app.services.pqc_migration.mappings_loader import (
-    CURRENT_MAPPINGS_VERSION,
     PQCMapping,
     Timeline,
     load_mappings,
@@ -51,7 +50,7 @@ class PQCMigrationPlanGenerator:
             project_names=await ProjectRepository(self.db).names_by_ids(p for i in returned for p in i.project_ids),
             # Summarised over every migratable group: an under-counting plan is wrong in the direction that matters.
             summary=self._summarise(items, items_returned=len(returned)),
-            mappings_version=CURRENT_MAPPINGS_VERSION,
+            mappings_version=self.mappings.version,
         )
 
     @staticmethod

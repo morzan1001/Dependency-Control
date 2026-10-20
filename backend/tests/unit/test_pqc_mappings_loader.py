@@ -1,10 +1,4 @@
-from pathlib import Path
-
-import yaml
-
-from app.services.pqc_migration import mappings_loader
 from app.services.pqc_migration.mappings_loader import (
-    CURRENT_MAPPINGS_VERSION,
     load_mappings,
     normalise_family,
 )
@@ -12,12 +6,6 @@ from app.services.pqc_migration.mappings_loader import (
 
 def test_load_returns_populated_object():
     assert len(load_mappings().mappings) >= 5
-
-
-def test_the_mappings_file_carries_the_version_plans_report():
-    doc = yaml.safe_load(Path(mappings_loader.__file__).with_name("mappings.yaml").read_text())
-
-    assert doc["version"] == CURRENT_MAPPINGS_VERSION
 
 
 def test_load_mappings_include_rsa_to_ml_kem():

@@ -8,8 +8,6 @@ import yaml
 from app.core import ensure_utc
 from app.models.crypto_asset import CryptoAsset
 
-CURRENT_MAPPINGS_VERSION = 1
-
 _MAPPINGS_PATH = Path(__file__).resolve().parent / "mappings.yaml"
 
 
@@ -32,6 +30,7 @@ class Timeline:
 
 @dataclass(frozen=True)
 class PQCMappings:
+    version: int
     mappings: list[PQCMapping]
     timelines: list[Timeline]
     # Upper-cased family or alias -> canonical source_family; CBOM tools emit names in arbitrary casing.
@@ -63,7 +62,7 @@ def load_mappings() -> PQCMappings:
     ]
     families = {m.source_family.upper(): m.source_family for m in mappings}
     families.update({alias.upper(): family for alias, family in (doc.get("family_aliases") or {}).items()})
-    return PQCMappings(mappings=mappings, timelines=timelines, families=families)
+    return PQCMappings(version=doc["version"], mappings=mappings, timelines=timelines, families=families)
 
 
 def normalise_family(name: str | None, mappings: PQCMappings) -> str:
