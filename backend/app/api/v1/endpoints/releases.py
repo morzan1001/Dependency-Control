@@ -17,7 +17,7 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
     SCANS_TIP_SORT,
 )
-from app.models.release import Release, release_identity
+from app.models.release import Release
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import LineageAnalysis, ScanRepository
 from app.schemas.pagination import Page
@@ -88,17 +88,18 @@ async def mark_release(
         raise HTTPException(status_code=404, detail=f"No scan found for commit {payload.commit_hash}")
 
     scan_id = str(scan["_id"])
-    environment, version = release_identity(payload.environment, payload.version, scan.get("commit_tag"))
+    environment = payload.environment or DEFAULT_RELEASE_ENVIRONMENT
     released_at = ensure_utc(payload.released_at) or datetime.now(timezone.utc)
 
     row = await ReleaseRepository(db).record(
         Release(
             project_id=project_id,
             environment=environment,
-            version=version,
+            version=payload.version,
             scan_id=scan_id,
             released_at=released_at,
-        )
+        ),
+        scan.get("commit_tag"),
     )
     await db.scans.update_one({"_id": scan_id}, {"$set": {"is_release": True}})
     logger.info(

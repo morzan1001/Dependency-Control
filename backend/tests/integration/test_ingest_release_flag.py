@@ -192,6 +192,27 @@ async def test_a_later_mark_without_a_version_keeps_the_recorded_one(client, db,
 
 
 @pytest.mark.asyncio
+async def test_a_later_unversioned_mark_of_a_tag_pipeline_keeps_the_recorded_version(
+    client, db, api_key_headers, latest_release
+):
+    deploy = await client.post(
+        "/api/v1/ingest",
+        json=_sbom_payload(is_release=True, release_environment=_STAGING, release_version=_VERSION, commit_tag="v9"),
+        headers=api_key_headers,
+    )
+    assert deploy.status_code == 202, deploy.text
+
+    unversioned = await client.post(
+        "/api/v1/ingest",
+        json=_sbom_payload(is_release=True, release_environment=_STAGING, commit_tag="v9"),
+        headers=api_key_headers,
+    )
+    assert unversioned.status_code == 202, unversioned.text
+
+    assert (await latest_release(_STAGING))["version"] == _VERSION
+
+
+@pytest.mark.asyncio
 async def test_a_later_job_without_the_field_keeps_the_flag_and_the_record(client, db, api_key_headers, latest_release):
     first = await client.post(
         "/api/v1/ingest",

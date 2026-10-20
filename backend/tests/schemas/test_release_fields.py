@@ -75,12 +75,12 @@ def test_release_fields_are_empty_when_not_a_release():
     assert data.release_fields(datetime.now(timezone.utc)) == {}
 
 
-def test_release_fields_fall_back_to_commit_tag_and_production():
+def test_release_fields_fall_back_to_production_and_leave_the_tag_to_the_record():
     now = datetime.now(timezone.utc)
     data = SBOMIngest(**_minimal_payload(commit_tag=_COMMIT_TAG, is_release=True))
     assert data.release_fields(now) == {
         "environment": DEFAULT_RELEASE_ENVIRONMENT,
-        "version": _COMMIT_TAG,
+        "version": None,
         "released_at": now,
     }
 
@@ -101,15 +101,24 @@ async def test_a_release_off_a_branch_pipeline_is_unnamed_rather_than_named_blan
     data = SBOMIngest(**_minimal_payload(is_release=True, **payload))
 
     await ReleaseRepository(db).record(
-        Release(project_id=_PROJECT_ID, scan_id=_SCAN_ID, **data.release_fields(datetime.now(timezone.utc)))
+        Release(project_id=_PROJECT_ID, scan_id=_SCAN_ID, **data.release_fields(datetime.now(timezone.utc))),
+        data.commit_tag,
     )
 
     assert "version" not in await db.releases.find_one({"scan_id": _SCAN_ID})
 
 
-def test_a_blank_release_version_still_falls_back_to_the_commit_tag():
+@pytest.mark.asyncio
+async def test_a_blank_release_version_still_falls_back_to_the_commit_tag():
+    db = FakeDatabase()
     data = SBOMIngest(**_minimal_payload(is_release=True, release_version=_UNSET, commit_tag=_COMMIT_TAG))
-    assert data.release_fields(datetime.now(timezone.utc))["version"] == _COMMIT_TAG
+
+    await ReleaseRepository(db).record(
+        Release(project_id=_PROJECT_ID, scan_id=_SCAN_ID, **data.release_fields(datetime.now(timezone.utc))),
+        data.commit_tag,
+    )
+
+    assert (await db.releases.find_one({"scan_id": _SCAN_ID}))["version"] == _COMMIT_TAG
 
 
 def test_release_fields_name_the_keys_of_a_release_document():

@@ -10,7 +10,9 @@ _Version = Annotated[str, StringConstraints(strip_whitespace=True, max_length=RE
 
 class ReleaseMarkRequest(BaseModel):
     commit_hash: str = Field(..., min_length=1, description="Commit whose newest scan becomes the release")
-    version: _Version | None = Field(None, description="Release name; blank falls back to the scan's commit_tag")
+    version: _Version | None = Field(
+        None, description="Release name; blank names a first mark of the scan to the environment by its commit_tag"
+    )
     environment: str | None = Field(None, description=f"Slug; falls back to {DEFAULT_RELEASE_ENVIRONMENT}")
     released_at: datetime | None = Field(None, description="Release time; falls back to server time")
 

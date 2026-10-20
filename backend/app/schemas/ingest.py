@@ -4,7 +4,6 @@ from typing import Any
 from pydantic import BaseModel, Field, computed_field, field_validator
 
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, validate_release_environment
-from app.models.release import release_identity
 
 _DESC_SCAN_ID = "Unique identifier of the scan"
 
@@ -27,7 +26,9 @@ class BaseIngest(BaseModel):
     pipeline_user: str | None = Field(None, description="User who triggered the pipeline")
 
     is_release: bool = Field(False, description="Mark this scan as the released/deployed artefact")
-    release_version: str | None = Field(None, description="Release name; falls back to commit_tag")
+    release_version: str | None = Field(
+        None, description="Release name; a first mark of the scan to the environment falls back to commit_tag"
+    )
     release_environment: str | None = Field(None, description=f"Slug; falls back to {DEFAULT_RELEASE_ENVIRONMENT}")
 
     @field_validator("release_environment")
@@ -39,8 +40,11 @@ class BaseIngest(BaseModel):
         """Empty for a payload that marks nothing, so the other jobs writing the same scan never demote its mark."""
         if not self.is_release:
             return {}
-        environment, version = release_identity(self.release_environment, self.release_version, self.commit_tag)
-        return {"environment": environment, "version": version, "released_at": released_at}
+        return {
+            "environment": self.release_environment or DEFAULT_RELEASE_ENVIRONMENT,
+            "version": self.release_version,
+            "released_at": released_at,
+        }
 
 
 class SBOMIngest(BaseIngest):

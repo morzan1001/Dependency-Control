@@ -109,6 +109,26 @@ async def test_record_answers_with_the_stored_row_so_an_unversioned_re_mark_keep
 
 
 @pytest.mark.asyncio
+async def test_the_version_fallback_names_a_first_mark_only(db):
+    repo = ReleaseRepository(db)
+    await repo.record(
+        Release(project_id=_PROJECT, environment=_ENVIRONMENT, version=_VERSION, scan_id=_SCAN, released_at=_NOW)
+    )
+
+    re_marked = await repo.record(
+        Release(project_id=_PROJECT, environment=_ENVIRONMENT, scan_id=_SCAN, released_at=_NOW), "v-tag"
+    )
+    first = await repo.record(
+        Release(project_id=_PROJECT, environment="staging", scan_id=_SCAN, released_at=_NOW), "v-tag"
+    )
+
+    assert re_marked is not None
+    assert re_marked["version"] == _VERSION
+    assert first is not None
+    assert first["version"] == "v-tag"
+
+
+@pytest.mark.asyncio
 async def test_withdraw_names_the_environments_the_scan_still_runs_in(db):
     repo = ReleaseRepository(db)
     for environment in (_ENVIRONMENT, "staging"):

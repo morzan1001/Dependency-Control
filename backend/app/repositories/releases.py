@@ -27,17 +27,21 @@ class ReleaseRepository(BaseRepository[Release]):
         rows: list[dict[str, Any]] = await cursor.to_list(limit)
         return rows
 
-    async def record(self, release: Release) -> dict[str, Any] | None:
+    async def record(self, release: Release, version_fallback: str | None = None) -> dict[str, Any] | None:
         """A re-deploy refreshes its record, a rollback adds its own; None only if a concurrent withdraw removed it."""
         key = {field: getattr(release, field) for field in RELEASES_UPSERT_KEY_FIELDS}
         # Only when named, so a later job cannot null the deploy job's version, nor an unset CI tag ("") name it.
         changes: dict[str, Any] = {"released_at": release.released_at}
+        inserted: dict[str, Any] = {"_id": release.id}
         if release.version:
             changes["version"] = release.version
+        elif version_fallback:
+            # A first mark only, so an unversioned re-mark keeps the version a deploy job named.
+            inserted["version"] = version_fallback
         try:
             row: dict[str, Any] | None = await self.collection.find_one_and_update(
                 key,
-                {"$set": changes, "$setOnInsert": {"_id": release.id}},
+                {"$set": changes, "$setOnInsert": inserted},
                 upsert=True,
                 return_document=ReturnDocument.AFTER,
             )
