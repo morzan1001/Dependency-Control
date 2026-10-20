@@ -123,3 +123,16 @@ async def test_scope_description_echoes_input():
     result = await _evaluate(_plan(), scope_description="project 'payments'")
 
     assert result.scope_description == "project 'payments'"
+
+
+@pytest.mark.asyncio
+async def test_a_control_names_how_often_and_in_which_projects_its_asset_was_found():
+    """A team or global item spans projects, which its single bom_ref as evidence does not show."""
+    plan = _plan()
+    plan.items[0] = plan.items[0].model_copy(update={"project_ids": [f"p{i}" for i in range(7)], "asset_count": 12})
+    plan.project_names = {f"p{i}": f"service-{i}" for i in range(1, 7)}
+
+    result = await _evaluate(plan)
+
+    control = next(c for c in result.controls if c.control_id == "PQC-RSA-r1")
+    assert "12 occurrence(s) in p0, service-1, service-2, service-3, service-4 and 2 more." in control.description
