@@ -7,6 +7,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection
 
+from app.core.constants import SCANS_TIP_SORT
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION, ScanOutdatedSet, ScanUpdateDelta
 from app.repositories.base import BaseRepository
 from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository, bounded_gather
@@ -123,6 +124,18 @@ def _commit_token(scan: dict[str, Any]) -> Any:
     return scan["_id"] if commit in (None, "") else commit
 
 
+async def _newest_scans(
+    collection: AsyncIOMotorCollection, project_ids: Sequence[str], scope: dict[str, Any]
+) -> AsyncIterator[tuple[tuple[str, str], dict[str, Any]]]:
+    """Each project's newest WINDOW_HARD_LIMIT scans off the tip index, as no read path folds more of a branch."""
+    for project_id in project_ids:
+        cursor = collection.find({"project_id": project_id, **scope}, _ACTIVITY_PROJECTION).sort(SCANS_TIP_SORT)
+        async for doc in cursor.limit(WINDOW_HARD_LIMIT):
+            chain = _named_branch(doc)
+            if chain is not None:
+                yield chain, doc
+
+
 async def window_scans_by_branch(
     scan_repo: ScanRepository,
     project_ids: Sequence[str],
@@ -131,10 +144,15 @@ async def window_scans_by_branch(
     """Both read paths pick their branch from these counts, so neither settles on a branch the other would not."""
     # A findings-only scan holds no dependencies to compare; $ne keeps scans older than sbom_refs.
     scoped = {**usable_scan_match(since), "sbom_refs": {"$ne": []}}
+    scans = (
+        _newest_scans(scan_repo.collection, project_ids, scoped)
+        if since is None
+        else _window_docs(scan_repo.collection, project_ids, scoped, _ACTIVITY_PROJECTION)
+    )
 
     commits: dict[tuple[str, str], Counter[str]] = {}
     latest: dict[tuple[str, str], datetime] = {}
-    async for chain, scan in _window_docs(scan_repo.collection, project_ids, scoped, _ACTIVITY_PROJECTION):
+    async for chain, scan in scans:
         per_commit = commits.setdefault(chain, Counter())
         if isinstance(token := _commit_token(scan), str):
             per_commit[token] += 1

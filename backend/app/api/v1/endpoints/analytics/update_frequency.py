@@ -18,6 +18,7 @@ from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.api.v1.helpers.teams import resolve_team_names, team_refs
 from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.config import settings
+from app.core.constants import SCANS_TIP_SORT
 from app.core.permissions import Permissions
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
@@ -47,6 +48,7 @@ from app.services.update_frequency import (
     rank_summaries,
     select_primary_branch,
     spanned_days,
+    walk_fetch_limit,
     window_cutoff,
 )
 from app.services.update_frequency_fold import (
@@ -116,13 +118,28 @@ def _comparison_cache_key(
     return f"{base}:w{window_days}:r{int(use_rollup)}"
 
 
-async def _branch_scan_token(db: DatabaseDep, project_id: str, branch: str | None, since: datetime | None) -> str:
-    """Count and newest completion of the scans the walk reads; the latter catches a re-finalised scan."""
+async def _branch_scan_token(
+    db: DatabaseDep, project_id: str, branch: str | None, since: datetime | None, limit: int
+) -> str:
+    """Count, newest completion and oldest date of the scans the walk reads: a re-finalised or retired one moves it."""
     match = {**usable_scan_match(since), "project_id": project_id, "branch": branch}
     rows = await ScanRepository(db).aggregate(
-        [{"$match": match}, {"$group": {"_id": None, "scans": {"$sum": 1}, "completed_at": {"$max": "$completed_at"}}}]
+        [
+            {"$match": match},
+            # The tip order is indexed, so the read stops at the walk's stretch instead of grouping the branch.
+            {"$sort": dict(SCANS_TIP_SORT)},
+            {"$limit": limit},
+            {
+                "$group": {
+                    "_id": None,
+                    "scans": {"$sum": 1},
+                    "completed_at": {"$max": "$completed_at"},
+                    "oldest": {"$min": "$created_at"},
+                }
+            },
+        ]
     )
-    return f"{rows[0]['scans']}@{rows[0]['completed_at']}" if rows else "0"
+    return f"{rows[0]['scans']}@{rows[0]['completed_at']}@{rows[0]['oldest']}" if rows else "0"
 
 
 @router.get("/projects/{project_id}/update-frequency", responses=RESP_AUTH_404)
@@ -148,7 +165,9 @@ async def get_project_update_frequency(
         max_scans=max_scans,
         window_days=window_days,
         branch=analyzed_branch,
-        version_token=await _branch_scan_token(db, project_id, analyzed_branch, since),
+        version_token=await _branch_scan_token(
+            db, project_id, analyzed_branch, since, walk_fetch_limit(max_scans, since)
+        ),
     )
 
     async def _fetch() -> dict[str, Any]:

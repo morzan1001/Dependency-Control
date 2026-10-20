@@ -10,8 +10,10 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
 )
+from app.api.v1.endpoints.analytics.update_frequency import _branch_scan_token
 from app.core.init_db import create_indexes
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION
+from app.repositories import update_frequency as update_frequency_repository
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     _WINDOW_PROJECT_BATCH,
@@ -247,3 +249,39 @@ async def test_the_comparison_reads_a_busy_chain_only_up_to_its_cap_off_the_chai
     (plan,) = plans
     assert plan["executionStats"]["totalDocsExamined"] == 5
     assert "project_id_1_branch_1_scan_created_at_-1__id_-1" in str(plan["queryPlanner"]["winningPlan"])
+
+
+async def test_the_scan_count_view_elects_from_a_bounded_read_off_the_tip_index(db, monkeypatch):
+    await create_indexes(db)
+    monkeypatch.setattr(update_frequency_repository, "WINDOW_HARD_LIMIT", 5)
+    for index in range(30):
+        await _scan(db, f"s{index:02d}", "p-a", "main" if index % 2 else "dev", _at(index), commit_hash=f"c{index}")
+    repo = ScanRepository(db)
+
+    plans = await _explained(repo.collection, lambda: window_scans_by_branch(repo, ["p-a"], None))
+
+    (plan,) = plans
+    assert plan["executionStats"]["totalDocsExamined"] == 5
+
+
+async def test_the_cache_token_reads_only_the_stretch_the_walk_reads(db, monkeypatch):
+    await create_indexes(db)
+    for index in range(30):
+        await _scan(db, f"s{index:02d}", "p-a", "main", _at(index), commit_hash=f"c{index}", completed_at=_at(index))
+    pipelines: list[list[dict[str, Any]]] = []
+    real_aggregate = ScanRepository.aggregate
+
+    async def _aggregate(self: ScanRepository, pipeline: list[dict[str, Any]], *args: Any, **kwargs: Any) -> Any:
+        pipelines.append(pipeline)
+        return await real_aggregate(self, pipeline, *args, **kwargs)
+
+    monkeypatch.setattr(ScanRepository, "aggregate", _aggregate)
+
+    token = await _branch_scan_token(db, "p-a", "main", None, 5)
+
+    assert token == f"5@{_at(29)}@{_at(25)}"
+    explain = await db.command(
+        "explain", {"aggregate": "scans", "pipeline": pipelines[0], "cursor": {}}, verbosity="executionStats"
+    )
+    stats = explain.get("executionStats") or explain["stages"][0]["$cursor"]["executionStats"]
+    assert stats["totalDocsExamined"] == 5

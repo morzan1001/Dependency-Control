@@ -447,6 +447,33 @@ class TestProjectEndpointCaching:
         assert live.await_count == 2
 
     @pytest.mark.asyncio
+    async def test_a_scan_older_than_the_walked_stretch_keeps_the_entry(self):
+        # Two bars read at most ten scans, so the eleventh-newest is no input of the cached answer.
+        db = FakeDatabase()
+        await db.scans.insert_many([_scan(f"s{i:02d}", days_ago=20 - i) for i in range(12)])
+        live = AsyncMock(return_value=_metrics("live"))
+
+        with _project_patched(FakeCache(), live):
+            await _view(db, max_scans=2)
+            await db.scans.delete_one({"_id": "s00"})
+            await _view(db, max_scans=2)
+
+        assert live.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_scan_retired_from_inside_the_walked_stretch_misses(self):
+        db = FakeDatabase()
+        await db.scans.insert_many([_scan(f"s{i:02d}", days_ago=20 - i) for i in range(12)])
+        live = AsyncMock(return_value=_metrics("live"))
+
+        with _project_patched(FakeCache(), live):
+            await _view(db, max_scans=2)
+            await db.scans.delete_one({"_id": "s05"})
+            await _view(db, max_scans=2)
+
+        assert live.await_count == 2
+
+    @pytest.mark.asyncio
     async def test_a_re_finalised_scan_misses(self):
         db = await _scanned_db()
         live = AsyncMock(return_value=_metrics("live"))

@@ -695,6 +695,11 @@ def fold_runs_into_bars(entries: Sequence[ScanTimelineEntry], commits: Sequence[
 _BAR_FETCH_HEADROOM = 5
 
 
+def walk_fetch_limit(max_scans: int, since: datetime | None) -> int:
+    """With since set, the calendar window (capped by WINDOW_HARD_LIMIT) applies and max_scans is ignored."""
+    return WINDOW_HARD_LIMIT if since is not None else min(WINDOW_HARD_LIMIT, max_scans * _BAR_FETCH_HEADROOM)
+
+
 async def _load_completed_scans(
     scan_repo: ScanRepository,
     project_id: str,
@@ -702,8 +707,7 @@ async def _load_completed_scans(
     max_scans: int,
     since: datetime | None,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """With since set, the calendar window (capped by WINDOW_HARD_LIMIT) applies and max_scans is ignored."""
-    fetch_limit = WINDOW_HARD_LIMIT if since is not None else min(WINDOW_HARD_LIMIT, max_scans * _BAR_FETCH_HEADROOM)
+    fetch_limit = walk_fetch_limit(max_scans, since)
     # Filtered in the query so the limit counts only usable scans, even when the newest ones failed.
     docs = await scan_repo.find_many_raw(
         {**usable_scan_match(since), "project_id": project_id, "branch": branch},

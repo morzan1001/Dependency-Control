@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import app.repositories.update_frequency as update_frequency_repository
 import app.services.update_frequency as update_frequency_module
 from app.core.purl import parse_purl
 from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
@@ -628,6 +629,18 @@ class TestBranchScopedScanSelection:
         assert m.scan_count == 2
         assert [e.scan_id for e in m.scan_timeline] == ["s3", "s4"]
         assert m.total_updates == 1
+
+    @pytest.mark.asyncio
+    async def test_the_scan_count_view_elects_from_the_newest_scans_only(self, monkeypatch):
+        # No read path folds more than the cap, so a branch busy only before it must not elect.
+        monkeypatch.setattr(update_frequency_repository, "WINDOW_HARD_LIMIT", 4)
+        scans = [_make_scan(f"l{i}", i, branch="legacy") for i in range(5)]
+        scans += [_make_scan(f"m{i}", 10 + i) for i in range(3)]
+        deps = {s["_id"]: [_make_dep(s["_id"], "pkg-a", "1.0.0")] for s in scans}
+
+        m = await self._compute_elected(scans, deps)
+
+        assert (m.branch, m.scan_count) == ("main", 3)
 
     @pytest.mark.asyncio
     async def test_a_branch_dated_only_in_text_does_not_win_the_scan_count_view(self):
