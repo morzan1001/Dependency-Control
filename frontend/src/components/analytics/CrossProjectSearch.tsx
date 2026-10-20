@@ -273,28 +273,28 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                     renderRow={(result, style) => (
                       <div
                         className="flex items-center border-b cursor-pointer hover:bg-muted transition-colors"
-                        role="button"
+                        role="row"
                         tabIndex={0}
                         style={style}
                         onClick={() => onSelectResult?.(result)}
                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectResult?.(result); } }}
                       >
-                        <div className="w-[250px] px-4 py-2 truncate">
+                        <div role="cell" className="w-[250px] px-4 py-2 truncate">
                           <div className="flex items-center gap-2 min-w-0">
                             <Package className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                             <span className="font-medium truncate">{result.package}</span>
                           </div>
                         </div>
-                        <div className="w-[120px] px-4 py-2 truncate">
+                        <div role="cell" className="w-[120px] px-4 py-2 truncate">
                           <Badge variant="outline" className="truncate max-w-full">{result.version}</Badge>
                         </div>
-                        <div className="w-[100px] px-4 py-2">
+                        <div role="cell" className="w-[100px] px-4 py-2">
                           <Badge variant="secondary" className="truncate">{result.type}</Badge>
                         </div>
-                        <div className="w-[150px] px-4 py-2 truncate">
+                        <div role="cell" className="w-[150px] px-4 py-2 truncate">
                           <span className="truncate block">{result.license || <span className="text-muted-foreground">-</span>}</span>
                         </div>
-                        <div className="flex-1 min-w-0 px-4 py-2 truncate">
+                        <div role="cell" className="flex-1 min-w-0 px-4 py-2 truncate">
                           <Link
                             to={`/projects/${result.project_id}`}
                             className="hover:underline text-primary truncate block"

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, it, expect, vi } from "vitest";
@@ -209,6 +209,39 @@ describe("CrossProjectSearch on a narrow screen", () => {
     const table = (await screen.findByText("lodash")).closest("table");
     expect(table).toHaveClass("table-fixed", "min-w-[820px]");
     expect(table?.parentElement).toHaveClass("overflow-auto");
+  });
+
+  it("hands assistive technology each result as a row of five cells under the header, and opens it from the keyboard", async () => {
+    search.mockReset();
+    search.mockResolvedValue({
+      items: [{ project_id: "p", project_name: "P", package: "lodash", version: "4.17.21", type: "npm", direct: true }],
+      total: 1,
+      page: 1,
+      size: 50,
+      pages: 1,
+    });
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+    const onSelectResult = vi.fn();
+    const main = document.createElement("main");
+    Object.defineProperty(main, "offsetHeight", { value: 800, configurable: true });
+    document.body.appendChild(main);
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <CrossProjectSearch onSelectResult={onSelectResult} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+      { container: main },
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Search for a package name/), { target: { value: "lodash" } });
+
+    const table = (await screen.findByText("lodash")).closest("table")!;
+    const [, result, ...rest] = within(table).getAllByRole("row");
+    expect(rest).toHaveLength(0);
+    expect(within(result).getAllByRole("cell")).toHaveLength(5);
+    fireEvent.keyDown(result, { key: "Enter" });
+    expect(onSelectResult).toHaveBeenCalledWith(expect.objectContaining({ package: "lodash" }));
   });
 });
 
