@@ -61,7 +61,10 @@ class GHSAProvider:
             if lifts_at is None and _bare_secondary_limit(response):
                 lifts_at = time.time() + UNNAMED_QUOTA_WAIT_SECONDS
             if lifts_at is not None:
-                self._rate_limited_until[authenticated] = lifts_at
+                # Answers in flight land in any order; a short secondary limit must not end a longer quota hold.
+                self._rate_limited_until[authenticated] = max(
+                    self._rate_limited_until.get(authenticated, 0.0), lifts_at
+                )
             response.raise_for_status()
             return _parse_ghsa_advisory(response.json(), ghsa_id).model_dump()
 

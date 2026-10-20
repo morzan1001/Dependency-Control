@@ -218,3 +218,27 @@ async def test_an_exhausted_anonymous_quota_does_not_stop_authenticated_lookups(
     await _resolve(_OTHER)
 
     assert (await _resolve(_LOG4SHELL, token="ghp_scan"))[_LOG4SHELL].cve_id == _LOG4SHELL_CVE
+
+
+@pytest.mark.asyncio
+async def test_a_shorter_hold_answered_later_does_not_cut_a_spent_quota_short(fake_cache, monkeypatch):
+    reset = str(int(time.time()) + 3600)
+    secondary_sent = asyncio.Event()
+
+    async def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(_OTHER):
+            secondary_sent.set()
+            await asyncio.sleep(0.01)
+            return httpx.Response(
+                403, headers={"Retry-After": "60", "X-RateLimit-Remaining": "4990"}, json=_SECONDARY_LIMIT_BODY
+            )
+        await secondary_sent.wait()
+        return httpx.Response(403, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset})
+
+    seen = serve_enrichment(monkeypatch, fake_cache, answer)
+    await _resolve(_LOG4SHELL, _OTHER)
+    after_retry_after = time.time() + 61
+    monkeypatch.setattr(time, "time", lambda: after_retry_after)
+
+    assert (await _resolve(_UNKNOWN))[_UNKNOWN].cve_id is None
+    assert len(seen) == 2
