@@ -38,9 +38,11 @@ from app.api.v1.helpers import (
 )
 from app.api.v1.helpers.auth import send_project_member_added_email
 from app.api.v1.helpers.projects import (
+    authorize_project_read,
     direct_member_role,
     effective_project_role,
     load_project_with_members,
+    project_access,
     reject_unknown_analyzers,
 )
 from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, case_insensitive_key, case_insensitive_sort
@@ -429,10 +431,10 @@ async def read_project(
     db: DatabaseDep,
 ) -> ProjectWithTeam:
     """Get a specific project by ID."""
-    await check_project_access(project_id, current_user, db)
     data = await load_project_with_members(db, project_id)
     if data is None:
         raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+    authorize_project_read(data, current_user)
     return ProjectWithTeam(**data)
 
 
@@ -816,11 +818,11 @@ async def update_notification_settings(
     db: DatabaseDep,
 ) -> ProjectDetail:
     """Update notification preferences for the current user in this project."""
-    project = await check_project_access(project_id, current_user, db)
+    project, role = await project_access(project_id, current_user, db)
     project_repo = ProjectRepository(db)
     user_id = str(current_user.id)
 
-    role = await effective_project_role(project, current_user, TeamRepository(db))
+    role = role or await effective_project_role(project, current_user, TeamRepository(db))
     may_enforce = role == PROJECT_ROLE_ADMIN or is_write_superuser(current_user)
 
     if settings.enforce_notification_settings is not None and may_enforce:

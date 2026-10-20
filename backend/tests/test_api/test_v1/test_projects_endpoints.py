@@ -32,7 +32,7 @@ class TestUpdateNotificationSettingsAdmin:
     def _run(self, current_user, project, settings, project_repo):
         from app.api.v1.endpoints.projects import update_notification_settings
 
-        with patch(f"{MODULE}.check_project_access", AsyncMock(return_value=project)):
+        with patch(f"{MODULE}.project_access", AsyncMock(return_value=(project, "admin"))):
             with patch(f"{MODULE}.ProjectRepository", return_value=project_repo):
                 return asyncio.run(
                     update_notification_settings(
@@ -539,7 +539,7 @@ class TestWritesReadTheProjectBackOnce:
         )
 
         with (
-            patch(f"{MODULE}.check_project_access", AsyncMock(return_value=project)),
+            patch(f"{MODULE}.project_access", AsyncMock(return_value=(project, "admin"))),
             patch.object(
                 ProjectRepository, "get_by_id", autospec=True, side_effect=ProjectRepository.get_by_id
             ) as reads,
