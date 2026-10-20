@@ -12,10 +12,13 @@ import {
     FileLocation 
 } from "./shared"
 import { SeverityBadge } from '../SeverityBadge'
-import { MARKDOWN_HEADINGS } from '@/lib/markdown'
+import { markdownHeadings, markdownHeadingTag } from '@/lib/markdown'
+
+// The finding dialog's sections are h4, so a rule's # becomes h5.
+const RuleSubheading = markdownHeadingTag(5, 2)
 
 const markdownComponents: Partial<Components> = {
-    ...MARKDOWN_HEADINGS,
+    ...markdownHeadings(5),
     code: ({ className, children, ...props }) => {
         const isInline = !className
         if (isInline) {
@@ -34,10 +37,10 @@ const markdownComponents: Partial<Components> = {
         )
     },
     h2: ({ children }) => (
-        <h5 className="text-sm font-semibold mt-4 mb-2 flex items-center gap-2">
+        <RuleSubheading className="text-sm font-semibold mt-4 mb-2 flex items-center gap-2">
             <Info className="h-4 w-4" />
             {children}
-        </h5>
+        </RuleSubheading>
     ),
     ul: ({ children }) => (
         <ul className="list-disc list-inside space-y-1 text-sm">{children}</ul>

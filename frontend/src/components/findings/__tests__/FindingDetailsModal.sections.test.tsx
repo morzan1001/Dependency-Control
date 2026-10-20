@@ -498,6 +498,16 @@ describe("FindingDetailsModal advisory description", () => {
     expect(screen.getByText("Remote code execution.")).not.toHaveClass("font-semibold");
   });
 
+  it("ranks an advisory's headings below the dialog's h4 sections", () => {
+    renderModal(finding({
+      id: "CVE-2021-44228",
+      details: { vulnerabilities: [{ id: "CVE-2021-44228", severity: "CRITICAL", description: "# Summary\n\n## Impact\n\nRemote code execution." }] },
+    }));
+
+    expect(screen.getByRole("heading", { level: 5, name: "Summary" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 6, name: "Impact" })).toBeInTheDocument();
+  });
+
   it("shows an advisory's list with bullets, like the chat and a SAST rule", () => {
     renderModal(finding({
       id: "CVE-2021-44228",

@@ -66,4 +66,15 @@ describe("SastDetailsView description", () => {
     expect(screen.getByRole("heading", { name: "Example" })).toHaveClass("font-semibold");
     expect(screen.getByRole("heading", { name: "Description" })).toHaveClass("font-semibold");
   });
+
+  it("ranks a rule's headings below its h4 section, in the order the markdown gives them", () => {
+    const sast = { ...finding("sast", {}), description: "# Rule\n\n## Description\n\nUser input reaches eval().\n\n### Example\n\nAvoid eval." };
+
+    render(<SastDetailsView finding={sast} />);
+
+    expect(screen.getByRole("heading", { level: 4, name: "Description & Remediation" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 5, name: "Rule" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 6, name: "Description" }).querySelector("svg")).not.toBeNull();
+    expect(screen.getByRole("heading", { level: 6, name: "Example" })).toBeInTheDocument();
+  });
 });
