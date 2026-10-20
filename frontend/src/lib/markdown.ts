@@ -10,3 +10,9 @@ export const MARKDOWN_HEADINGS: Components = Object.fromEntries(
     ({ children }: { children?: ReactNode }) => createElement(tag, { className: 'mb-2 mt-4 text-sm font-semibold first:mt-0' }, children),
   ]),
 )
+
+export const MARKDOWN_BODY: Components = {
+  p: ({ children }) => createElement('p', { className: 'my-1' }, children),
+  ul: ({ children }) => createElement('ul', { className: 'my-1 list-disc pl-5' }, children),
+  ol: ({ children }) => createElement('ol', { className: 'my-1 list-decimal pl-5' }, children),
+}

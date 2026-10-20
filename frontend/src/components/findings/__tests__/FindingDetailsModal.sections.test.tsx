@@ -489,4 +489,13 @@ describe("FindingDetailsModal advisory description", () => {
     expect(screen.getByRole("heading", { level: 3, name: "Impact" })).toHaveClass("font-semibold");
     expect(screen.getByText("Remote code execution.")).not.toHaveClass("font-semibold");
   });
+
+  it("shows an advisory's list with bullets, like the chat and a SAST rule", () => {
+    renderModal(finding({
+      id: "CVE-2021-44228",
+      details: { vulnerabilities: [{ id: "CVE-2021-44228", severity: "CRITICAL", description: "Affected:\n\n- log4j-core\n- log4j-api" }] },
+    }));
+
+    expect(screen.getByRole("list")).toHaveClass("list-disc");
+  });
 });

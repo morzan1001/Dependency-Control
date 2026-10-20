@@ -7,7 +7,7 @@ import { Link as RouterLink } from 'react-router-dom';
 
 import { Card } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { MARKDOWN_HEADINGS } from '@/lib/markdown';
+import { MARKDOWN_BODY, MARKDOWN_HEADINGS } from '@/lib/markdown';
 import { cn } from '@/lib/utils';
 import type { Message, ToolCall } from '@/types/chat';
 
@@ -61,12 +61,10 @@ function AssistantLink(props: Readonly<ComponentProps<'a'>>) {
 // Module-level, so a streaming answer's table is not remounted, losing its sideways scroll, on every chunk.
 const ASSISTANT_MARKDOWN: Components = {
   ...MARKDOWN_HEADINGS,
+  ...MARKDOWN_BODY,
   a: AssistantLink,
   // A rendered <img> would fetch a model-chosen URL without a click.
   img: ({ src, alt }) => <AssistantLink href={src}>{alt || src}</AssistantLink>,
-  p: ({ children }) => <p className="my-1">{children}</p>,
-  ul: ({ children }) => <ul className="my-1 list-disc pl-5">{children}</ul>,
-  ol: ({ children }) => <ol className="my-1 list-decimal pl-5">{children}</ol>,
   blockquote: ({ children }) => <blockquote className="my-2 border-l-4 border-muted-foreground/40 pl-4 italic">{children}</blockquote>,
   // Matches a tool call's panel; its <code> child drops the inline chip.
   pre: ({ children }) => (
