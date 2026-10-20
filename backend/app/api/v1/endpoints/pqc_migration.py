@@ -3,6 +3,7 @@ from fastapi import Query
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_403
+from app.core.cache import scope_digest
 from app.core.constants import (
     DEFAULT_PQC_PLAN_ITEMS,
     MAX_PQC_PLAN_ITEMS,
@@ -30,22 +31,14 @@ async def get_pqc_migration_plan(
         scope_id=scope_id,
     )
 
-    cache = get_analytics_cache()
-    cache_key = (
+    key = (
         "pqc-migration",
-        scope,
-        scope_id,
-        current_user.id,
+        resolved.scope,
+        resolved.scope_id,
+        scope_digest(resolved.project_ids),
         limit,
         CURRENT_MAPPINGS_VERSION,
     )
-    hit, cached = cache.get(cache_key)
-    if hit and isinstance(cached, MigrationPlanResponse):
-        return cached
-
-    resp = await PQCMigrationPlanGenerator(db).generate(
-        resolved=resolved,
-        limit=limit,
+    return await get_analytics_cache().get_or_compute(
+        key, lambda: PQCMigrationPlanGenerator(db).generate(resolved=resolved, limit=limit)
     )
-    cache.set(cache_key, resp)
-    return resp

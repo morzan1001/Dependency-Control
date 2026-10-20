@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 
 
 @pytest.mark.asyncio
@@ -113,3 +115,24 @@ async def test_one_users_plan_is_not_served_to_the_next_caller(
     assert owner_of_p2.status_code == 200, owner_of_p2.text
     assert owner_of_p2.json()["summary"]["total_items"] == 0
     assert owner_of_p2.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_two_callers_of_one_project_share_one_plan(client, db, owner_auth_headers_proj, admin_auth_headers):
+    await db.scans.insert_one(
+        {"_id": "s1", "project_id": "p", "status": "completed", "created_at": datetime.now(timezone.utc)}
+    )
+    generate = PQCMigrationPlanGenerator.generate
+    runs = 0
+
+    async def _counting_generate(self, **kwargs):
+        nonlocal runs
+        runs += 1
+        return await generate(self, **kwargs)
+
+    with patch.object(PQCMigrationPlanGenerator, "generate", _counting_generate):
+        for headers in (owner_auth_headers_proj, admin_auth_headers):
+            resp = await client.get("/api/v1/analytics/crypto/pqc-migration?scope=project&scope_id=p", headers=headers)
+            assert resp.status_code == 200, resp.text
+
+    assert runs == 1
