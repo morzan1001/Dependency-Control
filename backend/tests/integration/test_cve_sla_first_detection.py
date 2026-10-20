@@ -513,6 +513,25 @@ async def test_the_first_detection_lookup_reads_one_key_per_finding_however_many
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
+async def test_the_first_detection_lookup_reads_every_kept_copy_of_a_finding_id_several_components_share(db):
+    components = ["bash", "coreutils", "ghostscript", "grep", "readline"]
+    kept_scans = 30
+    for scan in range(kept_scans):
+        await _persist(db, f"scan-{scan}", _days_ago(60 - scan), *map(_gpl, components))
+    records, _ = _prepare_finding_records(list(map(_gpl, components)), "scan-now", _PROJECT, _NOW)
+    await _cold_plan_cache(db)
+
+    commands = await _profiled(db, _stamp_first_seen(records, _PROJECT, FindingRepository(db)))
+
+    # The newest copy dates only its own component; the others fall back to the $min over every kept copy.
+    assert sum(command["keysExamined"] for command in commands) >= (len(components) - 1) * kept_scans
+    assert {record["component"]: ensure_utc(record["first_seen_at"]) for record in records} == dict.fromkeys(
+        components, _days_ago(60)
+    )
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
 async def test_the_advisory_lookup_reads_one_copy_per_stored_version(db):
     for scan in range(4):
         await _persist(db, f"old-{scan}", _days_ago(90 - scan), _log4j_advisories(_LOG4SHELL, version="2.14.1"))
