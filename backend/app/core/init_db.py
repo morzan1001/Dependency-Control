@@ -52,7 +52,7 @@ RELEASES_LATEST_LOOKUP_KEY: list[tuple[str, int]] = [
 RELEASES_ENVIRONMENT_SORT = RELEASES_LATEST_LOOKUP_KEY[1:]
 
 
-async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[Any]) -> None:
+async def _backfill_gitlab_owner_provenance(database: AsyncIOMotorDatabase[Any]) -> None:
     """Skips a team bound to several GitLab instances, as the wrong one's next ingest would delete the owner."""
     teams = database["teams"]
     projects = database["projects"]
@@ -87,7 +87,7 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
                 {"team_ids": team_id, provenance: {"$in": [None]}},
                 {"$set": {provenance: team_source(TEAM_SOURCE_GITLAB, instance_id)}},
             )
-            projects_stamped += getattr(result, "modified_count", 0) or 0
+            projects_stamped += result.modified_count
         except Exception:
             failed += 1
             logger.exception(
@@ -101,8 +101,7 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
         logger.info(
             "Provenance backfill complete: %d project(s) stamped an owner with its GitLab instance "
             "across %d synced team(s), %d team(s) named no single instance and were left unstamped, "
-            "%d team(s) failed and skipped. "
-            "(Members intentionally left unstamped so manually-added members survive merges.)",
+            "%d team(s) failed and skipped.",
             projects_stamped,
             len(synced_teams),
             unattributable,
@@ -145,8 +144,6 @@ async def create_team_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
 async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     logger.info("Creating database indexes...")
-
-    await _backfill_member_and_team_provenance(database)
 
     await database["users"].create_index("username", unique=True)
     await database["users"].create_index("email", unique=True)
@@ -430,6 +427,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 async def init_db() -> None:
     database = await get_database()
 
+    await _backfill_gitlab_owner_provenance(database)
     await create_indexes(database)
 
     user_collection = database["users"]
