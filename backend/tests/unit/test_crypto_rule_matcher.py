@@ -270,6 +270,20 @@ def test_a_family_name_token_matches_a_bare_pattern():
     assert _seeded_rule_ids_matching(_algorithm("DES-CBC", "block-cipher")) == {"nist-131a-des"}
 
 
+@pytest.mark.parametrize(
+    ("name", "pattern", "expected"),
+    [
+        ("EC P-256", "EC", True),
+        ("EC-DSA", "ECDSA", True),
+        ("EC-DH", "ECDH", True),
+        ("EC-DSA", "DSA", False),
+        ("EC-DH", "DH", False),
+    ],
+)
+def test_ec_joins_only_the_scheme_it_qualifies(name, pattern, expected):
+    assert rule_matches(_asset(name=name), _rule(match_name_patterns=[pattern])) is expected
+
+
 @pytest.mark.parametrize("name", ["SHA1withRSA", "ECDH-RSA"])
 def test_a_glob_pattern_keeps_whole_name_semantics(name):
     assert rule_matches(_asset(name=name), _rule(match_name_patterns=["RSA*"])) is False
