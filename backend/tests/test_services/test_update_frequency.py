@@ -1734,6 +1734,14 @@ class TestSlowestPackagesCut:
 
         assert [row.name for row in rows] == sorted(tied)[:SLOWEST_PACKAGES_LIMIT]
 
+    def test_the_name_tie_break_and_the_cut_ignore_case(self):
+        fillers = {f"m{i:02d}": 3 for i in range(SLOWEST_PACKAGES_LIMIT - 2)}
+        counts = {"Zlib": 3, **fillers, "élan": 3, "axios": 3}
+
+        rows, _backlog = self._rows(counts, set(counts))
+
+        assert [row.name for row in rows] == ["axios", "élan", *fillers]
+
     def test_a_higher_count_still_outranks_the_name(self):
         counts = {"zzz": 9, "aaa": 1}
 
