@@ -12,7 +12,9 @@ from app.services.analysis import engine, registry
 from app.services.analysis.runner import build_settings_resolver
 from app.services.analyzers.base import Analyzer
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, _load_fallback_yaml, _materialize
-from app.services.crypto_policy.resolver import CryptoPolicyResolver
+from app.services.cbom_parser import parse_cbom
+from app.services.crypto_policy.resolver import CryptoPolicyResolver, EffectivePolicy
+from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.sbom_parser import parse_sbom
 
 
@@ -76,3 +78,12 @@ async def evaluate_crypto(name: str, db: Any, project_id: str = "p", scan_id: st
     assets = [CryptoAsset.model_validate(doc) for doc in docs]
     policy = await CryptoPolicyResolver(db).resolve(project_id)
     return registry.crypto_evaluators(bundled_iana_catalog())[name](assets, policy)
+
+
+def scan_cbom(cbom: dict[str, Any]) -> tuple[list[CryptoAsset], list[dict[str, Any]]]:
+    """Every crypto analyzer over the CBOM's assets under the seeded system policy, without a database."""
+    rules = load_seed_rules()
+    policy = EffectivePolicy(rules=rules, system_rules=rules, system_version=1, override_version=None)
+    assets = [CryptoAsset(project_id="p", scan_id="s", **asset.model_dump()) for asset in parse_cbom(cbom)]
+    evaluators = registry.crypto_evaluators(bundled_iana_catalog()).values()
+    return assets, [finding for evaluate in evaluators for finding in evaluate(assets, policy)["findings"]]

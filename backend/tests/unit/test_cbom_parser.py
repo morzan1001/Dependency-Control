@@ -1,13 +1,9 @@
 import json
 from pathlib import Path
 
-from app.models.crypto_asset import CryptoAsset
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.services.analysis.registry import crypto_evaluators
 from app.services.cbom_parser import parse_cbom, parse_crypto_components
-from app.services.crypto_policy.resolver import EffectivePolicy
-from app.services.crypto_policy.seeder import load_seed_rules
-from tests.helpers.analyzers import bundled_iana_catalog
+from tests.helpers.analyzers import scan_cbom
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "cbom"
 
@@ -52,13 +48,9 @@ def test_parse_modern_crypto_no_weak_algos():
 
 def test_two_cbomkit_theia_runs_over_one_tree_give_the_same_crypto_findings():
     """theia draws every bom-ref at random per run; the two fixtures are two runs over the same files."""
-    rules = load_seed_rules()
-    policy = EffectivePolicy(rules=rules, system_rules=rules, system_version=1, override_version=None)
-    evaluators = crypto_evaluators(bundled_iana_catalog()).values()
 
     def findings(fixture: str) -> set[tuple[str, str]]:
-        assets = [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in parse_cbom(_load(fixture))]
-        return {(f["id"], f["component"]) for evaluate in evaluators for f in evaluate(assets, policy)["findings"]}
+        return {(f["id"], f["component"]) for f in scan_cbom(_load(fixture))[1]}
 
     run_a, run_b = findings("cbomkit_theia_run_a.json"), findings("cbomkit_theia_run_b.json")
 
