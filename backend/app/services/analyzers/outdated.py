@@ -1,17 +1,17 @@
 import logging
 from typing import Any
-from urllib.parse import quote
 
 from packaging.version import InvalidVersion, Version
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, DEPS_DEV_API_URL
+from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 from app.services.aggregation.versions import is_stable_release, parse_version_key
+from app.services.release_history import parse_deps_dev_response, release_list_to_cache
 
 from .base import Analyzer
-from .deps_dev import deps_dev_coordinates, fetch_deps_dev_json
+from .deps_dev import deps_dev_coordinates, deps_dev_package_url, fetch_deps_dev_json
 from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
@@ -46,8 +46,13 @@ def _newest_stable(versions: list[dict[str, Any]], default: dict[str, Any], syst
 async def _fetch_package_info(
     client: InstrumentedAsyncClient, system: str, deps_dev_name: str
 ) -> dict[str, Any] | None:
-    url = f"{DEPS_DEV_API_URL}/systems/{system}/packages/{quote(deps_dev_name, safe='')}"
-    document = await fetch_deps_dev_json(client, url)
+    document = await fetch_deps_dev_json(client, deps_dev_package_url(system, deps_dev_name))
+    # The update-frequency view reads the same document, so it need not download it again.
+    await cache_service.set(
+        CacheKeys.release_history(system, deps_dev_name),
+        release_list_to_cache(parse_deps_dev_response(document or {})),
+        ttl_seconds=CacheTTL.RELEASE_HISTORY,
+    )
     if document is None:
         return None
     versions: list[dict[str, Any]] = document.get("versions", [])

@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -6,6 +7,7 @@ import pytest
 from typing_extensions import Self
 
 from app.services.analyzers.outdated import OutdatedAnalyzer
+from app.services.release_history import DepsDevReleaseHistoryFetcher, ReleaseInfo
 
 _API = "https://api.deps.dev/v3alpha/systems"
 
@@ -271,3 +273,15 @@ async def test_an_ecosystem_deps_dev_does_not_serve_is_neither_requested_nor_cac
     assert result == {"outdated_dependencies": [], "ahead_of_default": []}
     assert client.urls == []
     assert await fake_cache._client.keys("*") == []
+
+
+@pytest.mark.asyncio
+async def test_the_package_document_also_serves_the_release_history(fake_cache, monkeypatch) -> None:
+    _serve(monkeypatch, fake_cache, {"lodash": {"versions": [_v("4.17.20", default=True)]}})
+    monkeypatch.setattr("app.services.release_history.cache_service", fake_cache)
+    monkeypatch.setattr("app.services.release_history.InstrumentedAsyncClient", None)
+
+    await OutdatedAnalyzer().analyze({}, parsed_components=[_component("lodash", "4.17.20", "npm")])
+    history = await DepsDevReleaseHistoryFetcher().fetch([("npm", "lodash")])
+
+    assert history == {("npm", "lodash"): [ReleaseInfo("4.17.20", datetime(2024, 1, 1, tzinfo=timezone.utc))]}

@@ -6,14 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from statistics import median
 from typing import Any, Protocol
-from urllib.parse import quote
 
 from app.core import parse_iso_utc
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.constants import DEPS_DEV_API_URL
 from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
 from app.services.aggregation.versions import is_stable_release
-from app.services.analyzers.deps_dev import fetch_deps_dev_json
+from app.services.analyzers.deps_dev import deps_dev_package_url, fetch_deps_dev_json
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +142,7 @@ class DepsDevReleaseHistoryFetcher:
             async with InstrumentedAsyncClient("deps.dev API", timeout=_FETCH_TIMEOUT_SECONDS) as client:
                 payloads = await gather_bounded(
                     missing,
-                    lambda package: fetch_deps_dev_json(client, _build_deps_dev_url(*package)),
+                    lambda package: fetch_deps_dev_json(client, deps_dev_package_url(*package)),
                     _FETCH_CONCURRENCY,
                 )
             # A failed lookup stays uncached; a package deps.dev does not know is remembered as empty.
@@ -154,18 +152,14 @@ class DepsDevReleaseHistoryFetcher:
                 if not isinstance(payload, BaseException)
             }
             await cache_service.mset(
-                {keys[package]: _release_list_to_cache(releases) for package, releases in fetched.items()},
+                {keys[package]: release_list_to_cache(releases) for package, releases in fetched.items()},
                 ttl_seconds=CacheTTL.RELEASE_HISTORY,
             )
             history.update(fetched)
         return {package: releases for package, releases in history.items() if releases}
 
 
-def _build_deps_dev_url(system: str, name: str) -> str:
-    return f"{DEPS_DEV_API_URL}/systems/{system}/packages/{quote(name, safe='')}"
-
-
-def _release_list_to_cache(releases: Sequence[ReleaseInfo]) -> list[dict[str, str]]:
+def release_list_to_cache(releases: Sequence[ReleaseInfo]) -> list[dict[str, str]]:
     return [{"version": r.version, "published_at": r.published_at.isoformat()} for r in releases]
 
 

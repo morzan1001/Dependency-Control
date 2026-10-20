@@ -31,6 +31,10 @@ async def fetch_deps_dev_json(client: InstrumentedAsyncClient, url: str) -> dict
     return document
 
 
+def deps_dev_package_url(system: str, name: str) -> str:
+    return f"{DEPS_DEV_API_URL}/systems/{system}/packages/{quote(name, safe='')}"
+
+
 def deps_dev_coordinates(component: dict[str, Any]) -> tuple[str, str] | None:
     parsed = parse_purl(component.get("purl", ""))
     if parsed and parsed.deps_dev_system and parsed.name and has_known_version(component.get("version", "")):
@@ -45,7 +49,6 @@ def _lookup_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
 
 class DepsDevAnalyzer(Analyzer):
     name = "deps_dev"
-    base_url = DEPS_DEV_API_URL
 
     @staticmethod
     def _collect(
@@ -131,7 +134,7 @@ class DepsDevAnalyzer(Analyzer):
         return project
 
     async def _fetch_project(self, client: InstrumentedAsyncClient, project_id: str) -> dict[str, Any] | None:
-        data = await fetch_deps_dev_json(client, f"{self.base_url}/projects/{quote(project_id, safe='')}")
+        data = await fetch_deps_dev_json(client, f"{DEPS_DEV_API_URL}/projects/{quote(project_id, safe='')}")
         if data is None:
             return None
         scorecard = data.get("scorecard")
@@ -178,9 +181,7 @@ class DepsDevAnalyzer(Analyzer):
         name = component.get("name", "")
         version = component.get("version", "")
 
-        encoded_name = quote(lookup_name, safe="")
-        encoded_version = quote(version, safe="")
-        version_url = f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}"
+        version_url = f"{deps_dev_package_url(system, lookup_name)}/versions/{quote(version, safe='')}"
 
         data = await fetch_deps_dev_json(client, version_url)
         if data is None:
