@@ -83,6 +83,13 @@ class TestMongoFragmentsMirrorThePythonRule:
             "github.com/gin-gonic/gin",
             "lodash",
             "xerces:xercesImpl",
+            "  Lodash  ",
+            " org.foo:Core ",
+            "",
+            "   ",
+            None,
+            "org.foo:",
+            "vendor/",
         ]
         for value in cases:
             assert _eval_expr(artifact_name_expr("$c"), {"c": value}) == extract_artifact_name(value)
