@@ -4,18 +4,14 @@ import pytest
 
 from app.models.crypto_asset import CryptoAsset
 from app.models.crypto_policy import CryptoPolicy
-from app.core.constants import SCAN_STATUS_COMPLETED
-from app.core.init_db import create_indexes
 from app.models.finding import FindingType, Severity
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
-from app.services.analysis import engine
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.cbom_parser import parse_crypto_components
-from app.services.crypto_policy.seeder import load_seed_rules
-from tests.helpers.analyzers import evaluate_crypto, scan_cbom
+from tests.helpers.analyzers import evaluate_crypto, ingest_and_analyze_cbom, scan_cbom
 from tests.helpers.cbom import load_cbom
 
 _SHARED_PROJECT = "p4"
@@ -288,21 +284,7 @@ def test_every_crypto_finding_names_the_asset_it_flags():
 async def test_every_finding_of_a_scanned_cbom_counts_under_its_asset_in_the_hotspots(
     client, db, api_key_headers, member_auth_headers
 ):
-    await create_indexes(db)
-    await CryptoPolicyRepository(db).upsert_system_policy(
-        CryptoPolicy(scope="system", rules=list(load_seed_rules()), version=1)
-    )
-    resp = await client.post(
-        "/api/v1/ingest/cbom", json={"branch": "main", "cbom": load_cbom("tls_service.json")}, headers=api_key_headers
-    )
-    scan_id = resp.json()["scan_id"]
-    scan = await db.scans.find_one_and_update(
-        {"_id": scan_id}, {"$set": {"status": "processing", "worker_id": "pod-a/worker-0"}}, return_document=True
-    )
-    status = await engine.run_analysis(
-        scan_id, [], [], db, worker_id="pod-a/worker-0", sbom_generation=scan["sbom_generation"]
-    )
-    assert status == SCAN_STATUS_COMPLETED
+    scan_id = await ingest_and_analyze_cbom(client, db, api_key_headers, load_cbom("tls_service.json"), branch="main")
 
     async def hotspots(group_by):
         resp = await client.get(

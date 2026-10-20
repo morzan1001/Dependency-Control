@@ -4,10 +4,13 @@ from typing import Any
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED, ScanStatus
+from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
+from app.models.crypto_policy import CryptoPolicy
 from app.models.project import Scan
 from app.models.stats import Stats
 from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
+from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.services.analysis import engine, registry
 from app.services.analysis.runner import build_settings_resolver
 from app.services.analyzers.base import Analyzer
@@ -87,3 +90,23 @@ def scan_cbom(cbom: dict[str, Any]) -> tuple[list[CryptoAsset], list[dict[str, A
     assets = [CryptoAsset(project_id="p", scan_id="s", **asset.model_dump()) for asset in parse_cbom(cbom)]
     evaluators = registry.crypto_evaluators(bundled_iana_catalog()).values()
     return assets, [finding for evaluate in evaluators for finding in evaluate(assets, policy)["findings"]]
+
+
+async def ingest_and_analyze_cbom(
+    client: Any, db: Any, headers: dict[str, str], cbom: dict[str, Any], **payload: Any
+) -> str:
+    await create_indexes(db)
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", rules=list(load_seed_rules()), version=1)
+    )
+    resp = await client.post("/api/v1/ingest/cbom", json={**payload, "cbom": cbom}, headers=headers)
+    assert resp.status_code == 202, resp.text
+    scan_id: str = resp.json()["scan_id"]
+    scan = await db.scans.find_one_and_update(
+        {"_id": scan_id}, {"$set": {"status": "processing", "worker_id": "pod-a/worker-0"}}, return_document=True
+    )
+    status = await engine.run_analysis(
+        scan_id, [], [], db, worker_id="pod-a/worker-0", sbom_generation=scan["sbom_generation"]
+    )
+    assert status == SCAN_STATUS_COMPLETED
+    return scan_id
