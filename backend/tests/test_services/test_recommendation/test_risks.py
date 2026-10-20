@@ -410,7 +410,7 @@ class TestDetectToxicDependenciesTop5Limit:
 class TestDetectToxicDependenciesSortedByScore:
     def test_sorted_by_total_score_descending(self):
         findings = [
-            _vuln("pkg-low", "LOW", finding_id="CVE-2024-001"),
+            _vuln("pkg-low", "HIGH", finding_id="CVE-2024-001"),
             _eol("pkg-low"),
             _vuln("pkg-high", "CRITICAL", finding_id="CVE-2024-002"),
             _eol("pkg-high"),
@@ -460,14 +460,44 @@ class TestDetectToxicDependenciesVulnRiskSeverityLabel:
         vuln_factor = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "vulnerabilities"]
         assert vuln_factor[0]["severity"] == "HIGH"
 
-    def test_vuln_risk_factor_labels_medium_when_no_critical_or_high(self):
+    def test_a_kev_cve_of_low_severity_labels_the_factor_critical(self):
         findings = [
-            _vuln("pkg", "LOW", finding_id="CVE-2024-001"),
+            _vuln("pkg", "LOW", is_kev=True, finding_id="CVE-2024-001"),
             _quality("pkg", overall_score=1.0),
         ]
         result = _toxic(findings)
         vuln_factor = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "vulnerabilities"]
-        assert vuln_factor[0]["severity"] == "MEDIUM"
+        assert vuln_factor[0]["severity"] == "CRITICAL"
+
+    def test_medium_and_low_vulnerabilities_are_no_risk_factor(self):
+        findings = [
+            _vuln("pkg", "LOW", finding_id="CVE-2024-001"),
+            _vuln("pkg", "MEDIUM", finding_id="CVE-2024-002"),
+            _eol("pkg"),
+        ]
+
+        assert _toxic(findings) == []
+
+    def test_medium_and_low_vulnerabilities_stay_out_of_a_card_the_other_factors_raise(self):
+        findings = [_vuln("pkg", "LOW", finding_id="CVE-2024-001"), _eol("pkg"), _quality("pkg", overall_score=1.0)]
+
+        [rec] = _toxic(findings)
+
+        assert [rf["type"] for rf in rec.action["risk_factors"]] == ["eol", "low_scorecard"]
+
+
+class TestToxicEolNamesTheSupportedRelease:
+    def test_the_first_step_upgrades_to_the_supported_cycle(self):
+        eol = {**_eol("node"), "details": {"fixed_version": "20.18.0", "cycle": "16", "recommended_cycle": "20"}}
+
+        [rec] = _toxic([_vuln("node", "HIGH", finding_id="CVE-2024-001"), eol])
+
+        assert rec.action["steps"][0] == "Upgrade to 20.18.0 (supported cycle)"
+
+    def test_without_a_supported_release_the_steps_start_with_the_evaluation(self):
+        [rec] = _toxic([_vuln("node", "HIGH", finding_id="CVE-2024-001"), _eol("node")])
+
+        assert rec.action["steps"][0] == "Evaluate if node is essential to your application"
 
 
 class TestDetectToxicDependenciesDeduplication:

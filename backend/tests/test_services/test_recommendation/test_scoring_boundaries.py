@@ -58,7 +58,7 @@ def test_one_more_vulnerability_can_only_raise_the_score(severity):
         ([_vuln("CRITICAL")], "CRITICAL"),
         ([_vuln("MEDIUM", in_kev=True)], "CRITICAL"),
         ([_vuln("HIGH")], "HIGH"),
-        ([_vuln("MEDIUM")], "MEDIUM"),
+        ([_vuln("MEDIUM"), _vuln("HIGH")], "HIGH"),
     ],
 )
 def test_the_risk_factor_reports_the_worst_severity_present(vulns, expected_severity):

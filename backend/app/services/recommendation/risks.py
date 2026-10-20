@@ -58,6 +58,7 @@ class _PackageRisks:
     vulns: list[VulnerabilityInfo] = field(default_factory=list)
     has_malware: bool = False
     is_eol: bool = False
+    eol_fixed_version: str | None = None
     low_scorecard: float | None = None
     # (severity, license) of the first CRITICAL or HIGH license finding.
     license_issue: tuple[str, str] | None = None
@@ -94,6 +95,7 @@ def _record(pkg: _PackageRisks, finding: ModelOrDict) -> None:
         pkg.has_malware = True
     elif finding_type == "eol":
         pkg.is_eol = True
+        pkg.eol_fixed_version = pkg.eol_fixed_version or details.get("fixed_version")
     elif finding_type == "quality":
         score = scorecard_score(details)
         if pkg.low_scorecard is None and score is not None and score < SCORECARD_POOR_QUALITY_THRESHOLD:
@@ -242,12 +244,8 @@ def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, r
     )
 
 
-def _vuln_risk_severity(critical: int, high: int, kev: int) -> str:
-    if critical > 0 or kev > 0:
-        return "CRITICAL"
-    if high > 0:
-        return "HIGH"
-    return "MEDIUM"
+def _vuln_risk_severity(critical: int, kev: int) -> str:
+    return "CRITICAL" if critical > 0 or kev > 0 else "HIGH"
 
 
 def _toxic_risk_factors(pkg: _PackageRisks) -> tuple[list[dict[str, str]], int]:
@@ -273,16 +271,17 @@ def _toxic_risk_factors(pkg: _PackageRisks) -> tuple[list[dict[str, str]], int]:
         score += 20
 
     stats = pkg.stats
-    if stats.total:
-        critical, high = stats.severity["CRITICAL"], stats.severity["HIGH"]
+    critical, high = stats.severity["CRITICAL"], stats.severity["HIGH"]
+    # The same floor as the license factor: medium and low advisories alone make no independent risk.
+    if critical + high + stats.kev:
         factors.append(
             {
                 "type": "vulnerabilities",
-                "severity": _vuln_risk_severity(critical, high, stats.kev),
+                "severity": _vuln_risk_severity(critical, stats.kev),
                 "description": f"{stats.total} vulnerabilities ({critical} critical, {high} high, {stats.kev} KEV)",
             }
         )
-        score += critical * 50 + high * 20 + stats.total * 5 + stats.kev * 100
+    score += critical * 50 + high * 20 + stats.total * 5 + stats.kev * 100
     return factors, score
 
 
@@ -307,6 +306,7 @@ def _toxic_recommendation(
             "versions": pkg.versions,
             "risk_factors": factors,
             "steps": [
+                *([f"Upgrade to {pkg.eol_fixed_version} (supported cycle)"] if pkg.eol_fixed_version else []),
                 f"Evaluate if {pkg.name} is essential to your application",
                 "Search for alternative packages with better security posture",
                 "Check npm/pypi/crates.io for actively maintained alternatives",
