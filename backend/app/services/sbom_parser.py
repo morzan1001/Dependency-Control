@@ -149,6 +149,15 @@ def _graph_entries(value: Any, field: str) -> list[dict[str, Any]]:
     return value
 
 
+def _check_endpoints(field: str, *endpoints: Any) -> None:
+    if not all(isinstance(endpoint, str) for endpoint in endpoints):
+        raise ValueError(f"{field} entries need string endpoints")
+
+
+def _graph_id(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
+
+
 def _resolve_directness(
     forward: dict[Any, list[Any]],
     anchors: set[Any],
@@ -447,8 +456,9 @@ class SBOMParser:
         forward: dict[Any, list[Any]] = {}
         for entry in _graph_entries(dependencies, "dependencies"):
             ref, depends_on = entry.get("ref"), entry.get("dependsOn") or []
-            if not isinstance(depends_on, list) or not all(isinstance(r, str) for r in (ref, *depends_on)):
-                raise ValueError("dependencies entries need a string ref and a string list dependsOn")
+            if not isinstance(depends_on, list):
+                raise ValueError("dependencies entries need a list dependsOn")
+            _check_endpoints("dependencies", ref, *depends_on)
             forward.setdefault(ref, []).extend(depends_on)
         return forward
 
@@ -853,13 +863,16 @@ class SBOMParser:
         contains: dict[Any, list[Any]] = {}
         for rel in _graph_entries(relationships, "artifactRelationships"):
             parent, child, rel_type = rel.get("parent"), rel.get("child"), rel.get("type")
+            if rel_type not in ("depends-on", "dependency-of", "contains"):
+                continue
+            _check_endpoints("artifactRelationships", parent, child)
             if parent not in node_ids or child not in node_ids:
                 continue
             if rel_type == "depends-on":
                 forward.setdefault(parent, []).append(child)
             elif rel_type == "dependency-of":
                 forward.setdefault(child, []).append(parent)
-            elif rel_type == "contains":
+            else:
                 contains.setdefault(parent, []).append(child)
         return forward, contains
 
@@ -876,19 +889,22 @@ class SBOMParser:
         self._count_skipped(result, "malformed", len(raw_artifacts) - len(artifacts))
         self._count_skipped(result, _SKIP_FILE, len(sbom.get("files") or []))
 
-        node_ids = {source_id, *(artifact.get("id") for artifact in artifacts)}
+        node_ids = {_graph_id(source_id), *(_graph_id(artifact.get("id")) for artifact in artifacts)} - {None}
         forward, contains = self._build_syft_dependency_graph(sbom.get("artifactRelationships") or [], node_ids)
-        project = {artifact.get("id") for artifact in artifacts if _has_local_origin(artifact.get("metadata"))}
+        project = {
+            _graph_id(artifact.get("id")) for artifact in artifacts if _has_local_origin(artifact.get("metadata"))
+        }
         directness, subjects = _resolve_directness(forward, {source_id}, set(), project)
 
         parsed_by_id: dict[Any, ParsedDependency] = {}
         for artifact in artifacts:
-            if artifact.get("id") in subjects:
+            artifact_id = _graph_id(artifact.get("id"))
+            if artifact_id in subjects:
                 self._count_skipped(result, _SKIP_ROOT)
             elif parsed := self._append_parsed(
                 result, "Syft artifact", self._parse_syft_artifact, artifact, source_type, source_target, directness
             ):
-                parsed_by_id[artifact.get("id")] = parsed
+                parsed_by_id[artifact_id] = parsed
         _resolve_parent_refs(parsed_by_id, forward, contains)
 
         distro = sbom.get("distro")
@@ -969,7 +985,7 @@ class SBOMParser:
             None,
         )
         homepage = metadata.get("homepage") or (None if pkg_type == "npm" else metadata.get("url")) or None
-        is_direct, direct_inferred = directness(artifact.get("id"))
+        is_direct, direct_inferred = directness(_graph_id(artifact.get("id")))
 
         return ParsedDependency(
             name=name,
@@ -1018,22 +1034,25 @@ class SBOMParser:
 
     @staticmethod
     def _build_spdx_dependency_graph(
-        relationships: Any, doc_spdx_id: Any
-    ) -> tuple[dict[Any, list[Any]], set[Any], set[str]]:
+        relationships: Any, doc_spdx_id: str
+    ) -> tuple[dict[Any, list[Any]], set[Any], set[Any]]:
         forward: dict[Any, list[Any]] = {}
         described: set[Any] = set()
-        containers: set[str] = set()
+        containers: set[Any] = set()
         for rel in _graph_entries(relationships, "relationships"):
             rel_type = rel.get("relationshipType")
+            if rel_type not in ("DEPENDS_ON", "DEPENDENCY_OF", "DESCRIBES", "DOCUMENT_DESCRIBES", "CONTAINS"):
+                continue
             element, related = rel.get("spdxElementId"), rel.get("relatedSpdxElement")
+            _check_endpoints("relationships", element, related)
             if rel_type == "DEPENDS_ON":
                 forward.setdefault(element, []).append(related)
             elif rel_type == "DEPENDENCY_OF":
                 forward.setdefault(related, []).append(element)
-            elif rel_type in ("DESCRIBES", "DOCUMENT_DESCRIBES") and element == doc_spdx_id:
-                described.add(related)
-            elif rel_type == "CONTAINS" and isinstance(element, str):
+            elif rel_type == "CONTAINS":
                 containers.add(element)
+            elif element == doc_spdx_id:
+                described.add(related)
         return forward, described, containers
 
     def _parse_spdx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
@@ -1049,7 +1068,7 @@ class SBOMParser:
             None,
         )
 
-        doc_spdx_id = sbom.get("SPDXID", "SPDXRef-DOCUMENT")
+        doc_spdx_id = _graph_id(sbom.get("SPDXID")) or "SPDXRef-DOCUMENT"
         forward, described, containers = self._build_spdx_dependency_graph(sbom.get("relationships") or [], doc_spdx_id)
         # SPDX 2.2 names the described packages in documentDescribes instead of DESCRIBES relationships.
         described.update(ref for ref in sbom.get("documentDescribes") or [] if isinstance(ref, str))
@@ -1061,7 +1080,7 @@ class SBOMParser:
 
         roots = set(subjects)
         for pkg in packages:
-            if not isinstance(pkg, dict) or pkg.get("SPDXID") not in described:
+            if not isinstance(pkg, dict) or _graph_id(pkg.get("SPDXID")) not in described:
                 continue
             if pkg.get("primaryPackagePurpose") == "CONTAINER":
                 result.source_type = SOURCE_TYPE_IMAGE
@@ -1076,7 +1095,9 @@ class SBOMParser:
         for pkg in packages:
             if not isinstance(pkg, dict):
                 self._count_skipped(result, "malformed")
-            elif pkg.get("SPDXID") in roots:
+                continue
+            spdx_id = _graph_id(pkg.get("SPDXID"))
+            if spdx_id in roots:
                 self._count_skipped(result, _SKIP_ROOT)
             elif parsed := self._append_parsed(
                 result,
@@ -1089,10 +1110,10 @@ class SBOMParser:
                 result.source_target,
                 found_by,
                 # Trivy's purl-less lock-file and binary nodes only group packages.
-                structural=pkg.get("SPDXID") in described
-                or (pkg.get("primaryPackagePurpose") == "APPLICATION" and pkg.get("SPDXID") in containers),
+                structural=spdx_id in described
+                or (pkg.get("primaryPackagePurpose") == "APPLICATION" and spdx_id in containers),
             ):
-                parsed_by_id[pkg.get("SPDXID")] = parsed
+                parsed_by_id[spdx_id] = parsed
         _resolve_parent_refs(parsed_by_id, forward)
 
         if not any(
@@ -1115,12 +1136,12 @@ class SBOMParser:
     )
 
     @staticmethod
-    def _extract_spdx_external_refs(
-        external_refs: list[dict[str, Any]],
-    ) -> tuple[str | None, list[str]]:
+    def _extract_spdx_external_refs(external_refs: Any) -> tuple[str | None, list[str]]:
         purl: str | None = None
         cpes: list[str] = []
-        for ref in external_refs:
+        for ref in external_refs if isinstance(external_refs, list) else []:
+            if not isinstance(ref, dict):
+                continue
             ref_type = ref.get("referenceType", "")
             locator = ref.get("referenceLocator", "")
             if ref_type == "purl" and not purl:
@@ -1203,7 +1224,7 @@ class SBOMParser:
         if not name:
             return None
 
-        purl, cpes = self._extract_spdx_external_refs(pkg.get("externalRefs") or [])
+        purl, cpes = self._extract_spdx_external_refs(pkg.get("externalRefs"))
         version = self._normalize_version(pkg.get("versionInfo"), purl)
         download_url = _spdx_value(pkg, "downloadLocation")
 
@@ -1220,7 +1241,7 @@ class SBOMParser:
         pkg_type = get_purl_type(purl) or "unknown"
         author, publisher = self._resolve_spdx_originator(pkg)
         package_file_name = pkg.get("packageFileName")
-        is_direct, direct_inferred = directness(pkg.get("SPDXID"))
+        is_direct, direct_inferred = directness(_graph_id(pkg.get("SPDXID")))
 
         return ParsedDependency(
             name=name,

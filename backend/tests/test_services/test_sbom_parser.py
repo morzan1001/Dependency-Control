@@ -403,11 +403,77 @@ class TestMalformedDependencyGraph:
                 "artifactRelationships must be a list of objects",
                 id="syft-entry",
             ),
+            pytest.param(
+                _fixture_with("mono.trivy.cdx.json", "dependencies", {"ref": None, "dependsOn": []}),
+                "dependencies entries need string endpoints",
+                id="cyclonedx-ref-missing",
+            ),
+            pytest.param(
+                _fixture_with(
+                    "mono.syft.json",
+                    "artifactRelationships",
+                    {"parent": None, "child": "4370e91781766145", "type": "depends-on"},
+                ),
+                "artifactRelationships entries need string endpoints",
+                id="syft-parent-missing",
+            ),
+            pytest.param(
+                _fixture_with(
+                    "mono.syft.json",
+                    "artifactRelationships",
+                    {"parent": "4370e91781766145", "child": {"id": "b929298c0a8dba24"}, "type": "dependency-of"},
+                ),
+                "artifactRelationships entries need string endpoints",
+                id="syft-child-object",
+            ),
+            pytest.param(
+                _fixture_with(
+                    "mono.syft.spdx.json",
+                    "relationships",
+                    {
+                        "spdxElementId": "SPDXRef-Package-npm-debug-ce803f0c77037950",
+                        "relationshipType": "DEPENDS_ON",
+                        "relatedSpdxElement": ["SPDXRef-Package-python-anyio-4370e91781766145"],
+                    },
+                ),
+                "relationships entries need string endpoints",
+                id="spdx-related-list",
+            ),
         ],
     )
     def test_malformed_edge_fails_the_document(self, sbom, message):
         with pytest.raises(ValueError, match=message):
             parse_sbom(sbom)
+
+    def test_a_syft_artifact_with_an_object_id_is_kept_off_the_graph(self):
+        odd = {"id": {"x": 1}, "name": "odd", "version": "1.0", "type": "python", "purl": "pkg:pypi/odd@1.0"}
+
+        directness = _directness(parse_sbom(_fixture_with("mono.syft.json", "artifacts", odd)))
+
+        assert directness == {**_SYFT_MONOREPO, "odd": (True, True)}
+
+    def test_an_spdx_package_with_a_list_id_is_kept_off_the_graph(self):
+        odd = {
+            "SPDXID": ["SPDXRef-odd"],
+            "name": "odd",
+            "versionInfo": "1.0",
+            "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:pypi/odd@1.0"}],
+        }
+
+        result = parse_sbom(_fixture_with("mono.syft.spdx.json", "packages", odd))
+
+        assert _directness(result)["odd"] == (True, True)
+        assert _directness(result)["ms"] == (False, True)
+
+    @pytest.mark.parametrize("refs", [["junk", {"referenceType": "purl", "referenceLocator": "pkg:pypi/odd@1.0"}], 5])
+    def test_an_unreadable_spdx_external_ref_leaves_its_package(self, refs):
+        odd = {"SPDXID": "SPDXRef-odd", "name": "odd", "versionInfo": "1.0", "externalRefs": refs}
+
+        result = parse_sbom(_fixture_with("mono.syft.spdx.json", "packages", odd))
+
+        (dep,) = [dep for dep in result.dependencies if dep.name == "odd"]
+        assert dep.purl == ("pkg:pypi/odd@1.0" if isinstance(refs, list) else "pkg:generic/odd@1.0")
+        assert "parse-error" not in result.skipped_reasons
 
     def test_malformed_source_hints_leave_the_graph_intact(self):
         sbom = _fixture("mono.trivy.cdx.json")
@@ -1659,7 +1725,7 @@ class TestMalformedComponentResilience:
             "spdxVersion": "SPDX-2.3",
             "SPDXID": "SPDXRef-DOCUMENT",
             "packages": [
-                {"SPDXID": "SPDXRef-1", "name": "ok-1", "versionInfo": "1.0", "externalRefs": 5},
+                {"SPDXID": "SPDXRef-1", "name": "ok-1", "versionInfo": "1.0", "packageFileName": 5},
                 {"SPDXID": "SPDXRef-2", "name": "ok-2", "versionInfo": "2.0"},
             ],
             "relationships": [],
