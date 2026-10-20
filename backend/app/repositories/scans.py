@@ -237,10 +237,12 @@ class ScanRepository:
         )
         return bool(result.modified_count)
 
-    async def find_one(self, query: dict[str, Any], sort: list[tuple] | None = None) -> dict[str, Any] | None:
+    async def find_one(
+        self, query: dict[str, Any], sort: list[tuple] | None = None, projection: dict[str, int] | None = None
+    ) -> dict[str, Any] | None:
         if sort:
-            return await self.collection.find_one(query, sort=sort)
-        return await self.collection.find_one(query)
+            return await self.collection.find_one(query, projection, sort=sort)
+        return await self.collection.find_one(query, projection)
 
     async def _tip(self, match: dict[str, Any], projection: dict[str, int] | None = _TIP_PROJECTION) -> dict | None:
         """Each tier is one index seek."""

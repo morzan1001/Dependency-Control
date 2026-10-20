@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter()
 
 _SCAN_FIELDS = {"_id": 1, "commit_hash": 1, "branch": 1, "status": 1}
+_MARKED_SCAN_FIELDS = {**_SCAN_FIELDS, "commit_tag": 1}
 _DEFAULT_PAGE_SIZE = 20
 _MAX_PAGE_SIZE = 100
 
@@ -81,8 +82,8 @@ async def mark_release(
     builds = {"project_id": project_id, "commit_hash": payload.commit_hash, "is_rescan": {"$ne": True}}
     scan_repo = ScanRepository(db)
     scan = await scan_repo.find_one(
-        {**builds, "status": {"$ne": SCAN_STATUS_FAILED}}, sort=SCANS_TIP_SORT
-    ) or await scan_repo.find_one(builds, sort=SCANS_TIP_SORT)
+        {**builds, "status": {"$ne": SCAN_STATUS_FAILED}}, sort=SCANS_TIP_SORT, projection=_MARKED_SCAN_FIELDS
+    ) or await scan_repo.find_one(builds, sort=SCANS_TIP_SORT, projection=_MARKED_SCAN_FIELDS)
     if not scan:
         raise HTTPException(status_code=404, detail=f"No scan found for commit {payload.commit_hash}")
 

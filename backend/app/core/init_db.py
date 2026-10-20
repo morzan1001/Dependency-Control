@@ -220,6 +220,10 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["projects"].create_index([("created_at", pymongo.DESCENDING)])
 
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
+    # A release mark finds its commit's newest build in one seek.
+    await database["scans"].create_index(
+        [("project_id", pymongo.ASCENDING), ("commit_hash", pymongo.ASCENDING), *SCANS_TIP_SORT]
+    )
     await database["scans"].create_index(SCANS_TIP_INDEX_KEY)
     # The project scan list's pipeline and findings sorts page straight off these.
     for sort_field in ("pipeline_iid", "findings_count"):
