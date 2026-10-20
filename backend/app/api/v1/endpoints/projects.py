@@ -418,13 +418,13 @@ async def read_project(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Project:
+) -> ProjectWithTeam:
     """Get a specific project by ID."""
     await check_project_access(project_id, current_user, db)
     data = await load_project_with_members(db, project_id)
     if data is None:
         raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-    return Project(**data)
+    return ProjectWithTeam(**data)
 
 
 async def _reload_project(project_repo: ProjectRepository, project_id: str) -> Project:

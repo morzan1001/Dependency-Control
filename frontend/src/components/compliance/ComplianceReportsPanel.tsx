@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { listReports } from "@/api/compliance";
 import { useDialogState } from "@/hooks/use-dialog-state";
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime, sharedNames } from "@/lib/utils";
 import type { ReportFramework } from "@/types/compliance";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import { NewReportDialog } from "./NewReportDialog";
@@ -26,6 +26,9 @@ export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultF
   });
 
   const reports = data?.reports ?? [];
+  const namesakes = sharedNames(
+    reports.flatMap((r) => (r.scope === "project" && r.scope_id && r.scope_name ? [{ id: r.scope_id, name: r.scope_name }] : [])),
+  );
   const selected = reports.find((r) => r._id === selectedId) ?? null;
 
   return (
@@ -69,7 +72,7 @@ export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultF
                 <td className="p-2">{r.format.toUpperCase()}</td>
                 <td className="p-2"><ReportStatusBadge status={r.status} /></td>
                 <td className="p-2 text-xs">{formatDateTime(r.requested_at)}</td>
-                <td className="p-2 text-xs"><ReportScope report={r} /></td>
+                <td className="p-2 text-xs"><ReportScope report={r} namesake={r.scope === "project" && namesakes.has(r.scope_name ?? "")} /></td>
               </tr>
             ))}
           </tbody>

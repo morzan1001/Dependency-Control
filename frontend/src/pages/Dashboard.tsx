@@ -10,10 +10,11 @@ import { SortableHead } from '@/components/ui/sortable-head'
 import { TableHead } from '@/components/ui/table'
 import { usePaginationState } from '@/hooks/use-pagination-state'
 import { Pagination } from '@/components/ui/pagination'
-import { formatDate, truncateLabel } from '@/lib/utils'
+import { formatDate, sharedNames, truncateLabel } from '@/lib/utils'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
+import { ProjectOwnerById } from '@/components/project/ProjectOwner'
 import type { Project } from '@/types/project'
 
 const DASHBOARD_STATS_SKELETON_IDS = ['ds1', 'ds2', 'ds3', 'ds4']
@@ -52,6 +53,7 @@ export default function Dashboard() {
   )
 
   const scanList = recentScans || []
+  const namesakes = sharedNames(scanList.map((scan) => ({ id: scan.project_id, name: scan.project_name ?? '' })))
   const projectList = projectsData?.items || []
   const totalPages = projectsData?.pages || 0
 
@@ -211,7 +213,10 @@ export default function Dashboard() {
                             {scanList.map((scan) => (
                                 <div key={scan.id} className="flex items-center gap-4">
                                     <div className="space-y-1">
-                                        <p className="text-sm font-medium leading-none">{scan.project_name}</p>
+                                        <p className="flex min-w-0 items-center gap-2 text-sm font-medium leading-none">
+                                            <span className="truncate">{scan.project_name}</span>
+                                            {namesakes.has(scan.project_name ?? '') && <ProjectOwnerById projectId={scan.project_id} />}
+                                        </p>
                                         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                                             <span className="wrap-anywhere">{scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan'} on {scan.branch}</span>
                                             <ScanStatusBadge status={scan.status} failedAnalyzers={scan.failed_analyzers} />

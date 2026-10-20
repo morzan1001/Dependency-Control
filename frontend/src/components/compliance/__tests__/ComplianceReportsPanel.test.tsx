@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createReport, listReports } from '@/api/compliance'
 import type { ComplianceReportMeta, ReportFramework, ReportStatus } from '@/types/compliance'
+import type { Project } from '@/types/project'
 
 import { ComplianceReportsPanel } from '../ComplianceReportsPanel'
 
@@ -14,6 +15,11 @@ vi.mock('@/api/compliance', () => ({
   deleteReport: vi.fn(),
 }))
 vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ hasPermission: () => false }) }))
+const { useProjectMock } = vi.hoisted(() => ({ useProjectMock: vi.fn((_id: string) => ({ data: undefined as Project | undefined })) }))
+vi.mock('@/hooks/queries/use-projects', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/queries/use-projects')>()),
+  useProject: (id: string) => useProjectMock(id),
+}))
 vi.mock('@/hooks/queries/use-users', () => ({ useCurrentUser: () => ({ data: { id: 'lena' } }) }))
 
 function report(status: ReportStatus): ComplianceReportMeta {
@@ -97,6 +103,27 @@ describe('ComplianceReportsPanel', () => {
 
     const rows = await screen.findAllByRole('button', { name: /nist-sp-800-131a/ })
     expect(rows.map((row) => row.lastElementChild?.textContent)).toEqual(['team: Core', 'project: p-gone', 'user'])
+  })
+
+  it('names the owner of each scope project whose name another listed project shares, as the project picker does', async () => {
+    const owners: Record<string, Project> = {
+      p1: { id: 'p1', name: 'shared-lib', teams: [{ id: 't1', name: 'Payments' }] },
+      p2: { id: 'p2', name: 'shared-lib', teams: [{ id: 't2', name: 'Platform' }] },
+    }
+    useProjectMock.mockImplementation((id: string) => ({ data: owners[id] }))
+    vi.mocked(listReports).mockResolvedValue({
+      reports: [
+        { ...report('completed'), _id: 'r1', scope: 'project', scope_id: 'p1', scope_name: 'shared-lib' },
+        { ...report('completed'), _id: 'r2', scope: 'project', scope_id: 'p2', scope_name: 'shared-lib' },
+        { ...report('completed'), _id: 'r3', scope: 'project', scope_id: 'p1', scope_name: 'shared-lib' },
+        { ...report('completed'), _id: 'r4', scope: 'project', scope_id: 'p3', scope_name: 'checkout' },
+      ],
+    })
+    renderPanel()
+
+    expect(await screen.findAllByText('Payments')).toHaveLength(2)
+    expect(screen.getByText('Platform')).toBeInTheDocument()
+    expect(useProjectMock).not.toHaveBeenCalledWith('p3')
   })
 
   it('opens an empty form again after a cancelled draft', async () => {

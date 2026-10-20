@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.v1.helpers.sorting import case_insensitive_key
+from app.api.v1.helpers.teams import team_refs
 from app.core import security
 from app.core.constants import (
     PROJECT_ROLE_ADMIN,
@@ -226,6 +227,7 @@ async def load_project_with_members(db: AsyncIOMotorDatabase, project_id: str) -
     for member in members:
         member["username"] = usernames.get(member["user_id"])
     _merge_team_members(data, teams, usernames)
+    data["teams"] = team_refs(data.get("team_ids") or [], {team["_id"]: team.get("name", "") for team in teams})
     return data
 
 

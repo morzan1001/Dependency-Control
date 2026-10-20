@@ -198,6 +198,17 @@ async def test_a_project_no_team_owns_answers_its_own_members(db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("database", DATABASES)
+async def test_every_owner_is_named_as_the_project_list_names_it(db, database):
+    """Same-name projects are told apart by their owners, so the detail read names them like a list row."""
+    await _seed(db, team_order=(_BRAVO, {**_ALPHA, "name": "alpha"}), team_ids=["bravo", "alpha", "deleted-team"])
+
+    project = await read_project(_PROJECT, _user("u-direct"), db)
+
+    assert [(team.id, team.name) for team in project.teams] == [("alpha", "alpha"), ("bravo", "Bravo")]
+
+
+@pytest.mark.asyncio
 async def test_an_owner_that_no_longer_exists_is_skipped(db):
     project = await read_project(_PROJECT, _user("u-alpha"), await _seed(db, team_ids=["alpha", "deleted-team"]))
 

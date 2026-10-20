@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, it, expect, vi } from 'vitest'
 
 import ProjectsPage from '../Projects'
+import type { Project } from '@/types/project'
 
 const VISIBLE_PROJECTS = 5
 
@@ -17,9 +18,9 @@ vi.mock('@/context/useAuth', () => ({
 }))
 vi.mock('@/components/project/CreateProjectDialog', () => ({ CreateProjectDialog: () => null }))
 
-function renderProjects(pages = 1) {
+function renderProjects(pages = 1, items: Project[] = []) {
   useProjectsMock.mockReturnValue({
-    data: { items: [], total: VISIBLE_PROJECTS, page: 1, size: 12, pages },
+    data: { items, total: VISIBLE_PROJECTS, page: 1, size: 12, pages },
     isLoading: false,
     error: null,
   })
@@ -83,5 +84,19 @@ describe('ProjectsPage header on a tablet', () => {
 
     const controls = screen.getByRole('button', { name: /New Project/i }).parentElement
     expect(controls).toHaveClass('flex-col', 'sm:flex-row', 'sm:flex-wrap')
+  })
+})
+
+describe('ProjectsPage namesakes', () => {
+  it('names the owner of each project whose name another card shares, as the project picker does, and only theirs', () => {
+    renderProjects(1, [
+      { id: 'p1', name: 'shared-lib', teams: [{ id: 't1', name: 'Payments' }] },
+      { id: 'p2', name: 'shared-lib', teams: [], gitlab_project_path: 'platform/shared-lib' },
+      { id: 'p3', name: 'checkout', teams: [{ id: 't3', name: 'Retail' }] },
+    ])
+
+    expect(screen.getByText('Payments')).toBeInTheDocument()
+    expect(screen.getByText('platform/shared-lib')).toBeInTheDocument()
+    expect(screen.queryByText('Retail')).not.toBeInTheDocument()
   })
 })
