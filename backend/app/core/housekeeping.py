@@ -157,7 +157,7 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
                 "project_id": project.id,
                 "_id": {"$in": sorted(marked_ids)},
                 # A failed one is retried as well, since nothing else analyses it.
-                "status": {"$nin": [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]},
+                "status": {"$nin": SCAN_ACTIVE_STATUSES},
                 **HAS_SBOM_MATCH,
             },
             RESCAN_SOURCE_PROJECTION,
