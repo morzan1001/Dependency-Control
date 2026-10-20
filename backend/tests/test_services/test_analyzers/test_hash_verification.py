@@ -191,6 +191,18 @@ async def test_a_component_without_a_hash_makes_no_registry_request(monkeypatch,
 
 
 @pytest.mark.asyncio
+async def test_a_run_with_nothing_to_look_up_opens_no_client(monkeypatch, fake_cache):
+    opened: list[str] = []
+    monkeypatch.setattr(hash_verification, "InstrumentedAsyncClient", lambda service, **_k: opened.append(service))
+    monkeypatch.setattr(hash_verification, "cache_service", fake_cache)
+
+    result = await analyze_cyclonedx(HashVerificationAnalyzer(), [_numpy()])
+
+    assert opened == []
+    assert result["summary"]["unverifiable_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_a_component_without_a_version_makes_no_registry_request(monkeypatch, fake_cache):
     client = _FakeClient(_PYPI_PAYLOAD)
 

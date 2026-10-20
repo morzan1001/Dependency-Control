@@ -87,6 +87,8 @@ class HashVerificationAnalyzer(Analyzer):
             return False
 
     async def _registry_hashes(self, lookups: dict[str, tuple[str, str, str]]) -> tuple[dict[str, Any], int]:
+        if not lookups:
+            return {}, 0
         async with InstrumentedAsyncClient(
             "Package Registry API", timeout=ANALYZER_TIMEOUTS["hash_verification"]
         ) as client:
