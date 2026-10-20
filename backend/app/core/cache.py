@@ -33,6 +33,9 @@ T = TypeVar("T")
 REDIS_CONNECTION_LOST_MSG = "Redis connection lost, disabling cache temporarily"
 REDIS_OPERATION_TIMEOUT_SECONDS = 5.0
 _LOCK_POLL_INTERVAL_SECONDS = 0.1
+# The wait outlasts a 30 s upstream fetch and the lock the wait, so peers wait for the holder instead of re-fetching.
+STAMPEDE_LOCK_TTL_SECONDS = 60
+STAMPEDE_MAX_WAIT_SECONDS = 35.0
 
 # Compare-and-delete, so a slow fetch cannot delete a lock another pod has re-acquired since.
 _UNLOCK_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
@@ -376,8 +379,8 @@ class CacheService:
         key: str,
         fetch_fn: Callable[[], Any],
         ttl_seconds: int,
-        lock_ttl_seconds: int = 30,
-        max_wait_seconds: float = 5.0,
+        lock_ttl_seconds: int = STAMPEDE_LOCK_TTL_SECONDS,
+        max_wait_seconds: float = STAMPEDE_MAX_WAIT_SECONDS,
         reraise_fetch_errors: bool = False,
     ) -> Any | None:
         """One pod fetches a miss while its peers wait on the lock, so a multi-pod deploy cannot stampede upstream."""
@@ -424,6 +427,9 @@ class CacheService:
                 if cached is not None:
                     return cached
 
+            cached = await self.get(key)
+            if cached is not None:
+                return cached
             logger.warning(f"Lock wait timeout for {key}, fetching anyway")
             try:
                 data = await fetch_fn()

@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import hashlib
+import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -8,7 +9,16 @@ import redis.asyncio as redis
 import fakeredis
 from prometheus_client import REGISTRY
 
-from app.core.cache import CacheKeys, CacheService, CacheTTL, scope_digest, suppress_cache_writes
+from app.core.cache import (
+    STAMPEDE_LOCK_TTL_SECONDS,
+    STAMPEDE_MAX_WAIT_SECONDS,
+    CacheKeys,
+    CacheService,
+    CacheTTL,
+    scope_digest,
+    suppress_cache_writes,
+)
+from app.core.constants import ANALYZER_TIMEOUTS
 
 _TTL = 60
 
@@ -263,6 +273,34 @@ class TestStampedeHolderVanishes:
             await holder
 
         assert await waiter == {"value": 42}
+
+
+class TestStampedeWaitOutlastsTheFetch:
+    def test_by_default_a_waiter_outlasts_a_catalog_fetch_and_the_lock_outlasts_the_waiter(self):
+        slowest_fetch = max(ANALYZER_TIMEOUTS["kev"], ANALYZER_TIMEOUTS["ghsa"])
+
+        assert slowest_fetch < STAMPEDE_MAX_WAIT_SECONDS < STAMPEDE_LOCK_TTL_SECONDS
+
+    @pytest.mark.asyncio
+    async def test_a_value_a_peer_publishes_as_the_wait_ends_is_served_without_a_second_fetch(
+        self, fake_cache, monkeypatch
+    ):
+        key = "kev:catalog"
+        await fake_cache._client.set(fake_cache._make_key(f"lock:{key}"), "peer-token")
+        fetched = []
+
+        async def peer_publishes_after_the_last_poll(_client, cache_key, _lock_key, deadline):
+            await asyncio.sleep(max(0.0, deadline - time.monotonic()))
+            await fake_cache.set(cache_key, {"from": "peer"}, _TTL)
+
+        async def fetch():
+            fetched.append(key)
+            return {"from": "waiter"}
+
+        monkeypatch.setattr(fake_cache, "_wait_for_lock_holder", peer_publishes_after_the_last_poll)
+
+        assert await fake_cache.get_or_fetch_with_lock(key, fetch, _TTL, max_wait_seconds=0.2) == {"from": "peer"}
+        assert fetched == []
 
 
 class TestStampedeNegativeCaching:

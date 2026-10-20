@@ -109,13 +109,8 @@ class TyposquattingAnalyzer(Analyzer):
     name = "typosquatting"
 
     async def _ensure_popular_packages(self) -> dict[str, list[str]]:
-        # Lock and wait outlast the 30 s fetch, so peers wait for the holder instead of re-downloading.
         pypi = await cache_service.get_or_fetch_with_lock(
-            CacheKeys.popular_packages("pypi"),
-            self._fetch_pypi_packages,
-            CacheTTL.POPULAR_PACKAGES,
-            lock_ttl_seconds=60,
-            max_wait_seconds=35,
+            CacheKeys.popular_packages("pypi"), self._fetch_pypi_packages, CacheTTL.POPULAR_PACKAGES
         )
         return {"pypi": pypi or sorted(_STATIC_PYPI_FALLBACK), "npm": _NPM_RANKING}
 
