@@ -56,5 +56,6 @@ def test_dependencies_declare_only_the_indexes_a_read_needs():
         },
         (("scan_id", ASCENDING), ("version", ASCENDING)): {},
         (("scan_id", ASCENDING), ("direct", ASCENDING)): {},
+        (("scan_id", ASCENDING), ("type", ASCENDING)): {},
         (("scan_id", ASCENDING), ("purl", ASCENDING)): {},
     }
