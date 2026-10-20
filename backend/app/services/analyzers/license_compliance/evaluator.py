@@ -223,8 +223,8 @@ def evaluate_network_copyleft(
         return issue(
             Severity.INFO,
             "Network copyleft license (open source project)",
-            "Keep the project licence AGPL-compatible and publish the exact source you deploy.",
-            reason="Severity reduced: project is open source, AGPL network source offer is satisfied by publication.",
+            f"Keep the project licence compatible with {license_info.name} and publish the exact source you deploy.",
+            reason="Severity reduced: project is open source, the network source offer is satisfied by publication.",
         )
 
     if policy.distribution_model == DistributionModel.INTERNAL_ONLY:

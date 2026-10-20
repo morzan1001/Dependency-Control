@@ -328,6 +328,15 @@ class TestEvaluateLicenseWithContext:
         assert result["context_reason"]
         assert result["severity_without_context"] == Severity.CRITICAL.value
 
+    @pytest.mark.parametrize("spdx_id", ["AGPL-3.0-only", "CPAL-1.0", "RPL-1.5", "OSL-3.0"])
+    def test_the_open_source_advice_names_the_licence_it_is_about(self, spdx_id):
+        result = self._evaluate_with_policy(spdx_id, distribution_model=DistributionModel.OPEN_SOURCE)
+        name = LICENSE_DATABASE[spdx_id].name
+        assert result["recommendation"] == (
+            f"Keep the project licence compatible with {name} and publish the exact source you deploy."
+        )
+        assert "AGPL" not in result["context_reason"]
+
     @pytest.mark.parametrize(
         ("spdx_id", "policy_kwargs"),
         [
