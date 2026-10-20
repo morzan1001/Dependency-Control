@@ -421,6 +421,72 @@ class TestASecondaryRateLimitIsNotReadAsAScopeProblem:
         assert "5 minute(s)" in excinfo.value.detail
 
 
+_BAD_CREDENTIALS = {"message": "Bad credentials"}
+
+
+class TestARejectedTokenIsNotReadAsAScopeOrBudgetProblem:
+    """GitHub answers an expired or revoked token with 401 everywhere, GET /rate_limit included."""
+
+    def test_the_organisation_picker_asks_to_check_the_token(self, admin_user, monkeypatch):
+        from app.api.v1.endpoints.github_instances import list_instance_organisations
+
+        _serve_github_api(
+            monkeypatch,
+            {
+                "/user/orgs": httpx.Response(401, json=_BAD_CREDENTIALS),
+                "/rate_limit": httpx.Response(401, json=_BAD_CREDENTIALS),
+            },
+        )
+        instance = make_github_instance(id="gh-1", access_token="ghp-revoked")
+
+        with patch(f"{MODULE}.GitHubInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)):
+            with pytest.raises(HTTPException) as excinfo:
+                asyncio.run(list_instance_organisations(instance_id="gh-1", db=MagicMock(), current_user=admin_user))
+
+        assert excinfo.value.status_code == 502
+        assert "GitHub refused the access token" in excinfo.value.detail
+        assert "has not expired or been revoked" in excinfo.value.detail
+        assert "read:org" not in excinfo.value.detail
+        assert "could not be determined" not in excinfo.value.detail
+
+    def test_a_refusal_served_from_the_cache_is_named_by_the_budget_endpoint(self, monkeypatch):
+        """A cached failed listing sends no request, so only GET /rate_limit's own 401 can name the token."""
+        from app.api.v1.helpers.vcs_instances import refused_listing
+
+        _serve_github_api(monkeypatch, {"/rate_limit": httpx.Response(401, json=_BAD_CREDENTIALS)})
+        service = GitHubService(make_github_instance(id="gh-1", access_token="ghp-revoked"))
+
+        refusal = asyncio.run(refused_listing(service, "the teams of organisation 'acme'", "The token needs read:org."))
+
+        assert "GitHub refused the access token" in refusal.detail
+        assert "could not be determined" not in refusal.detail
+
+    def test_the_connection_test_asks_to_check_the_token(self, admin_user, monkeypatch):
+        from app.api.v1.endpoints.github_instances import test_connection
+
+        _serve_github_api(
+            monkeypatch,
+            {
+                "/user": httpx.Response(200, json={"id": _TOKEN_USER_ID, "login": "dc-bot"}),
+                "/user/orgs": httpx.Response(401, json=_BAD_CREDENTIALS),
+                "/rate_limit": httpx.Response(401, json=_BAD_CREDENTIALS),
+            },
+        )
+        instance = make_github_instance(id="gh-1", access_token="ghp-revoked", sync_teams=True)
+
+        with (
+            patch(f"{MODULE}.GitHubInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)),
+            patch.object(GitHubService, "refresh_jwks", new=AsyncMock(return_value={"keys": [{}]})),
+        ):
+            result = asyncio.run(test_connection(instance_id="gh-1", db=MagicMock(), current_user=admin_user))
+
+        assert result.success is False
+        assert "GitHub refused the access token" in result.message
+        assert "has not expired or been revoked" in result.message
+        assert "read:org" not in result.message
+        assert "could not be determined" not in result.message
+
+
 class TestConnectionProbesEveryOrganisation:
     """The owner runs several organisations, and a token can be green on one and blind on another."""
 
@@ -477,7 +543,7 @@ class TestBindingPickerListings:
     @staticmethod
     def _run(endpoint, instance, **service_returns):
         mock_repo = _make_repo_mock(get_by_id=instance)
-        service = MagicMock(rate_limited_until=None)
+        service = MagicMock(rate_limited_until=None, token_rejected=False)
         # An intact budget unless the test is about the budget: a refusal under it is a scope refusal.
         for name, value in {"get_core_rate_limit": _HEALTHY_BUDGET, **service_returns}.items():
             setattr(service, name, AsyncMock(return_value=value))

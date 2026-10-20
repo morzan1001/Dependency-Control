@@ -166,6 +166,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
 
     def __init__(self, github_instance: GitHubInstance):
         super().__init__(github_instance)
+        self.token_rejected = False
         github_url = (github_instance.github_url or "").rstrip("/")
         if is_public_github(github_url, github_instance.url):
             self.api_url = GITHUB_API_URL
@@ -187,7 +188,12 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return super()._can_call() and self.rate_limited_until is None
 
     def _response_hooks(self) -> ResponseHooks:
-        return {"response": [self._note_rate_limit]}
+        return {"response": [self._note_rate_limit, self._note_token_rejection]}
+
+    async def _note_token_rejection(self, response: httpx.Response) -> None:
+        """GitHub answers an expired or revoked token with 401, and a missing scope or a spent budget with 403."""
+        if response.status_code == 401:
+            self.token_rejected = True
 
     async def _note_rate_limit(self, response: httpx.Response) -> None:
         """Async only because httpx.AsyncClient awaits its event hooks."""

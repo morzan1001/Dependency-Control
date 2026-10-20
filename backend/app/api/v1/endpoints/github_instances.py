@@ -7,6 +7,7 @@ from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.vcs_instances import (
+    TOKEN_CHECK_HINT,
     Refusal,
     apply_update,
     assert_unique,
@@ -200,8 +201,7 @@ async def _probe_token(
         return _failed_test(
             instance,
             "OIDC endpoint reachable, but GitHub refused the access token on GET /user, so pull-request "
-            "decoration, branch housekeeping and team sync cannot use it. Check that it is valid and has "
-            "not expired or been revoked.",
+            f"decoration, branch housekeeping and team sync cannot use it. {TOKEN_CHECK_HINT}",
         )
     answer = "got no answer" if response is None else f"answered HTTP {response.status_code}"
     return _failed_test(
@@ -214,10 +214,15 @@ async def _probe_token(
 async def _refused_probe(
     github_service: GitHubService, instance: GitHubInstance, blocked: str
 ) -> GitHubInstanceTestConnectionResponse | None:
-    """None when the budget stands, so the refusal was the missing read:org each caller words its own way."""
+    """None when the budget stands and GitHub took the token, so the refusal was the missing read:org."""
     cause, reset = await why_refused(github_service)
     if cause is Refusal.BUDGET:
         return _budget_failure(instance, f"its {blocked}", reset)
+    if cause is Refusal.CREDENTIALS:
+        return _failed_test(
+            instance,
+            f"OIDC endpoint reachable, but GitHub refused the access token, so its {blocked}. {TOKEN_CHECK_HINT}",
+        )
     if cause is Refusal.UNDETERMINED:
         failure = f"OIDC endpoint reachable, but the token's {blocked}"
         return _failed_test(instance, f"{undetermined(failure)}, then test again.")

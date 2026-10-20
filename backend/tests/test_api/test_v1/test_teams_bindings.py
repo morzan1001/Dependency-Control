@@ -79,7 +79,7 @@ def _run_bind(
 
     github_instances = MagicMock()
     github_instances.get_by_id = AsyncMock(return_value=make_github_instance(id="gh-1", access_token="ghp-secret"))
-    github = MagicMock(rate_limited_until=None)
+    github = MagicMock(rate_limited_until=None, token_rejected=False)
     github.get_org_teams = AsyncMock(return_value=org_teams)
     github.get_core_rate_limit = AsyncMock(return_value=rate_limit)
     gitlab_instances = MagicMock()

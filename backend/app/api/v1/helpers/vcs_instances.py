@@ -121,9 +121,13 @@ async def delete_guarded(
     )
 
 
+TOKEN_CHECK_HINT = "Check that it is valid and has not expired or been revoked."
+
+
 class Refusal(Enum):
     BUDGET = auto()
     SCOPE = auto()
+    CREDENTIALS = auto()
     UNDETERMINED = auto()
 
 
@@ -139,6 +143,9 @@ async def why_refused(github_service: GitHubService) -> tuple[Refusal, str]:
     reset_at = github_service.rate_limited_until
     if reset_at is None:
         limit = await github_service.get_core_rate_limit()
+        # It answers a rejected token 401 too, which names the cause of a refusal served from the cache.
+        if github_service.token_rejected:
+            return Refusal.CREDENTIALS, ""
         if limit is None:
             return Refusal.UNDETERMINED, ""
         if limit.remaining > 0:
@@ -158,6 +165,8 @@ async def refused_listing(github_service: GitHubService, subject: str, scope_hin
         )
     elif cause is Refusal.SCOPE:
         detail = f"Could not list {subject}. {scope_hint}"
+    elif cause is Refusal.CREDENTIALS:
+        detail = f"Could not list {subject}: GitHub refused the access token. {TOKEN_CHECK_HINT}"
     else:
         detail = f"{undetermined(f'Could not list {subject}')}."
     return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
