@@ -128,9 +128,11 @@ def _advisory_changes(doc: dict[str, Any], stored: list[dict[str, Any]], record:
             changes[f"details.vulnerabilities.{index}.waiver_reason"] = after["waiver_reason"]
     if record.get("severity") != doc.get("severity"):
         changes["severity"] = record["severity"]
-    before, after = doc.get("details") or {}, record["details"]
+    stored_rollup, rolled_up = doc.get("details") or {}, record["details"]
     changes |= {
-        f"details.{key}": after.get(key) for key in ADVISORY_ENRICHMENT_KEYS if after.get(key) != before.get(key)
+        f"details.{key}": rolled_up.get(key)
+        for key in ADVISORY_ENRICHMENT_KEYS
+        if rolled_up.get(key) != stored_rollup.get(key)
     }
     return changes
 
