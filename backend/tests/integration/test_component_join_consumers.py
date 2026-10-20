@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 
+from app.api.v1.helpers.sorting import case_insensitive_key
 from app.repositories.dependencies import DependencyRepository
 from app.services.dependency_store import store_scan_dependencies
 from app.services.sbom_parser import parse_sbom
@@ -618,6 +619,20 @@ async def test_top_dependencies_name_a_package_the_same_whatever_the_row_order(c
     rows = await _analytics(client, "dependencies/top", seeded)
 
     assert [row["name"] for row in rows if row["name"].lower() == "django"] == ["Django"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_top_dependencies_break_ties_by_name_whatever_its_case(client, db, seeded):
+    names = ("lodash", "Express", "axios", "élan")
+    for name in names:
+        await db.dependencies.insert_one(
+            {**_dependency(f"d-{name}", name=name), "group": None, "type": "npm", "purl": f"pkg:npm/{name}@1.0.0"}
+        )
+
+    rows = await _analytics(client, "dependencies/top", seeded)
+
+    assert [row["name"] for row in rows] == sorted((*names, BARE), key=case_insensitive_key)
 
 
 @pytest.mark.live_mongo

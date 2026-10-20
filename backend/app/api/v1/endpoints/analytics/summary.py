@@ -15,6 +15,7 @@ from app.api.v1.helpers.analytics import (
     vuln_details_by,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
+from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.core.cache import scope_digest
 from app.core.constants import FINDINGS_SCAN_TYPE_INDEX
 from app.core.permissions import Permissions
@@ -197,7 +198,7 @@ async def _top_dependencies(
                 "total_occurrences": 1,
             }
         },
-        {"$sort": {"project_count": -1, "total_occurrences": -1, "_id": 1}},
+        *case_insensitive_sort([("project_count", -1), ("total_occurrences", -1), ("name", 1), ("_id", 1)], {"name"}),
         {"$limit": limit},
     ]
 
