@@ -398,12 +398,12 @@ describe('RecommendationCard priority projects', () => {
   })
 })
 
-describe('RecommendationCard version standardization', () => {
-  it('lists packages sharing a name in two ecosystems apart, each with its type', () => {
+describe('RecommendationCard packages of two ecosystems', () => {
+  it.each(['standardize_versions', 'deduplicate_versions'])('lists %s packages sharing a name apart, each with its type', (type) => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     renderExpanded(makeRecommendation({
-      type: 'standardize_versions',
+      type,
       packages: [
         { name: 'foo', type: 'npm', versions: ['2.0.0', '1.0.0'], project_count: 2 },
         { name: 'foo', type: 'pypi', versions: ['2.0.0', '1.0.0'], project_count: 2 },

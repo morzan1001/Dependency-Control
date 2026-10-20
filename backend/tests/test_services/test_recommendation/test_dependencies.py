@@ -122,6 +122,45 @@ class TestAnalyzeVersionFragmentationCaseInsensitive:
         assert len(result) == 1
 
 
+_NPM_DEDUPE = ["# For npm: npm dedupe", "# For yarn: yarn dedupe", "# For pnpm: pnpm dedupe"]
+_MAVEN_PIN = "# For Maven/Gradle: pin one version in dependencyManagement or a dependency constraint"
+_PIP_PIN = "# For pip: pin one version in a constraints file (pip install -c constraints.txt)"
+
+
+class TestAnalyzeVersionFragmentationEcosystems:
+    @staticmethod
+    def _fragmented(*purl_types: str) -> list:
+        return [
+            _dep(name="foo", version=f"1.0.{v}", purl=f"pkg:{purl_type}/foo@1.0.{v}")
+            for purl_type in purl_types
+            for v in range(3)
+        ]
+
+    def test_each_package_names_its_ecosystem(self):
+        [rec] = analyze_version_fragmentation(self._fragmented("npm", "pypi"))
+
+        assert sorted((p["name"], p["type"]) for p in rec.action["packages"]) == [("foo", "npm"), ("foo", "pypi")]
+
+    @pytest.mark.parametrize(
+        ("purl_types", "commands"),
+        [
+            pytest.param(("npm",), _NPM_DEDUPE, id="npm"),
+            pytest.param(("maven",), [_MAVEN_PIN], id="maven"),
+            pytest.param(("pypi",), [_PIP_PIN], id="pypi"),
+            pytest.param(("pypi", "golang", "npm"), [*_NPM_DEDUPE, _PIP_PIN], id="mixed"),
+        ],
+    )
+    def test_the_commands_follow_the_ecosystems_of_the_fragmented_packages(self, purl_types, commands):
+        [rec] = analyze_version_fragmentation(self._fragmented(*purl_types))
+
+        assert rec.action["commands"] == commands
+
+    def test_an_ecosystem_without_a_dedupe_tool_gets_no_commands(self):
+        [rec] = analyze_version_fragmentation(self._fragmented("golang", "deb"))
+
+        assert "commands" not in rec.action
+
+
 class TestAnalyzeDevInProductionEmpty:
     def test_empty_returns_empty(self):
         assert analyze_dev_in_production([]) == []
