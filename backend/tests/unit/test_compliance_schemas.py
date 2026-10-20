@@ -65,3 +65,9 @@ def test_enums():
     assert ReportFormat.SARIF.value == "sarif"
     assert ReportStatus.COMPLETED.value == "completed"
     assert ControlStatus.PASSED.value == "passed"
+
+
+def test_report_enums_format_as_their_values():
+    """The engine hands back ReportStatus members, which the webhook payload and notification texts embed as text."""
+    assert (str(ReportStatus.COMPLETED), f"{ReportStatus.FAILED}") == ("completed", "failed")
+    assert f"{ReportFramework.BSI_TR_02102} ({ReportFormat.PDF})" == "bsi-tr-02102 (pdf)"

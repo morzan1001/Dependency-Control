@@ -52,10 +52,6 @@ class ReportAck(BaseModel):
     status: str
 
 
-def _status_str(value: Any) -> str:
-    return str(value.value) if hasattr(value, "value") else str(value)
-
-
 def _report_view(report: ComplianceReport) -> dict[str, Any]:
     statement = coverage_statement(report.coverage) if report.coverage else None
     return {**report.model_dump(by_alias=True), "coverage_statement": statement}
@@ -104,7 +100,7 @@ async def create_report(
     await repo.create(report)
 
     background_tasks.add_task(_run_and_webhook, db, report, current_user)
-    return ReportAck(report_id=report.id, status=_status_str(report.status))
+    return ReportAck(report_id=report.id, status=report.status)
 
 
 async def _user_can_see_report(db: AsyncIOMotorDatabase, user: User, report: ComplianceReport) -> bool:
@@ -176,9 +172,8 @@ async def download_report(
     r = await ComplianceReportRepository(db).get_by_id(report_id)
     if r is None or not await _user_can_see_report(db, current_user, r):
         raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
-    status_val = _status_str(r.status)
-    if status_val != "completed":
-        raise HTTPException(status_code=409, detail=f"Report not ready (status: {status_val})")
+    if r.status != ReportStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail=f"Report not ready (status: {r.status})")
     try:
         # artifact_gridfs_id is stored as a string; GridFS needs an ObjectId.
         stream = await open_gridfs_download_with_retry(AsyncIOMotorGridFSBucket(db), ObjectId(r.artifact_gridfs_id))
@@ -233,12 +228,12 @@ async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, u
         "event": WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "report_id": report.id,
-        "framework": _status_str(report.framework),
-        "format": _status_str(report.format),
+        "framework": report.framework,
+        "format": report.format,
         "scope": report.scope,
         "scope_id": report.scope_id,
         "scope_name": named.get("scope_name"),
-        "status": _status_str(status),
+        "status": status,
         "summary": summary,
     }
     await webhook_service.safe_trigger_webhooks(
@@ -255,7 +250,7 @@ async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, u
             db,
             project_id=report.scope_id,
             event_type=NOTIFICATION_EVENT_COMPLIANCE_REPORT_GENERATED,
-            subject=f"Compliance report ready ({_status_str(report.framework)})",
-            message=f"A new {_status_str(report.framework)} compliance report ({_status_str(report.format)}) is available for this project.",
+            subject=f"Compliance report ready ({report.framework})",
+            message=f"A new {report.framework} compliance report ({report.format}) is available for this project.",
             context="compliance_reports",
         )
