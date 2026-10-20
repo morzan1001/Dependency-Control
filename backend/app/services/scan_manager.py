@@ -140,12 +140,7 @@ class ScanManager:
         scan_repo = ScanRepository(self.db)
         await ProjectRepository(self.db).update_raw(str(self.project.id), {"$set": {"last_scan_at": now}})
 
-        scan = await self.db.scans.find_one_and_update(
-            {"_id": scan_id},
-            update_ops,
-            projection={"status": 1},
-            return_document=True,
-        )
+        scan = await scan_repo.add_received_result(scan_id, update_ops)
 
         if not scan:
             logger.warning(f"Scan {scan_id} not found during register_result")
