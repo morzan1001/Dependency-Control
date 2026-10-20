@@ -255,8 +255,8 @@ class TestOnlyThePypiCorpusIsCached:
 
         corpus, _ = await self._corpus(monkeypatch, cache, payload={"rows": [{"project": "Requests"}]})
 
-        assert corpus["pypi"] == ["requests"]
-        assert cache.writes == [(_PYPI_KEY, ["requests"], CacheTTL.POPULAR_PACKAGES)]
+        assert corpus["pypi"] == ["Requests"]
+        assert cache.writes == [(_PYPI_KEY, ["Requests"], CacheTTL.POPULAR_PACKAGES)]
 
     @pytest.mark.asyncio
     async def test_peers_wait_out_the_holders_fetch_instead_of_downloading_again(self, monkeypatch):
@@ -326,6 +326,17 @@ class TestTheWholePypiRankingIsKnownAndOnlyItsTopIsImitated:
         issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache(), components, payload)
 
         assert issues == {"elasticsaerch": "elasticsearch"}
+
+
+class TestARankingIsComparedByItsNormalisedNames:
+    @pytest.mark.asyncio
+    async def test_a_ranked_name_spelled_in_another_case_is_known_and_still_imitated(self, monkeypatch):
+        payload = {"rows": [{"project": "Requests"}]}
+        components = [_pypi("requests"), _pypi("reqests")]
+
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache(), components, payload)
+
+        assert issues == {"reqests": "requests"}
 
 
 class TestTheShippedNpmRanking:

@@ -127,7 +127,7 @@ class TyposquattingAnalyzer(Analyzer):
                 resp = await client.get(TOP_PYPI_PACKAGES_URL)
             reason = f"HTTP {resp.status_code}"
             if resp.status_code == 200:
-                packages = [row["project"].lower() for row in resp.json().get("rows", [])]
+                packages = [row["project"] for row in resp.json().get("rows", [])]
                 if packages:
                     logger.info(f"Loaded {len(packages)} popular PyPI packages")
                     return packages
@@ -179,12 +179,15 @@ class TyposquattingAnalyzer(Analyzer):
         critical_at: float,
         high_at: float,
     ) -> list[dict[str, Any]]:
-        corpora: dict[str, tuple[set[str], list[str]]] = {}
+        corpora = {ecosystem: _corpus(ranking) for ecosystem, ranking in popular_packages.items()}
         issues = []
         for component in components:
-            issue = self._scan_component(
-                component, popular_packages, corpora, similarity_threshold, critical_at, high_at
-            )
+            parsed = parse_purl(component.get("purl") or "")
+            ecosystem = parsed.registry_system if parsed else None
+            corpus = corpora.get(ecosystem) if ecosystem else None
+            if corpus is None:
+                continue
+            issue = self._scan_component(component, corpus, similarity_threshold, critical_at, high_at)
             if issue is not None:
                 issues.append(issue)
         return issues
@@ -192,26 +195,17 @@ class TyposquattingAnalyzer(Analyzer):
     def _scan_component(
         self,
         component: dict[str, Any],
-        popular_packages: dict[str, list[str]],
-        corpora: dict[str, tuple[set[str], list[str]]],
+        corpus: tuple[set[str], list[str]],
         similarity_threshold: float,
         critical_at: float,
         high_at: float,
     ) -> dict[str, Any] | None:
-        parsed = parse_purl(component.get("purl") or "")
-        ecosystem = parsed.registry_system if parsed else None
-        if ecosystem not in popular_packages:
-            return None
-
         full_name = pep503_normalize(component.get("name") or "")
         name = _normalize_pkg_name(full_name)
         if not name:
             return None
 
-        if ecosystem not in corpora:
-            corpora[ecosystem] = _corpus(popular_packages[ecosystem])
-        known, top = corpora[ecosystem]
-
+        known, top = corpus
         # The bare name of @myorg/axios would otherwise match axios itself.
         if full_name in known or name in known:
             return None
