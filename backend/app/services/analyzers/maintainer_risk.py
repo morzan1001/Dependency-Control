@@ -75,13 +75,16 @@ class MaintainerRiskAnalyzer(Analyzer):
         self._stale_after_days = settings.get("stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS)
         self._warn_after_days = settings.get("warn_after_days", STALE_PACKAGE_WARNING_DAYS)
         timeout = ANALYZER_TIMEOUTS["maintainer_risk"]
+        token_rejected: set[str] = set()
 
         async with InstrumentedAsyncClient("Maintainer Risk API", timeout=timeout) as client:
             results = await gather_bounded(
                 parsed_components,
-                lambda component: self._check_component(client, component, github_token),
+                lambda component: self._check_component(client, component, github_token, token_rejected),
                 ANALYZER_BATCH_SIZES["maintainer_risk"],
             )
+        if token_rejected:
+            logger.warning(f"maintainer_risk: GitHub rejected the token for {len(token_rejected)} repositories")
 
         issues = []
         skipped = 0
@@ -101,6 +104,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         client: InstrumentedAsyncClient,
         component: dict[str, Any],
         github_token: str | None,
+        token_rejected: set[str],
     ) -> dict[str, Any] | None:
         name = component.get("name", "")
         purl = component.get("purl", "")
@@ -144,9 +148,9 @@ class MaintainerRiskAnalyzer(Analyzer):
                     reraise_fetch_errors=True,
                 )
             except (httpx.HTTPError, ValueError) as e:
-                # A rejected token fails every repository until an operator replaces it.
-                unauthorized = isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 401
-                logger.log(logging.WARNING if unauthorized else logging.DEBUG, f"GitHub check failed for {repo}: {e}")
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 401:
+                    token_rejected.add(repo)
+                logger.debug(f"GitHub check failed for {repo}: {e}")
 
         risks = self._assess_risks(maintainer_info)
         if github_info:

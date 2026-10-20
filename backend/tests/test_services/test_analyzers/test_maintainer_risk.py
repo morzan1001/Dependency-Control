@@ -429,17 +429,24 @@ class TestAnalyze:
         assert _risk_types(result) == ["stale_package", "inactive_repo"]
         assert issue["maintainer_info"]["github"]["days_since_push"] == 800
 
-    @pytest.mark.parametrize(("status", "level"), [(401, logging.WARNING), (403, logging.DEBUG)])
+    @pytest.mark.parametrize(
+        ("status", "warnings"),
+        [(401, ["maintainer_risk: GitHub rejected the token for 3 repositories"]), (403, [])],
+    )
     @pytest.mark.asyncio
-    async def test_a_rejected_github_token_is_logged_as_a_warning(self, fake_cache, monkeypatch, caplog, status, level):
-        _serve(monkeypatch, fake_cache, {f"{GITHUB_API_URL}/repos/acme/oldlib": status})
+    async def test_a_rejected_token_is_one_warning_per_run(self, fake_cache, monkeypatch, caplog, status, warnings):
+        names = ["one", "two", "three"]
+        _serve(monkeypatch, fake_cache, {f"{GITHUB_API_URL}/repos/acme/{name}": status for name in names})
         caplog.set_level(logging.DEBUG, logger=maintainer_mod.__name__)
 
         await analyze_cyclonedx(
-            MaintainerRiskAnalyzer(), [_component("pypi", "oldlib", "https://github.com/acme/oldlib")]
+            MaintainerRiskAnalyzer(),
+            [_component("pypi", name, f"https://github.com/acme/{name}") for name in names],
         )
 
-        assert [record.levelno for record in caplog.records if "acme/oldlib" in record.getMessage()] == [level]
+        assert [record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING] == warnings
+        debug_lines = " ".join(record.getMessage() for record in caplog.records if record.levelno == logging.DEBUG)
+        assert all(f"GitHub check failed for acme/{name}:" in debug_lines for name in names)
 
     @pytest.mark.asyncio
     async def test_a_pypi_upload_time_without_a_zone_is_read_as_utc(self, fake_cache, monkeypatch):
