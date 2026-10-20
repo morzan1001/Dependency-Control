@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -41,3 +42,27 @@ async def test_a_queued_invitation_mail_carries_no_warning(client, db, admin_aut
     assert resp.status_code == 201, resp.text
     assert "warning" not in resp.json()
     assert provider.return_value.send.await_args.kwargs["destination"] == "invitee@corp.com"
+
+
+@pytest.mark.asyncio
+async def test_resending_an_invitation_near_expiry_mails_the_same_link_valid_for_another_week(
+    client, db, admin_auth_headers
+):
+    await db.system_invitations.insert_one(
+        {
+            "_id": "inv-1",
+            "email": "invitee@corp.com",
+            "token": "tok-1",
+            "invited_by": "admin",
+            "is_used": False,
+            "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
+        }
+    )
+
+    resp = await client.post(_PATH, json={"email": "invitee@corp.com"}, headers=admin_auth_headers)
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["link"].endswith("token=tok-1")
+    stored = await db.system_invitations.find_one({"_id": "inv-1"})
+    remaining = stored["expires_at"].replace(tzinfo=timezone.utc) - datetime.now(timezone.utc)
+    assert remaining > timedelta(days=6, hours=23)
