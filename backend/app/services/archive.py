@@ -480,11 +480,7 @@ async def _flush_batches(
     batch_by_collection.clear()
 
 
-async def _handle_header_event(
-    db: Any,
-    data: dict[str, Any],
-    collections_restored: list[str],
-) -> None:
+async def _handle_header_event(db: Any, data: dict[str, Any]) -> None:
     """read_bundle_frames already rejected a header of another version."""
     scan_data = data["scan"]
     scan_data["pinned"] = True
@@ -493,7 +489,6 @@ async def _handle_header_event(
     scan_data.pop("retention_deleting", None)
     scan_data["restore_in_progress"] = True
     await db.scans.insert_one(scan_data)
-    collections_restored.append("scans")
 
 
 async def _handle_doc_event(
@@ -608,7 +603,8 @@ async def _replay_bundle(
         async for event in read_bundle_frames(decompressed):
             etype = event["type"]
             if etype == "header":
-                await _handle_header_event(db, event["data"], collections_restored)
+                await _handle_header_event(db, event["data"])
+                collections_restored.append("scans")
             elif etype == "doc":
                 coll = event["collection"]
                 if coll not in _RESTORABLE_COLLECTIONS:

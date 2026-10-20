@@ -595,11 +595,11 @@ async def test_a_restore_beaten_to_the_scan_by_an_ingest_leaves_the_ingested_sca
     await _archive_scans_and_delete(db, [scan_id], "retention")
     real_header = archive._handle_header_event
 
-    async def retry_before_the_header_insert(db_, data, collections_restored):
+    async def retry_before_the_header_insert(db_, data):
         await _retried_job(client, db, api_key_headers)
         if not header_keys_scan:
             data.pop("scan")
-        return await real_header(db_, data, collections_restored)
+        return await real_header(db_, data)
 
     monkeypatch.setattr(archive, "_handle_header_event", retry_before_the_header_insert)
 

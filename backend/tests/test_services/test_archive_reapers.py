@@ -227,7 +227,7 @@ async def test_reap_stale_metadata_keeps_the_metadata_of_a_restore_that_stopped_
     """A pod that dies mid-restore never rolls back and its lock expires; the bundle is the only complete copy."""
     db = FakeDatabase()
     await _seed_metadata(db, "scan-partial")
-    await _handle_header_event(db, {"scan": {"_id": "scan-partial", "project_id": "proj-1"}}, [])
+    await _handle_header_event(db, {"scan": {"_id": "scan-partial", "project_id": "proj-1"}})
 
     reaped = await reap_stale_metadata(db)
 
