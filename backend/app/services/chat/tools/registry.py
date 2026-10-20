@@ -257,6 +257,11 @@ async def _waiver_rows(db: AsyncIOMotorDatabase, query: dict[str, Any], subject:
     }
 
 
+def _project_row(project: dict[str, Any], fields: list[str]) -> dict[str, Any]:
+    # The links key on project_id and project_name; id stays for callers that read it.
+    return {**_serialize_doc(project, fields), "project_id": project["_id"], "project_name": project.get("name")}
+
+
 def _rank_risky_projects(stats: dict[str, Stats], limit: int) -> list[str]:
     """The id breaks ties so the order is stable."""
     return sorted(stats, key=lambda pid: (-stats[pid].critical, -stats[pid].high, pid))[:limit]
@@ -558,7 +563,7 @@ class ChatToolRegistry:
         stats = await self._head_scan_stats(ctx.db, await ScanRepository(ctx.db).get_latest_active_scan_ids(projects))
         rows = []
         for p in projects:
-            row = _serialize_doc(p, ["_id", "name", "last_scan_at", "created_at"])
+            row = _project_row(p, ["_id", "name", "last_scan_at", "created_at"])
             row["stats"] = stats[p["_id"]].model_dump(exclude_unset=True) if p["_id"] in stats else None
             row["teams"] = [ref.model_dump() for ref in team_refs(p.get("team_ids") or [], team_names)]
             rows.append(row)
@@ -576,7 +581,7 @@ class ChatToolRegistry:
         license_entry = (project.get("analyzer_settings") or {}).get("license_compliance")
         return {
             "project": {
-                **_serialize_doc(project, _PROJECT_DETAIL_FIELDS),
+                **_project_row(project, _PROJECT_DETAIL_FIELDS),
                 "retention": {"days": days, "action": action, "source": source},
                 "rescan_interval_hours": resolve_rescan_interval(Project(**project), system),
                 "license_policy": license_policy_from_settings(license_entry).model_dump(),
@@ -607,6 +612,8 @@ class ChatToolRegistry:
                     **_serialize_doc(
                         s, ["_id", "status", "branch", "commit_hash", "created_at", "completed_at", "stats"]
                     ),
+                    "project_id": project["_id"],
+                    "scan_id": s["_id"],
                     "is_head": s["_id"] == head_scan_id,
                 }
                 for s in scans
@@ -623,7 +630,7 @@ class ChatToolRegistry:
         project = await self._require_project(ctx)
         scan_id, build = await self._scan_under_answer(ctx, project)
         scan = await ctx.db["scans"].find_one({"_id": scan_id, "project_id": project["_id"]}, _SCAN_DETAIL_PROJECTION)
-        return {"scan": {**_serialize_doc(scan), "is_head": build["is_head"]}}
+        return {"scan": {**_serialize_doc(scan), "scan_id": scan_id, "is_head": build["is_head"]}}
 
     async def _tool_get_scan_findings(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
@@ -865,7 +872,7 @@ class ChatToolRegistry:
         stats = await self._head_scan_stats(ctx.db, await ScanRepository(ctx.db).get_latest_active_scan_ids(projects))
         rows = []
         for p in projects:
-            row = _serialize_doc(p, ["_id", "name", "last_scan_at"])
+            row = _project_row(p, ["_id", "name", "last_scan_at"])
             row["stats"] = stats[p["_id"]].model_dump(exclude_unset=True) if p["_id"] in stats else None
             rows.append(row)
         return {"projects": rows, "projects_total": projects_total}
