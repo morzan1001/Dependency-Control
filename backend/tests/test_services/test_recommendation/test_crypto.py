@@ -108,7 +108,7 @@ def test_certificate_and_protocol_cards_name_their_asset_like_every_crypto_card(
         ("crypto_quantum_vulnerable", "Plan PQC migration for RSA"),
         ("crypto_quantum_vulnerable", "Plan PQC migration for SHA1withRSA"),
         ("crypto_weak_algorithm", "Replace weak algorithm: MD5"),
-        ("crypto_weak_algorithm", "Replace weak algorithm: TLS"),
+        ("crypto_weak_algorithm", "Replace weak algorithm: tls 1.0"),
         ("crypto_weak_key", "Increase key size for RSA-1024"),
         ("crypto_weak_protocol", "Upgrade protocol/cipher: tls 1.0"),
     ]

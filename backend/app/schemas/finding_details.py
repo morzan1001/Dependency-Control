@@ -356,6 +356,8 @@ class CryptoAssetDetails(_DetailsModel):
     asset_type: str | None = None
     primitive: str | None = None
     occurrence_count: int | None = None
+    protocol_type: str | None = None
+    protocol_version: str | None = None
 
 
 class CryptoRuleDetails(CryptoAssetDetails):
@@ -400,8 +402,6 @@ class CryptoCertificateDetails(CryptoAssetDetails):
 class CryptoProtocolDetails(CryptoAssetDetails):
     """Details of crypto_weak_protocol findings."""
 
-    protocol_type: str | None = None
-    protocol_version: str | None = None
     cipher_suite: str | None = None
     cipher_suite_value: Any = None
     key_exchange: str | None = None
