@@ -213,6 +213,23 @@ describe("CrossProjectSearch on a narrow screen", () => {
 });
 
 describe("CrossProjectSearch accessible names", () => {
+  it("tells assistive technology whether its filter panel is open", () => {
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <CrossProjectSearch />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const toggle = screen.getByRole("button", { name: /Filters/ });
+
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("names its search field and links every filter's label to its field", () => {
     vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -111,6 +111,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
             variant={showFilters ? "default" : "outline"}
             size="sm"
             type="button"
+            aria-expanded={showFilters}
             onClick={() => setShowFilters(!showFilters)}
           >
             <Filter className="h-4 w-4 mr-2" />
