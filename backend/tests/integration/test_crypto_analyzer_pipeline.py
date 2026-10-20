@@ -261,6 +261,25 @@ def test_a_rule_finding_carries_the_first_twenty_locations_and_the_total():
     assert finding["details"]["occurrence_count"] == 25
 
 
+@pytest.mark.parametrize("locations", [0, 3, 20])
+def test_a_rule_finding_listing_every_location_carries_no_separate_count(locations):
+    asset = CryptoAsset(
+        project_id="p",
+        scan_id="s",
+        bom_ref="md5",
+        name="MD5",
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=CryptoPrimitive.HASH,
+        occurrence_locations=[f"src/Crypto{index}.java" for index in range(locations)],
+    )
+    rule = _rule("md5", FindingType.CRYPTO_WEAK_ALGORITHM, match_name_patterns=["MD5"])
+
+    (finding,) = crypto_findings_for_assets([asset], [rule], scanner="crypto_weak_algorithm")
+
+    assert len(finding["found_in"]) == locations
+    assert "occurrence_count" not in finding["details"]
+
+
 def test_every_crypto_finding_names_the_asset_it_flags():
     assets, findings = scan_cbom(load_cbom("tls_service.json"))
     by_ref = {asset.bom_ref: asset for asset in assets}

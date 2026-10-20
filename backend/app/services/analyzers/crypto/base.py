@@ -36,12 +36,14 @@ def protocol_label(protocol_type: str | None) -> str | None:
 
 
 def asset_details(asset: CryptoAsset) -> dict[str, Any]:
+    occurrences = len(asset.occurrence_locations)
     return CryptoAssetDetails(
         bom_ref=asset.bom_ref,
         asset_name=asset.name,
         asset_type=asset.asset_type,
         primitive=asset.primitive,
-        occurrence_count=len(asset.occurrence_locations),
+        # Only a truncated found_in needs the total beside it.
+        occurrence_count=occurrences if occurrences > MAX_FINDING_LOCATIONS else None,
         protocol_type=asset.protocol_type,
         protocol_version=asset.version,
         mode=asset.mode,
