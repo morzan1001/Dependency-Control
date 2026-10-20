@@ -386,7 +386,7 @@ async def test_a_rescan_shares_the_result_file_and_the_reaper_keeps_it_until_bot
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_a_rescan_copies_each_external_row_once_under_an_id_derived_from_the_original(db):
+async def test_a_rescan_copies_each_external_row_once_under_an_id_derived_from_its_row_key(db):
     long_message = {**_OPENGREP_FINDING, "extra": {"message": "x" * (9 * 1024 * 1024), "severity": "WARNING"}}
     kics = {"kics_version": "2.1.3", "queries": [_KICS_QUERY]}
     outdated = {"outdated_dependencies": [], "ahead_of_default": [], "yanked_versions": []}
@@ -409,8 +409,36 @@ async def test_a_rescan_copies_each_external_row_once_under_an_id_derived_from_t
     await _carry_over_external_results("scan-2", rescan, db)
 
     copies = {row["_id"]: row for row in await _rows(db, "scan-2")}
-    assert sorted(copies) == ["scan-2:row-kics", "scan-2:row-opengrep"]
-    assert copies["scan-2:row-kics"]["result"] == kics
+    assert sorted(copies) == ["scan-2:kics", "scan-2:opengrep"]
+    assert copies["scan-2:kics"]["result"] == kics
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_legacy_row_rekeyed_after_its_copy_leaves_the_rescan_a_single_copy(db):
+    kics = {"kics_version": "2.1.3", "queries": [_KICS_QUERY]}
+    await db.analysis_results.insert_one(
+        {"_id": ObjectId(), "scan_id": "scan-1", "analyzer_name": "kics", "result": kics}
+    )
+    rescan = Scan(id="scan-2", project_id="p", branch="main", is_rescan=True, original_scan_id="scan-1")
+
+    await _carry_over_external_results("scan-2", rescan, db)
+    await AnalysisResultRepository(db).save_result("scan-1", "kics", kics)
+    await _carry_over_external_results("scan-2", rescan, db)
+
+    outcomes = await _aggregate_external_results(ResultAggregator(), AnalysisResultRepository(db), "scan-2")
+    assert [outcome.name for outcome in outcomes] == ["kics"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_rescan_copy_of_a_row_with_a_source_is_keyed_like_save_result_keys_it(db):
+    await AnalysisResultRepository(db).save_result("scan-1", "kics", {"queries": []}, source="infra/")
+    rescan = Scan(id="scan-2", project_id="p", branch="main", is_rescan=True, original_scan_id="scan-1")
+
+    await _carry_over_external_results("scan-2", rescan, db)
+
+    assert [row["_id"] for row in await _rows(db, "scan-2")] == ["scan-2:kics:infra/"]
 
 
 @pytest.mark.asyncio
