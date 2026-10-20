@@ -1,3 +1,4 @@
+import contextlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -769,6 +770,30 @@ class TestScanLostItsUsableStatus:
         assert repaired["prev_scan_id"] == "s1"
         assert repaired["updates"]["major"] == 1
         assert repaired["outdated_resolved"] == ["requests"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("between", ["error", "sbom_less"])
+    async def test_the_linked_successor_is_repointed_past_a_delta_that_is_never_a_predecessor(self, between: str):
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _at(0), [_dep("s1", "requests", "1.0.0")])
+        await _seed_scan(db, "s2", _at(1), [_dep("s2", "requests", "2.0.0")])
+        await _seed_scan(db, "s3", _at(2), [] if between == "sbom_less" else [_dep("s3", "requests", "2.5.0")])
+        await _seed_scan(db, "s4", _at(3), [_dep("s4", "requests", "3.0.0")])
+        await record_scan_update_delta(db, "s1")
+        await record_scan_update_delta(db, "s2")
+        failing = _failing_dependency_reads(db, only_scan="s3") if between == "error" else contextlib.nullcontext()
+        with failing:
+            await record_scan_update_delta(db, "s3")
+        await record_scan_update_delta(db, "s4")
+        assert (await _delta(db, "s4"))["prev_scan_id"] == "s2"
+
+        await db.dependencies.delete_many({"scan_id": "s2"})
+        await db.scans.update_one({"_id": "s2"}, {"$set": {"status": "failed"}})
+        await record_scan_update_delta(db, "s2")
+
+        repaired = await _delta(db, "s4")
+        assert repaired["prev_scan_id"] == "s1"
+        assert repaired["updates"]["major"] == 1
 
     @pytest.mark.asyncio
     async def test_a_scan_that_never_had_a_delta_stays_untouched(self):

@@ -266,6 +266,10 @@ async def _repair_successors(
         successor = await repo.find_successor(project_id, branch, after, after_id)
         if successor is None:
             return
+        if only_when_linked and not successor.get("dep_count"):
+            # An error document counts 0 dependencies too, so neither kind is recomputed for a dropped anchor.
+            after, after_id = successor["scan_created_at"], successor["_id"]
+            continue
         if only_when_linked and successor.get("prev_scan_id") != anchor_id:
             return
         logger.info(
