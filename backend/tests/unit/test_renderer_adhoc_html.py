@@ -169,6 +169,26 @@ def test_findings_are_ordered_most_severe_first():
     assert html.index("critical-component") < html.index("low-component")
 
 
+def test_waived_findings_cannot_push_a_live_finding_out_of_the_capped_table():
+    waived = [_finding(id=f"w{i}", component=f"waived-{i}", waived=True) for i in range(_FINDING_ROW_CAP)]
+    live = _finding(id="live", severity="LOW", component="live-component")
+
+    rows = report_context(_result(findings=[*waived, live]))["findings"]
+
+    assert rows[0]["component"] == "live-component"
+
+
+def test_one_finding_type_cannot_fill_the_capped_table_for_its_severity():
+    secrets = [
+        _finding(id=f"s{i}", type="secret", severity="HIGH", component=f"secret-{i}") for i in range(_OVER_THE_CAP)
+    ]
+    vulnerability = _finding(id="v", severity="HIGH", component="vulnerable-component")
+
+    rows = report_context(_result(findings=[*secrets, vulnerability]))["findings"]
+
+    assert [row["type"] for row in rows[:2]] == ["secret", "vulnerability"]
+
+
 def test_a_waived_finding_is_marked_as_waived_in_its_row():
     """The stylesheet strikes tr.waived through; without the class a waived finding reads like a live one."""
     result = _result(findings=[_finding(waived=True), _finding(id="live", component="live-component")])

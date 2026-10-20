@@ -1,10 +1,12 @@
+from collections import defaultdict
 from datetime import datetime, timezone
+from itertools import chain, zip_longest
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from app.core.constants import sort_by_severity
+from app.core.constants import get_severity_value
 from app.core.cve import canonical_cves
 from app.schemas.adhoc import AdhocAnalyzeResponse
 
@@ -37,8 +39,21 @@ def _row(finding: dict[str, Any]) -> dict[str, str | bool]:
     }
 
 
+def _cap_order(rows: list[dict[str, str | bool]]) -> list[dict[str, str | bool]]:
+    """Live findings first, most severe first; types alternate within a tier so none fills the row cap alone."""
+    tiers: dict[tuple[bool, int], dict[str, list[dict[str, str | bool]]]] = defaultdict(lambda: defaultdict(list))
+    for row in rows:
+        tiers[(bool(row["waived"]), -get_severity_value(str(row["severity"])))][str(row["type"])].append(row)
+    return [
+        row
+        for tier in sorted(tiers)
+        for row in chain.from_iterable(zip_longest(*tiers[tier].values()))
+        if row is not None
+    ]
+
+
 def report_context(result: AdhocAnalyzeResponse) -> dict[str, Any]:
-    rows = sort_by_severity([_row(finding) for finding in result.findings])
+    rows = _cap_order([_row(finding) for finding in result.findings])
     context: dict[str, Any] = {
         name: getattr(result, name) for name in AdhocAnalyzeResponse.model_fields if name not in _DERIVED_FIELDS
     }
