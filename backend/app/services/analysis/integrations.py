@@ -110,11 +110,11 @@ async def decorate_gitlab_mr(
 
         gitlab_service = GitLabService(gitlab_instance)
         gitlab_project_id = project.gitlab_project_id
-        mrs = await gitlab_service.get_merge_requests_for_commit(gitlab_project_id, scan_doc.commit_hash)
+        head_sha, mrs = await gitlab_service.get_merge_requests_for_commit(
+            gitlab_project_id, scan_doc.commit_hash, scan_doc.branch
+        )
         relevant_mrs = [
-            mr
-            for mr in mrs
-            if mr.state == "opened" and not mr.draft and not mr.work_in_progress and mr.sha == scan_doc.commit_hash
+            mr for mr in mrs if mr.state == "opened" and not mr.draft and not mr.work_in_progress and mr.sha == head_sha
         ]
         if not relevant_mrs:
             logger.info(f"No open MR has scan {scan_id}'s commit as head in project {project.id}")

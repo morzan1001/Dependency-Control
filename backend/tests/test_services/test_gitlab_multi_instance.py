@@ -212,7 +212,7 @@ class TestMrDecorationInstanceRouting:
 
         with patch("app.services.analysis.integrations.GitLabService") as MockService:
             mock_svc = MagicMock()
-            mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=[])
+            mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=("abc", []))
             MockService.return_value = mock_svc
 
             asyncio.run(
@@ -277,7 +277,7 @@ class TestMrDecorationInstanceRouting:
 
             with patch("app.services.analysis.integrations.GitLabService") as MockService:
                 mock_svc = MagicMock()
-                mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=[])
+                mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=("abc", []))
                 MockService.return_value = mock_svc
 
                 asyncio.run(
@@ -326,7 +326,7 @@ class TestMrDecorationInstanceRouting:
 
         with patch("app.services.analysis.integrations.GitLabService") as MockService:
             mock_svc = MagicMock()
-            mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=mrs)
+            mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=("abc", mrs))
             mock_svc.get_current_user_id = AsyncMock(return_value=BOT_USER_ID)
             mock_svc.find_merge_request_notes = _matching_notes([])
             mock_svc.post_merge_request_comment = AsyncMock(return_value=True)
@@ -375,7 +375,7 @@ class TestMrDecorationInstanceRouting:
 
         with patch("app.services.analysis.integrations.GitLabService") as MockService:
             mock_svc = MagicMock()
-            mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=mrs)
+            mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=("abc", mrs))
             mock_svc.get_current_user_id = AsyncMock(return_value=BOT_USER_ID)
             mock_svc.find_merge_request_notes = _matching_notes(existing_notes)
             mock_svc.update_merge_request_comment = AsyncMock(return_value=True)
@@ -432,7 +432,7 @@ class TestMrDecorationInstanceRouting:
 
         with patch("app.services.analysis.integrations.GitLabService") as MockService:
             mock_svc = MagicMock()
-            mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=mrs)
+            mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=("abc", mrs))
             mock_svc.get_current_user_id = AsyncMock(return_value=BOT_USER_ID)
             mock_svc.find_merge_request_notes = _matching_notes(existing_notes)
             mock_svc.update_merge_request_comment = AsyncMock(return_value=True)
@@ -471,7 +471,7 @@ class TestMrCommentTarget:
         )
         db = create_mock_db({"gitlab_instances": create_mock_collection(find_one=_USABLE_INSTANCE_DOC)})
         svc = MagicMock()
-        svc.get_merge_requests_for_commit = AsyncMock(return_value=mrs)
+        svc.get_merge_requests_for_commit = AsyncMock(return_value=("abc", mrs))
         svc.get_current_user_id = AsyncMock(return_value=bot_id)
         svc.find_merge_request_notes = _matching_notes(notes)
         svc.update_merge_request_comment = AsyncMock(return_value=True)
@@ -516,6 +516,55 @@ class TestMrCommentTarget:
         svc.post_merge_request_comment.assert_not_awaited()
         svc.update_merge_request_comment.assert_not_awaited()
         assert [r.levelno for r in caplog.records] == [logging.WARNING]
+
+
+_MERGED_RESULT = "1f0e9c2a3b4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f"
+_TARGET_HEAD = "9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d"
+_SOURCE_HEAD = "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a"
+_NEWER_SOURCE_HEAD = "7b6a5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b"
+
+
+class TestMergedResultsPipelines:
+    """CI_COMMIT_SHA is the merged result GitLab links to no MR; CI_COMMIT_REF_NAME is the MR's source branch."""
+
+    @staticmethod
+    def _decorate(mr_head, branch="feature"):
+        from app.services.analysis.integrations import decorate_gitlab_mr
+
+        routes = {
+            f"/projects/100/repository/commits/{_MERGED_RESULT}/merge_requests": httpx.Response(200, json=[]),
+            f"/projects/100/repository/commits/{_MERGED_RESULT}": httpx.Response(
+                200, json={"id": _MERGED_RESULT, "parent_ids": [_TARGET_HEAD, _SOURCE_HEAD]}
+            ),
+            f"/projects/100/repository/commits/{_SOURCE_HEAD}/merge_requests": httpx.Response(
+                200, json=[{"iid": 42, "state": "opened", "sha": mr_head, "source_branch": "feature"}]
+            ),
+            "/user": httpx.Response(200, json={"id": BOT_USER_ID}),
+        }
+        api_post = AsyncMock(return_value=httpx.Response(201, json={"id": 1}))
+        project = Project(
+            name="Test", gitlab_instance_id="inst-1", gitlab_project_id=100, gitlab_mr_comments_enabled=True
+        )
+        db = create_mock_db({"gitlab_instances": create_mock_collection(find_one=_USABLE_INSTANCE_DOC)})
+        with (
+            patch.object(
+                GitLabService, "_api_get", AsyncMock(side_effect=lambda endpoint, params=None: routes.get(endpoint))
+            ),
+            patch.object(GitLabService, "_first_page_matches", AsyncMock(return_value=[])),
+            patch.object(GitLabService, "_api_request", api_post),
+        ):
+            scan = _make_scan(commit_hash=_MERGED_RESULT, branch=branch)
+            asyncio.run(decorate_gitlab_mr("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan, project, db))
+        return [call.args[1] for call in api_post.await_args_list]
+
+    def test_the_merge_request_whose_head_was_merged_is_decorated(self):
+        assert self._decorate(mr_head=_SOURCE_HEAD) == ["/projects/100/merge_requests/42/notes"]
+
+    def test_a_merged_result_of_a_superseded_head_is_left_alone(self):
+        assert self._decorate(mr_head=_NEWER_SOURCE_HEAD) == []
+
+    def test_a_pushed_merge_of_the_source_branch_into_another_branch_is_left_alone(self):
+        assert self._decorate(mr_head=_SOURCE_HEAD, branch="develop") == []
 
 
 class TestTeamSyncNamespaceCheck:

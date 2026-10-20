@@ -2,6 +2,7 @@ import asyncio
 import logging
 import urllib.parse
 from collections.abc import Callable
+from functools import partial
 from typing import Any, NamedTuple
 
 import httpx
@@ -30,7 +31,7 @@ from app.models.team import GitLabGroupBinding, Team, TeamMember, TeamSyncResult
 from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
 from app.schemas.gitlab_instance import GitLabGroupOption
-from app.services.git_provider import GitProviderService
+from app.services.git_provider import GitProviderService, json_document
 from app.services.oidc_utils import discover_jwks_uri
 
 logger = logging.getLogger(__name__)
@@ -121,9 +122,25 @@ class GitLabService(GitProviderService[GitLabInstance, OIDCPayload]):
         details = await self.get_project_details(project_id)
         return details.default_branch if details else None
 
-    async def get_merge_requests_for_commit(self, project_id: int, commit_sha: str) -> list[GitLabMergeRequest]:
-        response = await self._get_ok(f"/projects/{project_id}/repository/commits/{commit_sha}/merge_requests")
+    async def get_merge_requests_for_commit(
+        self, project_id: int, commit_sha: str, branch: str
+    ) -> tuple[str, list[GitLabMergeRequest]]:
+        # A merged-results or merge-train pipeline runs a merge commit; its CI_COMMIT_REF_NAME is the source branch.
+        return await self._requests_for_merge_build(
+            f"project {project_id}",
+            commit_sha,
+            partial(self._merge_requests_for_sha, project_id),
+            partial(self._commit_parents, project_id),
+            lambda mr: mr.source_branch == branch,
+        )
+
+    async def _merge_requests_for_sha(self, project_id: int, sha: str) -> list[GitLabMergeRequest]:
+        response = await self._get_ok(f"/projects/{project_id}/repository/commits/{sha}/merge_requests")
         return [] if response is None else [GitLabMergeRequest(**mr) for mr in response.json()]
+
+    async def _commit_parents(self, project_id: int, commit_sha: str) -> list[str]:
+        response = await self._get_ok(f"/projects/{project_id}/repository/commits/{commit_sha}")
+        return [] if response is None else [str(sha) for sha in json_document(response).get("parent_ids") or []]
 
     async def post_merge_request_comment(self, project_id: int, mr_iid: int, body: str) -> bool:
         return await self._send_comment("POST", f"/projects/{project_id}/merge_requests/{mr_iid}/notes", body)

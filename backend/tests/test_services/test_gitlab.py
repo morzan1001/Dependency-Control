@@ -302,9 +302,9 @@ class TestARejectedReadIsLogged:
         [
             (lambda service: service.get_project_details(100), "/projects/100", None),
             (
-                lambda service: service.get_merge_requests_for_commit(100, "9c1d2e3f"),
+                lambda service: service.get_merge_requests_for_commit(100, "9c1d2e3f", "main"),
                 "/projects/100/repository/commits/9c1d2e3f/merge_requests",
-                [],
+                ("9c1d2e3f", []),
             ),
         ],
         ids=["project details", "merge requests of a commit"],
@@ -317,6 +317,87 @@ class TestARejectedReadIsLogged:
             assert asyncio.run(read(service)) == unanswered
 
         assert f"GitLab API GET {endpoint} returned HTTP 401" in [r.getMessage() for r in caplog.records]
+
+
+_MERGED_RESULT = "1f0e9c2a3b4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f"
+_TARGET_HEAD = "9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d"
+_SOURCE_HEAD = "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a"
+
+
+def _merge_request(iid, source_branch, sha=_SOURCE_HEAD):
+    """One item of GET /projects/:id/repository/commits/:sha/merge_requests."""
+    return {"iid": iid, "state": "opened", "draft": False, "sha": sha, "source_branch": source_branch}
+
+
+def _routed(routes):
+    return AsyncMock(side_effect=lambda endpoint, params=None: routes.get(endpoint))
+
+
+class TestMergeRequestsForCommit:
+    """A merged-results or merge-train pipeline's CI_COMMIT_SHA is a merge commit GitLab links to no MR."""
+
+    @staticmethod
+    def _lookup(gitlab_instance_a, branch, parent_ids, head_mrs):
+        routes = {
+            f"/projects/100/repository/commits/{_MERGED_RESULT}/merge_requests": httpx.Response(200, json=[]),
+            f"/projects/100/repository/commits/{_MERGED_RESULT}": httpx.Response(
+                200, json={"id": _MERGED_RESULT, "parent_ids": parent_ids}
+            ),
+            f"/projects/100/repository/commits/{_SOURCE_HEAD}/merge_requests": httpx.Response(200, json=head_mrs),
+        }
+        service = GitLabService(gitlab_instance_a)
+        with patch.object(service, "_api_get", _routed(routes)) as api_get:
+            head_sha, mrs = asyncio.run(service.get_merge_requests_for_commit(100, _MERGED_RESULT, branch))
+        return head_sha, [mr.iid for mr in mrs], [call.args[0] for call in api_get.await_args_list]
+
+    def test_a_merged_result_resolves_to_the_merge_request_of_its_source_head(self, gitlab_instance_a):
+        head_sha, iids, requested = self._lookup(
+            gitlab_instance_a,
+            "feature",
+            [_TARGET_HEAD, _SOURCE_HEAD],
+            [_merge_request(7, "feature"), _merge_request(8, "feature-copy")],
+        )
+
+        assert (head_sha, iids) == (_SOURCE_HEAD, [7])
+        assert requested[-1] == f"/projects/100/repository/commits/{_SOURCE_HEAD}/merge_requests"
+
+    def test_a_pushed_merge_into_another_branch_leaves_the_merged_branchs_request_alone(self, gitlab_instance_a):
+        head_sha, iids, _ = self._lookup(
+            gitlab_instance_a, "develop", [_TARGET_HEAD, _SOURCE_HEAD], [_merge_request(7, "feature")]
+        )
+
+        assert (head_sha, iids) == (_MERGED_RESULT, [])
+
+    @pytest.mark.parametrize(
+        "parent_ids",
+        [
+            pytest.param([_TARGET_HEAD], id="single-parent"),
+            pytest.param([_TARGET_HEAD, _SOURCE_HEAD, "c" * 40], id="octopus"),
+        ],
+    )
+    def test_only_a_two_parent_commit_is_retried(self, gitlab_instance_a, parent_ids):
+        head_sha, iids, requested = self._lookup(
+            gitlab_instance_a, "feature", parent_ids, [_merge_request(7, "feature")]
+        )
+
+        assert (head_sha, iids) == (_MERGED_RESULT, [])
+        assert requested == [
+            f"/projects/100/repository/commits/{_MERGED_RESULT}/merge_requests",
+            f"/projects/100/repository/commits/{_MERGED_RESULT}",
+        ]
+
+    def test_a_commit_a_merge_request_names_is_not_retried(self, gitlab_instance_a):
+        routes = {
+            f"/projects/100/repository/commits/{_SOURCE_HEAD}/merge_requests": httpx.Response(
+                200, json=[_merge_request(7, "feature")]
+            )
+        }
+        service = GitLabService(gitlab_instance_a)
+        with patch.object(service, "_api_get", _routed(routes)) as api_get:
+            head_sha, mrs = asyncio.run(service.get_merge_requests_for_commit(100, _SOURCE_HEAD, "feature"))
+
+        assert (head_sha, [mr.iid for mr in mrs]) == (_SOURCE_HEAD, [7])
+        api_get.assert_awaited_once()
 
 
 def _note(note_id, body="", author_id=7):

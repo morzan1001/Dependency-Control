@@ -4,6 +4,7 @@ import urllib.parse
 from collections.abc import Awaitable, Callable
 from contextlib import aclosing
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any, NamedTuple
 
 import httpx
@@ -773,51 +774,27 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
     async def get_pull_requests_for_commit(
         self, owner: str, repo: str, commit_sha: str, branch: str
     ) -> tuple[str, list[GitHubPullRequest]]:
-        pull_requests = await self._pull_requests_for_sha(owner, repo, commit_sha)
-        if pull_requests or not branch.endswith("/merge"):
-            return commit_sha, pull_requests
-
-        # A "<number>/merge" build runs a test-merge commit GitHub links to no PR (200, []); parents[1] is the PR head.
-        head_sha = await self._merge_commit_head_parent(owner, repo, commit_sha)
-        if head_sha:
-            pull_requests = [
-                pr for pr in await self._pull_requests_for_sha(owner, repo, head_sha) if branch == f"{pr.number}/merge"
-            ]
-            if pull_requests:
-                logger.info(
-                    "Resolved %s/%s commit %s to pull request(s) %s via merge-commit head parent %s",
-                    owner,
-                    repo,
-                    commit_sha,
-                    [pr.number for pr in pull_requests],
-                    head_sha,
-                )
-                return head_sha, pull_requests
-
-        logger.info(
-            "No pull request found for %s/%s commit %s (head parent tried: %s)",
-            owner,
-            repo,
+        pull_requests_for = partial(self._pull_requests_for_sha, owner, repo)
+        if not branch.endswith("/merge"):
+            return commit_sha, await pull_requests_for(commit_sha)
+        # A "<number>/merge" build runs a test-merge commit GitHub links to no PR (200, []).
+        return await self._requests_for_merge_build(
+            f"{owner}/{repo}",
             commit_sha,
-            head_sha or "none",
+            pull_requests_for,
+            partial(self._commit_parents, owner, repo),
+            lambda pr: branch == f"{pr.number}/merge",
         )
-        return commit_sha, []
 
     async def _pull_requests_for_sha(self, owner: str, repo: str, sha: str) -> list[GitHubPullRequest]:
         response = await self._get_ok(f"/repos/{owner}/{repo}/commits/{sha}/pulls")
         return [] if response is None else [GitHubPullRequest(**pr) for pr in response.json()]
 
-    async def _merge_commit_head_parent(self, owner: str, repo: str, commit_sha: str) -> str | None:
-        """Parent order is a git convention, not an API guarantee."""
+    async def _commit_parents(self, owner: str, repo: str, commit_sha: str) -> list[str]:
         # The git object, not the REST commit, which also carries every changed file and its patch.
         response = await self._get_ok(f"/repos/{owner}/{repo}/git/commits/{commit_sha}")
-        if response is None:
-            return None
-        parents = json_document(response).get("parents") or []
-        if len(parents) != 2:
-            return None
-        head_sha = parents[1].get("sha")
-        return str(head_sha) if head_sha else None
+        parents = [] if response is None else json_document(response).get("parents") or []
+        return [str(parent.get("sha") or "") for parent in parents]
 
     async def find_pull_request_comments(
         self, owner: str, repo: str, pr_number: int, matches: Callable[[GitHubIssueComment], bool]

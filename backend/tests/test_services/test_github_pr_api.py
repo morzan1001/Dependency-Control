@@ -162,7 +162,7 @@ class TestMergeCommitFallback:
             f"/repos/acme/widget/commits/{_HEAD_SHA}/pulls": _json_response([_PULL_REQUEST]),
         }
         with patch.object(service, "_api_get", _routed_api_get(routes)):
-            with caplog.at_level("INFO", logger="app.services.github"):
+            with caplog.at_level("INFO", logger="app.services.git_provider"):
                 _, prs = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA, "42/merge"))
 
         assert [p.number for p in prs] == [42]
@@ -180,7 +180,7 @@ class TestMergeCommitFallback:
             f"/repos/acme/widget/commits/{_HEAD_SHA}/pulls": _json_response([]),
         }
         with patch.object(service, "_api_get", _routed_api_get(routes)):
-            with caplog.at_level("INFO", logger="app.services.github"):
+            with caplog.at_level("INFO", logger="app.services.git_provider"):
                 assert asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA, "42/merge")) == (
                     _MERGE_SHA,
                     [],
