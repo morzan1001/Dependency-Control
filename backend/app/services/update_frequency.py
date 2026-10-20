@@ -74,12 +74,22 @@ def _release_tuple(version: Version) -> tuple[int, int]:
 
 # Hex digests order at random, so ranking two commit pins would book half of all pin bumps as downgrades.
 _COMMIT_HASH = re.compile(r"[0-9a-f]{7,64}")
+# A Debian epoch outranks the whole version after it, which parse_version_key would read as one more number.
+_DEBIAN_EPOCH = re.compile(r"(\d+):")
+
+
+def _debian_epoch(version: str) -> int:
+    match = _DEBIAN_EPOCH.match(version)
+    return int(match.group(1)) if match else 0
 
 
 def _classify_outside_pep_440(old_version: str, new_version: str) -> UpdateKind | Literal["none"]:
     """Maven, Debian and Go spellings: ordered for direction only, as their parts name no major, minor or patch."""
     if _COMMIT_HASH.fullmatch(old_version) or _COMMIT_HASH.fullmatch(new_version):
         return "unknown"
+    old_epoch, new_epoch = _debian_epoch(old_version), _debian_epoch(new_version)
+    if old_epoch != new_epoch:
+        return "downgrade" if new_epoch < old_epoch else "unknown"
     old_key, new_key = parse_version_key(old_version), parse_version_key(new_version)
     if new_key < old_key:
         return "downgrade"

@@ -96,6 +96,13 @@ class TestClassifyVersionChange:
     def test_a_forward_move_outside_pep_440_stays_unknown(self):
         assert classify_version_change("5.3.9.RELEASE", "5.3.10.RELEASE") == "unknown"
 
+    @pytest.mark.parametrize(("old", "new"), [("2.0-1", "1:1.0-1"), ("1:2.38.1-5", "2:2.38.1-5")])
+    def test_a_debian_epoch_bump_is_an_update_whatever_version_follows_it(self, old: str, new: str):
+        assert classify_version_change(old, new) == "unknown"
+
+    def test_a_dropped_debian_epoch_is_a_downgrade(self):
+        assert classify_version_change("1:1.0-1", "2.0-1") == "downgrade"
+
     def test_commit_hashes_are_not_ordered(self):
         # Their letters sort at random, so ordering them would book half of all pin bumps as downgrades.
         old, new = "8f4b7f84864484a7bf31766abe9204da3cbe65b3", "a8eba0b27e820071cde6df949e0beb9ba4906955"
