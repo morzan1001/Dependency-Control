@@ -240,11 +240,11 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
               />
               <CountRow
                 icon={AlertCircle} iconClass="text-severity-high" label="Likely Reachable (import-level)"
-                count={reachability.likely_reachable_count} className="bg-orange-500/20"
+                count={reachability.likely_reachable_count} className="border-orange-500/30 bg-orange-500/20"
               />
               <CountRow
                 icon={CheckCircle2} iconClass="text-success" label="Unreachable (Safe)"
-                count={reachability.unreachable_count} className="bg-green-500/20 text-green-600"
+                count={reachability.unreachable_count} className="border-green-500/30 bg-green-500/20 text-green-600"
               />
               <CountRow icon={Info} iconClass="text-muted-foreground" label="Unknown" count={reachability.unknown_count} />
 

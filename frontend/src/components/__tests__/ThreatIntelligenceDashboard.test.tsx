@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { ThreatIntelligenceDashboard } from "../ThreatIntelligenceDashboard";
 
@@ -79,6 +79,21 @@ describe("ThreatIntelligenceDashboard reachability card", () => {
     );
     const likelyRow = screen.getByText(/Likely Reachable/).closest("div")?.parentElement;
     expect(likelyRow).toHaveTextContent("8");
+  });
+
+  it("edges the tinted likely and unreachable pills in their own hue instead of the neutral badge outline", () => {
+    render(
+      <ThreatIntelligenceDashboard stats={{ ...makeStats({ total: 30, deprioritized_count: 0 }), reachability }} />,
+    );
+    const pill = (label: RegExp, count: string) =>
+      within(screen.getByText(label).closest("div")?.parentElement as HTMLElement).getByText(count);
+    const likely = pill(/Likely Reachable/, "8");
+    const unreachable = pill(/Unreachable/, "10");
+
+    expect(likely).toHaveClass("border-orange-500/30");
+    expect(unreachable).toHaveClass("border-green-500/30");
+    expect(likely).not.toHaveClass("border-foreground/45");
+    expect(unreachable).not.toHaveClass("border-foreground/45");
   });
 });
 
