@@ -95,7 +95,7 @@ from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, load
 from app.services.crypto_policy.resolver import CryptoPolicyResolver, EffectivePolicy
 from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment.service import vulnerability_enrichment_service
-from app.services.github import is_public_github
+from app.services.github import installation_github_token
 from app.services.gridfs_maintenance import gridfs_ref_id
 from app.services.reachability_enrichment import (
     ComponentLanguages,
@@ -161,24 +161,12 @@ class _Verdict:
     enrichment_failures: list[str]
 
 
-async def _get_github_instance_token(db: Database) -> str | None:
-    """A github.com instance's token, since GHSA lookups send it to api.github.com."""
-    cursor = db.github_instances.find(
-        {"is_active": True, "access_token": {"$nin": [None, ""]}},
-        {"access_token": 1, "github_url": 1, "url": 1},
-    ).sort([("created_at", 1), ("_id", 1)])
-    async for doc in cursor:
-        if is_public_github(doc.get("github_url"), doc["url"]):
-            return str(doc["access_token"])
-    return None
-
-
 async def _run_context(scan: Scan, db: Database, worker_id: str, sbom_generation: int | None) -> _RunContext | None:
     project = await ProjectRepository(db).get_by_id(scan.project_id)
     if project is None:
         return None
     system_settings = await SystemSettingsRepository(db).get()
-    github_token = system_settings.github_token or await _get_github_instance_token(db)
+    github_token = await installation_github_token(db, system_settings.github_token)
     settings_for = build_settings_resolver(system_settings, project.analyzer_settings, github_token)
     return _RunContext(scan, db, worker_id, sbom_generation, project.active_analyzers, github_token, settings_for)
 

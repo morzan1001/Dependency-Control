@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,6 +17,8 @@ _FEED_DOWN = "EPSS feed down"
 _SECRET_FILE = "app/config.py"
 _CVE = "CVE-2024-0001"
 _VULNERABLE_COMPONENT = "requests"
+_SETTINGS_TOKEN = "settings-token"
+_INSTANCE_TOKEN = "instance-token"
 
 _TRUFFLEHOG = {
     "findings": [
@@ -166,7 +169,7 @@ async def test_the_kev_card_names_the_bundled_cve_the_enrichment_marks(monkeypat
         second: VulnerabilityEnrichment(cve=second, risk_score=40.0, is_kev=True),
     }
 
-    async def enrich_findings(findings):
+    async def enrich_findings(findings, github_token=None):
         for finding in findings:
             apply_enrichments(finding["details"], live)
         return live, []
@@ -194,3 +197,60 @@ async def test_the_note_names_every_host_the_enrichment_reached(fake_cache, monk
     contacted = {r.url.host for r in seen}
     assert contacted == {"api.github.com", "api.first.org", "www.cisa.gov"}
     assert all(host in response.analyzers.notes[_ENRICHMENT] for host in contacted)
+
+
+@pytest.mark.asyncio
+async def test_the_ghsa_lookups_carry_the_installation_github_token(monkeypatch):
+    enrich = _serve(monkeypatch)
+    db = FakeDatabase()
+    await db.system_settings.insert_one({"_id": "current", "github_token": _SETTINGS_TOKEN})
+    await db.github_instances.insert_one(_github_com_instance(access_token=_INSTANCE_TOKEN))
+
+    await run_adhoc_analysis(_vulnerable_request(monkeypatch), db)
+
+    assert enrich.await_args.kwargs["github_token"] == _SETTINGS_TOKEN
+
+
+@pytest.mark.asyncio
+async def test_without_a_settings_token_the_ghsa_lookups_carry_the_github_com_instance_token(monkeypatch):
+    enrich = _serve(monkeypatch)
+    db = FakeDatabase()
+    await db.github_instances.insert_one(_github_com_instance(access_token=_INSTANCE_TOKEN))
+
+    await run_adhoc_analysis(_vulnerable_request(monkeypatch), db)
+
+    assert enrich.await_args.kwargs["github_token"] == _INSTANCE_TOKEN
+
+
+@pytest.mark.asyncio
+async def test_analyzers_receive_none_of_the_installation_settings_or_credentials(monkeypatch):
+    _serve(monkeypatch)
+    received: list[dict] = []
+
+    class _Probe:
+        name = "osv"
+
+        async def analyze(self, sbom, settings=None, parsed_components=None):
+            received.append(settings)
+            return {"osv_vulnerabilities": []}
+
+    serve_analyzer(monkeypatch, "osv", _Probe())
+    db = FakeDatabase()
+    await db.system_settings.insert_one(
+        {"_id": "current", "github_token": _SETTINGS_TOKEN, "open_source_malware_api_key": "malware-key"}
+    )
+
+    await run_adhoc_analysis(AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False), db)
+
+    assert received == [{"github_token": None}]
+
+
+def _github_com_instance(**fields) -> dict:
+    return {
+        "_id": "gh",
+        "is_active": True,
+        "url": "https://token.actions.githubusercontent.com",
+        "github_url": "https://github.com",
+        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        **fields,
+    }

@@ -20,8 +20,8 @@ from app.core.constants import (
     TOP_PYPI_PACKAGES_URL,
 )
 from app.models.finding import FindingType
-from app.models.system import SystemSettings
 from app.models.waiver import Waiver
+from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport, WaiversApplied
 from app.schemas.bearer import BearerFinding
 from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
@@ -49,6 +49,7 @@ from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.analyzers.malware import MISSING_API_KEY
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import sends_ids, vulnerability_enrichment_service
+from app.services.github import installation_github_token
 from app.services.normalizers.sast import bearer_entries
 from app.services.reachability_enrichment import (
     ComponentLanguages,
@@ -374,12 +375,15 @@ def _aggregate_crypto_rules(
 
 
 async def _enrich_vulnerabilities(
-    records: list[dict[str, Any]], vulnerabilities: list[dict[str, Any]], report: AnalyzerReport
+    records: list[dict[str, Any]], vulnerabilities: list[dict[str, Any]], report: AnalyzerReport, db: Database
 ) -> tuple[dict[str, Any], dict[str, VulnerabilityEnrichment]]:
     threat_intel: dict[str, VulnerabilityEnrichment] = {}
     sends = sends_ids(vulnerabilities)
     try:
-        threat_intel, unavailable = await vulnerability_enrichment_service.enrich_findings(vulnerabilities)
+        github_token = await installation_github_token(db, (await SystemSettingsRepository(db).get()).github_token)
+        threat_intel, unavailable = await vulnerability_enrichment_service.enrich_findings(
+            vulnerabilities, github_token=github_token
+        )
     except Exception as exc:
         logger.warning("adhoc: EPSS/KEV enrichment failed: %s", exc)
         _record_errored(report, _ENRICHMENT, str(exc))
@@ -478,7 +482,8 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     parsed_inputs = await asyncio.to_thread(_parse_sboms, request, report)
 
     license_settings = {"license_compliance": request.license_policy.model_dump()} if request.license_policy else None
-    settings_for = build_settings_resolver(SystemSettings(), license_settings)
+    # Analyzers get none of the installation's settings or credentials; its GitHub token serves the GHSA lookups only.
+    settings_for = build_settings_resolver(None, license_settings)
 
     requested = resolve_adhoc_analyzers(request.analyzers, report)
     # An input without package components must not be analysed into a clean bill of health.
@@ -501,7 +506,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     # Same dict objects as records, so every stage's in-place enrichment reaches the response.
     vulnerabilities = [record for record in records if record["type"] == FindingType.VULNERABILITY]
 
-    epss_kev_summary, threat_intel = await _enrich_vulnerabilities(records, vulnerabilities, report)
+    epss_kev_summary, threat_intel = await _enrich_vulnerabilities(records, vulnerabilities, report, db)
 
     # One row per package across every posted SBOM, the invariant a stored scan's inventory holds.
     merged, _ = merge_duplicate_dependencies([dep for pi in parsed_inputs for dep in pi.parsed.dependencies])

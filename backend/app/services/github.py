@@ -149,6 +149,20 @@ def is_public_github(github_url: str | None, issuer_url: str) -> bool:
     return _hostname(issuer_url) == _hostname(GITHUB_SHARED_OIDC_ISSUER)
 
 
+async def installation_github_token(db: AsyncIOMotorDatabase, settings_token: str | None) -> str | None:
+    """The settings token, else a github.com instance's, since GHSA lookups send it to api.github.com."""
+    if settings_token:
+        return settings_token
+    cursor = db.github_instances.find(
+        {"is_active": True, "access_token": {"$nin": [None, ""]}},
+        {"access_token": 1, "github_url": 1, "url": 1},
+    ).sort([("created_at", 1), ("_id", 1)])
+    async for doc in cursor:
+        if is_public_github(doc.get("github_url"), doc["url"]):
+            return str(doc["access_token"])
+    return None
+
+
 def github_api_headers(token: str | None) -> dict[str, str]:
     headers = {"Accept": _DEFAULT_ACCEPT, "X-GitHub-Api-Version": "2022-11-28"}
     if token:
