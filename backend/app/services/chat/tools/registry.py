@@ -266,7 +266,7 @@ async def _waiver_rows(db: AsyncIOMotorDatabase, query: dict[str, Any], subject:
 
 
 def _project_row(project: dict[str, Any], fields: list[str]) -> dict[str, Any]:
-    # The links key on project_id and project_name; id stays for callers that read it.
+    # The links key on project_id and project_name.
     return {**_serialize_doc(project, fields), "project_id": project["_id"], "project_name": project.get("name")}
 
 
@@ -443,7 +443,6 @@ async def _ranked_findings(
             {**query, "severity": tier},
             RANKED_FINDING_PROJECTION,
             limit=_FINDING_RANK_FETCH_CAP + 1,
-            # A search's unanchored regexes read every head finding; past this nobody waits for the answer.
             max_time_ms=DEFAULT_MAX_TIME_MS,
         )
         candidates = await cursor.to_list(length=None)
@@ -633,7 +632,7 @@ class ChatToolRegistry:
             {"project_id": project["_id"]},
             subject="scans",
             limit=ctx.args["limit"],
-            sort=[("created_at", -1)],
+            sort=_NEWEST_FIRST,
             projection=_SCAN_HISTORY_PROJECTION,
         )
         head_scan_id = await self._head_scan_id(project, ctx.db)

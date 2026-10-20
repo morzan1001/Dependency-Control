@@ -179,7 +179,7 @@ async def one_rule_overridden(db):
     await db.projects.insert_one({"_id": _PROJECT, "name": "P", "default_branch": "main", "members": []})
     await seed_crypto_policies(db)
     rules = list(load_seed_rules())
-    # The last rule is the one the byte cap used to drop.
+    # The last rule sits past where a full-row dump would hit the byte cap.
     flipped = rules[-1].model_copy(update={"enabled": not rules[-1].enabled})
     await write_policy(
         db,

@@ -79,7 +79,7 @@ async def test_pqc_migration_plan(seeded, admin_user):
 async def test_a_crypto_list_asked_without_a_limit_reads_what_the_result_cap_can_show(
     seeded, admin_user, tool, chat_default
 ):
-    """Hundreds of full rows by default reach the model as the 8 KB cap's first few; the maximum stays."""
+    """Hundreds of full rows by default reach the model as the 8 KB cap's first few."""
     spy = AsyncMock(return_value={})
     with patch(f"app.services.chat.tools.registry.{tool}", new=spy):
         await ChatToolRegistry().execute_tool(tool, {"project_id": _PROJECT}, admin_user, seeded)
