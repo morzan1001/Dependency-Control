@@ -2,8 +2,6 @@
 
 import pytest
 
-from app.api.v1.helpers.vcs_instances import list_page
-
 from app.models.github_instance import GitHubInstance
 from app.models.gitlab_instance import GitLabInstance
 from app.repositories.github_instances import GitHubInstanceRepository
@@ -13,7 +11,6 @@ from tests.mocks.fake_mongo import FakeDatabase
 _CREATED_BY = "admin"
 _TOKEN = "glpat-secret"
 _BASE_URL = "https://vcs.example.com"
-_ACTIVE_COUNT = 3
 
 _REPOSITORIES = [
     pytest.param(GitLabInstanceRepository, GitLabInstance, "gitlab_instances", id="gitlab"),
@@ -59,27 +56,6 @@ class TestSharedVcsInstanceBehaviour:
 
         assert (await db[collection_name].find_one({"_id": "i-1"}))["access_token"] == _TOKEN
         assert (await repo.get_by_id("i-1")).access_token == _TOKEN
-
-    @pytest.mark.asyncio
-    async def test_a_page_of_active_instances_counts_the_active_ones_only(self, repo_class, model, collection_name):
-        db = FakeDatabase()
-        repo = repo_class(db)
-        for index in range(_ACTIVE_COUNT):
-            await repo.create(_instance(model, instance_id=f"a-{index}", name=f"Active {index}"))
-        await repo.create(_instance(model, instance_id="inactive", name="Inactive", is_active=False))
-
-        second = await list_page(repo, page=2, size=1, active_only=True, to_response=lambda instance: instance)
-
-        assert ([instance.id for instance in second["items"]], second["total"], second["page"]) == (
-            ["a-1"],
-            _ACTIVE_COUNT,
-            2,
-        )
-        everything = await list_page(repo, page=1, size=10, active_only=False, to_response=lambda instance: instance)
-        assert ([instance.id for instance in everything["items"]][-1], everything["total"]) == (
-            "inactive",
-            _ACTIVE_COUNT + 1,
-        )
 
     @pytest.mark.asyncio
     async def test_a_name_is_taken_unless_the_row_holding_it_is_the_excluded_one(

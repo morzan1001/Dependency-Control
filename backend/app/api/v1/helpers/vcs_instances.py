@@ -86,7 +86,7 @@ async def apply_update[T: GitLabInstance | GitHubInstance](
         value = update_dict.get(field)
         return value if field in update_dict and value != getattr(instance, field) else None
 
-    await assert_unique(repo, "", url=changed("url"), name=changed("name"), exclude_id=str(instance.id))
+    await assert_unique(repo, label, url=changed("url"), name=changed("name"), exclude_id=str(instance.id))
     if update_dict.get("sync_teams", instance.sync_teams) and not update_dict.get(
         "access_token", instance.access_token
     ):
