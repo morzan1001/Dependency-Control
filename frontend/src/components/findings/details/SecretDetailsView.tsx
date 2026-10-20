@@ -19,19 +19,19 @@ export function SecretDetailsView({ finding, scanContext }: SecretDetailsViewPro
 
     return (
         <div className="space-y-4">
-            {scanContext && finding.component && (
-                <FileLocation
-                    filePath={finding.component}
-                    startLine={details?.line}
-                    scmContext={scanContext}
-                />
-            )}
             {finding.component && (
-                <AdditionalLocations
-                    filePath={finding.component}
-                    locations={details?.additional_locations}
-                    scmContext={scanContext}
-                />
+                <>
+                    <FileLocation
+                        filePath={finding.component}
+                        startLine={details?.line}
+                        scmContext={scanContext}
+                    />
+                    <AdditionalLocations
+                        filePath={finding.component}
+                        locations={details?.additional_locations}
+                        scmContext={scanContext}
+                    />
+                </>
             )}
             {hint && (
                 <div className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${hint.tone === 'danger'

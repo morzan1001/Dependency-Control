@@ -56,7 +56,7 @@ describe("FindingDetailsModal secret detector", () => {
 });
 
 describe("FindingDetailsModal secret locations", () => {
-  it("lists the secret's other lines and commits in the file without a scan context", () => {
+  it("shows the secret's file and line beside its other lines and commits without a scan context", () => {
     const locations = [
       { line: 9, commit: "a".repeat(40) },
       { line: 3, commit: "b".repeat(40) },
@@ -65,9 +65,11 @@ describe("FindingDetailsModal secret locations", () => {
       secretFinding({ detector: "2", detector_name: "AWS", line: 3, commit: "a".repeat(40), additional_locations: locations }, "Secret detected: AWS"),
     );
 
+    expect(screen.getByText("File").nextElementSibling).toHaveTextContent("config.py");
+    expect(screen.getByText("Location").nextElementSibling).toHaveTextContent("Line 3");
     expect(screen.getByText("Additional Locations")).toBeInTheDocument();
     expect(screen.getByText("Line 9")).toBeInTheDocument();
-    expect(screen.getByText("Line 3")).toBeInTheDocument();
+    expect(screen.getAllByText("Line 3")).toHaveLength(2);
     expect(screen.getByText("bbbbbbb")).toBeInTheDocument();
   });
 });

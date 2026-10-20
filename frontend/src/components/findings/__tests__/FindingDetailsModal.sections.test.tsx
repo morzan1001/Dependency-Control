@@ -366,15 +366,20 @@ describe("FindingDetailsModal secret details", () => {
     expect(screen.getByText("AKIA****")).toBeInTheDocument();
   });
 
-  it("places the secret in its file only when the scan's source is known", () => {
+  it("places the secret in its file and links the file only when the scan's source is known", () => {
     const shown = secret({ line: 42 });
     const { unmount } = renderModal(shown);
-    expect(screen.queryByText("Line 42")).not.toBeInTheDocument();
+    expect(screen.getByText("Line 42")).toBeInTheDocument();
+    expect(screen.getByTitle("config/settings.py").closest("a")).toBeNull();
     unmount();
 
     renderModal(shown, { scanContext: { projectUrl: "https://gitlab.example.com/acme/app", commitHash: "abc1234" } });
 
     expect(screen.getByText("Line 42")).toBeInTheDocument();
+    expect(screen.getByTitle("config/settings.py").closest("a")).toHaveAttribute(
+      "href",
+      "https://gitlab.example.com/acme/app/-/blob/abc1234/config/settings.py#L42",
+    );
   });
 });
 
