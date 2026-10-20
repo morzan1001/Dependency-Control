@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.constants import NotificationChannel
 from app.services.aggregation.versions import parse_version_key
 
 # Dependency types a row of the ecosystem is stored under besides its purl type: syft's, or a pkg:go purl's.
@@ -102,7 +103,7 @@ class AdvisoryPackage(BaseModel):
 class BroadcastRequest(BaseModel):
     target_type: Literal["global", "teams", "advisory"] = Field(..., description="Target audience")
     target_teams: list[str] | None = Field(None, description="List of Team IDs if target_type is 'teams'")
-    channels: list[str] | None = Field(None, description="Channels to send to (email, slack, mattermost)")
+    channels: list[NotificationChannel] | None = Field(None, description="Channels to send to")
 
     packages: list[AdvisoryPackage] | None = Field(None, description="List of affected packages for advisory")
 

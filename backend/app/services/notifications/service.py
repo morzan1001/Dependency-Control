@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from app.core import abatched
@@ -49,7 +50,7 @@ class NotificationService:
     async def _deliver(
         self,
         db: Any,
-        recipients: list[tuple[User, list[str]]],
+        recipients: Sequence[tuple[User, Sequence[str]]],
         subject: str,
         message: str,
         *,
@@ -101,7 +102,7 @@ class NotificationService:
         message: str,
         *,
         db: Any,
-        forced_channels: list[str] | None = None,
+        forced_channels: Sequence[str] | None = None,
         html_message: str | None = None,
         slack_blocks: list[dict[str, Any]] | None = None,
         mattermost_props: dict[str, Any] | None = None,
@@ -136,7 +137,7 @@ class NotificationService:
         event_type: NotificationEvent,
         subject: str,
         message: str,
-        forced_channels: list[str] | None = None,
+        forced_channels: Sequence[str] | None = None,
         html_message: str | None = None,
         slack_blocks: list[dict[str, Any]] | None = None,
         mattermost_props: dict[str, Any] | None = None,

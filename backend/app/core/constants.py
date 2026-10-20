@@ -589,15 +589,13 @@ SEVERITY_ALIASES: dict[str, str] = {
     "TRACE": "INFO",
 }
 
-NOTIFICATION_CHANNEL_EMAIL = "email"
-NOTIFICATION_CHANNEL_SLACK = "slack"
-NOTIFICATION_CHANNEL_MATTERMOST = "mattermost"
+NotificationChannel = Literal["email", "slack", "mattermost"]
 
-NOTIFICATION_CHANNELS = [
-    NOTIFICATION_CHANNEL_EMAIL,
-    NOTIFICATION_CHANNEL_SLACK,
-    NOTIFICATION_CHANNEL_MATTERMOST,
-]
+NOTIFICATION_CHANNEL_EMAIL: NotificationChannel = "email"
+NOTIFICATION_CHANNEL_SLACK: NotificationChannel = "slack"
+NOTIFICATION_CHANNEL_MATTERMOST: NotificationChannel = "mattermost"
+
+NOTIFICATION_CHANNELS: list[str] = list(get_args(NotificationChannel))
 
 NotificationEvent = Literal[
     "analysis_completed",
