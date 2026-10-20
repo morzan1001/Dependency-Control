@@ -99,9 +99,9 @@ async def _seed_chain(db: FakeDatabase, versions: dict[str, str], *, record: boo
 def spy(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     calls: list[str] = []
 
-    async def _record(db: Any, scan_id: str) -> None:
+    async def _record(db: Any, scan_id: str) -> bool:
         calls.append(scan_id)
-        await record_scan_update_delta(db, scan_id)
+        return await record_scan_update_delta(db, scan_id)
 
     monkeypatch.setattr(reconcile_module, "record_scan_update_delta", _record)
     return calls
@@ -582,6 +582,58 @@ class TestDriftMetric:
         assert {kind: _metric(kind, "resolved") for kind in kinds} == {
             kind: value + 1 for kind, value in before.items()
         }
+
+
+class TestFailedRepairs:
+    @pytest.mark.asyncio
+    async def test_a_derivation_that_stores_an_error_document_is_not_counted_as_resolved(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str], caplog: pytest.LogCaptureFixture
+    ):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0"}, record=False)
+        monkeypatch.setattr(rollup_module, "load_scan_deps", AsyncMock(side_effect=RuntimeError("boom")))
+        before = _metric("missing", "failed")
+
+        with caplog.at_level(logging.WARNING, logger=reconcile_module.__name__):
+            report = await run_update_frequency_reconcile(db)
+
+        assert (report.resolved, report.failed) == ({}, {"missing": 1})
+        assert (await _delta(db, "s1") or {})["error"] == "RuntimeError: boom"
+        assert _metric("missing", "failed") == before + 1
+        assert "could not derive 1 missing" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_a_scan_gone_before_its_repair_is_not_counted_as_resolved(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
+    ):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0"}, record=False)
+        real_classify = reconcile_module._classify
+
+        def _classify_then_delete(*args: Any) -> Any:
+            db.scans._docs.pop("s1")
+            return real_classify(*args)
+
+        monkeypatch.setattr(reconcile_module, "_classify", _classify_then_delete)
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert (spy, report.resolved, report.failed) == (["s1"], {}, {"missing": 1})
+
+    @pytest.mark.asyncio
+    async def test_failed_derivations_spend_the_repair_budget(self, monkeypatch: pytest.MonkeyPatch, spy: list[str]):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"}, record=False)
+        monkeypatch.setattr(rollup_module, "load_scan_deps", AsyncMock(side_effect=RuntimeError("boom")))
+        monkeypatch.setattr(reconcile_module, "_MAX_REPAIRS", 1)
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert spy == ["s1"]
+        assert (report.failed, report.deferred) == ({"missing": 1}, {"missing": 1})
 
 
 class TestLock:

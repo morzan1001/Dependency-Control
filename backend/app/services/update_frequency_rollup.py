@@ -52,11 +52,11 @@ class _Diff:
         return UpdateCounts(**self.counts)
 
 
-async def record_scan_update_delta(db: Any, scan_id: str) -> None:
-    """Never raises: the triggering ingest or restore would treat an exception as a lost scan."""
+async def record_scan_update_delta(db: Any, scan_id: str) -> bool:
+    """True once the scan's delta is written; never raises, as the ingest or restore would treat that as a lost scan."""
     try:
         if not settings.UPDATE_FREQUENCY_ROLLUP_ENABLED:
-            return
+            return False
         delta = await _record(db, scan_id)
         # An SBOM-less scan is never a predecessor, so no later delta can be stale because of it.
         if delta is not None and delta.dep_count > 0:
@@ -71,6 +71,8 @@ async def record_scan_update_delta(db: Any, scan_id: str) -> None:
     except Exception:
         logger.exception("Update-frequency rollup aborted for scan %s", sanitize_for_log(scan_id))
         update_frequency_delta_writes_total.labels(result="error").inc()
+        return False
+    return delta is not None
 
 
 async def _record(db: Any, scan_id: str) -> ScanUpdateDelta | None:

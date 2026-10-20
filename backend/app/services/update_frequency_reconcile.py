@@ -60,14 +60,16 @@ class ReconcileReport:
     chains: int = 0
     drifted_chains: int = 0
     resolved: Counter = field(default_factory=Counter)
+    # Derivations that wrote no delta: an error document, a scan gone or no longer usable, an aborted run.
+    failed: Counter = field(default_factory=Counter)
     deferred: Counter = field(default_factory=Counter)
 
-    def totals(self) -> tuple[int, int]:
-        return sum(self.resolved.values()), sum(self.deferred.values())
+    def totals(self) -> tuple[int, int, int]:
+        return sum(self.resolved.values()), sum(self.failed.values()), sum(self.deferred.values())
 
     def repairs_spent(self) -> int:
         """Orphans are excluded: a bulk delete costs nothing like a re-derivation."""
-        return sum(count for kind, count in self.resolved.items() if kind != "orphan")
+        return sum(count for kind, count in self.resolved.items() if kind != "orphan") + sum(self.failed.values())
 
 
 async def run_update_frequency_reconcile(db: Any) -> ReconcileReport | None:
@@ -156,8 +158,8 @@ async def _repair_chain(
         if report.repairs_spent() >= _MAX_REPAIRS:
             report.deferred[repair.kind] += 1
             continue
-        await record_scan_update_delta(db, repair.scan_id)
-        report.resolved[repair.kind] += 1
+        written = await record_scan_update_delta(db, repair.scan_id)
+        (report.resolved if written else report.failed)[repair.kind] += 1
         # The scans this competes with are live.
         await asyncio.sleep(_REPAIR_PAUSE_SECONDS)
 
@@ -195,13 +197,13 @@ async def _dependents_of(
 
 def _publish(report: ReconcileReport) -> None:
     # Every tallied kind is exported so the metric never reports less drift than the warning below.
-    for outcome, tally in (("resolved", report.resolved), ("deferred", report.deferred)):
+    for outcome, tally in (("resolved", report.resolved), ("failed", report.failed), ("deferred", report.deferred)):
         for kind, count in tally.items():
             if count:
                 update_frequency_reconcile_drift_total.labels(kind=kind, outcome=outcome).inc(count)
 
-    resolved, deferred = report.totals()
-    if not resolved and not deferred:
+    resolved, failed, deferred = report.totals()
+    if not resolved and not failed and not deferred:
         logger.info("Update-frequency reconcile: %d chain(s) in step with the ledger", report.chains)
         return
     logger.warning(
@@ -216,6 +218,16 @@ def _publish(report: ReconcileReport) -> None:
         report.resolved["dependent"],
         report.resolved["orphan"],
     )
+    if failed:
+        logger.warning(
+            "Update-frequency reconcile could not derive %d missing, %d outdated, %d severed, %d relink and "
+            "%d successor delta(s); the rollup writer logged why",
+            report.failed["missing"],
+            report.failed["stale"],
+            report.failed["severed"],
+            report.failed["relink"],
+            report.failed["dependent"],
+        )
     if deferred:
         logger.warning(
             "Update-frequency reconcile hit its per-run caps (%d repairs, %d orphan deletes) and left "
