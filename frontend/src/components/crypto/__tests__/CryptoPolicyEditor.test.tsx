@@ -253,23 +253,13 @@ describe("CryptoPolicyEditor rules table width", () => {
     expect(screen.queryByRole("button", { name: /Revert|Remove/ })).not.toBeInTheDocument();
   });
 
-  it("wraps a rule's name over as many lines as it needs instead of cutting it off", () => {
+  it("names a rule in a one-line input like the other fields, and in full as its title", () => {
     const long = { ...systemRule(), name: "BSI requires RSA keys of at least 3000 bits from 2024 onwards" };
     render(<CryptoPolicyEditor initialRules={[long]} onSave={vi.fn()} />);
 
     const name = screen.getByDisplayValue(long.name);
-    expect(name.tagName).toBe("TEXTAREA");
-    expect(name).toHaveClass("field-sizing-content", "resize-none");
+    expect(name.tagName).toBe("INPUT");
     expect(name).toHaveAttribute("title", long.name);
-  });
-
-  it("keeps a rule's name on one logical line when a line break is typed or pasted", () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render(<CryptoPolicyEditor initialRules={[systemRule()]} onSave={onSave} />);
-
-    fireEvent.change(screen.getByDisplayValue("Block RC4"), { target: { value: "Block\nRC4 \n now" } });
-
-    expect(screen.getByDisplayValue("Block RC4 now")).toBeInTheDocument();
   });
 });
 
