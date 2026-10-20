@@ -577,15 +577,9 @@ async def recover_stuck_scans(worker_manager: "AnalysisWorkerManager") -> None:
     max_retries = HOUSEKEEPING_MAX_SCAN_RETRIES
     scan_repo = ScanRepository(db)
 
-    cursor = db.scans.find(
-        {
-            "status": SCAN_STATUS_PROCESSING,
-            "$or": [
-                {"analysis_started_at": {"$lt": timeout_threshold}},
-                {"analysis_started_at": None},
-            ],
-        }
-    )
+    # Repeated on each write, so a lease the worker renewed since this read is neither requeued nor failed.
+    stale = {"$or": [{"analysis_started_at": {"$lt": timeout_threshold}}, {"analysis_started_at": None}]}
+    cursor = db.scans.find({"status": SCAN_STATUS_PROCESSING, **stale})
 
     async for scan in cursor:
         scan_id = scan["_id"]
@@ -595,7 +589,7 @@ async def recover_stuck_scans(worker_manager: "AnalysisWorkerManager") -> None:
             logger.warning(
                 f"Scan {scan_id} stuck in processing. Resetting to pending (Retry {retry_count + 1}/{max_retries})."
             )
-            requeued = await scan_repo.requeue(scan_id, scan.get("worker_id"), counter="stuck_retry_count")
+            requeued = await scan_repo.requeue(scan_id, scan.get("worker_id"), counter="stuck_retry_count", guard=stale)
             if requeued:
                 await worker_manager.add_job(str(scan_id))
 
@@ -603,7 +597,7 @@ async def recover_stuck_scans(worker_manager: "AnalysisWorkerManager") -> None:
             logger.error(f"Scan {scan_id} failed after {max_retries} retries.")
             error = "Analysis timed out or worker crashed multiple times."
             # Every pod runs this loop; only the one whose write lands announces the failure.
-            if await scan_repo.mark_failed(scan_id, error, worker_id=scan.get("worker_id")):
+            if await scan_repo.mark_failed(scan_id, error, worker_id=scan.get("worker_id"), guard=stale):
                 await notify_analysis_failed(db, scan_id, scan.get("project_id"), error)
 
 

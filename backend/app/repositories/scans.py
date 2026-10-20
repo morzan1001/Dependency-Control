@@ -192,10 +192,16 @@ class ScanRepository:
         return claimed
 
     async def mark_failed(
-        self, scan_id: str, error: str, *, status: ScanStatus = SCAN_STATUS_PROCESSING, worker_id: str | None = None
+        self,
+        scan_id: str,
+        error: str,
+        *,
+        status: ScanStatus = SCAN_STATUS_PROCESSING,
+        worker_id: str | None = None,
+        guard: dict[str, Any] | None = None,
     ) -> bool:
         """Guarded on status and worker, so a stale writer cannot fail a run that another worker has since claimed."""
-        query: dict[str, Any] = {"_id": scan_id, "status": status}
+        query: dict[str, Any] = {"_id": scan_id, "status": status, **(guard or {})}
         if worker_id:
             query["worker_id"] = worker_id
         now = datetime.now(timezone.utc)
@@ -214,10 +220,15 @@ class ScanRepository:
         await self.collection.update_one({"_id": root_id, "sbom_generation": sbom_generation}, {"$set": fields})
 
     async def requeue(
-        self, scan_id: str, worker_id: str | None, *, counter: Literal["retry_count", "stuck_retry_count"]
+        self,
+        scan_id: str,
+        worker_id: str | None,
+        *,
+        counter: Literal["retry_count", "stuck_retry_count"],
+        guard: dict[str, Any] | None = None,
     ) -> bool:
         result = await self.collection.update_one(
-            {"_id": scan_id, "status": SCAN_STATUS_PROCESSING, "worker_id": worker_id},
+            {"_id": scan_id, "status": SCAN_STATUS_PROCESSING, "worker_id": worker_id, **(guard or {})},
             {
                 "$set": {"status": SCAN_STATUS_PENDING, "worker_id": None, "analysis_started_at": None},
                 "$inc": {counter: 1},
