@@ -16,9 +16,10 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.responses import RESP_AUTH
-from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
+from app.api.v1.helpers.sorting import SortOrderQuery, case_insensitive_sort, parse_sort_direction
 from app.core.cve import canonical_cve
 from app.core.constants import (
+    DEPENDENCIES_SCAN_PACKAGE_INDEX,
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
     FINDINGS_SCAN_TYPE_INDEX,
@@ -63,10 +64,11 @@ async def _dependency_ids_by_vulnerability(
     query: dict[str, Any],
     scan_ids: list[str],
     has_vulnerabilities: bool,
-    sort: dict[str, int],
+    ordered: list[dict[str, Any]],
 ) -> list[str]:
     candidates = await DependencyRepository(db).aggregate(
-        [{"$match": query}, {"$sort": sort}, {"$project": {"project_id": 1, "name": 1, "version": 1}}]
+        [{"$match": query}, *ordered, {"$project": {"project_id": 1, "name": 1, "version": 1}}],
+        hint=DEPENDENCIES_SCAN_PACKAGE_INDEX,
     )
     # No component filter: a finding's component can be a qualified form no $in over inventory names expresses.
     vuln_pipeline: list[dict[str, Any]] = [
@@ -98,6 +100,8 @@ async def _dependency_ids_by_vulnerability(
 
     return [dep["_id"] for dep in candidates if is_vulnerable(dep) == has_vulnerabilities]
 
+
+_TEXT_SORTS = frozenset({"name", "version", "type", "license"})
 
 # Every other result field carries the dependency's own field of the same name.
 _DEPENDENCY_FIELDS = DependencySearchResult.model_fields.keys() - {"project_name", "package"}
@@ -157,23 +161,21 @@ async def search_dependencies_advanced(
         "direct": "direct",
     }
     mongo_sort_field = sort_field_map.get(sort_by, "name")
-    sort_direction = parse_sort_direction(sort_order)
+    ordered = case_insensitive_sort([(mongo_sort_field, parse_sort_direction(sort_order)), ("_id", 1)], _TEXT_SORTS)
 
     if has_vulnerabilities is None:
         total_count = await dep_repo.count(query)
-        dependencies = await dep_repo.find_many(
-            query, skip=skip, limit=limit, sort_by=mongo_sort_field, sort_order=sort_direction
+        rows = await dep_repo.aggregate(
+            [{"$match": query}, *ordered, {"$skip": skip}, {"$limit": limit}, {"$project": {"_folded": 0}}],
+            hint=DEPENDENCIES_SCAN_PACKAGE_INDEX,
         )
+        dependencies = [Dependency(**row) for row in rows]
     else:
-        sort = {mongo_sort_field: sort_direction, "_id": 1}
-        matching = await _dependency_ids_by_vulnerability(db, query, scan_ids, has_vulnerabilities, sort)
+        matching = await _dependency_ids_by_vulnerability(db, query, scan_ids, has_vulnerabilities, ordered)
         total_count = len(matching)
-        dependencies = await dep_repo.find_many(
-            {"_id": {"$in": matching[skip : skip + limit]}},
-            limit=limit,
-            sort_by=mongo_sort_field,
-            sort_order=sort_direction,
-        )
+        page = matching[skip : skip + limit]
+        by_id = {dep.id: dep for dep in await dep_repo.find_many({"_id": {"$in": page}}, limit=limit)}
+        dependencies = [by_id[dep_id] for dep_id in page if dep_id in by_id]
 
     results = [_dep_to_search_result(dep, project_name_map) for dep in dependencies]
     return DependencySearchResponse(items=results, **page_meta(total_count, skip, limit), **counts)
