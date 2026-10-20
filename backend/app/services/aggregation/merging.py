@@ -8,11 +8,12 @@ from app.core.cve import advisory_ids, entry_cves
 from app.models.finding import Finding
 from app.schemas.finding import VulnerabilityEntry
 from app.services.aggregation.versions import VersionKey, parse_version_key, split_fixed_versions
+from app.services.normalizers.utils import UNKNOWN_RULE_ID
 
 
 def to_sast_aggregate(f: Finding) -> Finding:
     entry = {
-        "id": f.details.get("rule_id", "unknown"),
+        "id": f.details.get("rule_id", UNKNOWN_RULE_ID),
         "scanner": f.scanners[0],
         "severity": f.severity,
         "details": f.details,

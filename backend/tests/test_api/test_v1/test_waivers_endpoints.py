@@ -223,6 +223,29 @@ class TestCreateWaiverValidatesFindingMatch:
 
         assert created.rule_id == "ruby_lang_weak-hash"
 
+    @pytest.mark.parametrize("scope", ["file", "rule"])
+    @pytest.mark.parametrize("sent_rule", [None, "unknown"], ids=["rule from the finding", "rule sent by the form"])
+    def test_a_widened_scope_on_a_finding_whose_scanner_named_no_rule_is_rejected(self, admin_user, scope, sent_rule):
+        """Every rule-less finding carries the same placeholder, so the waiver would cover all of them."""
+        from app.api.v1.endpoints.waivers import _MSG_SCOPE_NEEDS_RULE
+
+        db = self._db_with_head_scan()
+        db.findings._docs["ruleless"] = _stored_bearer_finding("BEARER-unknown-src/file.rb-12", "unknown", _HEAD_SCAN)
+
+        exc = _refused(
+            admin_user,
+            db,
+            project_id="proj-1",
+            finding_id="BEARER-unknown-src/file.rb-12",
+            finding_type="sast",
+            package_name="src/file.rb",
+            scope=scope,
+            rule_id=sent_rule,
+            reason="future",
+        )
+
+        assert (exc.status_code, exc.detail) == (422, _MSG_SCOPE_NEEDS_RULE)
+
     def test_file_scope_waiver_skips_match_check(self, admin_user):
         db = self._db_with_head_scan()
         db.findings._docs["elsewhere"] = _stored_bearer_finding("BEARER-rule_x-src/file.js-1", "rule_x", "other-scan")

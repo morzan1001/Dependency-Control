@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 from app.models.finding import Finding, FindingType
 from app.schemas.finding_details import IacDetails, LineSpan
 from app.services.normalizers.utils import (
+    UNKNOWN_RULE_ID,
     FindingIdPrefix,
     build_finding_id,
     normalize_cwe_list,
@@ -21,7 +22,7 @@ def _process_kics_file(
     source: str | None,
 ) -> None:
     query_name = query.get("query_name") or "Unknown Issue"
-    query_id = query.get("query_id") or "unknown"
+    query_id = query.get("query_id") or UNKNOWN_RULE_ID
     description = query.get("description") or ""
     platform = query.get("platform") or "unknown"
     category = query.get("category") or "infrastructure"

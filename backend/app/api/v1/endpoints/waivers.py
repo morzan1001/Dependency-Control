@@ -30,7 +30,7 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository, non_expired_waiver_filter
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
-from app.services.normalizers.utils import FindingIdPrefix
+from app.services.normalizers.utils import UNKNOWN_RULE_ID, FindingIdPrefix
 from app.services.stats import request_waiver_recalc, restamp_single_scan, run_waiver_recalc
 from app.services.waivers.matching import finding_rule_id, waiver_query
 
@@ -65,7 +65,7 @@ async def _resolve_widened_rule(waiver_in: WaiverCreate, db: AsyncIOMotorDatabas
         raise HTTPException(status_code=422, detail=_MSG_SCOPE_NEEDS_LOCATION)
     if waiver_in.scope == WAIVER_SCOPE_FILE and not waiver_in.package_name:
         raise HTTPException(status_code=422, detail=_MSG_SCOPE_NEEDS_FILE)
-    if waiver_in.rule_id:
+    if waiver_in.rule_id and waiver_in.rule_id != UNKNOWN_RULE_ID:
         return
     finding = None
     if waiver_in.project_id and waiver_in.finding_id:

@@ -13,6 +13,7 @@ from app.models.finding import LOCATION_FINDING_TYPES
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
 from app.services.enrichment.service import roll_up_stored_enrichments
+from app.services.normalizers.utils import UNKNOWN_RULE_ID
 
 REANCHOR_WINDOW = 50  # max line distance to consider a candidate the moved instance
 REANCHOR_MARGIN = 3  # nearest must beat second-nearest by this many lines to be unambiguous
@@ -25,7 +26,8 @@ _RULE_ID_PATHS = ("details.sast_findings.id", "details.rule_id", "details.detect
 def finding_rule_id(details: Mapping[str, Any] | None) -> str | None:
     details = details or {}
     entries = details.get("sast_findings") or []
-    return (entries[0].get("id") if entries else None) or details.get("rule_id") or details.get("detector")
+    rule_id = (entries[0].get("id") if entries else None) or details.get("rule_id") or details.get("detector")
+    return None if rule_id == UNKNOWN_RULE_ID else rule_id
 
 
 def waiver_criteria(waiver: Waiver) -> dict[str, Any]:

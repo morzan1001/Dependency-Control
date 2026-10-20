@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 from app.models.finding import Finding, FindingType
 from app.schemas.finding_details import LineSpan, SastScannerDetails
 from app.services.normalizers.utils import (
+    UNKNOWN_RULE_ID,
     FindingIdPrefix,
     build_finding_id,
     normalize_cwe_list,
@@ -42,7 +43,7 @@ def _build_opengrep_description(check_id: str, message: str) -> str:
 
 
 def _parse_opengrep_item(item: dict[str, Any]) -> Finding:
-    check_id = item.get("check_id") or "unknown-check"
+    check_id = item.get("check_id") or UNKNOWN_RULE_ID
     path = item.get("path") or "unknown"
 
     start_obj = item.get("start") or {}
@@ -143,7 +144,7 @@ def normalize_bearer(aggregator: "ResultAggregator", result: dict[str, Any], sou
         start_col = column_obj.get("start") or item.get("column_number") or 0
         end_col = column_obj.get("end") or item.get("end_column_number") or 0
 
-        rule_id = item.get("id") or item.get("rule_id") or "unknown"
+        rule_id = item.get("id") or item.get("rule_id") or UNKNOWN_RULE_ID
 
         finding_id = build_finding_id(FindingIdPrefix.BEARER, rule_id, filename, line_number)
 
