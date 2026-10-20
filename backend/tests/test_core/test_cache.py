@@ -9,6 +9,7 @@ import redis.asyncio as redis
 import fakeredis
 from prometheus_client import REGISTRY
 
+from app.core import cache as cache_module
 from app.core.cache import (
     STAMPEDE_LOCK_TTL_SECONDS,
     STAMPEDE_MAX_WAIT_SECONDS,
@@ -494,6 +495,63 @@ class TestConnectionPoolBursts:
             assert await svc.mget(keys) == {key: {"ok": True} for key in keys}
         finally:
             await svc._client.aclose(close_connection_pool=True)
+
+
+async def _hang(*_args, **_kwargs):
+    await asyncio.Event().wait()
+
+
+_BOUND = 0.1
+_GUARD = 3
+
+
+class TestAHangingRedisCannotStallTheLockedPath:
+    @pytest.fixture(autouse=True)
+    def short_redis_bound(self, monkeypatch):
+        monkeypatch.setattr(cache_module, "REDIS_OPERATION_TIMEOUT_SECONDS", _BOUND)
+
+    @staticmethod
+    async def _fetch():
+        return {"v": 1}
+
+    @pytest.mark.asyncio
+    async def test_a_hanging_lock_acquire_pauses_the_cache_and_fetches_directly(self, fake_cache, monkeypatch):
+        monkeypatch.setattr(fake_cache._client, "set", _hang)
+
+        result = await asyncio.wait_for(fake_cache.get_or_fetch_with_lock("k", self._fetch, _TTL), _GUARD)
+
+        assert (result, fake_cache._available) == ({"v": 1}, False)
+
+    @pytest.mark.asyncio
+    async def test_a_hanging_lock_probe_pauses_the_cache_and_fetches_directly(self, fake_cache, monkeypatch):
+        await fake_cache._client.set(fake_cache._make_key("lock:k"), "peer-token")
+        monkeypatch.setattr(fake_cache._client, "exists", _hang)
+
+        result = await asyncio.wait_for(fake_cache.get_or_fetch_with_lock("k", self._fetch, _TTL), _GUARD)
+
+        assert (result, fake_cache._available) == ({"v": 1}, False)
+
+    @pytest.mark.asyncio
+    async def test_a_hanging_lock_release_still_returns_the_fetched_value(self, fake_cache, monkeypatch):
+        monkeypatch.setattr(fake_cache._client, "eval", _hang)
+
+        result = await asyncio.wait_for(fake_cache.get_or_fetch_with_lock("k", self._fetch, _TTL), _GUARD)
+
+        assert result == {"v": 1}
+
+    @pytest.mark.asyncio
+    async def test_a_wait_for_a_pooled_connection_ends_on_the_same_bound(self, tcp_redis):
+        svc = CacheService()
+        client = await svc.get_client()
+        held = [await svc._pool.get_connection() for _ in range(svc._pool.max_connections)]
+        try:
+            health = await asyncio.wait_for(svc.health_check(), _GUARD)
+        finally:
+            for connection in held:
+                await svc._pool.release(connection)
+            await client.aclose(close_connection_pool=True)
+
+        assert health["status"] == "unhealthy"
 
 
 class TestFetchFailuresReachTheCaller:

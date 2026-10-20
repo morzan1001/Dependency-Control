@@ -230,6 +230,7 @@ class CacheService:
                     encoding="utf-8",
                     decode_responses=True,
                     max_connections=20,
+                    timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
                 )
                 self._client = redis.Redis(connection_pool=self._pool)
                 await self._client.ping()
@@ -392,7 +393,8 @@ class CacheService:
         if not self._available or _writes_suppressed.get():
             return await self._fetch_bypassing_cache(key, fetch_fn, reraise_fetch_errors)
 
-        lock_key = self._make_key(f"lock:{key}")
+        lock_name = f"lock:{key}"
+        lock_key = self._make_key(lock_name)
         try:
             client = await self.get_client()
             deadline = time.monotonic() + max_wait_seconds
@@ -401,11 +403,10 @@ class CacheService:
             while time.monotonic() < deadline:
                 # Unique per-acquisition token so we only release a lock we still own.
                 lock_token = uuid.uuid4().hex
-                lock_acquired = await client.set(
-                    lock_key,
-                    lock_token,
-                    nx=True,
-                    ex=lock_ttl_seconds,  # Auto-expire to prevent deadlock on pod crash.
+                # The lock expires, so a holder whose pod crashed cannot deadlock its peers.
+                lock_acquired = await asyncio.wait_for(
+                    client.set(lock_key, lock_token, nx=True, ex=lock_ttl_seconds),
+                    timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
                 )
 
                 if lock_acquired:
@@ -421,7 +422,7 @@ class CacheService:
                             await self.set(key, {}, CacheTTL.NEGATIVE_RESULT)
                         return data
                     finally:
-                        await self._release_lock(client, lock_key, lock_token)
+                        await self.eval(_UNLOCK_LUA, lock_name, lock_token)
 
                 cached = await self._wait_for_lock_holder(client, key, lock_key, deadline)
                 if cached is not None:
@@ -444,7 +445,7 @@ class CacheService:
                 raise e.cause from None
             logger.warning(f"Fetch failed for {key}", exc_info=e.cause)
             return None
-        except redis.ConnectionError:
+        except (redis.ConnectionError, asyncio.TimeoutError):
             logger.warning(REDIS_CONNECTION_LOST_MSG)
             self._mark_unavailable()
             return await self._fetch_bypassing_cache(key, fetch_fn, reraise_fetch_errors)
@@ -486,16 +487,9 @@ class CacheService:
             cached = await self.get(key)
             if cached is not None:
                 return cached
-            if not await client.exists(full_lock_key):
+            if not await asyncio.wait_for(client.exists(full_lock_key), timeout=REDIS_OPERATION_TIMEOUT_SECONDS):
                 return None
         return None
-
-    async def _release_lock(self, client: "redis.Redis", full_lock_key: str, token: str) -> None:
-        try:
-            # redis-py types eval() as Awaitable[str] | str; the asyncio client always returns an awaitable.
-            await cast(Awaitable[str], client.eval(_UNLOCK_LUA, 1, full_lock_key, token))
-        except Exception as e:
-            logger.warning(f"Failed to release cache lock {full_lock_key}: {e}")
 
     async def health_check(self) -> dict[str, Any]:
         try:
