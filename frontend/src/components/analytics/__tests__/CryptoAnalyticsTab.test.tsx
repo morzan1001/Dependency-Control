@@ -98,6 +98,18 @@ describe("CryptoAnalyticsTab trends range", () => {
     expect(last.end).toMatch(/:00:00\.000Z$/);
     expect(last.start).toMatch(/:00:00\.000Z$/);
   });
+
+  it("takes in today's scans, ending the range at the start of tomorrow", () => {
+    renderTab();
+
+    const trendsTab = screen.getByRole("tab", { name: /trends/i });
+    fireEvent.mouseDown(trendsTab);
+    fireEvent.click(trendsTab);
+
+    const last = capturedRanges[capturedRanges.length - 1];
+    expect(last.end).toBe(new Date(2026, 6, 8).toISOString());
+    expect(last.start).toBe(new Date(2026, 5, 8).toISOString());
+  });
 });
 
 describe("CryptoAnalyticsTab PQC export", () => {

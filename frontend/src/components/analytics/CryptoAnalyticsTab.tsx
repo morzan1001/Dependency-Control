@@ -131,7 +131,8 @@ function TrendsSection() {
   // Memoize the day-granularity range on `days` so re-renders don't feed unique timestamps into the query key and defeat caching.
   const { start, end } = useMemo(() => {
     const end = new Date();
-    end.setHours(0, 0, 0, 0);
+    // Tomorrow's midnight, so the range takes in today's scans.
+    end.setHours(24, 0, 0, 0);
     const start = new Date(end);
     start.setDate(end.getDate() - days);
     return { start, end };
