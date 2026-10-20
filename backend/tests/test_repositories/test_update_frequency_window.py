@@ -6,8 +6,8 @@ import pytest
 
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
-    _WINDOW_PROJECT_BATCH,
     WINDOW_HARD_LIMIT,
+    WINDOW_PROJECT_BATCH,
     ScanOutdatedSetRepository,
     ScanUpdateDeltaRepository,
     window_scans_by_branch,
@@ -266,7 +266,7 @@ class TestWindowScansByBranch:
     @pytest.mark.asyncio
     async def test_a_scope_larger_than_one_batch_is_read_in_batches(self):
         db = FakeDatabase()
-        project_ids = [f"p{i}" for i in range(_WINDOW_PROJECT_BATCH * 2 + 1)]
+        project_ids = [f"p{i}" for i in range(WINDOW_PROJECT_BATCH * 2 + 1)]
         for project_id in project_ids:
             await _seed_scan(db, f"{project_id}-s1", project_id, "main", 0)
 
@@ -281,7 +281,7 @@ class TestWindowScansByBranch:
         activity = await window_scans_by_branch(ScanRepository(db), project_ids, T0 - timedelta(days=1))
 
         assert len(activity) == len(project_ids)
-        assert batch_sizes == [_WINDOW_PROJECT_BATCH, _WINDOW_PROJECT_BATCH, 1]
+        assert batch_sizes == [WINDOW_PROJECT_BATCH, WINDOW_PROJECT_BATCH, 1]
 
     @pytest.mark.asyncio
     async def test_an_empty_scope_issues_no_query(self):

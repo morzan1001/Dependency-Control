@@ -877,6 +877,49 @@ class TestScope:
         assert report.chains == 2
         assert report.drifted_chains == 2
 
+    @pytest.mark.asyncio
+    async def test_each_project_batch_is_censused_and_repaired_before_the_next_is_read(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Only one batch's ledger and scan census stay in memory while its repairs run."""
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_project(db, "proj-2")
+        await _seed_chain(db, {"s1": "1.0.0"}, record=False)
+        await _seed_scan(db, "o1", _at(0), [_dep("o1", "requests", "1.0.0")], project_id="proj-2")
+        monkeypatch.setattr(reconcile_module, "WINDOW_PROJECT_BATCH", 1)
+        events: list[tuple[str, Any]] = []
+        real_scan_census = reconcile_module.window_scan_ids_by_branch
+        real_ledger_census = ScanUpdateDeltaRepository.window_ledger_by_branch
+
+        async def _ledger_census(self: Any, project_ids: Any, since: Any) -> Any:
+            events.append(("ledger", list(project_ids)))
+            return await real_ledger_census(self, project_ids, since)
+
+        async def _scan_census(scan_repo: Any, project_ids: Any, since: Any) -> Any:
+            events.append(("scans", list(project_ids)))
+            return await real_scan_census(scan_repo, project_ids, since)
+
+        async def _record(inner_db: Any, scan_id: str) -> bool:
+            events.append(("repair", scan_id))
+            return await record_scan_update_delta(inner_db, scan_id)
+
+        monkeypatch.setattr(ScanUpdateDeltaRepository, "window_ledger_by_branch", _ledger_census)
+        monkeypatch.setattr(reconcile_module, "window_scan_ids_by_branch", _scan_census)
+        monkeypatch.setattr(reconcile_module, "record_scan_update_delta", _record)
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert events == [
+            ("ledger", ["proj-1"]),
+            ("scans", ["proj-1"]),
+            ("repair", "s1"),
+            ("ledger", ["proj-2"]),
+            ("scans", ["proj-2"]),
+            ("repair", "o1"),
+        ]
+        assert (report.chains, report.drifted_chains, report.resolved) == (2, 2, {"missing": 2})
+
 
 class TestHousekeepingWiring:
     @pytest.mark.asyncio

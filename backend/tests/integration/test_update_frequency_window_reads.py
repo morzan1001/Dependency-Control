@@ -16,7 +16,7 @@ from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION
 from app.repositories import update_frequency as update_frequency_repository
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
-    _WINDOW_PROJECT_BATCH,
+    WINDOW_PROJECT_BATCH,
     BranchWindowActivity,
     LedgerEntry,
     ScanUpdateDeltaRepository,
@@ -32,7 +32,7 @@ T0 = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 SINCE = T0 - timedelta(days=1)
 V = UPDATE_DELTA_SCHEMA_VERSION
 # Splits p-a and p-b into different batches, so a batch boundary cannot hide a lost chain.
-SCOPE = ["p-a", *(f"p-filler-{i:03d}" for i in range(_WINDOW_PROJECT_BATCH)), "p-b", "p-c"]
+SCOPE = ["p-a", *(f"p-filler-{i:03d}" for i in range(WINDOW_PROJECT_BATCH)), "p-b", "p-c"]
 
 
 def _at(minutes: int) -> datetime:

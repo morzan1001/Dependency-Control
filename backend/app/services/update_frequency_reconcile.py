@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
-from itertools import pairwise
+from itertools import batched, pairwise
 from typing import Any
 
 from app.core.config import settings
@@ -17,6 +17,7 @@ from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION
 from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
+    WINDOW_PROJECT_BATCH,
     LedgerEntry,
     ScanOutdatedSetRepository,
     ScanUpdateDeltaRepository,
@@ -100,18 +101,21 @@ async def _reconcile(db: Any) -> ReconcileReport:
     # The sweep repairs nothing older, even if a request asks for a wider window.
     since = datetime.now(tz=timezone.utc) - timedelta(days=UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS)
     project_ids = sorted(str(project_id) for project_id in await db.projects.distinct("_id"))
-    # Ledger first: a scan finishing between the reads then looks missing (idempotent), not like an orphan to delete.
-    ledger = await ScanUpdateDeltaRepository(db).window_ledger_by_branch(project_ids, since)
-    scans = await window_scan_ids_by_branch(ScanRepository(db), project_ids, since)
+    report = ReconcileReport()
+    # Batch by batch, so the run holds one batch's census rather than the estate's while it repairs.
+    for batch in batched(project_ids, WINDOW_PROJECT_BATCH, strict=False):
+        # Ledger first: a scan finishing between the reads then looks missing (idempotent), not like an orphan to delete.
+        ledger = await ScanUpdateDeltaRepository(db).window_ledger_by_branch(batch, since)
+        scans = await window_scan_ids_by_branch(ScanRepository(db), batch, since)
 
-    chains = sorted(set(scans) | set(ledger))
-    report = ReconcileReport(chains=len(chains))
-    for chain in chains:
-        drift = _classify(scans.get(chain, ()), ledger.get(chain, {}), since)
-        if not drift:
-            continue
-        report.drifted_chains += 1
-        await _repair_chain(db, chain, drift, report, since)
+        chains = sorted(set(scans) | set(ledger))
+        report.chains += len(chains)
+        for chain in chains:
+            drift = _classify(scans.get(chain, ()), ledger.get(chain, {}), since)
+            if not drift:
+                continue
+            report.drifted_chains += 1
+            await _repair_chain(db, chain, drift, report, since)
 
     _publish(report)
     return report

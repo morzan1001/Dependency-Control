@@ -46,7 +46,7 @@ _SCAN_ID_PROJECTION = {"_id": 1, "project_id": 1, "branch": 1, "created_at": 1}
 _ACTIVITY_PROJECTION = {**_SCAN_ID_PROJECTION, "commit_hash": 1}
 
 # Bounds one read's $in list.
-_WINDOW_PROJECT_BATCH = 100
+WINDOW_PROJECT_BATCH = 100
 
 
 def is_comparable_delta(delta: dict[str, Any]) -> bool:
@@ -112,7 +112,7 @@ async def _window_docs(
     projection: dict[str, int],
 ) -> AsyncIterator[tuple[tuple[str, str], dict[str, Any]]]:
     """Streamed for bucketing in Python, as a $group over a window's documents outgrew a blocking stage's 100 MB."""
-    for batch in batched(project_ids, _WINDOW_PROJECT_BATCH, strict=False):
+    for batch in batched(project_ids, WINDOW_PROJECT_BATCH, strict=False):
         # Unsorted: a blocking sort has the same ceiling.
         async for doc in collection.find({"project_id": {"$in": list(batch)}, **scope}, projection):
             chain = _named_branch(doc)
