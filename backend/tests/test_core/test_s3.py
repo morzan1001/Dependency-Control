@@ -2,6 +2,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from botocore.exceptions import ClientError
 
 from app.core.s3 import (
     delete_object,
@@ -99,9 +100,10 @@ class TestEnsureBucketExists:
         mock_s3.head_bucket.assert_called_once_with(Bucket="dc-archives")
         mock_s3.create_bucket.assert_not_called()
 
-    def test_creates_bucket_if_not_exists(self):
+    @staticmethod
+    def _run_with_head_bucket_error(error: Exception) -> AsyncMock:
         mock_s3 = AsyncMock()
-        mock_s3.head_bucket = AsyncMock(side_effect=Exception("Not found"))
+        mock_s3.head_bucket = AsyncMock(side_effect=error)
         mock_s3.create_bucket = AsyncMock()
 
         mock_ctx = AsyncMock()
@@ -115,8 +117,24 @@ class TestEnsureBucketExists:
         ):
             mock_settings.S3_BUCKET_NAME = "dc-archives"
             asyncio.run(ensure_bucket_exists())
+        return mock_s3
+
+    @pytest.mark.parametrize("code", ["404", "NoSuchBucket", "NotFound"])
+    def test_creates_the_bucket_only_when_it_is_missing(self, code):
+        mock_s3 = self._run_with_head_bucket_error(ClientError({"Error": {"Code": code}}, "HeadBucket"))
 
         mock_s3.create_bucket.assert_called_once_with(Bucket="dc-archives")
+
+    @pytest.mark.parametrize(
+        "error",
+        [ClientError({"Error": {"Code": "403", "Message": "Forbidden"}}, "HeadBucket"), OSError("connection reset")],
+        ids=["refused", "unreachable"],
+    )
+    def test_a_bucket_that_cannot_be_checked_is_reported_rather_than_created(self, error):
+        with pytest.raises(type(error)) as raised:
+            self._run_with_head_bucket_error(error)
+
+        assert raised.value is error
 
 
 class TestDeleteObject:

@@ -2,6 +2,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+from botocore.exceptions import ClientError
+
 
 class FakeS3StreamingBody:
     def __init__(self, data: bytes):
@@ -35,7 +37,7 @@ class FakeS3Client:
 
     async def head_bucket(self, Bucket: str) -> dict[str, Any]:
         if not self.bucket_exists:
-            raise RuntimeError("NoSuchBucket")
+            raise ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadBucket")
         return {}
 
     async def create_bucket(self, Bucket: str) -> dict[str, Any]:

@@ -6,11 +6,15 @@ from typing import Any
 
 from aiobotocore.session import AioSession, get_session
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 
 from app.core.config import settings
 from app.core.constants import S3_MULTIPART_PART_SIZE
 
 logger = logging.getLogger(__name__)
+
+# HEAD carries no error body, so S3 names a missing bucket by status alone; S3-compatible stores spell it out.
+_MISSING_BUCKET_CODES = frozenset({"404", "NoSuchBucket", "NotFound"})
 
 
 @functools.cache
@@ -58,7 +62,9 @@ async def ensure_bucket_exists() -> None:
         try:
             await s3.head_bucket(Bucket=settings.S3_BUCKET_NAME)
             logger.info(f"S3 bucket '{settings.S3_BUCKET_NAME}' exists.")
-        except Exception:
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") not in _MISSING_BUCKET_CODES:
+                raise
             logger.info(f"Creating S3 bucket '{settings.S3_BUCKET_NAME}'...")
             await s3.create_bucket(Bucket=settings.S3_BUCKET_NAME)
 
