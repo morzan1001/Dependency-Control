@@ -10,7 +10,7 @@ export function expectFieldLabel(text: string) {
 
 const FIELD_ROLES = ['combobox', 'textbox', 'switch', 'checkbox', 'radiogroup', 'spinbutton'] as const
 
-// Without a name a screen reader announces a bare "combobox" or "edit text"; a placeholder does not count.
+// Without a name a screen reader announces a bare "combobox" or "edit text"; jsdom's name check ignores placeholders.
 export function expectEveryFieldNamed() {
   const fields = FIELD_ROLES.flatMap((role) => screen.queryAllByRole(role))
   expect(fields.length).toBeGreaterThan(0)

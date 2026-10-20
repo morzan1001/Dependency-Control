@@ -20,7 +20,7 @@ export type RetentionAction = 'delete' | 'archive' | 'none';
 export interface Project {
   id: string;
   name: string;
-  // Every owning team, named in teams; only the detail read adds each owner's provenance.
+  // Every owning team, named in teams.
   team_ids?: string[];
   team_sources?: Record<string, TeamSource>;
   teams?: TeamRef[];
