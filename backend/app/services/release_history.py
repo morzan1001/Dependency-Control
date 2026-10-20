@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -9,12 +8,11 @@ from statistics import median
 from typing import Any, Protocol
 from urllib.parse import quote
 
-from packaging.version import InvalidVersion, Version
-
 from app.core import parse_iso_utc
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import DEPS_DEV_API_URL
 from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
+from app.services.aggregation.versions import is_stable_release
 from app.services.analyzers.deps_dev import fetch_deps_dev_json
 
 logger = logging.getLogger(__name__)
@@ -22,23 +20,6 @@ logger = logging.getLogger(__name__)
 # Low enough that a cold cache doesn't blast deps.dev.
 _FETCH_CONCURRENCY = 16
 _FETCH_TIMEOUT_SECONDS = 10.0
-
-# Matched by token, not by any "-" suffix, because Maven qualifiers like Guava's 33.0.0-jre are releases.
-_PRERELEASE_TAG = re.compile(
-    r"[-.](alpha|beta|rc|pre|preview|dev|canary|next|nightly|experimental|snapshot|m\d+)(?![a-z])", re.IGNORECASE
-)
-
-# Strict-semver ecosystems mark every prerelease (Go pseudo-versions, npm "4.0.0-0") with "-" before any "+build".
-_SEMVER_SYSTEMS = frozenset({"npm", "go", "cargo", "nuget"})
-
-
-def _is_stable_release(version: str, system: str) -> bool:
-    if system in _SEMVER_SYSTEMS:
-        return "-" not in version.split("+", 1)[0]
-    try:
-        return not Version(version).is_prerelease
-    except InvalidVersion:
-        return _PRERELEASE_TAG.search(version) is None
 
 
 @dataclass(frozen=True)
@@ -121,7 +102,7 @@ def aggregate_upstream_metrics(
     days_since: list[int] = []
 
     for (system, _name), releases in history.items():
-        stable = [r for r in releases if _is_stable_release(r.version, system)]
+        stable = [r for r in releases if is_stable_release(r.version, system)]
         if not stable:
             continue
         releases_counts.append(releases_in_last_n_days(stable, window_days=365, ref=ref))

@@ -10,11 +10,12 @@ from app.services.analyzers.outdated import OutdatedAnalyzer
 _API = "https://api.deps.dev/v3alpha/systems"
 
 
-def _v(version: str, default: bool = False) -> dict[str, Any]:
+def _v(version: str, default: bool = False, deprecated: bool = False) -> dict[str, Any]:
     return {
         "versionKey": {"system": "NPM", "name": "pkg", "version": version},
         "publishedAt": "2024-01-01T00:00:00Z",
         "isDefault": default,
+        "isDeprecated": deprecated,
     }
 
 
@@ -71,7 +72,7 @@ class TestMultipleVersionsOfSamePackage:
     @pytest.mark.asyncio
     async def test_both_versions_classified_from_shared_latest_warm_cache(self, fake_cache, monkeypatch) -> None:
         # The latest-version cache is a single package-level key; the older copy must still surface a card.
-        await fake_cache.set("latest2:npm:lodash", {"default": "4.17.20"})
+        await fake_cache.set("latest3:npm:lodash", {"default": "4.17.20", "stable": "4.17.20"})
         client = _serve(monkeypatch, fake_cache, {})
 
         result = await OutdatedAnalyzer().analyze(
@@ -112,7 +113,7 @@ class TestDepsDevStatusPolicy:
             "partial_components_skipped": 1,
             "lookup_failed_components": ["flaky"],
         }
-        assert await fake_cache.get("latest2:pypi:flaky") is None
+        assert await fake_cache.get("latest3:pypi:flaky") is None
 
     @pytest.mark.asyncio
     async def test_an_unknown_package_is_negative_cached_briefly(self, fake_cache, monkeypatch) -> None:
@@ -121,8 +122,8 @@ class TestDepsDevStatusPolicy:
         result = await OutdatedAnalyzer().analyze({}, parsed_components=[_component("typo-pkg", "1.0.0")])
 
         assert result == {"outdated_dependencies": [], "ahead_of_default": []}
-        assert await fake_cache.get("latest2:pypi:typo-pkg") == {}
-        assert 0 < await fake_cache._client.ttl(fake_cache._make_key("latest2:pypi:typo-pkg")) <= 3600
+        assert await fake_cache.get("latest3:pypi:typo-pkg") == {}
+        assert 0 < await fake_cache._client.ttl(fake_cache._make_key("latest3:pypi:typo-pkg")) <= 3600
 
 
 class TestDefaultVersionSelection:
@@ -144,6 +145,74 @@ class TestDefaultVersionSelection:
 
         assert result == {"outdated_dependencies": [], "ahead_of_default": []}
         assert client.urls == []
+
+
+_SLF4J = [_v("2.0.16"), _v("2.0.17"), _v("2.1.0-alpha0"), _v("2.1.0-alpha1", default=True)]
+
+
+class TestPrereleaseDefault:
+    """deps.dev flags Maven's highest version as default even when it is a pre-release such as 2.1.0-alpha1."""
+
+    @staticmethod
+    async def _classify(fake_cache, monkeypatch, versions, installed, ptype="maven") -> dict[str, Any]:
+        _serve(monkeypatch, fake_cache, {"lib": {"versions": versions}})
+        return await OutdatedAnalyzer().analyze({}, parsed_components=[_component("lib", installed, ptype)])
+
+    @pytest.mark.asyncio
+    async def test_a_stable_install_compares_against_the_newest_stable_release(self, fake_cache, monkeypatch) -> None:
+        result = await self._classify(fake_cache, monkeypatch, _SLF4J, "2.0.16")
+
+        assert [o["latest_version"] for o in result["outdated_dependencies"]] == ["2.0.17"]
+
+    @pytest.mark.asyncio
+    async def test_the_newest_stable_release_is_neither_outdated_nor_ahead(self, fake_cache, monkeypatch) -> None:
+        result = await self._classify(fake_cache, monkeypatch, _SLF4J, "2.0.17")
+
+        assert result == {"outdated_dependencies": [], "ahead_of_default": []}
+
+    @pytest.mark.asyncio
+    async def test_a_prerelease_install_compares_against_the_default(self, fake_cache, monkeypatch) -> None:
+        result = await self._classify(fake_cache, monkeypatch, _SLF4J, "2.1.0-alpha0")
+
+        assert [o["latest_version"] for o in result["outdated_dependencies"]] == ["2.1.0-alpha1"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "versions",
+        [
+            [_v("7.1.5.Final"), _v("7.2.0.CR1"), _v("8.0.0.Beta3", default=True)],
+            [_v("7.1.5"), _v("7.2.0-M1"), _v("7.2.0-RC1"), _v("7.2.0-SNAPSHOT"), _v("8.0.0.Alpha2", default=True)],
+            [_v("7.1.5"), _v("7.1.6", deprecated=True), _v("8.0.0-alpha1", default=True)],
+        ],
+        ids=["final-and-cr", "milestone-rc-snapshot", "deprecated"],
+    )
+    async def test_maven_qualifiers_and_deprecations_never_name_the_latest(
+        self, fake_cache, monkeypatch, versions
+    ) -> None:
+        result = await self._classify(fake_cache, monkeypatch, versions, "7.1.4")
+
+        assert [o["latest_version"] for o in result["outdated_dependencies"]] == [versions[0]["versionKey"]["version"]]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("ptype", "stable", "prerelease", "installed"),
+        [
+            ("npm", "1.2.0", "2.0.0-beta.1", "1.1.0"),
+            ("pypi", "1.2.0", "2.0.0b1", "1.1.0"),
+            ("golang", "v1.2.0", "v2.0.0-rc.1", "v1.1.0"),
+            ("cargo", "1.2.0", "2.0.0-alpha.1", "1.1.0"),
+            ("nuget", "1.2.0", "2.0.0-preview.1", "1.1.0"),
+            ("gem", "1.2.0", "2.0.0.rc1", "1.1.0"),
+        ],
+    )
+    async def test_every_ecosystem_skips_a_prerelease_default(
+        self, fake_cache, monkeypatch, ptype, stable, prerelease, installed
+    ) -> None:
+        versions = [_v(stable), _v(prerelease, default=True)]
+
+        result = await self._classify(fake_cache, monkeypatch, versions, installed, ptype)
+
+        assert [o["latest_version"] for o in result["outdated_dependencies"]] == [stable]
 
 
 class TestConcurrentFetch:

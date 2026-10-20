@@ -337,6 +337,7 @@ SCORECARD_POOR_QUALITY_THRESHOLD: float = 4.0
 # Days since the last release.
 STALE_PACKAGE_THRESHOLD_DAYS: int = 730
 STALE_PACKAGE_WARNING_DAYS: int = 365
+MAINTENANCE_RISK_TYPES = frozenset({"stale_package", "infrequent_updates", "archived_repo", "inactive_repo"})
 
 # Days past an end-of-life date at which the finding is raised to HIGH, then to MEDIUM.
 EOL_HIGH_AFTER_DAYS: int = 365

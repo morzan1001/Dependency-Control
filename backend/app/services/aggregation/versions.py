@@ -5,6 +5,8 @@ from collections.abc import Iterable, Mapping
 from operator import itemgetter
 from typing import Any
 
+from packaging.version import InvalidVersion, Version
+
 VersionKey = tuple[tuple[int, int | str], ...]
 
 # Flags that give 1.0-rc1 < 1.0 < 1.0.post1 < 1.0.1: a prerelease tag, the end, any other tag, one more number.
@@ -62,6 +64,24 @@ def parse_version_key(v: str) -> VersionKey:
 
 def _is_prerelease(key: VersionKey) -> bool:
     return any(flag == _PRERELEASE for flag, _ in key)
+
+
+# Matched by token, not by any "-" suffix, because Maven qualifiers like Guava's 33.0.0-jre are releases.
+_PRERELEASE_TAG = re.compile(
+    r"[-.](alpha|beta|rc|cr|pre|preview|dev|canary|next|nightly|experimental|snapshot|m\d+)(?![a-z])", re.IGNORECASE
+)
+
+# Strict-semver ecosystems mark every prerelease (Go pseudo-versions, npm "4.0.0-0") with "-" before any "+build".
+_SEMVER_SYSTEMS = frozenset({"npm", "go", "cargo", "nuget"})
+
+
+def is_stable_release(version: str, system: str) -> bool:
+    if system in _SEMVER_SYSTEMS:
+        return "-" not in version.split("+", 1)[0]
+    try:
+        return not Version(version).is_prerelease
+    except InvalidVersion:
+        return _PRERELEASE_TAG.search(version) is None
 
 
 def newest_first(versions: Iterable[Any]) -> list[str]:
