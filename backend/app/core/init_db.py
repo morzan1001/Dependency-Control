@@ -20,7 +20,7 @@ from app.core.security import get_password_hash
 from app.db.mongodb import get_database
 from app.models.user import User
 from app.repositories.findings import FIRST_DETECTION_INDEX, NEWEST_VULNERABILITY_INDEX, VULNERABILITIES_ONLY
-from app.repositories.scans import TAG_BUILD_MATCH
+from app.repositories.scans import HAS_SBOM_MATCH, TAG_BUILD_MATCH
 from app.services.crypto_policy.seeder import seed_crypto_policies
 
 logger = logging.getLogger(__name__)
@@ -241,6 +241,17 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("is_rescan", pymongo.ASCENDING),
             *SCANS_TIP_SORT,
         ]
+    )
+    # The head's SBOM tiers find nothing in one seek for a project whose scans carry no SBOM.
+    await database["scans"].create_index(
+        [
+            ("project_id", pymongo.ASCENDING),
+            ("branch", pymongo.ASCENDING),
+            ("is_rescan", pymongo.ASCENDING),
+            *SCANS_TIP_SORT,
+        ],
+        name="scans_sbom_branch_tip",
+        partialFilterExpression=HAS_SBOM_MATCH,
     )
     await database["scans"].create_index([("status", pymongo.ASCENDING), ("analysis_started_at", pymongo.ASCENDING)])
     # A lineage's history pages its rescans newest first straight off this key.

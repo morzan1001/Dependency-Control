@@ -71,3 +71,17 @@ async def test_the_releases_are_read_in_one_query_and_every_target_only_as_far_a
     assert sorted(target["_id"] for target in targets) == sorted(["build", *_ENVIRONMENTS])
     assert len(reads) == 2
     assert all(set(target) <= set(RESCAN_SOURCE_PROJECTION) for target in targets)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_project_without_an_sbom_is_ruled_out_without_reading_its_scans(db):
+    await create_indexes(db)
+    await db.scans.insert_many(
+        [_scan(f"sast-{n}", timedelta(days=n), sbom_refs=[]) for n in range(_PILED_UP_RESCANS)]
+    )
+
+    targets, reads = await _scan_reads(db, _rescan_targets(_PROJECT, db))
+
+    assert targets == []
+    assert [read["docsExamined"] for read in reads] == [0] * len(reads)

@@ -5,7 +5,7 @@ import pytest
 
 from app.core.constants import SCAN_STATUS_FAILED
 from app.models.stats import Stats
-from app.repositories.scans import ScanRepository
+from app.repositories.scans import HAS_SBOM_MATCH, USABLE_BUILD_MATCH, ScanRepository
 from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
@@ -443,6 +443,25 @@ class TestHeadIsTheDefaultBranch:
         )
 
         assert result == {"p1": "v2"}
+
+
+class TestTipTiers:
+    def test_the_rescan_scheduler_tries_each_distinct_query_once(self):
+        """Its match folds the six tiers into two queries, and repeating one only walks the same scans again."""
+
+        async def run():
+            db = await _seeded([_scan(f"sast-{n}", "p1", "main", n, sbom_refs=[]) for n in range(3)])
+            counting = _CountingScans(db.scans)
+            repo = ScanRepository(db)
+            repo.collection = counting
+            project = _project("p1", default_branch="main")
+            return await repo.head_build(project, {**HAS_SBOM_MATCH, **USABLE_BUILD_MATCH}, {"_id": 1}), counting
+
+        tip, reads = asyncio.run(run())
+
+        assert tip is None
+        # Two distinct queries, once on the default branch and once across the live branches.
+        assert reads.seeks == 4
 
 
 class TestGetPrecedingScan:

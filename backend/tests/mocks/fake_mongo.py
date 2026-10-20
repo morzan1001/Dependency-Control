@@ -163,6 +163,12 @@ def _resolve_dotted(doc: dict, path: str):
     cur = doc.get(head)
     if cur is None:
         return None
+    index, _, after = rest.partition(".")
+    if isinstance(cur, list) and index.isdigit():
+        element = cur[int(index)] if int(index) < len(cur) else None
+        if not after:
+            return element
+        return _resolve_dotted(element, after) if isinstance(element, dict) else None
     if isinstance(cur, list):
         out: list = []
         for el in cur:

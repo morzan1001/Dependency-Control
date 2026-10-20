@@ -31,7 +31,8 @@ USABLE_BUILD_MATCH: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}, "
 # A tag pipeline writes its tag into branch, so such a scan names no branch.
 BRANCH_SCAN_FILTER: dict[str, Any] = {"$expr": {"$ne": ["$branch", "$commit_tag"]}}
 # A scan without an SBOM (SAST only) carries no dependencies, so it heads only where no scan has one.
-HAS_SBOM_MATCH: dict[str, Any] = {"sbom_refs": {"$exists": True, "$ne": []}}
+# The scans_sbom_branch_tip index filters on this exact predicate, which a query must repeat.
+HAS_SBOM_MATCH: dict[str, Any] = {"sbom_refs.0": {"$exists": True}}
 # Builds with a non-empty tag; the scans_tag_builds index filters on this exact predicate, which a query must repeat.
 TAG_BUILD_MATCH: dict[str, Any] = {"commit_tag": {"$gt": ""}}
 # Best first: a rescan, dated today over an older commit, ranks last, yet still heads a project with nothing else.
@@ -234,9 +235,14 @@ class ScanRepository:
         return await self.collection.find_one(query, projection)
 
     async def _tip(self, match: dict[str, Any], projection: dict[str, int] | None = _TIP_PROJECTION) -> dict | None:
-        """Each tier is one index seek."""
+        """A match that folds tiers into one query, as the rescan scheduler's does, runs that query once."""
+        tried: list[dict[str, Any]] = []
         for tier in _TIP_TIERS:
-            doc: dict | None = await self.collection.find_one({**match, **tier}, projection, sort=SCANS_TIP_SORT)
+            query = {**match, **tier}
+            if query in tried:
+                continue
+            tried.append(query)
+            doc: dict | None = await self.collection.find_one(query, projection, sort=SCANS_TIP_SORT)
             if doc:
                 return doc
         return None
