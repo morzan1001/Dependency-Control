@@ -1,11 +1,14 @@
 import itertools
+from collections import Counter
 
 import pytest
+from pydantic import ValidationError
 
+from app.core.config import Settings, settings
 from app.schemas.enrichment import EPSSData, GHSAData, KEVEntry
 from app.schemas.finding_details import VulnerabilityDetails, VulnerabilityEntryDetails
 from app.services.enrichment.service import VulnerabilityEnrichmentService, vulnerability_enrichment_service
-from tests.helpers.enrichment import CISA_HOST, Upstreams, serve_enrichment
+from tests.helpers.enrichment import CISA_HOST, FIRST_HOST, GITHUB_HOST, Upstreams, serve_enrichment
 
 
 def _kev(cve: str, due: str, *, ransomware: bool = False) -> KEVEntry:
@@ -281,3 +284,24 @@ async def test_an_unreadable_source_is_reported_and_the_other_still_applies(fake
     assert unavailable == ["KEV"]
     assert finding["details"]["epss_score"] == 0.94
     assert "in_kev" not in finding["details"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retries", [0, 1])
+async def test_every_source_retries_as_often_as_the_setting_says(fake_cache, monkeypatch, retries):
+    monkeypatch.setattr(settings, "ENRICHMENT_MAX_RETRIES", retries)
+    seen = serve_enrichment(monkeypatch, fake_cache, Upstreams(down=frozenset({GITHUB_HOST, FIRST_HOST, CISA_HOST})))
+    finding = _vuln_finding("log4j-core", {"id": "GHSA-jfh8-c2jp-5v3q", "aliases": ["CVE-2021-44228"]})
+
+    _, unavailable = await vulnerability_enrichment_service.enrich_findings([finding])
+
+    assert unavailable == ["KEV", "EPSS"]
+    assert Counter(request.url.host for request in seen) == {
+        host: 1 + retries for host in (GITHUB_HOST, FIRST_HOST, CISA_HOST)
+    }
+
+
+def test_a_negative_retry_count_is_refused_at_startup():
+    with pytest.raises(ValidationError) as refused:
+        Settings(ENRICHMENT_MAX_RETRIES=-1)
+    assert [error["loc"] for error in refused.value.errors()] == [("ENRICHMENT_MAX_RETRIES",)]

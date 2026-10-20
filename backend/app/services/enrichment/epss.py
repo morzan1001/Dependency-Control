@@ -19,7 +19,7 @@ class EPSSProvider:
         response = await client.send_with_backoff(
             "GET",
             f"{EPSS_API_URL}?cve={','.join(cves)}",
-            attempts=settings.ENRICHMENT_MAX_RETRIES,
+            attempts=1 + settings.ENRICHMENT_MAX_RETRIES,
             base_delay=settings.ENRICHMENT_RETRY_DELAY,
         )
         response.raise_for_status()

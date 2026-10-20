@@ -37,7 +37,7 @@ class GHSAProvider:
             response = await client.send_with_backoff(
                 "GET",
                 f"{GHSA_API_URL}/{ghsa_id}",
-                attempts=settings.ENRICHMENT_MAX_RETRIES,
+                attempts=1 + settings.ENRICHMENT_MAX_RETRIES,
                 base_delay=settings.ENRICHMENT_RETRY_DELAY,
                 headers=github_api_headers(token),
             )

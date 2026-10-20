@@ -19,7 +19,7 @@ async def _fetch_kev_catalog() -> dict[str, Any]:
         response = await client.send_with_backoff(
             "GET",
             KEV_CATALOG_URL,
-            attempts=settings.ENRICHMENT_MAX_RETRIES,
+            attempts=1 + settings.ENRICHMENT_MAX_RETRIES,
             base_delay=settings.ENRICHMENT_RETRY_DELAY,
         )
     response.raise_for_status()
