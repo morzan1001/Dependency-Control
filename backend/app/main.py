@@ -50,7 +50,7 @@ from app.repositories.users import IdentityTakenError
 from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=settings.LOG_LEVEL.upper(),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 

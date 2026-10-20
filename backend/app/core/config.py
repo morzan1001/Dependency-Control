@@ -19,6 +19,8 @@ class Settings(BaseSettings):
 
     WORKER_COUNT: int = 2
 
+    LOG_LEVEL: str = "INFO"
+
     FRONTEND_BASE_URL: str = "http://localhost:3000"
 
     @field_validator("FRONTEND_BASE_URL")
