@@ -17,7 +17,7 @@ from app.api.v1.helpers import (
     visible_teams_filter,
 )
 from app.api.v1.helpers.teams import enrich_teams_with_usernames
-from app.api.v1.helpers.vcs_instances import refused_listing
+from app.api.v1.helpers.vcs_instances import get_or_404, refused_listing
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
@@ -164,9 +164,7 @@ async def delete_team(
 
 async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDatabase) -> GitHubTeamBinding:
     """Reading the organisation's slug also proves the team number exists."""
-    instance = await GitHubInstanceRepository(db).get_by_id(request.instance_id)
-    if not instance:
-        raise HTTPException(status_code=404, detail=f"GitHub instance with ID {request.instance_id} not found")
+    instance = await get_or_404(GitHubInstanceRepository(db), request.instance_id, "GitHub")
 
     github_service = GitHubService(instance)
     org_teams = await github_service.get_org_teams(request.org)
@@ -193,9 +191,7 @@ async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDat
 
 async def _gitlab_binding(request: TeamGitLabBindingRequest, db: AsyncIOMotorDatabase) -> GitLabGroupBinding:
     """Reading the instance's full path also proves the group number exists."""
-    instance = await GitLabInstanceRepository(db).get_by_id(request.instance_id)
-    if not instance:
-        raise HTTPException(status_code=404, detail=f"GitLab instance with ID {request.instance_id} not found")
+    instance = await get_or_404(GitLabInstanceRepository(db), request.instance_id, "GitLab")
 
     lookup = await GitLabService(instance).get_group(request.external_id)
     if not lookup.reachable:
