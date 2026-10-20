@@ -191,11 +191,9 @@ class ScanRepository:
         )
         return claimed
 
-    async def mark_failed(
-        self, scan_id: str, error: str, *, status: ScanStatus = SCAN_STATUS_PROCESSING, worker_id: str | None = None
-    ) -> bool:
+    async def mark_failed(self, scan_id: str, error: str, *, worker_id: str | None = None) -> bool:
         """Guarded on status and worker, so a stale writer cannot fail a run that another worker has since claimed."""
-        query: dict[str, Any] = {"_id": scan_id, "status": status}
+        query: dict[str, Any] = {"_id": scan_id, "status": SCAN_STATUS_PROCESSING}
         if worker_id:
             query["worker_id"] = worker_id
         now = datetime.now(timezone.utc)

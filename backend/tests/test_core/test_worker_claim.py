@@ -208,7 +208,7 @@ async def test_a_scan_whose_project_is_gone_counts_as_a_failed_job():
 
 
 @pytest.mark.asyncio
-async def test_a_scan_rescheduled_past_the_ceiling_counts_as_a_failed_job():
+async def test_a_scan_rescheduled_past_the_ceiling_stays_pending_and_is_neither_failed_nor_announced():
     db = FakeDatabase()
     await db.projects.insert_one({"_id": "proj-1", "active_analyzers": []})
     await db.scans.insert_one(
@@ -220,15 +220,17 @@ async def test_a_scan_rescheduled_past_the_ceiling_counts_as_a_failed_job():
             "retry_count": ANALYSIS_MAX_RETRIES - 1,
         }
     )
-    failed_before, durations_before = _jobs("failed"), _durations()
+    failed_before = _jobs("failed")
 
     async def _rescheduled(**kwargs):
         await ScanRepository(db).requeue("scan-1", kwargs["worker_id"], counter="retry_count")
         return SCAN_STATUS_PENDING
 
+    manager = AnalysisWorkerManager(num_workers=1)
     with patch("app.core.worker.notify_analysis_failed", AsyncMock()) as notify:
-        await _drain_one_job(db, "scan-1", _rescheduled)
+        await _drain_one_job(db, "scan-1", _rescheduled, manager=manager)
 
-    assert (await db.scans.find_one({"_id": "scan-1"}))["status"] == SCAN_STATUS_FAILED
-    notify.assert_called_once()
-    assert (_jobs("failed") - failed_before, _durations() - durations_before) == (1, 1)
+    assert (await db.scans.find_one({"_id": "scan-1"}))["status"] == SCAN_STATUS_PENDING
+    assert manager.queue.empty()
+    notify.assert_not_called()
+    assert _jobs("failed") == failed_before

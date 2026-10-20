@@ -21,7 +21,6 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
-    ScanStatus,
 )
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.core.metrics import (
@@ -96,15 +95,9 @@ def _record_job(status: str, started: float) -> None:
 
 
 async def _fail_scan(
-    db: AsyncIOMotorDatabase,
-    scan: dict[str, Any],
-    error: str,
-    started: float,
-    *,
-    status: ScanStatus = SCAN_STATUS_PROCESSING,
-    worker_id: str | None = None,
+    db: AsyncIOMotorDatabase, scan: dict[str, Any], error: str, started: float, *, worker_id: str | None = None
 ) -> None:
-    if await ScanRepository(db).mark_failed(scan["_id"], error, status=status, worker_id=worker_id):
+    if await ScanRepository(db).mark_failed(scan["_id"], error, worker_id=worker_id):
         _record_job("failed", started)
         notice = asyncio.create_task(notify_analysis_failed(db, scan["_id"], scan.get("project_id"), error))
         _failure_notices.add(notice)
@@ -240,19 +233,16 @@ class AnalysisWorkerManager:
     async def add_adhoc_job(self, job_id: str) -> bool:
         return await self.add_job(_ADHOC_JOB + job_id)
 
-    async def _handle_rescheduled(self, scan: dict[str, Any], db: AsyncIOMotorDatabase, started: float) -> None:
+    async def _handle_rescheduled(self, scan: dict[str, Any]) -> None:
         scan_id = scan["_id"]
         # Every reschedule follows exactly one engine requeue, which added one to the claimed retry_count.
         retry_count = scan.get("retry_count", 0) + 1
-        if retry_count < ANALYSIS_MAX_RETRIES:
-            logger.info(f"Scan {scan_id} was rescheduled. Re-queueing (attempt {retry_count}/{ANALYSIS_MAX_RETRIES}).")
-            await self.queue.put(scan_id)
+        if retry_count >= ANALYSIS_MAX_RETRIES:
+            # A completed scan reopened by late results must not fail; the stale loop re-runs it once they stop.
+            logger.warning(f"Scan {scan_id} was rescheduled {retry_count} times; leaving it to the stale loop.")
             return
-
-        logger.error(f"Scan {scan_id} was rescheduled {retry_count} times. Marking as failed.")
-        error = f"Analysis failed after {retry_count} retry attempts: new input kept arriving or an SBOM failed to load"
-        # The engine sent it back to pending, so a scan another worker has claimed since is left alone.
-        await _fail_scan(db, scan, error, started, status=SCAN_STATUS_PENDING)
+        logger.info(f"Scan {scan_id} was rescheduled. Re-queueing (attempt {retry_count}/{ANALYSIS_MAX_RETRIES}).")
+        await self.queue.put(scan_id)
 
     async def _process(self, scan_id: str, worker_id: str) -> None:
         logger.info(f"Worker {worker_id} picked up scan {scan_id}")
@@ -286,7 +276,7 @@ class AnalysisWorkerManager:
                 sbom_generation=scan.get("sbom_generation"),
             )
             if outcome == SCAN_STATUS_PENDING:
-                await self._handle_rescheduled(scan, db, started)
+                await self._handle_rescheduled(scan)
             elif outcome is not None:
                 _record_job("failed" if outcome == SCAN_STATUS_FAILED else "success", started)
         except Exception as e:
