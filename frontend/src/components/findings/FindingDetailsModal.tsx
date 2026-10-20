@@ -284,8 +284,9 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                                     <div className="col-span-2">
                                         <DetailSection label="Unlisted Findings" compact>
                                             <p className="text-xs text-muted-foreground">
-                                                Not listed: {finding.related_findings_omitted.toLocaleString()} other findings on this
-                                                component. Filter the findings table by this component to see them.
+                                                Not listed: {finding.related_findings_omitted.toLocaleString()} other finding
+                                                {finding.related_findings_omitted === 1 ? '' : 's'} on this component. Filter the
+                                                findings table by this component to see them.
                                             </p>
                                         </DetailSection>
                                     </div>
