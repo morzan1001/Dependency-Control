@@ -278,16 +278,15 @@ class TestWindowScansByBranch:
         assert activity["p1"]["main"].commit_count == 1
 
     @pytest.mark.asyncio
-    async def test_a_branch_whose_dates_are_restored_iso_strings_keeps_its_count(self):
-        # Archive restore inserts bundle JSON verbatim, so a branch can carry no real date at all.
+    async def test_a_branch_dated_only_in_restored_iso_strings_counts_without_a_window_neither(self):
+        # Archive restore inserts bundle JSON verbatim; the walk cannot date such scans, so they elect nothing.
         db = FakeDatabase()
         await _seed_scan(db, "s1", "p1", "main", 0, created_at="2026-01-01T00:00:00+00:00")
         await _seed_scan(db, "s2", "p1", "main", 10, created_at="2026-01-02T00:00:00+00:00")
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], None)
 
-        assert activity["p1"]["main"].commit_count == 2
-        assert activity["p1"]["main"].last_scan_at == datetime.min.replace(tzinfo=timezone.utc)
+        assert activity == {}
 
     @pytest.mark.asyncio
     async def test_a_scope_larger_than_one_batch_is_read_in_batches(self):

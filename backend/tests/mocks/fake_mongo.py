@@ -256,7 +256,7 @@ def _in_allowed(value: Any, allowed: list) -> bool:
 _PULL_ELEMENT = "__element__"
 _MATCH_TOP_LEVEL_OPERATORS = frozenset({"$or", "$and", "$nor", "$expr"})
 _MATCH_FIELD_OPERATORS = frozenset(
-    {"$exists", "$eq", "$in", "$nin", "$ne", "$regex", "$options", "$elemMatch", "$size", "$all", *_CMP}
+    {"$exists", "$eq", "$in", "$nin", "$ne", "$regex", "$options", "$elemMatch", "$size", "$all", "$type", *_CMP}
 )
 
 
@@ -362,6 +362,12 @@ def _match_doc(doc: dict, query: dict) -> bool:
         if "$exists" in condition:
             field_present = _resolve_dotted(doc, key) is not None or key in doc
             if bool(condition["$exists"]) != field_present:
+                return False
+        if "$type" in condition:
+            wanted = condition["$type"]
+            aliases = wanted if isinstance(wanted, list) else [wanted]
+            field_present = _resolve_dotted(doc, key) is not None or key in doc
+            if not field_present or _bson_type_name(value) not in aliases:
                 return False
         # $eq/$in/$nin/$ne compare an array field as a whole and element by element.
         if "$eq" in condition and not _matches_value(value, condition["$eq"]):

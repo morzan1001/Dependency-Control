@@ -610,6 +610,19 @@ class TestBranchScopedScanSelection:
         assert m.total_updates == 1
 
     @pytest.mark.asyncio
+    async def test_a_branch_dated_only_in_text_does_not_win_the_scan_count_view(self):
+        # The walk cannot date these scans, so electing their busier branch would leave the view empty.
+        scans = [
+            {**_make_scan(f"r{i}", i, branch="restored"), "created_at": f"2026-02-0{i + 1}T00:00:00Z"} for i in range(3)
+        ]
+        scans += [_make_scan("m1", 10), _make_scan("m2", 20)]
+        deps = {s["_id"]: [_make_dep(s["_id"], "pkg-a", "1.0.0")] for s in scans}
+
+        m = await self._compute_elected(scans, deps)
+
+        assert (m.branch, m.scan_count) == ("main", 2)
+
+    @pytest.mark.asyncio
     async def test_a_same_commit_scan_storm_becomes_one_bar(self):
         # 5 CI runs of one commit within a day, then a real new commit.
         scans = [

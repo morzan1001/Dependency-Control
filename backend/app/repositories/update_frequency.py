@@ -7,7 +7,6 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection
 
-from app.core import UNDATED
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION, ScanOutdatedSet, ScanUpdateDelta
 from app.repositories.base import BaseRepository
 from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
@@ -92,11 +91,8 @@ WINDOW_HARD_LIMIT = 1000
 
 
 def usable_scan_match(since: datetime | None) -> dict[str, Any]:
-    """The usable builds both read paths fold, from ``since`` on."""
-    scoped: dict[str, Any] = dict(USABLE_BUILD_MATCH)
-    if since is not None:
-        scoped["created_at"] = {"$gte": since}
-    return scoped
+    """The usable builds both read paths fold, from ``since`` on; an archive restore can store created_at as text."""
+    return {**USABLE_BUILD_MATCH, "created_at": {"$type": "date"} if since is None else {"$gte": since}}
 
 
 def _named_branch(doc: dict[str, Any]) -> tuple[str, str] | None:
@@ -143,15 +139,11 @@ async def window_scans_by_branch(
         per_commit = commits.setdefault(chain, Counter())
         if isinstance(token := _commit_token(scan), str):
             per_commit[token] += 1
-        created_at = scan.get("created_at")
-        # Archive restore can insert a scan date as an ISO string.
-        if isinstance(created_at, datetime) and created_at > latest.get(chain, UNDATED):
-            latest[chain] = created_at
+        latest[chain] = max(latest.get(chain, scan["created_at"]), scan["created_at"])
 
     activity: dict[str, dict[str, BranchWindowActivity]] = {}
     for (project_id, branch), per_commit in commits.items():
-        moment = latest.get((project_id, branch), UNDATED)
-        activity.setdefault(project_id, {})[branch] = BranchWindowActivity(per_commit, moment)
+        activity.setdefault(project_id, {})[branch] = BranchWindowActivity(per_commit, latest[project_id, branch])
     return activity
 
 

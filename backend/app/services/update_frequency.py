@@ -723,10 +723,7 @@ async def _load_completed_scans(
         projection={"_id": 1, "created_at": 1, "commit_hash": 1},
     )
     scans_raw: list[dict[str, Any]] = [
-        {"_id": d["_id"], "created_at": d["created_at"], "commit_hash": d.get("commit_hash")}
-        for d in docs
-        # A restored bundle can carry ISO-string dates, which the aggregation and delta writer also skip.
-        if isinstance(d.get("created_at"), datetime)
+        {"_id": d["_id"], "created_at": d["created_at"], "commit_hash": d.get("commit_hash")} for d in docs
     ]
     scans_raw.reverse()
     if since is None:

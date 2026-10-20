@@ -4,7 +4,6 @@ from typing import Any
 import pytest
 from prometheus_client import REGISTRY
 
-from app.core import UNDATED
 from app.core.constants import (
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
@@ -169,18 +168,15 @@ async def test_branch_activity_inside_a_window_counts_commits_and_the_newest_sca
     }
 
 
-async def test_branch_activity_over_the_whole_history_skips_undated_scans_for_the_newest(db):
+async def test_branch_activity_over_the_whole_history_counts_only_dated_scans(db):
     await _seed_scans(db)
 
     activity = await window_scans_by_branch(ScanRepository(db), SCOPE, None)
 
     assert activity == {
         "p-a": {
-            "main": BranchWindowActivity(
-                {"c1": 2, "c2": 1, "sa4": 1, "sa5": 1, "sa6": 1, "c-old": 1, "c-text": 1}, _at(30)
-            ),
-            "dev": BranchWindowActivity({"cd1": 1, "cd2": 1, "cd3": 1}, _at(50)),
-            "legacy": BranchWindowActivity({"cl1": 1, "cl2": 1}, UNDATED),
+            "main": BranchWindowActivity({"c1": 2, "c2": 1, "sa4": 1, "sa5": 1, "sa6": 1, "c-old": 1}, _at(30)),
+            "dev": BranchWindowActivity({"cd3": 1}, _at(50)),
         },
         "p-b": {"main": BranchWindowActivity({"cb1": 1}, _at(1))},
     }
