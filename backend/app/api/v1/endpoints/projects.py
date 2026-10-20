@@ -79,7 +79,7 @@ from app.repositories.findings import FindingRepository
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.releases import ReleaseRepository
-from app.repositories.scans import BRANCH_SCAN_FILTER, ScanRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
 from app.repositories.waivers import WaiverRepository
@@ -621,13 +621,7 @@ async def read_project_branches(
     project = await check_project_access(project_id, current_user, db)
     scan_repo = ScanRepository(db)
 
-    rows = await scan_repo.aggregate(
-        [
-            {"$match": {"project_id": project_id, **BRANCH_SCAN_FILTER}},
-            {MONGO_GROUP: {"_id": "$branch", "last_scan_at": {"$max": "$created_at"}}},
-        ]
-    )
-    last_scans = {row["_id"]: row["last_scan_at"] for row in rows if isinstance(row["_id"], str) and row["_id"]}
+    last_scans = await scan_repo.branch_last_scans(project_id)
     deleted = set(project.deleted_branches or [])
     names = sorted(last_scans, key=case_insensitive_key)
     active = [branch for branch in names if branch not in deleted]

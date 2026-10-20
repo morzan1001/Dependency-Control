@@ -272,6 +272,19 @@ class ScanRepository:
         doc = (await self._freshest_analysis_docs([tip])).get(tip["_id"]) if tip else None
         return Scan(**doc) if doc else None
 
+    async def branch_last_scans(self, project_id: str) -> dict[str, datetime]:
+        """Newest scan date per branch name, grouped off the index alone; one read per name drops names only tags carry."""
+        rows = await self.aggregate(
+            [
+                {"$match": {"project_id": project_id}},
+                {"$group": {"_id": "$branch", "last_scan_at": {"$max": "$created_at"}}},
+            ]
+        )
+        last = {row["_id"]: row["last_scan_at"] for row in rows if isinstance(row["_id"], str) and row["_id"]}
+        branch_scans = {"project_id": project_id, **BRANCH_SCAN_FILTER}
+        found = await _bounded_gather(self.collection.find_one({**branch_scans, "branch": b}, {"_id": 1}) for b in last)
+        return {branch: at for (branch, at), hit in zip(last.items(), found, strict=True) if hit}
+
     async def branch_tips(
         self, project_id: str, deleted_branches: list[str] | None = None, since: datetime | None = None
     ) -> list[tuple[str, int, dict[str, Any] | None]]:
