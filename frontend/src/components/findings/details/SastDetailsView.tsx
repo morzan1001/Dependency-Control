@@ -1,4 +1,4 @@
-import { Finding } from "@/types/scan"
+import type { Finding, FindingLocation } from "@/types/scan"
 import { Badge } from "@/components/ui/badge"
 import { ExternalLink, AlertTriangle, Info, BookOpen, Shield, Target, Gauge, ChevronDown, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -9,7 +9,8 @@ import {
     BadgeList, 
     ReferencesList, 
     RiskBadge, 
-    FileLocation 
+    FileLocation,
+    AdditionalLocations
 } from "./shared"
 import { SeverityBadge } from '../SeverityBadge'
 import { markdownHeadings, markdownHeadingTag } from '@/lib/markdown'
@@ -72,6 +73,7 @@ interface SastDetails {
     sast_findings?: SastIssueEntry[];
     start?: { line: number; column?: number };
     end?: { line: number; column?: number };
+    additional_locations?: FindingLocation[];
     line?: number;
     rule_id?: string;
     check_id?: string;
@@ -314,6 +316,11 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                     endCol={position.end?.column}
                     scmContext={scanContext}
                 />
+                <AdditionalLocations
+                    filePath={finding.component || "Unknown"}
+                    locations={position.additional_locations}
+                    scmContext={scanContext}
+                />
                 
                 <p className="text-sm text-muted-foreground">
                     Aggregated findings from <strong>{finding.scanners?.length || sastFindings.length}</strong> scanners at this location.
@@ -375,6 +382,11 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 endLine={endLine}
                 startCol={position.start?.column}
                 endCol={position.end?.column}
+                scmContext={scanContext}
+            />
+            <AdditionalLocations
+                filePath={finding.component || "Unknown"}
+                locations={position.additional_locations}
                 scmContext={scanContext}
             />
             

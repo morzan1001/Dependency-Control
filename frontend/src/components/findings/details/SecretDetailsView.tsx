@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge"
 import type { Finding } from "@/types/scan"
 import { getSecretRemediationHint, getSecretTreeStatusInfo } from "@/lib/finding-utils"
 import { formatDate, shortCommitHash } from "@/lib/utils"
-import { DetailSection, FileLocation } from "./shared"
+import { AdditionalLocations, DetailSection, FileLocation } from "./shared"
 import type { ScanContext } from "./SastDetailsView"
 
 interface SecretDetailsViewProps {
@@ -23,6 +23,13 @@ export function SecretDetailsView({ finding, scanContext }: SecretDetailsViewPro
                 <FileLocation
                     filePath={finding.component}
                     startLine={details?.line}
+                    scmContext={scanContext}
+                />
+            )}
+            {finding.component && (
+                <AdditionalLocations
+                    filePath={finding.component}
+                    locations={details?.additional_locations}
                     scmContext={scanContext}
                 />
             )}

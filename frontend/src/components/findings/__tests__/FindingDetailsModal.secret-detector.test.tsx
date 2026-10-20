@@ -54,3 +54,20 @@ describe("FindingDetailsModal secret detector", () => {
     expect(screen.getByText("17")).toBeInTheDocument();
   });
 });
+
+describe("FindingDetailsModal secret locations", () => {
+  it("lists the secret's other lines and commits in the file without a scan context", () => {
+    const locations = [
+      { line: 9, commit: "a".repeat(40) },
+      { line: 3, commit: "b".repeat(40) },
+    ];
+    renderModal(
+      secretFinding({ detector: "2", detector_name: "AWS", line: 3, commit: "a".repeat(40), additional_locations: locations }, "Secret detected: AWS"),
+    );
+
+    expect(screen.getByText("Additional Locations")).toBeInTheDocument();
+    expect(screen.getByText("Line 9")).toBeInTheDocument();
+    expect(screen.getByText("Line 3")).toBeInTheDocument();
+    expect(screen.getByText("bbbbbbb")).toBeInTheDocument();
+  });
+});

@@ -1,5 +1,15 @@
 import { FileCode, ExternalLink } from "lucide-react"
 import { buildFileUrl } from "@/lib/scm-links"
+import { shortCommitHash } from "@/lib/utils"
+import type { FindingLocation } from "@/types/scan"
+import { DetailSection } from "./DetailSection"
+
+type ScmContext = {
+    projectUrl?: string | null
+    pipelineUrl?: string | null
+    commitHash?: string | null
+    branch?: string | null
+} | null
 
 interface FileLocationProps {
     readonly filePath: string
@@ -7,12 +17,7 @@ interface FileLocationProps {
     readonly endLine?: number | null
     readonly startCol?: number | null
     readonly endCol?: number | null
-    readonly scmContext?: {
-        projectUrl?: string | null
-        pipelineUrl?: string | null
-        commitHash?: string | null
-        branch?: string | null
-    } | null
+    readonly scmContext?: ScmContext
 }
 
 function buildLocationString(
@@ -33,15 +38,8 @@ function buildLocationString(
     return str
 }
 
-export function FileLocation({
-    filePath,
-    startLine,
-    endLine,
-    startCol,
-    endCol,
-    scmContext
-}: FileLocationProps) {
-    const fileUrl = scmContext ? buildFileUrl({
+function buildScmFileUrl(filePath: string, scmContext: ScmContext | undefined, startLine?: number | null, endLine?: number | null) {
+    return scmContext ? buildFileUrl({
         projectUrl: scmContext.projectUrl,
         pipelineUrl: scmContext.pipelineUrl,
         commitHash: scmContext.commitHash,
@@ -50,6 +48,17 @@ export function FileLocation({
         startLine: typeof startLine === 'number' ? startLine : null,
         endLine: typeof endLine === 'number' ? endLine : null,
     }) : null
+}
+
+export function FileLocation({
+    filePath,
+    startLine,
+    endLine,
+    startCol,
+    endCol,
+    scmContext
+}: FileLocationProps) {
+    const fileUrl = buildScmFileUrl(filePath, scmContext, startLine, endLine)
 
     const locationStr = buildLocationString(startLine, endLine, startCol, endCol)
 
@@ -84,5 +93,43 @@ export function FileLocation({
                 </div>
             </div>
         </div>
+    )
+}
+
+interface AdditionalLocationsProps {
+    readonly filePath: string
+    readonly locations?: FindingLocation[]
+    readonly scmContext?: ScmContext
+}
+
+export function AdditionalLocations({ filePath, locations, scmContext }: AdditionalLocationsProps) {
+    if (!locations?.length) return null
+    return (
+        <DetailSection label="Additional Locations">
+            <ul className="space-y-1">
+                {locations.map((location) => {
+                    const startLine = location.start?.line ?? location.line
+                    const endLine = location.end?.line
+                    const label = startLine ? buildLocationString(startLine, endLine, location.start?.column, location.end?.column) : null
+                    const url = label ? buildScmFileUrl(filePath, scmContext, startLine, endLine) : null
+                    return (
+                        <li key={JSON.stringify(location)} className="flex flex-wrap items-center gap-2 text-sm">
+                            {url ? (
+                                <a href={url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                                    {label}
+                                    <ExternalLink className="h-3 w-3 ml-1 inline" />
+                                </a>
+                            ) : label && <span>{label}</span>}
+                            {location.commit && (
+                                <code className="font-mono text-xs text-muted-foreground">{shortCommitHash(location.commit)}</code>
+                            )}
+                            {location.search_key && (
+                                <code className="font-mono text-xs text-muted-foreground break-all">{location.search_key}</code>
+                            )}
+                        </li>
+                    )
+                })}
+            </ul>
+        </DetailSection>
     )
 }

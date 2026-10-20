@@ -1154,3 +1154,79 @@ class TestStoredEntryShape:
         [finding] = agg.get_findings()
         assert finding.found_in == ["sbom-a.json", "sbom-b.json"]
         assert "source" not in finding.details["quality_issues"][0]
+
+
+def _opengrep_hit(col: int) -> dict:
+    return {
+        "check_id": "python.lang.security.audit.eval",
+        "path": "app/views.py",
+        "start": {"line": 10, "col": col},
+        "end": {"line": 10, "col": col + 6},
+        "extra": {"severity": "ERROR", "message": "eval", "lines": "eval(a); eval(b)"},
+    }
+
+
+def _trufflehog_hit(line: int, commit: str) -> dict:
+    return {
+        "DetectorType": 2,
+        "Raw": "AKIAIOSFODNN7EXAMPLE",
+        "SourceMetadata": {"Data": {"Git": {"file": "deploy/.env", "line": line, "commit": commit}}},
+    }
+
+
+def _kics_hit(search_key: str) -> dict:
+    return {"file_name": "deploy/pod.yaml", "line": 7, "search_key": search_key}
+
+
+class TestSameIdentityHitsInOneFile:
+    """The id keeps rule, file and at most the start line, so other hits of one identity become locations."""
+
+    def test_a_second_hit_on_the_same_line_is_listed_as_a_location(self):
+        agg = ResultAggregator()
+        agg.aggregate("opengrep", {"results": [_opengrep_hit(1), _opengrep_hit(11)]})
+
+        [finding] = agg.get_findings()
+        details = finding.details["sast_findings"][0]["details"]
+        assert details["start"] == {"line": 10, "column": 1}
+        assert details["additional_locations"] == [
+            {"start": {"line": 10, "column": 11}, "end": {"line": 10, "column": 17}}
+        ]
+
+    def test_one_secret_at_other_lines_and_commits_of_its_file_lists_each(self):
+        agg = ResultAggregator()
+        hits = [_trufflehog_hit(3, "a" * 40), _trufflehog_hit(9, "a" * 40), _trufflehog_hit(3, "b" * 40)]
+        agg.aggregate("trufflehog", {"findings": hits})
+
+        [finding] = agg.get_findings()
+        assert (finding.details["line"], finding.details["commit"]) == (3, "a" * 40)
+        assert finding.details["additional_locations"] == [
+            {"line": 9, "commit": "a" * 40},
+            {"line": 3, "commit": "b" * 40},
+        ]
+
+    def test_an_iac_hit_on_the_same_line_is_told_apart_by_its_search_key(self):
+        agg = ResultAggregator()
+        query = {"query_name": "Privileged", "query_id": "q1", "severity": "HIGH"}
+        files = [_kics_hit("spec.containers.name={{a}}"), _kics_hit("spec.containers.name={{b}}")]
+        agg.aggregate("kics", {"queries": [{**query, "files": files}]})
+
+        [finding] = agg.get_findings()
+        assert finding.details["search_key"] == "spec.containers.name={{a}}"
+        assert finding.details["additional_locations"] == [
+            {"start": {"line": 7}, "end": {"line": 7}, "search_key": "spec.containers.name={{b}}"}
+        ]
+
+    def test_the_same_hit_posted_twice_adds_no_location(self):
+        agg = ResultAggregator()
+        agg.aggregate("opengrep", {"results": [_opengrep_hit(1)]}, source="job-a")
+        agg.aggregate("opengrep", {"results": [_opengrep_hit(1)]}, source="job-b")
+
+        [finding] = agg.get_findings()
+        assert "additional_locations" not in finding.details["sast_findings"][0]["details"]
+
+    def test_the_waiver_signature_stays_on_the_first_hit(self):
+        single, double = ResultAggregator(), ResultAggregator()
+        single.aggregate("opengrep", {"results": [_opengrep_hit(1)]})
+        double.aggregate("opengrep", {"results": [_opengrep_hit(1), _opengrep_hit(11)]})
+
+        assert double.get_findings()[0].match == single.get_findings()[0].match

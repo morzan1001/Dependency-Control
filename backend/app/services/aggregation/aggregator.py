@@ -9,7 +9,7 @@ from app.core.constants import (
     MAX_CROSS_LINK_GROUP_SIZE,
     UNKNOWN_LICENSE_PATTERNS,
 )
-from app.models.finding import PACKAGE_FINDING_TYPES, Finding, FindingType, Severity
+from app.models.finding import LOCATION_FINDING_TYPES, PACKAGE_FINDING_TYPES, Finding, FindingType, Severity
 from app.models.license import CATEGORY_RESTRICTIVENESS
 from app.schemas.enrichment import DependencyEnrichment
 from app.schemas.finding import (
@@ -18,7 +18,7 @@ from app.schemas.finding import (
     VulnerabilityAggregatedDetails,
     VulnerabilityEntry,
 )
-from app.schemas.finding_details import SystemWarningDetails
+from app.schemas.finding_details import FindingLocation, SystemWarningDetails
 from app.services.component_identity import (
     cluster_by_package_identity,
     extract_artifact_name,
@@ -109,6 +109,20 @@ def _adopt_smallest_spelling(existing: Finding, finding: Finding, id_prefix: str
         key=lambda cv: (cv[0], cv[1] or "", cv[1] is None),
     )
     existing.id = f"{id_prefix}{existing.component}:{existing.version}"
+
+
+def _location(details: dict[str, Any]) -> dict[str, Any]:
+    return {key: details[key] for key in FindingLocation.model_fields if details.get(key) is not None}
+
+
+def _record_additional_location(existing: Finding, finding: Finding) -> None:
+    """The id keeps rule, file and at most the start line, so a same-identity hit differs only in its position."""
+    location = _location(finding.details)
+    if not location or location == _location(existing.details):
+        return
+    others = existing.details.setdefault("additional_locations", [])
+    if location not in others:
+        others.append(location)
 
 
 def _record_license(enrichment: DependencyEnrichment, entry: dict[str, Any]) -> None:
@@ -575,6 +589,8 @@ class ResultAggregator:
         comp_key, version_key = _package_key(finding)
         key = f"{finding.type}:{finding.id}:{comp_key}:{version_key}"
         if existing := self.findings.get(key):
+            if existing.type in LOCATION_FINDING_TYPES:
+                _record_additional_location(existing, finding)
             self._merge_generic_into_existing(existing, finding)
         else:
             self.findings[key] = finding
