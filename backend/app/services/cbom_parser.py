@@ -208,7 +208,11 @@ def component_properties(comp: dict[str, Any]) -> dict[str, str]:
     return {
         str(p["name"]): str(p["value"])
         for p in (raw if isinstance(raw, list) else [])
-        if isinstance(p, dict) and p.get("name") and p.get("value") not in (None, "")
+        # A key like $regex would re-hydrate as Extended JSON when an archive of the scan is restored.
+        if isinstance(p, dict)
+        and p.get("name")
+        and not str(p["name"]).startswith("$")
+        and p.get("value") not in (None, "")
     }
 
 

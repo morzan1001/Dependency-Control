@@ -229,8 +229,12 @@ def _hash_map(entries: Any, alg_key: str, value_key: str) -> dict[str, str]:
         if not isinstance(entry, dict):
             continue
         alg, value = entry.get(alg_key), entry.get(value_key)
-        if isinstance(alg, str) and isinstance(value, str) and alg and value:
-            hashes.setdefault(normalize_hash_algorithm(alg), value)
+        if not (isinstance(alg, str) and isinstance(value, str) and value):
+            continue
+        name = normalize_hash_algorithm(alg)
+        # A key like $date would re-hydrate as Extended JSON when an archive of the scan is restored.
+        if name.isascii() and name.isalnum():
+            hashes.setdefault(name, value)
     return hashes
 
 
