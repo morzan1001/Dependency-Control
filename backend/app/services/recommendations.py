@@ -81,7 +81,7 @@ def generate_recommendations(
     upgraded_by_vuln_cards: list[ModelOrDict] = []
 
     def vulnerability_cards() -> list[Recommendation]:
-        cards, upgraded = vulnerabilities.process_vulnerabilities(vulns, join_list)
+        cards, upgraded = vulnerabilities.process_vulnerabilities(vulns, join_list, threat_intel)
         upgraded_by_vuln_cards.extend(upgraded)
         return cards
 

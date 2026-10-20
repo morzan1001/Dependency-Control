@@ -1,5 +1,5 @@
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +19,7 @@ from app.core.constants import (
 from app.core.cve import canonical_cves, counted_cves
 from app.core.epss import bucket_epss
 from app.core.risk_scoring import is_actionable_vulnerability
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
 from app.services.aggregation.versions import (
     aggregate_fixed_version,
@@ -212,6 +213,22 @@ def live_cves(details_list: Iterable[Any]) -> list[str]:
 def display_vulnerability_id(details: Any) -> str | None:
     ids = live_cves([details]) or canonical_cves([details])
     return next((i for i in ids if i.startswith("CVE-")), next(iter(ids), None))
+
+
+def cve_signals(
+    advisories: Iterable[dict[str, Any]], threat_intel: Mapping[str, VulnerabilityEnrichment]
+) -> Iterator[tuple[str, bool, bool, float]]:
+    """(cve, in_kev, ransomware_use, epss_score) per CVE of each advisory."""
+    for advisory in advisories:
+        cves = counted_cves(advisory)
+        for cve in cves:
+            # A bundle's stored marks are any one CVE's; a single CVE keeps its own, which a KEV outage cannot clear.
+            live = threat_intel.get(cve) if len(cves) > 1 else None
+            if live is not None:
+                yield cve, live.is_kev, live.kev_ransomware_use, live.epss_score or 0.0
+            else:
+                in_kev, ransomware = advisory.get(DETAILS_KEY_IN_KEV), advisory.get(DETAILS_KEY_KEV_RANSOMWARE)
+                yield cve, bool(in_kev), bool(ransomware), advisory.get("epss_score") or 0.0
 
 
 def cve_severities(advisories: Iterable[dict[str, Any]]) -> dict[str, str | None]:

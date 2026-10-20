@@ -1,18 +1,17 @@
 from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
 from app.core.constants import (
-    DETAILS_KEY_IN_KEV,
     EPSS_HIGH_THRESHOLD,
     SOURCE_TYPE_DIRECTORY,
     SOURCE_TYPE_FILE,
     SOURCE_TYPE_IMAGE,
 )
-from app.core.cve import canonical_cves
 from app.core.epss import HIGH_EPSS_LABEL
 from app.core.purl import is_os_package_type
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import (
     Effort,
     Priority,
@@ -23,6 +22,7 @@ from app.services.recommendation.common import (
     ModelOrDict,
     VulnStats,
     VulnerabilityInfo,
+    cve_signals,
     get_attr,
     installed_copy_lookup,
     names_fix,
@@ -41,7 +41,9 @@ _MARKED_CVES_SAMPLED = 5
 
 
 def process_vulnerabilities(
-    findings: list[ModelOrDict], join_dependencies: list[ModelOrDict]
+    findings: list[ModelOrDict],
+    join_dependencies: list[ModelOrDict],
+    threat_intel: Mapping[str, VulnerabilityEnrichment] | None = None,
 ) -> tuple[list[Recommendation], list[ModelOrDict]]:
     """join_dependencies holds the inventory rows the findings name; also returns the findings the cards upgrade."""
     recommendations = []
@@ -57,7 +59,9 @@ def process_vulnerabilities(
     # One card per installed copy: another version of the package has its own fixes and CVEs.
     for source, transitive in (("application", False), ("transitive", True)):
         for (component, version), group in _by_installed_version(vulns_by_source.get(source, [])).items():
-            recommendations.append(_build_update_recommendation(component, version, group, transitive))
+            recommendations.append(
+                _build_update_recommendation(component, version, group, transitive, threat_intel or {})
+            )
 
     no_fix_recs = _analyze_no_fix_vulns(vulns_by_source.get("no_fix", []))
     recommendations.extend(no_fix_recs)
@@ -199,14 +203,30 @@ def _build_update_description(
     return " ".join(desc_parts)
 
 
-def _marked_cves(vulns: list[VulnerabilityInfo], marked: Callable[[dict[str, Any]], Any]) -> list[str]:
-    return canonical_cves([{"vulnerabilities": [a for a in v.advisories if marked(a)]} for v in vulns])
+def _marked_cves(
+    vulns: list[VulnerabilityInfo], threat_intel: Mapping[str, VulnerabilityEnrichment]
+) -> tuple[list[str], list[str]]:
+    """The KEV and high-EPSS CVEs; a bundled advisory's CVEs are judged by their own live marks."""
+    kev: dict[str, None] = {}
+    high_epss: dict[str, None] = {}
+    for v in vulns:
+        for cve, in_kev, _ransomware, epss_score in cve_signals(v.advisories, threat_intel):
+            if in_kev:
+                kev[cve] = None
+            if epss_score >= EPSS_HIGH_THRESHOLD:
+                high_epss[cve] = None
+    return list(kev), list(high_epss)
 
 
 def _build_update_recommendation(
-    component: str, current_version: str, component_vulns: list[VulnerabilityInfo], transitive: bool
+    component: str,
+    current_version: str,
+    component_vulns: list[VulnerabilityInfo],
+    transitive: bool,
+    threat_intel: Mapping[str, VulnerabilityEnrichment],
 ) -> Recommendation:
     stats = summarize_vulns(component_vulns, names_fix)
+    kev_cves, high_epss_cves = _marked_cves(component_vulns, threat_intel)
     direct_inferred = not transitive and component_vulns[0].direct_inferred
     label = f"{component}@{current_version}"
 
@@ -226,16 +246,8 @@ def _build_update_recommendation(
             "target_version": stats.best_fix,
             "direct_inferred": direct_inferred,
             **sampled("cves", stats.cves, _CVES_SAMPLED),
-            **sampled(
-                "kev_cves",
-                _marked_cves(component_vulns, lambda a: a.get(DETAILS_KEY_IN_KEV)),
-                _MARKED_CVES_SAMPLED,
-            ),
-            **sampled(
-                "high_epss_cves",
-                _marked_cves(component_vulns, lambda a: (a.get("epss_score") or 0) >= EPSS_HIGH_THRESHOLD),
-                _MARKED_CVES_SAMPLED,
-            ),
+            **sampled("kev_cves", kev_cves, _MARKED_CVES_SAMPLED),
+            **sampled("high_epss_cves", high_epss_cves, _MARKED_CVES_SAMPLED),
         },
         effort=Effort.HIGH if transitive else Effort.MEDIUM if direct_inferred else Effort.LOW,
     )
