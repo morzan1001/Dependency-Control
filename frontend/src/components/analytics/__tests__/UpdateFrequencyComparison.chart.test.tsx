@@ -3,8 +3,11 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
+import { expectLabelsOnTheirTicks, measureChartText } from "@/test/chart-axis";
 import type { ProjectUpdateSummary } from "@/types/analytics";
 import { UpdateFrequencyComparison } from "../UpdateFrequencyComparison";
+
+measureChartText();
 
 const LONG_NAME = "identity-and-access-management-gateway";
 
@@ -100,5 +103,29 @@ describe("UpdateFrequencyComparison chart", () => {
 
     expect(await within(card).findByText("Payments")).toBeInTheDocument();
     expect(card.querySelector(".recharts-tooltip-item-value")).toHaveTextContent("40%");
+  });
+
+  it("draws the top value's label under its grid line, level with a bar that reaches it", async () => {
+    vi.mocked(analyticsApi.getUpdateFrequencyComparison).mockResolvedValue({
+      projects: [project("checkout-service", 100), project("search", 40)],
+      team_avg_updates_per_month: 1,
+      team_avg_coverage_pct: 70,
+      best_project: null,
+      worst_project: null,
+      partial_projects: 0,
+      pending_projects: 0,
+      skipped_insufficient_data: 0,
+      skipped_error: 0,
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <UpdateFrequencyComparison />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /load comparison/i }));
+
+    const card = (await screen.findByText("Project Comparison")).closest(".bg-card") as HTMLElement;
+    await waitFor(() => expect(within(card).getByText("100")).toBeInTheDocument());
+    expectLabelsOnTheirTicks(card, "x");
   });
 });

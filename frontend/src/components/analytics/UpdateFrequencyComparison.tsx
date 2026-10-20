@@ -345,7 +345,7 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
       <CardContent>
         <div className="w-full min-w-0" style={{ height: Math.max(250, chartData.length * 40) }}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData} layout="vertical" margin={{ left: 20 }}>
+            <BarChart data={chartData} layout="vertical" margin={{ left: 20, right: 20 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
               <XAxis type="number" className="text-xs" />
               <YAxis dataKey="id" type="category" width={150} className="text-xs" tickFormatter={(id: string) => truncateLabel(names.get(id) ?? '')} />

@@ -2,7 +2,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { cloneElement, type ReactElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
+import { expectLabelsOnTheirTicks, measureChartText } from '@/test/chart-axis'
+
 import Dashboard from '../Dashboard'
+
+measureChartText()
 
 const LONG_NAME = 'identity-and-access-management-gateway'
 
@@ -63,6 +67,13 @@ describe('Dashboard riskiest projects chart', () => {
     await waitFor(() => expect(screen.getByText('search')).toBeInTheDocument())
     const ticks = [...container.querySelectorAll('.recharts-xAxis-tick-labels text')].map((tick) => tick.textContent)
     expect(ticks).toEqual(['…ent-gateway', 'search', '…strg/tm/app', '…strg/tm/web'])
+  })
+
+  it('draws the top risk label on its grid line, level with a bar that reaches it', async () => {
+    const { container } = render(<Dashboard />)
+
+    await waitFor(() => expect(screen.getByText('search')).toBeInTheDocument())
+    expectLabelsOnTheirTicks(container, 'y')
   })
 
   it('names the owner and the risk of each bar whose project name another bar shares in its tooltip', async () => {

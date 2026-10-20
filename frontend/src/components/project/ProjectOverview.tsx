@@ -285,7 +285,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
           <CardContent className="pl-2">
             <div className="h-[300px] w-full min-w-0">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={trendData}>
+                <LineChart data={trendData} margin={{ top: 20, right: 5, bottom: 5, left: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                   <XAxis dataKey="date" className="text-xs" />
                   <YAxis className="text-xs" />

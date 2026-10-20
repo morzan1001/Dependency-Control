@@ -157,7 +157,7 @@ function TimelineChart({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
       <CardContent>
         <div className="h-[300px] w-full min-w-0">
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData}>
+            <ComposedChart data={chartData} margin={{ top: 20, right: 5, bottom: 5, left: 5 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
               <XAxis dataKey="date" className="text-xs" />
               <YAxis yAxisId="left" className="text-xs" />

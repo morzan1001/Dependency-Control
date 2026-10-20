@@ -3,9 +3,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cloneElement, type ReactElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { expectLabelsOnTheirTicks, measureChartText } from '@/test/chart-axis'
 import type { ScanWithReleases } from '@/types/scan'
 
 import { ProjectOverview } from '../ProjectOverview'
+
+measureChartText()
 
 const SCAN: ScanWithReleases = {
   id: 's-main',
@@ -129,5 +132,21 @@ describe('ProjectOverview branch chart', () => {
     const card = screen.getByText('Severity Distribution by Branch').closest('.bg-card') as HTMLElement
     expect(await within(card).findByText('…21-checkout-redesign')).toBeInTheDocument()
     expect(within(card).getByText('…4821-checkout-hotfix')).toBeInTheDocument()
+  })
+})
+
+describe('ProjectOverview chart axes', () => {
+  it('draw each top value label on its grid line, level with a point or bar that reaches it', async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ProjectOverview projectId="p1" selectedBranches={['main']} />
+      </QueryClientProvider>,
+    )
+
+    for (const title of ['Vulnerability Trends', 'Severity Distribution by Branch']) {
+      const card = screen.getByText(title).closest('.bg-card') as HTMLElement
+      await waitFor(() => expect(card.querySelector('.recharts-yAxis-tick-labels text')).not.toBeNull())
+      expectLabelsOnTheirTicks(card, 'y')
+    }
   })
 })

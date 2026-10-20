@@ -46,7 +46,7 @@ export function TrendsTimeSeriesChart(p: Readonly<Props>) {
       <div className="text-sm font-medium">{p.label}</div>
       <div style={{ width: "100%", height: 320 }}>
         <ResponsiveContainer>
-          <LineChart data={chartData}>
+          <LineChart data={chartData} margin={{ top: 20, right: 5, bottom: 5, left: 5 }}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="date" />
             <YAxis />

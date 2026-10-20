@@ -2,8 +2,11 @@ import { cloneElement, isValidElement, type ReactElement, type ReactNode } from 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { expectLabelsOnTheirTicks, measureChartText } from "@/test/chart-axis";
 import type { UpdateFrequencyMetrics } from "@/types/analytics";
 import { UpdateFrequency } from "../UpdateFrequency";
+
+measureChartText();
 
 vi.mock("@/api/analytics", () => ({
   analyticsApi: { getUpdateFrequency: vi.fn() },
@@ -120,5 +123,22 @@ describe("UpdateFrequency timeline legend", () => {
     expect([...card.querySelectorAll(".recharts-legend-item-text")].map((item) => item.textContent)).toEqual([
       "Patch", "Minor", "Major", "Unknown", "Downgrade", "Outdated",
     ]);
+  });
+});
+
+describe("UpdateFrequency timeline axes", () => {
+  it("draw each top count label on its tick, level with a bar or point that reaches it", async () => {
+    mockedFrequency.mockResolvedValue(metrics);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <UpdateFrequency />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByText("select-project"));
+
+    const card = (await screen.findByText("Update Timeline")).closest(".bg-card") as HTMLElement;
+    await waitFor(() => expect(card.querySelectorAll(".recharts-yAxis-tick-labels").length).toBe(2));
+    expectLabelsOnTheirTicks(card, "y");
   });
 });
