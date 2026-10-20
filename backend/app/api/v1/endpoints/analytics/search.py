@@ -64,20 +64,19 @@ async def _resolve_search_scope(
 async def _dependency_ids_by_vulnerability(
     db: AsyncIOMotorDatabase,
     query: dict[str, Any],
-    scan_ids: list[str],
     has_vulnerabilities: bool,
     ordered: list[dict[str, Any]],
     hint: dict[str, int],
 ) -> list[str]:
     candidates = await DependencyRepository(db).aggregate(
-        [{"$match": query}, *ordered, {"$project": {"project_id": 1, "name": 1, "version": 1}}], hint=hint
+        [{"$match": query}, *ordered, {"$project": {"project_id": 1, "scan_id": 1, "name": 1, "version": 1}}],
+        hint=hint,
     )
     # No component filter: a finding's component can be a qualified form no $in over inventory names expresses.
     vuln_pipeline: list[dict[str, Any]] = [
         {
             "$match": {
-                "scan_id": {"$in": scan_ids},
-                "project_id": {"$in": list({dep["project_id"] for dep in candidates})},
+                "scan_id": {"$in": list({dep["scan_id"] for dep in candidates})},
                 "type": "vulnerability",
                 "waived": {"$ne": True},
             }
@@ -90,7 +89,7 @@ async def _dependency_ids_by_vulnerability(
         },
     ]
     by_project: dict[str, dict[str, set[str]]] = {}
-    for r in await FindingRepository(db).aggregate(vuln_pipeline):
+    for r in await FindingRepository(db).aggregate(vuln_pipeline, hint=FINDINGS_SCAN_TYPE_INDEX):
         versions = {normalize_version(v) for v in r["versions"]}
         by_project.setdefault(r["_id"]["project_id"], {})[r["_id"]["component"]] = versions
     vuln_versions = {pid: build_component_index(components) for pid, components in by_project.items()}
@@ -174,7 +173,7 @@ async def search_dependencies_advanced(
         )
         dependencies = [Dependency(**row) for row in rows]
     else:
-        matching = await _dependency_ids_by_vulnerability(db, query, scan_ids, has_vulnerabilities, ordered, hint)
+        matching = await _dependency_ids_by_vulnerability(db, query, has_vulnerabilities, ordered, hint)
         total_count = len(matching)
         page = matching[skip : skip + limit]
         by_id = {dep.id: dep for dep in await dep_repo.find_many({"_id": {"$in": page}}, limit=limit)}

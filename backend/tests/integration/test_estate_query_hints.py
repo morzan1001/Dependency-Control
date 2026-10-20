@@ -167,3 +167,28 @@ async def test_vulnerability_search_counts_and_pages_off_the_scan_type_index(cli
 
     assert [item["vulnerability_id"] for item in resp.json()["items"]] == ["CVE-2026-0001"]
     assert _plans(entries, "findings", "aggregate") == [("IXSCAN { scan_id: 1, type: 1 }", True)] * 2
+
+
+async def test_the_vulnerability_filter_reads_only_the_findings_of_the_matching_dependencies_scans(client, db, estate):
+    from app.models.project import Project, ProjectMember
+
+    other = Project(id="p2", name="project-p2", members=[ProjectMember(user_id="ownerp", role="admin")])
+    await db.projects.insert_one({**other.model_dump(by_alias=True), "latest_scan_id": "head-p2"})
+    await db.scans.insert_one(
+        {"_id": "head-p2", "project_id": "p2", "status": "completed", "created_at": datetime.now(timezone.utc)}
+    )
+    finding = await db.findings.find_one({"_id": "finding-lodash"})
+    await db.findings.insert_many(
+        [
+            {**finding, "_id": f"finding-p2-{i}", "scan_id": "head-p2", "project_id": "p2", "component": f"lib-{i}"}
+            for i in range(_DECOYS)
+        ]
+    )
+
+    resp, entries = await _profiled(
+        db,
+        client.get("/api/v1/analytics/search", params={"q": _COMPONENT, "has_vulnerabilities": "true"}, headers=estate),
+    )
+
+    assert [item["package"] for item in resp.json()["items"]] == [_COMPONENT]
+    assert _plans(entries, "findings", "aggregate") == [("IXSCAN { scan_id: 1, type: 1 }", True)]
