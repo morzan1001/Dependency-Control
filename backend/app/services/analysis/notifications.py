@@ -122,9 +122,13 @@ def _build_vulnerability_message(
     return subject, message
 
 
+def _fingerprint(content: Any) -> str:
+    return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+
+
 async def _first_announcement(db: Database, scan_id: str, event: str, content: Any) -> bool:
     """Claim ``event`` for ``content`` on the scan, so a re-analysis that changed nothing announces nothing."""
-    fingerprint = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+    fingerprint = _fingerprint(content)
     claimed = await db.scans.find_one_and_update(
         {"_id": scan_id, f"announced.{event}": {"$ne": fingerprint}},
         {"$set": {f"announced.{event}": fingerprint}},
@@ -285,8 +289,14 @@ async def notify_analysis_failed(db: Database, scan_id: str, project_id: str | N
         scan = await db.scans.find_one({"_id": scan_id}, {"original_scan_id": 1})
         root_id = scan.get("original_scan_id") if scan else None
         # The scheduler reruns a failing rescan every interval, so a build announces each of its errors once.
-        if root_id and not await _first_announcement(db, root_id, NOTIFICATION_EVENT_ANALYSIS_FAILED, error):
-            return
+        if root_id:
+            announced = f"announced.{NOTIFICATION_EVENT_ANALYSIS_FAILED}"
+            fingerprint = _fingerprint(error)
+            claimed = await db.scans.find_one_and_update(
+                {"_id": root_id, announced: {"$ne": fingerprint}}, {"$addToSet": {announced: fingerprint}}
+            )
+            if claimed is None:
+                return
         project = await db.projects.find_one({"_id": project_id})
         if not project:
             return

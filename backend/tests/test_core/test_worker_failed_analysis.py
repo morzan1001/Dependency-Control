@@ -178,6 +178,13 @@ class TestRepeatedRescanFailures:
 
         assert announced == [("rescan-1", "SBOM unparsable"), ("rescan-2", "analyzer crashed")]
 
+    def test_an_error_announced_before_another_one_is_not_announced_again(self):
+        announced = self._announced_errors(
+            [("rescan-0", "SBOM unparsable"), ("rescan-1", "analyzer crashed"), ("rescan-2", "SBOM unparsable")]
+        )
+
+        assert announced == [("rescan-0", "SBOM unparsable"), ("rescan-1", "analyzer crashed")]
+
     def test_every_failure_of_a_build_itself_is_announced(self):
         announced = self._announced_errors([("build", "SBOM unparsable"), ("build", "SBOM unparsable")])
 
