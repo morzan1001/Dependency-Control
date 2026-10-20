@@ -23,6 +23,9 @@ from app.schemas.notification import AdvisoryPackage
         ("2.14.0", "2.14", True),
         ("2.0.0", "2", True),
         ("latest", "1.0.0", None),
+        ("3f2a9c1", "9.0.0", None),
+        ("1A2B3C4D5E6F7A8B9C0D1E2F3A4B5C6D7E8F9A0B", "9.0.0", None),
+        ("20240101", "20250101", True),
     ],
 )
 def test_a_version_is_covered_up_to_the_bound_it_names(installed, bound, affected):
@@ -34,7 +37,7 @@ def test_a_rule_without_a_bound_covers_every_version():
     assert AdvisoryPackage(name="pkg", version="").covers("99.0") is True
 
 
-@pytest.mark.parametrize("bound", ["2.14.x", "2.*", "<=2.14", "latest"])
+@pytest.mark.parametrize("bound", ["2.14.x", "2.*", "<=2.14", "latest", "3f2a9c1"])
 def test_a_bound_that_names_no_version_is_rejected(bound):
     with pytest.raises(ValidationError):
         AdvisoryPackage(name="pkg", version=bound)
