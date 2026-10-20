@@ -306,6 +306,19 @@ async def test_a_weakness_tag_row_spans_every_severity_it_was_seen_at(db):
 
 
 @pytest.mark.asyncio
+async def test_weakness_tags_on_as_many_findings_rank_by_name_whatever_its_case(db):
+    for index, tag in enumerate(["short-key", "weak-hash", "ECB", "deprecated", "weak-hash"]):
+        finding = _crypto_finding(f"f{index}", asset_name="RSA", project_id="pt", scan_id="st")
+        finding["details"] |= {"weakness_tags": [tag], "bom_ref": f"b{index}"}
+        await db.findings.insert_one(finding)
+    resolved = ResolvedScope(scope="project", scope_id="pt", project_ids=["pt"])
+
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="weakness_tag", scan_id="st", limit=3)
+
+    assert [e.key for e in result.items] == ["weak-hash", "deprecated", "ECB"]
+
+
+@pytest.mark.asyncio
 async def test_no_completed_scans_returns_empty_not_all_history(db):
     await CryptoAssetRepository(db).bulk_upsert(
         "pn",

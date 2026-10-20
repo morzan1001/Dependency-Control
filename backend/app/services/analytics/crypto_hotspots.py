@@ -3,7 +3,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.v1.helpers.sorting import case_insensitive_sort
+from app.api.v1.helpers.sorting import case_insensitive_key, case_insensitive_sort
 from app.core.cache import scope_digest
 from app.models.finding import CRYPTO_FINDING_TYPES
 from app.schemas.analytics import GroupBy, HotspotEntry, HotspotResponse
@@ -211,7 +211,7 @@ class CryptoHotspotService:
                     entry[field] = value if entry[field] is None else pick(entry[field], value)
 
         now = datetime.now(timezone.utc)
-        ranked = sorted(accum.items(), key=lambda kv: kv[1]["finding_count"], reverse=True)[:limit]
+        ranked = sorted(accum.items(), key=lambda kv: (-kv[1]["finding_count"], case_insensitive_key(kv[0])))[:limit]
         return [
             HotspotEntry(
                 key=str(key),
