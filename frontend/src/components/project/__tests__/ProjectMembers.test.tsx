@@ -66,6 +66,13 @@ describe('ProjectMembers', () => {
     expect(screen.getByText('Team: The TOURists')).toBeInTheDocument()
   })
 
+  it('outlines the inherited owner pill like every neutral badge, so it stays visible on a hovered row', () => {
+    renderMembers('Team: The TOURists')
+
+    expect(screen.getByText('Team: The TOURists')).toHaveClass('border-foreground/45')
+    expect(screen.getByText('Team: The TOURists')).not.toHaveClass('border-transparent')
+  })
+
   it('names an invitation that failed and why', async () => {
     vi.mocked(projectApi.inviteMember).mockRejectedValue(new Error('Network Error'))
     renderMembers('')

@@ -106,3 +106,16 @@ describe('UserDetailsDialog - project membership', () => {
     expect(screen.getByText('Project 200')).toBeInTheDocument()
   })
 })
+
+describe('UserDetailsDialog - permissions', () => {
+  it('outlines each permission pill like every neutral badge', () => {
+    render(
+      <MemoryRouter>
+        <UserDetailsDialog user={{ ...makeUser(), permissions: ['project:read'] }} open onOpenChange={() => {}} />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('project:read')).toHaveClass('border-foreground/45')
+    expect(screen.getByText('project:read')).not.toHaveClass('border-transparent')
+  })
+})

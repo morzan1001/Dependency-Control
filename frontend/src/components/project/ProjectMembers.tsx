@@ -8,6 +8,7 @@ import { refusesEmail, useCurrentUser } from '@/hooks/queries/use-users'
 import { isProjectAdmin } from '@/lib/project-roles'
 import { getErrorMessage } from '@/lib/utils'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -214,9 +215,7 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
                 </TableCell>
                 <TableCell>
                   {member.inherited_from ? (
-                    <span className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80">
-                      {member.inherited_from}
-                    </span>
+                    <Badge variant="secondary">{member.inherited_from}</Badge>
                   ) : (
                     <span className="text-muted-foreground text-sm">Direct</span>
                   )}

@@ -102,6 +102,19 @@ describe('ProjectsPage namesakes', () => {
   })
 })
 
+describe('ProjectsPage analyzer pills', () => {
+  it('outlines a scanner pill like every neutral badge and edges a post-processor pill in its own blue', () => {
+    renderProjects(1, [{ id: 'p1', name: 'checkout', teams: [], active_analyzers: ['trivy', 'epss_kev'] } as Project])
+
+    const scanner = screen.getByText('Trivy (Container/FS)')
+    const postProcessor = screen.getByText('EPSS/KEV Enrichment')
+    expect(scanner).toHaveClass('border-foreground/45')
+    expect(scanner).not.toHaveClass('border-transparent')
+    expect(postProcessor).toHaveClass('border-blue-200', 'dark:border-blue-800', 'bg-blue-100')
+    expect(postProcessor).not.toHaveClass('border-foreground/45')
+  })
+})
+
 describe('ProjectsPage accessible names', () => {
   it('names its search box and sort dropdown, which have no visible label', () => {
     renderProjects()

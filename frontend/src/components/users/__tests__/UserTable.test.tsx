@@ -62,3 +62,18 @@ describe('UserTable invitation failures', () => {
     expect(mockUseInviteUser).toHaveBeenCalledWith({ errorTitle: 'Failed to resend invitation' })
   })
 })
+
+describe('UserTable permissions', () => {
+  it('outlines each permission pill and the overflow count like every neutral badge, so they stay visible on a hovered row', () => {
+    const user: User = {
+      id: 'lena', username: 'lena', email: 'lena@corp.com', is_active: true, status: 'active', totp_enabled: false,
+      permissions: ['project:read', 'project:create', 'user:read', 'team:read', 'system:manage'],
+    }
+    render(<UserTable users={[user]} page={0} limit={20} onPageChange={vi.fn()} />)
+
+    for (const pill of [...['project:read', 'project:create', 'user:read'].map((perm) => screen.getByText(perm)), screen.getByText('+2')]) {
+      expect(pill).toHaveClass('border-foreground/45')
+      expect(pill).not.toHaveClass('border-transparent')
+    }
+  })
+})

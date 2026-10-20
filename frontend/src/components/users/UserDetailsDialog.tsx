@@ -7,6 +7,7 @@ import {
   useAdminResetPassword,
   useAdminDisable2FA
 } from '@/hooks/queries/use-users';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -212,9 +213,9 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
                 <div className="flex flex-wrap gap-1">
                     {user.permissions.length === 0 && <span className="text-sm text-muted-foreground">No permissions assigned.</span>}
                     {user.permissions.slice(0, 5).map(p => (
-                        <span key={p} className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80">
+                        <Badge key={p} variant="secondary" className="rounded-md">
                             {p}
-                        </span>
+                        </Badge>
                     ))}
                     {user.permissions.length > 5 && (
                         <span className="text-xs text-muted-foreground flex items-center">

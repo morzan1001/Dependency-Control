@@ -1,5 +1,6 @@
 import { User } from '@/types/user';
 import { useDeleteUser, useInviteUser, useRevokeInvitation } from '@/hooks/queries/use-users';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Check, X, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { SortableHead } from '@/components/ui/sortable-head';
@@ -135,17 +136,17 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                 <TableCell>
                   <div className="flex gap-1 flex-wrap items-center">
                     {user.permissions.slice(0, 3).map((perm) => (
-                      <span key={perm} className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80">
+                      <Badge key={perm} variant="secondary" className="rounded-md">
                         {perm}
-                      </span>
+                      </Badge>
                     ))}
                     {user.permissions.length > 3 && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <span className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold cursor-help border-transparent bg-muted text-muted-foreground hover:bg-muted/80">
+                            <Badge variant="secondary" className="rounded-md cursor-help">
                               +{user.permissions.length - 3}
-                            </span>
+                            </Badge>
                           </TooltipTrigger>
                           <TooltipContent side="bottom" className="max-w-xs">
                             <div className="flex flex-wrap gap-1">

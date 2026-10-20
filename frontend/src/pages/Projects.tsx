@@ -4,6 +4,7 @@ import { useTeams } from '@/hooks/queries/use-teams';
 import { useAuth } from '@/context/useAuth';
 import { usePaginationState } from '@/hooks/use-pagination-state';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Pagination } from '@/components/ui/pagination';
 import { Input } from '@/components/ui/input';
@@ -12,7 +13,7 @@ import { Link } from 'react-router-dom';
 import { Project } from '@/types/project';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AVAILABLE_ANALYZERS, PROJECT_GRID_PAGE_SIZE } from '@/lib/constants';
-import { formatDate, sharedNames } from '@/lib/utils';
+import { cn, formatDate, sharedNames } from '@/lib/utils';
 import { CreateProjectDialog } from '@/components/project/CreateProjectDialog';
 import { ProjectOwner } from '@/components/project/ProjectOwner';
 import {
@@ -162,17 +163,18 @@ export default function ProjectsPage() {
                     {project.active_analyzers?.slice(0, 6).map(analyzerId => {
                         const analyzerInfo = AVAILABLE_ANALYZERS.find(a => a.id === analyzerId);
                         return (
-                          <span 
-                            key={analyzerId} 
-                            className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent ${
-                              analyzerInfo?.isPostProcessor 
-                                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                                : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
-                            }`}
+                          <Badge
+                            key={analyzerId}
+                            variant="secondary"
+                            className={cn(
+                              'rounded-md px-2',
+                              analyzerInfo?.isPostProcessor &&
+                                'border-blue-200 bg-blue-100 text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/30',
+                            )}
                             title={analyzerInfo?.description}
                           >
                             {analyzerInfo?.label || analyzerId}
-                          </span>
+                          </Badge>
                         );
                     })}
                     {(project.active_analyzers?.length || 0) > 6 && (
