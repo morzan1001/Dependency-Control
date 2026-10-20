@@ -6,7 +6,6 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.v1.helpers.sorting import case_insensitive_key
 from app.api.v1.helpers.teams import team_refs
-from app.core import security
 from app.core.constants import (
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
@@ -19,6 +18,7 @@ from app.core.constants import (
 from app.core.permissions import Permissions, has_permission
 from app.models.project import Project
 from app.models.user import User
+from app.repositories.api_keys import hash_token
 from app.repositories.projects import ProjectRepository, surviving_admin_filter
 from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
@@ -269,9 +269,7 @@ async def ensure_crypto_overrides_writable(db: AsyncIOMotorDatabase) -> None:
 
 def generate_project_api_key(project_id: str) -> tuple[str, str]:
     secret = secrets.token_urlsafe(32)
-    api_key = f"{project_id}.{secret}"
-    api_key_hash = security.get_password_hash(secret)
-    return api_key, api_key_hash
+    return f"{project_id}.{secret}", hash_token(secret)
 
 
 def apply_system_settings_enforcement(
