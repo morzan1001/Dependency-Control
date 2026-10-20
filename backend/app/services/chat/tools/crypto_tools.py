@@ -1,17 +1,18 @@
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.v1.helpers.users import resolve_usernames
 from app.core.constants import ScopeName
+from app.models.compliance_report import ComplianceReport
 from app.models.finding import CRYPTO_FINDING_TYPES
 from app.models.policy_audit_entry import PolicyType
 from app.models.user import User
-from app.repositories.compliance_report import ComplianceReportRepository
+from app.repositories.compliance_report import NEWEST_REPORT_FIRST, ComplianceReportRepository, report_list_query
 from app.repositories.crypto_asset import CryptoAssetRepository
-from app.repositories.policy_audit_entry import PolicyAuditRepository
+from app.repositories.policy_audit_entry import NEWEST_ENTRY_FIRST, PolicyAuditRepository, history_query
 from app.schemas.analytics import GroupBy, Metric
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.compliance import ReportFramework
@@ -24,6 +25,8 @@ from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.renderers.base import coverage_statement
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
+
+from ._helpers import bounded_read
 
 _NOISY_RULE_SAMPLE = 10
 
@@ -177,9 +180,18 @@ async def list_compliance_reports(
     limit: int,
 ) -> dict[str, Any]:
     fw = ReportFramework(framework) if framework else None
-    reports = await ComplianceReportRepository(db).list(visibility=visibility, framework=fw, limit=limit)
-    rows = await resolve_scope_names(db, [r.model_dump(by_alias=True) for r in reports])
-    return {"reports": await resolve_usernames(db, rows, "requested_by_name", id_field="requested_by")}
+    docs, total = await bounded_read(
+        db[ComplianceReportRepository.collection_name],
+        report_list_query(visibility=visibility, framework=fw),
+        subject="compliance reports",
+        limit=limit,
+        sort=NEWEST_REPORT_FIRST,
+    )
+    rows = await resolve_scope_names(db, [ComplianceReport.model_validate(d).model_dump(by_alias=True) for d in docs])
+    return {
+        "reports": await resolve_usernames(db, rows, "requested_by_name", id_field="requested_by"),
+        "reports_total": total,
+    }
 
 
 async def list_policy_audit_entries(
@@ -190,14 +202,19 @@ async def list_policy_audit_entries(
     policy_type: PolicyType,
     limit: int,
 ) -> dict[str, Any]:
-    entries = await PolicyAuditRepository(db).list(
-        policy_scope=cast(Literal["system", "project"], policy_scope),
-        project_id=project_id,
-        policy_type=policy_type,
+    rows, total = await bounded_read(
+        db[PolicyAuditRepository.collection_name],
+        history_query(policy_scope=policy_scope, project_id=project_id, policy_type=policy_type),
+        subject="policy audit entries",
         limit=limit,
+        sort=NEWEST_ENTRY_FIRST,
+        # A snapshot is the whole policy, ~22 KB, and the answer never shows it.
+        projection={"snapshot": 0},
     )
-    rows = [e.model_dump(by_alias=True, exclude={"snapshot"}) for e in entries]
-    return {"entries": await resolve_usernames(db, rows, "actor_display_name", id_field="actor_user_id")}
+    return {
+        "entries": await resolve_usernames(db, rows, "actor_display_name", id_field="actor_user_id"),
+        "entries_total": total,
+    }
 
 
 async def get_framework_evaluation_summary(

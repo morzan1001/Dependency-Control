@@ -4,7 +4,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED
+from app.models.compliance_report import ComplianceReport
+from app.models.policy_audit_entry import PolicyAuditEntry
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
+from app.schemas.policy_audit import PolicyAuditAction
 
 
 @pytest.mark.asyncio
@@ -30,46 +34,41 @@ async def test_generate_pqc_migration_plan_returns_response():
 
 
 @pytest.mark.asyncio
-async def test_list_compliance_reports_returns_metadata():
+async def test_list_compliance_reports_returns_metadata(db):
     from app.services.chat.tools.crypto_tools import list_compliance_reports
 
-    db = MagicMock()
-    with patch("app.services.chat.tools.crypto_tools.ComplianceReportRepository") as repo_cls:
-        repo_cls.return_value = MagicMock(
-            list=AsyncMock(
-                return_value=[
-                    MagicMock(
-                        model_dump=lambda **kw: {"id": "r1", "status": "completed", "scope": "user", "scope_id": None},
-                    )
-                ]
-            )
-        )
-        out = await list_compliance_reports(
-            db, visibility={"scope": "project", "scope_id": "p"}, framework=None, limit=10
-        )
-    assert len(out["reports"]) == 1
-    assert out["reports"][0]["id"] == "r1"
+    report = ComplianceReport(
+        id="r1",
+        scope="project",
+        scope_id="p",
+        framework=ReportFramework.LICENSE_AUDIT,
+        format=ReportFormat.PDF,
+        status=ReportStatus.COMPLETED,
+        requested_by="u-1",
+        requested_at=datetime.now(timezone.utc),
+    ).model_dump(by_alias=True)
+    db.compliance_reports._docs["r1"] = report
+
+    out = await list_compliance_reports(db, visibility={"scope": "project", "scope_id": "p"}, framework=None, limit=10)
+
+    assert [(r["_id"], r["status"]) for r in out["reports"]] == [("r1", "completed")]
+    assert out["reports_total"] == 1
 
 
 @pytest.mark.asyncio
-async def test_list_policy_audit_entries_returns_timeline():
+async def test_list_policy_audit_entries_returns_timeline(db):
     from app.services.chat.tools.crypto_tools import list_policy_audit_entries
 
-    db = MagicMock()
-    with patch("app.services.chat.tools.crypto_tools.PolicyAuditRepository") as repo_cls:
-        repo_cls.return_value = MagicMock(
-            list=AsyncMock(
-                return_value=[
-                    MagicMock(
-                        model_dump=lambda **kw: {"version": 1, "change_summary": "x"},
-                    )
-                ]
-            )
-        )
-        out = await list_policy_audit_entries(
-            db, policy_scope="system", project_id=None, policy_type="crypto", limit=20
-        )
-    assert out["entries"][0]["version"] == 1
+    entry = PolicyAuditEntry(
+        policy_scope="system", version=1, action=PolicyAuditAction.SEED, snapshot={"rules": []}, change_summary="x"
+    ).model_dump(by_alias=True)
+    db.crypto_policy_history._docs[entry["_id"]] = entry
+
+    out = await list_policy_audit_entries(db, policy_scope="system", project_id=None, policy_type="crypto", limit=20)
+
+    assert [(e["version"], e["change_summary"]) for e in out["entries"]] == [(1, "x")]
+    assert "snapshot" not in out["entries"][0]
+    assert out["entries_total"] == 1
 
 
 async def _project_with_vulnerabilities_and_one_md5_finding(db):
