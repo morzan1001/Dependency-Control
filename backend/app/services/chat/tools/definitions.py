@@ -387,7 +387,7 @@ _tool(
     "Use when the user asks 'what vulns have we been ignoring?', 'what's old?' or about SLA.",
     days_open=_bounded(30, MAX_DAY_WINDOW, "Minimum open age in days"),
     project_id=_ONE_PROJECT,
-    severity_min=_string("Min severity, one of CRITICAL/HIGH/MEDIUM/LOW (default HIGH)."),
+    severity_min={"type": "string", "enum": _SEVERITIES, "default": "HIGH", "description": "Min severity."},
     limit=_FINDING_LIMIT,
 )
 _tool(

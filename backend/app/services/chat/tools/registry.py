@@ -1355,12 +1355,8 @@ class ChatToolRegistry:
 
     async def _tool_get_stale_findings(self, ctx: _ToolContext) -> dict[str, Any]:
         days = ctx.args["days_open"]
-        sev_min = (ctx.args.get("severity_min") or "HIGH").upper()
-        allowed_sev = [
-            s
-            for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
-            if get_severity_value(s) >= SEVERITY_ORDER.get(sev_min, SEVERITY_ORDER["HIGH"])
-        ]
+        threshold = SEVERITY_ORDER[ctx.args["severity_min"]]
+        allowed_sev = [severity for severity, rank in SEVERITY_ORDER.items() if rank >= threshold]
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         # Aged as the CVE SLA ages it, falling back from the advisory's date to its finding's, then its scan's.
         old_advisory = {
