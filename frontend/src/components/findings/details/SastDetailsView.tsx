@@ -7,6 +7,7 @@ import { useState } from "react"
 import { 
     DetailSection, 
     BadgeList, 
+    CweBadgeList,
     ReferencesList, 
     RiskBadge, 
     FileLocation,
@@ -141,13 +142,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
 
             {details.cwe_ids && details.cwe_ids.length > 0 && (
                 <DetailSection label="CWE References">
-                    <BadgeList
-                        items={details.cwe_ids}
-                        variant="outline"
-                        icon={AlertTriangle}
-                        formatLabel={(cwe: string) => `CWE-${cwe}`}
-                        buildUrl={(cwe: string) => `https://cwe.mitre.org/data/definitions/${cwe}.html`}
-                    />
+                    <CweBadgeList ids={details.cwe_ids} />
                 </DetailSection>
             )}
 

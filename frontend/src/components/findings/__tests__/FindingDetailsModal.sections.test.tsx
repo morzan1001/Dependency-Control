@@ -325,9 +325,16 @@ describe("FindingDetailsModal advisory details", () => {
     expect(screen.getByText("EPSS: 25.00%")).toHaveClass("text-severity-critical");
     expect(screen.getByText("(Top 3%)")).toBeInTheDocument();
     expect(screen.getByText("Published:")).toBeInTheDocument();
-    expect(screen.getByText("CWE-79")).toBeInTheDocument();
+    expect(screen.getByText("CWE-79").closest("a")).toHaveAttribute("href", "https://cwe.mitre.org/data/definitions/79.html");
     expect(screen.getByText("grype")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /References \(2\)/ })).toBeInTheDocument();
+  });
+
+  it("links an advisory's bare CWE numbers as the SAST view does", () => {
+    renderModal(finding({ details: { vulnerabilities: [{ id: "CVE-2024-1", details: { cwe_ids: ["79", "89"] } }] } }));
+
+    expect(screen.getByText("CWE-79").closest("a")).toHaveAttribute("href", "https://cwe.mitre.org/data/definitions/79.html");
+    expect(screen.getByText("CWE-89").closest("a")).toHaveAttribute("href", "https://cwe.mitre.org/data/definitions/89.html");
   });
 });
 

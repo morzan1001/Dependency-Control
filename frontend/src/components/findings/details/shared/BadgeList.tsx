@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge"
-import { LucideIcon } from "lucide-react"
+import { AlertTriangle, LucideIcon } from "lucide-react"
 import { AdvisoryLink } from "../../AdvisoryLink"
 
 interface BadgeListProps {
@@ -36,5 +36,18 @@ export function BadgeList({
                 )
             })}
         </div>
+    )
+}
+
+// Stored Trivy advisories may still carry the CWE- prefix the other scanners never write.
+export function CweBadgeList({ ids }: Readonly<{ ids: string[] }>) {
+    return (
+        <BadgeList
+            items={ids.map((id) => id.replace(/^CWE-/i, ""))}
+            variant="outline"
+            icon={AlertTriangle}
+            formatLabel={(cwe) => `CWE-${cwe}`}
+            buildUrl={(cwe) => `https://cwe.mitre.org/data/definitions/${cwe}.html`}
+        />
     )
 }

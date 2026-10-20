@@ -1,5 +1,5 @@
 export { DetailSection } from './DetailSection'
-export { BadgeList } from './BadgeList'
+export { BadgeList, CweBadgeList } from './BadgeList'
 export { ReferencesList } from './ReferencesList'
 export { RiskBadge } from './RiskBadge'
 export { AdditionalLocations, FileLocation } from './FileLocation'
