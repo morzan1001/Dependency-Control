@@ -174,16 +174,17 @@ def test_sbom_parsing_counts_the_sbom_its_components_and_a_parse_error():
 
 
 @pytest.mark.asyncio
-async def test_sbom_downloads_count_their_attempt_success_and_failure(monkeypatch):
+async def test_sbom_downloads_count_their_attempt_success_and_failure():
     stream = MagicMock(read=AsyncMock(return_value=b'{"bomFormat": "CycloneDX", "specVersion": "1.5"}'))
-    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", AsyncMock(return_value=stream))
     moved = _deltas(
         [
             ("analysis_gridfs_operations_total", {"operation": "download", "status": s})
             for s in ("attempt", "success", "error")
         ]
     )
-    await engine._load_sbom(None, str(ObjectId()), 1, write_file=False)
+    await engine._load_sbom(
+        SimpleNamespace(open_download_stream=AsyncMock(return_value=stream)), str(ObjectId()), 1, write_file=False
+    )
     engine._sbom_load_failed(ResultAggregator(), "gone")
     assert moved() == [1, 1, 1]
 

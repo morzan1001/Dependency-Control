@@ -66,7 +66,6 @@ from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import risk_score_expr
 from app.core.worker import worker_manager
-from app.db.mongodb import open_gridfs_download_with_retry
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.release import Release
 from app.models.system import SystemSettings
@@ -929,7 +928,7 @@ async def _open_gridfs(db: Any, file_id: str | None, what: str) -> Any:
     if not file_id:
         raise HTTPException(status_code=500, detail=f"Invalid {what} reference (not GridFS)")
     try:
-        return await open_gridfs_download_with_retry(AsyncIOMotorGridFSBucket(db), ObjectId(file_id))
+        return await AsyncIOMotorGridFSBucket(db).open_download_stream(ObjectId(file_id))
     except NoFile as exc:
         raise HTTPException(status_code=404, detail=f"{what} file not found in GridFS") from exc
 

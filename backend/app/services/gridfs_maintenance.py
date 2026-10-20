@@ -6,7 +6,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
 from bson import ObjectId
 from gridfs.errors import NoFile
@@ -14,7 +14,6 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.core import abatched
 from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
-from app.db.mongodb import open_gridfs_download_with_retry
 from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 
 logger = logging.getLogger(__name__)
@@ -45,10 +44,16 @@ def gridfs_ref_id(ref: Any) -> str | None:
     return None
 
 
+async def read_gridfs_file(fs: AsyncIOMotorGridFSBucket, file_id: ObjectId) -> bytes:
+    """Raises on failure, NoFile for a missing file, so each caller keeps its own policy."""
+    stream = await fs.open_download_stream(file_id)
+    # motor's stub types AgnosticGridOut.read() as NoReturn.
+    data: bytes = await cast(Any, stream).read()
+    return data
+
+
 async def load_gridfs_json(fs: AsyncIOMotorGridFSBucket, file_id: str) -> Any:
-    """Raises on failure so each caller keeps its own policy."""
-    stream = await open_gridfs_download_with_retry(fs, ObjectId(file_id))
-    return await asyncio.to_thread(json.loads, await stream.read())
+    return await asyncio.to_thread(json.loads, await read_gridfs_file(fs, ObjectId(file_id)))
 
 
 async def iter_gridfs_chunks(stream: Any) -> AsyncIterator[bytes]:

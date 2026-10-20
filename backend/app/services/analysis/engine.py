@@ -51,7 +51,6 @@ from app.core.metrics import (
     analysis_scans_total,
     analysis_waivers_applied_total,
 )
-from app.db.mongodb import open_gridfs_download_with_retry
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import Finding, FindingType
 from app.models.project import Scan
@@ -96,7 +95,7 @@ from app.services.crypto_policy.resolver import CryptoPolicyResolver, EffectiveP
 from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment.service import vulnerability_enrichment_service
 from app.services.github import is_public_github
-from app.services.gridfs_maintenance import gridfs_ref_id
+from app.services.gridfs_maintenance import gridfs_ref_id, read_gridfs_file
 from app.services.reachability_enrichment import (
     ComponentLanguages,
     apply_reachability,
@@ -333,7 +332,7 @@ async def _load_sbom(
     fs: AsyncIOMotorGridFSBucket, gridfs_id: str, position: int, write_file: bool
 ) -> tuple[ParsedSBOM | None, AnalyzerInput]:
     analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
-    data = await (await open_gridfs_download_with_retry(fs, bson.ObjectId(gridfs_id))).read()
+    data = await read_gridfs_file(fs, bson.ObjectId(gridfs_id))
     path = None
     try:
         if write_file:

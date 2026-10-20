@@ -1,10 +1,8 @@
-import asyncio
 import logging
 from datetime import timezone
 from typing import Any
 
-from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from app.core.config import settings
 from app.core.metrics import DbCommandMetrics, DbHeartbeatFailures, db_connections_active
@@ -19,22 +17,6 @@ DEFAULT_CONNECT_TIMEOUT_MS = 20000
 DEFAULT_SOCKET_TIMEOUT_MS = 30000
 # Below the socket timeout, so mongod aborts a runaway read, which is not retried, before the driver resends it.
 DEFAULT_MAX_TIME_MS = 25000
-
-
-async def open_gridfs_download_with_retry(
-    fs: AsyncIOMotorGridFSBucket, file_id: ObjectId, attempts: int = 4, base_delay: float = 0.25
-) -> Any:
-    """A just-committed GridFS file can momentarily be unreadable under load."""
-    last_err: Exception | None = None
-    for attempt in range(attempts):
-        try:
-            return await fs.open_download_stream(file_id)
-        except Exception as err:
-            last_err = err
-            if attempt < attempts - 1:
-                await asyncio.sleep(base_delay * (2**attempt))
-    assert last_err is not None
-    raise last_err
 
 
 class Database:

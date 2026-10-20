@@ -12,7 +12,7 @@ from app.services.analysis.engine import run_analysis
 from app.services.analysis.runner import AnalyzerOutcome, OutcomeStatus
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from tests.helpers.analyzers import serve_analyzer
-from tests.helpers.sboms import sbom_ref, store_sbom
+from tests.helpers.sboms import sbom_ref, store_sbom, unreadable_downloads
 
 _PROJECT_ID = "test-project-id"
 _WORKER = "pod-a/worker-0"
@@ -332,14 +332,7 @@ async def test_a_crypto_evaluator_failing_with_an_empty_message_still_counts_as_
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_k9_partial_gridfs_failure_marks_scan_completed_with_errors(db, _stored_sboms, monkeypatch):
-    real_open = engine.open_gridfs_download_with_retry
-
-    async def _fail_second_file(fs, file_id, **kwargs):
-        if str(file_id) == _FILE_ID_B:
-            raise OSError("transient gridfs outage")
-        return await real_open(fs, file_id, **kwargs)
-
-    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", _fail_second_file)
+    unreadable_downloads(monkeypatch, {_FILE_ID_B})
     await _seed_project(db)
     refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     scan_id = await _seed_scan(db, refs)
@@ -354,10 +347,7 @@ async def test_k9_partial_gridfs_failure_marks_scan_completed_with_errors(db, _s
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_k9_all_gridfs_failures_still_mark_scan_failed(db, _stored_sboms, monkeypatch):
-    async def _fail_all(fs, file_id, **_kwargs):
-        raise OSError("gridfs outage")
-
-    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", _fail_all)
+    unreadable_downloads(monkeypatch, {_FILE_ID_A})
     await _seed_project(db)
     scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
 

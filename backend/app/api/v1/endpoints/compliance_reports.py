@@ -19,7 +19,6 @@ from app.core.constants import (
     ScopeName,
 )
 from app.core.permissions import Permissions, has_permission
-from app.db.mongodb import open_gridfs_download_with_retry
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
@@ -181,7 +180,7 @@ async def download_report(
         raise HTTPException(status_code=409, detail=f"Report not ready (status: {status_val})")
     try:
         # artifact_gridfs_id is stored as a string; GridFS needs an ObjectId.
-        stream = await open_gridfs_download_with_retry(AsyncIOMotorGridFSBucket(db), ObjectId(r.artifact_gridfs_id))
+        stream = await AsyncIOMotorGridFSBucket(db).open_download_stream(ObjectId(r.artifact_gridfs_id))
     except Exception as exc:
         raise HTTPException(status_code=410, detail="Artifact storage error") from exc
 

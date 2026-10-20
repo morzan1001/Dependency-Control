@@ -86,15 +86,16 @@ async def test_a_stored_sbom_is_decoded_and_parsed_off_the_event_loop(monkeypatc
 
         return run
 
-    async def stored(_fs, _file_id):
+    async def stored(_file_id):
         return _StoredSbom()
 
-    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", stored)
     monkeypatch.setattr(engine, "json", SimpleNamespace(loads=recording("loads", json.loads)))
     monkeypatch.setattr(engine, "parse_sbom", recording("parse", parse_sbom))
     sbom = json.loads(_UV_SBOM.read_text())
 
-    _, loaded = await engine._load_sbom(None, "69d5332257c8763c8d8c82d7", 1, False)
+    _, loaded = await engine._load_sbom(
+        SimpleNamespace(open_download_stream=stored), "69d5332257c8763c8d8c82d7", 1, False
+    )
 
     assert loaded.path is None
     assert loaded.components == [dependency.model_dump() for dependency in parse_sbom(sbom).dependencies]
