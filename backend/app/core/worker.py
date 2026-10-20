@@ -199,13 +199,13 @@ class AnalysisWorkerManager:
 
         logger.info("Graceful shutdown complete.")
 
-    async def add_job(self, scan_id: str) -> bool:
+    async def add_job(self, scan_id: str) -> None:
         if self._shutting_down:
             logger.warning(
                 f"Job {scan_id} rejected - worker manager is shutting down. "
                 f"Scan remains 'pending' in DB and will be processed by another pod."
             )
-            return False
+            return
 
         await self.queue.put(scan_id)
         queue_size = self.queue.qsize()
@@ -213,10 +213,8 @@ class AnalysisWorkerManager:
 
         worker_queue_size.set(queue_size)
 
-        return True
-
-    async def add_adhoc_job(self, job_id: str) -> bool:
-        return await self.add_job(_ADHOC_JOB + job_id)
+    async def add_adhoc_job(self, job_id: str) -> None:
+        await self.add_job(_ADHOC_JOB + job_id)
 
     async def _handle_rescheduled(self, scan: dict[str, Any]) -> None:
         scan_id = scan["_id"]
