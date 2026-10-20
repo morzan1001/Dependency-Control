@@ -86,4 +86,15 @@ describe('ProjectOwner', () => {
     expect(path).toHaveClass('truncate', 'font-mono')
     expect(path.parentElement).toHaveClass('min-w-0', 'max-w-[50%]')
   })
+
+  it('keeps an owner tag whole up to half the row and truncates Unassigned like a team name beyond that', () => {
+    renderOwners([
+      { id: 'p1', name: 'checkout-service', teams: [{ id: 't1', name: 'Retail' }] },
+      { id: 'p2', name: 'checkout-service', teams: [] },
+    ])
+
+    expect(screen.getByText('Retail').closest('.max-w-\\[50\\%\\]')).toHaveClass('shrink-0')
+    expect(screen.getByText('Unassigned')).toHaveClass('truncate')
+    expect(screen.getByText('Unassigned').closest('.max-w-\\[50\\%\\]')).toHaveClass('shrink-0')
+  })
 })

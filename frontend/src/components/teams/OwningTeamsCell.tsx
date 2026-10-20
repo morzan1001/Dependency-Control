@@ -10,7 +10,7 @@ export function OwningTeamsCell({ teams }: Readonly<OwningTeamsCellProps>) {
   const owners = teams ?? []
 
   if (owners.length === 0) {
-    return <span className="text-muted-foreground">Unassigned</span>
+    return <span className="block truncate text-muted-foreground">Unassigned</span>
   }
 
   const allNames = owners.map((team) => team.name).join(', ')

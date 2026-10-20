@@ -41,7 +41,7 @@ export function ProjectOwner({ project, namesakes }: Readonly<{ project: Project
   const trait = distinguishingTrait(namesakes, instanceNames)
   const label = TRAITS[trait](project, instanceNames)
   return (
-    <span className="min-w-0 max-w-[50%] text-xs text-muted-foreground">
+    <span className="min-w-0 max-w-[50%] shrink-0 text-xs text-muted-foreground">
       {trait === 'owner' ? (
         <OwningTeamsCell teams={project.teams} />
       ) : (
