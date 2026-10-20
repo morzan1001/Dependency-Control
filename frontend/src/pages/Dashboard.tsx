@@ -150,7 +150,6 @@ export default function Dashboard() {
                     <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                        {/* Keyed by id: projects of one name would share a category, and the second's tooltip showed the first. */}
                         <XAxis
                         dataKey="id"
                         stroke="#888888"
@@ -219,7 +218,7 @@ export default function Dashboard() {
                                     <div className="min-w-0 space-y-1">
                                         <p className="flex items-center gap-2 text-sm leading-none">
                                             <span className="truncate font-medium">{scan.project_name}</span>
-                                            {namesakes.has(scan.project_name ?? '') && <ProjectOwnerById projectId={scan.project_id} namesakeIds={namesakes.get(scan.project_name ?? '')} />}
+                                            {namesakes.has(scan.project_name ?? '') && <ProjectOwnerById projectId={scan.project_id} namesakes={namesakes.get(scan.project_name ?? '')} />}
                                         </p>
                                         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                                             <span className="wrap-anywhere">{scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan'} on {scan.branch}</span>

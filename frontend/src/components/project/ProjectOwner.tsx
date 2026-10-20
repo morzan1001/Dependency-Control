@@ -2,7 +2,7 @@ import { useInstanceNames } from '@/hooks/queries/use-instances'
 import { useProjectDetails } from '@/hooks/queries/use-projects'
 import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
 import { PROVIDER_LABEL, sourceLabel } from '@/lib/team-binding'
-import { cn } from '@/lib/utils'
+import { cn, type Named } from '@/lib/utils'
 import type { Project } from '@/types/project'
 
 function vcsLink(project: Project) {
@@ -57,19 +57,19 @@ export function ProjectOwner({ project, namesakes }: Readonly<{ project: Project
   )
 }
 
-export function ProjectOwnerById({ projectId, namesakeIds = [] }: Readonly<{ projectId: string; namesakeIds?: readonly string[] }>) {
-  const namesakes = useProjectDetails(namesakeIds)
-  const project = namesakes.find((namesake) => namesake.id === projectId)
-  return project ? <ProjectOwner project={project} namesakes={namesakes} /> : null
+export function ProjectOwnerById({ projectId, namesakes = [] }: Readonly<{ projectId: string; namesakes?: readonly Named[] }>) {
+  const details = useProjectDetails(namesakes.map(({ id }) => id))
+  const project = details.find((namesake) => namesake.id === projectId)
+  return project ? <ProjectOwner project={project} namesakes={details} /> : null
 }
 
-// A chart keys its bars by project id, so its tooltip resolves the name and adds the owner of a namesake.
-export function ChartProjectLabel({ projectId, names, namesakes }: Readonly<{ projectId: string; names: ReadonlyMap<string, string>; namesakes: ReadonlyMap<string, string[]> }>) {
+// A chart keys its bars by project id, as a name may repeat, so its tooltip resolves the name and adds a namesake's owner.
+export function ChartProjectLabel({ projectId, names, namesakes }: Readonly<{ projectId: string; names: ReadonlyMap<string, string>; namesakes: ReadonlyMap<string, readonly Named[]> }>) {
   const name = names.get(projectId) ?? ''
   return namesakes.has(name) ? (
     <span className="flex items-center gap-2">
       {name}
-      <ProjectOwnerById projectId={projectId} namesakeIds={namesakes.get(name)} />
+      <ProjectOwnerById projectId={projectId} namesakes={namesakes.get(name)} />
     </span>
   ) : name
 }

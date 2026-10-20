@@ -131,7 +131,7 @@ export default function ProjectsPage() {
                   <CardTitle className="text-sm font-medium truncate">
                     {project.name}
                   </CardTitle>
-                  {namesakes.has(project.name) && <ProjectOwner project={project} namesakes={projects.filter((p) => p.name === project.name)} />}
+                  {namesakes.has(project.name) && <ProjectOwner project={project} namesakes={namesakes.get(project.name)!} />}
                 </div>
                 <FolderGit2 className="h-4 w-4 text-muted-foreground flex-shrink-0" />
               </CardHeader>

@@ -12,12 +12,12 @@ import { useDialogState } from "@/hooks/use-dialog-state";
 import { downloadServerFile } from "@/lib/download";
 import { Permissions } from "@/lib/permissions";
 import { REPORT_FRAMEWORK_LABELS } from "@/lib/constants";
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime, type Named } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import { ReportScope } from "./ReportScope";
 import type { ComplianceReportMeta, ControlStatus } from "@/types/compliance";
 
-interface Props { report: ComplianceReportMeta | null; namesakeIds?: readonly string[]; onClose: () => void; }
+interface Props { report: ComplianceReportMeta | null; namesakes?: readonly Named[]; onClose: () => void; }
 
 function CoverageNotice({ report }: { readonly report: ComplianceReportMeta }) {
   const plan = report.coverage?.plan_items;
@@ -54,7 +54,7 @@ function SummaryRow({ statusKey, value }: { readonly statusKey: string; readonly
   );
 }
 
-export function ReportDetailDrawer({ report, namesakeIds, onClose }: Readonly<Props>) {
+export function ReportDetailDrawer({ report, namesakes, onClose }: Readonly<Props>) {
   const qc = useQueryClient();
   const confirm = useDialogState();
   const { hasPermission } = useAuth();
@@ -94,7 +94,7 @@ export function ReportDetailDrawer({ report, namesakeIds, onClose }: Readonly<Pr
                   Status: <ReportStatusBadge status={report.status} />
                 </div>
                 <div>
-                  Scope: <ReportScope report={report} namesakeIds={namesakeIds} />
+                  Scope: <ReportScope report={report} namesakes={namesakes} />
                 </div>
                 <div className="text-muted-foreground">
                   Requested {formatDateTime(report.requested_at)} by {report.requested_by_name ?? report.requested_by}

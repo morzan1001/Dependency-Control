@@ -41,7 +41,7 @@ import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
 import { ChartProjectLabel, ProjectOwnerById } from '@/components/project/ProjectOwner'
 import { useUpdateFrequencyComparison } from '@/hooks/queries/use-analytics'
 import { useTeams } from '@/hooks/queries/use-teams'
-import { formatDate, formatCoveragePct, formatUpdatesPerMonth, sharedNames, truncateLabel } from '@/lib/utils'
+import { formatDate, formatCoveragePct, formatUpdatesPerMonth, sharedNames, truncateLabel, type Named } from '@/lib/utils'
 import type {
   ProjectUpdateSummary,
   UpdateDataStatus,
@@ -227,14 +227,14 @@ function PartialBanner({ count }: Readonly<{ count: number }>) {
   )
 }
 
-function RankedProjectName({ project, namesakes }: Readonly<{ project?: ProjectUpdateSummary; namesakes: Map<string, string[]> }>) {
+function RankedProjectName({ project, namesakes }: Readonly<{ project?: ProjectUpdateSummary; namesakes: ReadonlyMap<string, readonly Named[]> }>) {
   return (
     <div className="flex min-w-0 items-center gap-2">
       <div className="text-lg font-bold truncate" title={project?.project_name}>
         {project?.project_name || NO_VALUE}
       </div>
       {project && namesakes.has(project.project_name) && (
-        <ProjectOwnerById projectId={project.project_id} namesakeIds={namesakes.get(project.project_name)} />
+        <ProjectOwnerById projectId={project.project_id} namesakes={namesakes.get(project.project_name)} />
       )}
     </div>
   )
@@ -348,7 +348,6 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
             <BarChart data={chartData} layout="vertical" margin={{ left: 20 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
               <XAxis type="number" className="text-xs" />
-              {/* Keyed by id: projects of one name would share a category, and the second's tooltip showed the first. */}
               <YAxis dataKey="id" type="category" width={150} className="text-xs" tickFormatter={(id: string) => truncateLabel(names.get(id) ?? '')} />
               <Tooltip
                 contentStyle={{

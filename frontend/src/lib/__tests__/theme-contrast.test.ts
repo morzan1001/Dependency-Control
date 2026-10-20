@@ -96,7 +96,7 @@ describe.each([
     ['hovered', over(muted, token(theme, 'background'), 0.5)],
   ] as const
 
-  // The secondary fill and the outline variant's border equal the muted row highlight, as the severity pills' did.
+  // The secondary fill and the outline variant's border equal the muted row highlight.
   it.each((['secondary', 'outline'] as const).flatMap((variant) => rows.map(([row, highlight]) => [variant, row, highlight] as const)))(
     'sets the %s badge off a %s row at a WCAG non-text contrast of at least 3:1',
     (variant, _row, highlight) => {

@@ -306,7 +306,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                             {result.project_name}
                           </Link>
                           {namesakes.has(result.project_name) && (
-                            <ProjectOwnerById projectId={result.project_id} namesakeIds={namesakes.get(result.project_name)} />
+                            <ProjectOwnerById projectId={result.project_id} namesakes={namesakes.get(result.project_name)} />
                           )}
                         </div>
                       </div>

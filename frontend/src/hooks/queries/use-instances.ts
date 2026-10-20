@@ -20,7 +20,7 @@ export const useGitHubInstances = (params?: { active_only?: boolean }, enabled =
     enabled,
   });
 
-export const useInstanceNames = (enabled = true): ReadonlyMap<string, string> => {
+export const useInstanceNames = (enabled: boolean): ReadonlyMap<string, string> => {
   const { hasPermission } = useAuth();
   const canList = enabled && hasPermission('system:manage');
   const { data: github } = useGitHubInstances(undefined, canList);
