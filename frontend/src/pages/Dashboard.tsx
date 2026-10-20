@@ -91,6 +91,7 @@ export default function Dashboard() {
   ]
 
   const chartData = dashboardStats?.top_risky_projects || []
+  const riskyNamesakes = sharedNames(chartData)
 
   return (
     <div className="space-y-8">
@@ -174,6 +175,15 @@ export default function Dashboard() {
                             }}
                             labelStyle={{ color: 'hsl(var(--popover-foreground))' }}
                             itemStyle={{ color: 'hsl(var(--popover-foreground))' }}
+                            labelFormatter={(name, payload) => {
+                              const projectId = payload[0]?.payload?.id
+                              return typeof name === 'string' && riskyNamesakes.has(name) && projectId ? (
+                                <span className="flex items-center gap-2">
+                                  {name}
+                                  <ProjectOwnerById projectId={projectId} namesakeIds={riskyNamesakes.get(name)} />
+                                </span>
+                              ) : name
+                            }}
                         />
                         <Bar
                           dataKey="risk"

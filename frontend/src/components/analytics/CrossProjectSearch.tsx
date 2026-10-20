@@ -27,6 +27,8 @@ import { useInfiniteRows } from '@/hooks/use-infinite-rows'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { useScrollContainer } from '@/hooks/use-scroll-container'
 import { getSourceInfo } from '@/lib/finding-utils'
+import { sharedNames } from '@/lib/utils'
+import { ProjectOwnerById } from '@/components/project/ProjectOwner'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
 interface CrossProjectSearchProps {
@@ -85,6 +87,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
   const { isLoading, error } = results
   const list = useInfiniteRows(results, (page) => page.items)
   const allResults = list.rows
+  const namesakes = sharedNames(allResults.map((result) => ({ id: result.project_id, name: result.project_name })))
   const totalCount = results.data?.pages[0]?.total ?? 0
 
   const clearFilters = () => {
@@ -294,7 +297,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                         <div role="cell" className="w-[150px] px-4 py-2 truncate">
                           <span className="truncate block">{result.license || <span className="text-muted-foreground">-</span>}</span>
                         </div>
-                        <div role="cell" className="flex-1 min-w-0 px-4 py-2 truncate">
+                        <div role="cell" className="flex flex-1 min-w-0 items-center gap-2 px-4 py-2">
                           <Link
                             to={`/projects/${result.project_id}`}
                             className="hover:underline text-primary truncate block"
@@ -302,6 +305,9 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                           >
                             {result.project_name}
                           </Link>
+                          {namesakes.has(result.project_name) && (
+                            <ProjectOwnerById projectId={result.project_id} namesakeIds={namesakes.get(result.project_name)} />
+                          )}
                         </div>
                       </div>
                     )}

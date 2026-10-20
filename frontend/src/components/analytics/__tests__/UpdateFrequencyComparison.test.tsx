@@ -30,6 +30,13 @@ vi.mock("../WindowSelect", () => ({
   ),
 }));
 
+vi.mock("@/api/projects", () => ({
+  projectApi: {
+    getOne: vi.fn(async (id: string) => ({ id, name: "checkout-service", teams: [{ id: `t-${id}`, name: id === "p-retail" ? "Retail" : "Payments" }] })),
+  },
+}));
+vi.mock("@/hooks/queries/use-instances", () => ({ useInstanceNames: () => new Map() }));
+
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   BarChart: ({ data, children }: { data: unknown[]; children?: ReactNode }) => (
@@ -410,5 +417,28 @@ describe("UpdateFrequencyComparison accessible names", () => {
     expect(screen.getByRole("combobox", { name: "Comparison time window" })).toBeInTheDocument();
     clickLoad();
     expect(await screen.findByRole("combobox", { name: "Comparison metric" })).toBeInTheDocument();
+  });
+});
+
+describe("UpdateFrequencyComparison namesakes", () => {
+  it("names the owner of a best or worst project whose name another project in scope shares, as the project cards do", async () => {
+    mockedComparison.mockResolvedValue(
+      makeComparison(0, {
+        projects: [
+          { ...makeProject(9), project_id: "p-retail", project_name: "checkout-service" },
+          { ...makeProject(5), project_id: "p-search", project_name: "search" },
+          { ...makeProject(2), project_id: "p-pay", project_name: "checkout-service" },
+        ],
+        best_project: "checkout-service",
+        worst_project: "checkout-service",
+      }),
+    );
+    renderComparison();
+    clickLoad();
+
+    const card = (title: string) => screen.getByText(title).closest(".rounded-lg") as HTMLElement;
+    await screen.findByText("Best Project");
+    expect(await within(card("Best Project")).findByText("Retail")).toBeInTheDocument();
+    expect(await within(card("Needs Attention")).findByText("Payments")).toBeInTheDocument();
   });
 });

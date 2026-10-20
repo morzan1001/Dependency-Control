@@ -38,9 +38,10 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
+import { ProjectOwnerById } from '@/components/project/ProjectOwner'
 import { useUpdateFrequencyComparison } from '@/hooks/queries/use-analytics'
 import { useTeams } from '@/hooks/queries/use-teams'
-import { formatDate, formatCoveragePct, formatUpdatesPerMonth, truncateLabel } from '@/lib/utils'
+import { formatDate, formatCoveragePct, formatUpdatesPerMonth, sharedNames, truncateLabel } from '@/lib/utils'
 import type {
   ProjectUpdateSummary,
   UpdateDataStatus,
@@ -226,8 +227,24 @@ function PartialBanner({ count }: Readonly<{ count: number }>) {
   )
 }
 
+function RankedProjectName({ project, namesakes }: Readonly<{ project?: ProjectUpdateSummary; namesakes: Map<string, string[]> }>) {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <div className="text-lg font-bold truncate" title={project?.project_name}>
+        {project?.project_name || NO_VALUE}
+      </div>
+      {project && namesakes.has(project.project_name) && (
+        <ProjectOwnerById projectId={project.project_id} namesakeIds={namesakes.get(project.project_name)} />
+      )}
+    </div>
+  )
+}
+
 function ComparisonSummaryCards({ data, measuredCount }: Readonly<{ data: Comparison; measuredCount: number }>) {
   const unmeasured = unmeasuredNote(data)
+  // The backend lists the covered "ready" rows first, best to worst, and names its best and worst from them.
+  const ranked = data.projects.filter((project) => isMeasured(project) && project.update_coverage_pct !== null)
+  const namesakes = sharedNames(data.projects.map((project) => ({ id: project.project_id, name: project.project_name })))
 
   return (
     <div className="grid gap-4 md:grid-cols-4">
@@ -264,9 +281,7 @@ function ComparisonSummaryCards({ data, measuredCount }: Readonly<{ data: Compar
           <Trophy className="h-4 w-4 text-green-500" />
         </CardHeader>
         <CardContent>
-          <div className="text-lg font-bold truncate" title={data.best_project ?? undefined}>
-            {data.best_project || NO_VALUE}
-          </div>
+          <RankedProjectName project={data.best_project ? ranked[0] : undefined} namesakes={namesakes} />
           <p className="text-xs text-muted-foreground">highest measured coverage</p>
         </CardContent>
       </Card>
@@ -277,9 +292,7 @@ function ComparisonSummaryCards({ data, measuredCount }: Readonly<{ data: Compar
           <AlertTriangle className="h-4 w-4 text-amber-500" />
         </CardHeader>
         <CardContent>
-          <div className="text-lg font-bold truncate" title={data.worst_project ?? undefined}>
-            {data.worst_project || NO_VALUE}
-          </div>
+          <RankedProjectName project={data.worst_project ? ranked[ranked.length - 1] : undefined} namesakes={namesakes} />
           <p className="text-xs text-muted-foreground">lowest measured coverage</p>
         </CardContent>
       </Card>

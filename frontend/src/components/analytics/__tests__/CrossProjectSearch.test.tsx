@@ -15,6 +15,8 @@ vi.mock("@/api/projects", () => ({
   projectApi: { getAll: vi.fn(async () => ({ items: [], total: 0, page: 1, size: 50, pages: 0 })), getOne: vi.fn() },
 }));
 
+vi.mock("@/hooks/queries/use-instances", () => ({ useInstanceNames: () => new Map() }));
+
 import { analyticsApi } from "@/api/analytics";
 import { projectApi } from "@/api/projects";
 
@@ -281,5 +283,45 @@ describe("CrossProjectSearch accessible names", () => {
       const field = screen.getByRole("combobox", { name });
       expect(document.querySelector(`label[for="${field.id}"]`)?.textContent).toBe(name);
     }
+  });
+});
+
+describe("CrossProjectSearch namesakes", () => {
+  it("names the owner of each result project whose name another result project shares, as the project picker does", async () => {
+    search.mockReset();
+    search.mockResolvedValue({
+      items: [
+        { project_id: "p-retail", project_name: "checkout-service", package: "lodash", version: "4.17.21", type: "npm", direct: true },
+        { project_id: "p-pay", project_name: "checkout-service", package: "lodash", version: "4.17.20", type: "npm", direct: true },
+        { project_id: "p-search", project_name: "search", package: "lodash", version: "4.17.21", type: "npm", direct: true },
+      ],
+      total: 3,
+      page: 1,
+      size: 50,
+      pages: 1,
+    });
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+    vi.mocked(projectApi.getOne).mockImplementation(async (id: string) => ({
+      id,
+      name: id === "p-search" ? "search" : "checkout-service",
+      teams: [{ id: `t-${id}`, name: id === "p-retail" ? "Retail" : "Payments" }],
+    }));
+    const main = document.createElement("main");
+    Object.defineProperty(main, "offsetHeight", { value: 800, configurable: true });
+    document.body.appendChild(main);
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <CrossProjectSearch />
+        </MemoryRouter>
+      </QueryClientProvider>,
+      { container: main },
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Search for a package name/), { target: { value: "lodash" } });
+
+    expect(await screen.findByText("Retail")).toBeInTheDocument();
+    expect(screen.getByText("Payments")).toBeInTheDocument();
+    expect(projectApi.getOne).not.toHaveBeenCalledWith("p-search");
   });
 });

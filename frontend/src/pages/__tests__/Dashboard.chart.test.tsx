@@ -6,6 +6,17 @@ import Dashboard from '../Dashboard'
 
 const LONG_NAME = 'identity-and-access-management-gateway'
 
+const { chart } = vi.hoisted(() => ({
+  chart: {
+    projects: [
+      { id: 'p1', name: 'identity-and-access-management-gateway', risk: 80 },
+      { id: 'p2', name: 'search', risk: 40 },
+      { id: 'p3', name: 'aufstrg/tm/app', risk: 30 },
+      { id: 'p4', name: 'aufstrg/tm/web', risk: 20 },
+    ],
+  },
+}))
+
 vi.mock('recharts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('recharts')>()),
   // jsdom lays nothing out, so the chart gets the size a browser would measure.
@@ -19,18 +30,18 @@ vi.mock('@/hooks/queries/use-analytics', () => ({
       total_critical: 0,
       total_high: 0,
       avg_risk_score: 0,
-      top_risky_projects: [
-        { id: 'p1', name: LONG_NAME, risk: 80 },
-        { id: 'p2', name: 'search', risk: 40 },
-        { id: 'p3', name: 'aufstrg/tm/app', risk: 30 },
-        { id: 'p4', name: 'aufstrg/tm/web', risk: 20 },
-      ],
+      top_risky_projects: chart.projects,
     },
     isLoading: false,
   }),
 }))
 vi.mock('@/hooks/queries/use-scans', () => ({ useRecentScans: () => ({ data: [], isLoading: false }) }))
-vi.mock('@/hooks/queries/use-projects', () => ({ useProjects: () => ({ data: undefined, isLoading: false }) }))
+vi.mock('@/hooks/queries/use-projects', () => ({
+  useProjects: () => ({ data: undefined, isLoading: false }),
+  useProjectDetails: (ids: readonly string[]) =>
+    ids.map((id) => ({ id, name: 'checkout-service', teams: [{ id: `t-${id}`, name: id === 'c1' ? 'Retail' : 'Payments' }] })),
+}))
+vi.mock('@/hooks/queries/use-instances', () => ({ useInstanceNames: () => new Map() }))
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }))
 
 describe('Dashboard riskiest projects chart', () => {
@@ -52,5 +63,25 @@ describe('Dashboard riskiest projects chart', () => {
     await waitFor(() => expect(screen.getByText('search')).toBeInTheDocument())
     const ticks = [...container.querySelectorAll('.recharts-xAxis-tick-labels text')].map((tick) => tick.textContent)
     expect(ticks).toEqual(['…ent-gateway', 'search', '…strg/tm/app', '…strg/tm/web'])
+  })
+
+  it('names the owner of a bar whose project name another bar shares in its tooltip, as the project picker does', async () => {
+    const saved = chart.projects
+    chart.projects = [
+      { id: 'c1', name: 'checkout-service', risk: 80 },
+      { id: 'c2', name: 'checkout-service', risk: 60 },
+      { id: 's1', name: 'search', risk: 40 },
+    ]
+    try {
+      const { container } = render(<Dashboard />)
+      await waitFor(() => expect(container.querySelector('.recharts-wrapper')).not.toBeNull())
+
+      fireEvent.focus(container.querySelector('.recharts-wrapper')!)
+
+      expect(await screen.findByText('Retail')).toBeInTheDocument()
+      expect(screen.queryByText('Payments')).not.toBeInTheDocument()
+    } finally {
+      chart.projects = saved
+    }
   })
 })
