@@ -97,7 +97,7 @@ async def _reconcile(db: Any) -> ReconcileReport:
         if not drift:
             continue
         report.drifted_chains += 1
-        await _repair_chain(db, chain, drift, report)
+        await _repair_chain(db, chain, drift, report, since)
 
     _publish(report)
     return report
@@ -143,10 +143,12 @@ def _skip_links(ledger: dict[str, LedgerEntry], owed: frozenset[str]) -> set[str
     }
 
 
-async def _repair_chain(db: Any, chain: tuple[str, str], drift: _ChainDrift, report: ReconcileReport) -> None:
+async def _repair_chain(
+    db: Any, chain: tuple[str, str], drift: _ChainDrift, report: ReconcileReport, since: datetime
+) -> None:
     deleted = await _delete_orphans(db, chain, drift.orphans, report)
     repairs = {repair.scan_id: repair for repair in drift.repairs}
-    for dependent in await _dependents_of(db, chain, deleted, drift.owed):
+    for dependent in await _dependents_of(db, chain, deleted, drift.owed, since):
         repairs.setdefault(dependent.scan_id, dependent)
 
     # Oldest first: a newer scan derived before its predecessor would be stored as a baseline and written twice.
@@ -181,10 +183,13 @@ async def _delete_orphans(
     return set(doomed)
 
 
-async def _dependents_of(db: Any, chain: tuple[str, str], deleted: set[str], owed: frozenset[str]) -> list[_Repair]:
+async def _dependents_of(
+    db: Any, chain: tuple[str, str], deleted: set[str], owed: frozenset[str], since: datetime
+) -> list[_Repair]:
     """One whose own scan is gone is a deferred orphan; handing it over would count a repair that never happened."""
     project_id, branch = chain
-    docs = await ScanUpdateDeltaRepository(db).find_dependents(project_id, branch, sorted(deleted))
+    # A dependent is newer than the in-window orphan it names, so the window bounds the index scan.
+    docs = await ScanUpdateDeltaRepository(db).find_dependents(project_id, branch, sorted(deleted), since)
     return [_Repair(doc["_id"], doc["scan_created_at"], "dependent") for doc in docs if doc["_id"] in owed]
 
 

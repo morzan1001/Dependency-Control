@@ -316,6 +316,22 @@ class TestWindowScansByBranch:
         assert db.scans.find.call_count == 0
 
 
+class TestFindDependents:
+    @pytest.mark.asyncio
+    async def test_the_read_stops_at_the_window(self):
+        db = FakeDatabase()
+        await db.scan_update_deltas.insert_many(
+            [
+                _delta("before", "p1", "main", -2 * 24 * 60, prev_scan_id="gone"),
+                _delta("inside", "p1", "main", 0, prev_scan_id="gone"),
+            ]
+        )
+
+        docs = await ScanUpdateDeltaRepository(db).find_dependents("p1", "main", ["gone"], T0 - timedelta(days=1))
+
+        assert [doc["_id"] for doc in docs] == ["inside"]
+
+
 class TestWindowHardLimit:
     def test_the_shared_document_cap_is_the_documented_one(self):
         # Both read paths truncate a branch here, so moving it silently redefines every busier project's window.

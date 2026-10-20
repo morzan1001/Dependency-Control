@@ -226,11 +226,18 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
             chains.setdefault(chain, {})[delta["_id"]] = _ledger_entry(delta)
         return chains
 
-    async def find_dependents(self, project_id: str, branch: str, prev_scan_ids: Sequence[str]) -> list[dict[str, Any]]:
+    async def find_dependents(
+        self, project_id: str, branch: str, prev_scan_ids: Sequence[str], since: datetime
+    ) -> list[dict[str, Any]]:
         if not prev_scan_ids:
             return []
         return await self.collection.find(
-            {"project_id": project_id, "branch": branch, "prev_scan_id": {"$in": list(prev_scan_ids)}},
+            {
+                "project_id": project_id,
+                "branch": branch,
+                "scan_created_at": {"$gte": since},
+                "prev_scan_id": {"$in": list(prev_scan_ids)},
+            },
             _NEIGHBOUR_PROJECTION,
         ).to_list(None)
 
