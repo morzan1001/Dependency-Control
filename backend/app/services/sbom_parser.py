@@ -302,6 +302,9 @@ def _purl_less_identity(
     if not has_known_version(version):
         return False, None
     purl_type = _FABRICATED_PURL_TYPES.get(pkg_type, pkg_type)
+    # The purl spec requires a maven namespace.
+    if purl_type == "maven" and not group:
+        purl_type = "generic"
     namespace = f"{quote(str(group), safe='')}/" if group else ""
     return True, f"pkg:{purl_type}/{namespace}{quote(str(name), safe='')}@{quote(str(version), safe='')}"
 

@@ -2256,6 +2256,7 @@ class TestTypeIsPurlEcosystem:
                 [
                     {
                         "type": "library",
+                        "group": "org.example",
                         "name": "some-lib",
                         "version": "1.0",
                         "properties": [{"name": "syft:package:type", "value": "java-archive"}],
@@ -2263,7 +2264,52 @@ class TestTypeIsPurlEcosystem:
                 ]
             )
         )
-        assert (result.dependencies[0].type, result.dependencies[0].purl) == ("maven", "pkg:maven/some-lib@1.0")
+        assert (result.dependencies[0].type, result.dependencies[0].purl) == (
+            "maven",
+            "pkg:maven/org.example/some-lib@1.0",
+        )
+
+    def test_a_fabricated_maven_purl_needs_a_group(self):
+        cyclonedx = _cyclonedx_with(
+            [
+                {
+                    "type": "library",
+                    "name": "some-lib",
+                    "version": "1.0",
+                    "properties": [{"name": "syft:package:type", "value": "java-archive"}],
+                }
+            ]
+        )
+        syft = {
+            "descriptor": {"name": "syft", "version": "1.42.1"},
+            "source": {"id": "src", "type": "directory", "target": "/build"},
+            "artifacts": [
+                {"id": "a1", "name": "some-lib", "version": "1.0", "type": "java-archive"},
+                {"id": "a2", "name": "git-client", "version": "6.1.0", "type": "jenkins-plugin"},
+            ],
+            "artifactRelationships": [],
+        }
+        spdx = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "packages": [
+                {
+                    "SPDXID": "SPDXRef-1",
+                    "name": "some-lib",
+                    "versionInfo": "1.0",
+                    "downloadLocation": "https://repo.maven.apache.org/maven2/some-lib-1.0.jar",
+                }
+            ],
+        }
+
+        purls = [dep.purl for sbom in (cyclonedx, syft, spdx) for dep in self.parser.parse(sbom).dependencies]
+
+        assert purls == [
+            "pkg:generic/some-lib@1.0",
+            "pkg:generic/some-lib@1.0",
+            "pkg:generic/git-client@6.1.0",
+            "pkg:generic/some-lib@1.0",
+        ]
 
     def test_syft_artifact_type_replaced_by_purl_type(self):
         sbom = {
