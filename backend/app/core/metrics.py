@@ -21,6 +21,9 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 logger = logging.getLogger(__name__)
 
 _UNMATCHED_ENDPOINT = "<unmatched>"
+# Any other method reaches a real path before auth, so its raw name would open a series per caller-chosen string.
+_LABELLED_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
+_OTHER_METHOD = "OTHER"
 
 
 class ArchiveFailureReason:
@@ -543,6 +546,8 @@ class PrometheusMiddleware:
             return
 
         method: str = scope.get("method", "")
+        if method not in _LABELLED_METHODS:
+            method = _OTHER_METHOD
         request_size = _content_length(scope.get("headers", []))
 
         http_requests_in_progress.labels(method=method).inc()

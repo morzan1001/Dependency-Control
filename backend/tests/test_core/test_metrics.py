@@ -11,6 +11,7 @@ from app.core.metrics import (
     PrometheusMiddleware,
     http_request_duration_seconds,
     http_request_size_bytes,
+    http_requests_in_progress,
     http_requests_total,
     http_response_size_bytes,
     metrics_endpoint,
@@ -62,6 +63,22 @@ def _endpoint_labels() -> set[str]:
         for family in metric.collect()
         for sample in family.samples
         if "endpoint" in sample.labels
+    }
+
+
+def _method_labels() -> set[str]:
+    return {
+        sample.labels["method"]
+        for metric in (
+            http_requests_total,
+            http_request_duration_seconds,
+            http_request_size_bytes,
+            http_response_size_bytes,
+            http_requests_in_progress,
+        )
+        for family in metric.collect()
+        for sample in family.samples
+        if "method" in sample.labels
     }
 
 
@@ -130,6 +147,21 @@ class TestRouteTemplateLabel:
 
         assert _sample("http_requests_total", labels) == before + 1000
         assert _endpoint_labels() - labels_before <= {UNMATCHED}
+
+
+class TestMethodLabel:
+    @pytest.mark.asyncio
+    async def test_unknown_methods_on_a_real_path_share_one_label_value(self) -> None:
+        labels = {"method": "OTHER", "endpoint": TOKEN_TEMPLATE, "status": "405"}
+        before = _sample("http_requests_total", labels)
+        methods = ("PROPFIND", "MKCOL", secrets.token_hex(6).upper())
+
+        async with _client() as client:
+            for method in methods:
+                await client.request(method, f"/api/v1/invitations/system/{secrets.token_urlsafe(8)}")
+
+        assert _sample("http_requests_total", labels) == before + len(methods)
+        assert _method_labels().isdisjoint(methods)
 
 
 class TestInProgressGauge:
