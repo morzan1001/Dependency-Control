@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 from collections import Counter
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Coroutine, Iterable
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from itertools import batched
@@ -509,8 +509,7 @@ async def _best_effort[*Ts](label: str, task: Callable[[*Ts], Awaitable[object]]
         logger.exception("%s failed: %s", label, e)
 
 
-async def run_housekeeping() -> None:
-    db = await get_database()
+async def run_housekeeping(db: Any) -> None:
     # Held to expiry, never released: its TTL is the cadence across pods.
     if not await DistributedLocksRepository(db).acquire_lock(
         "housekeeping", new_lock_holder(), ttl_seconds=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS * 3600
@@ -604,8 +603,7 @@ async def recover_stuck_scans(worker_manager: "AnalysisWorkerManager") -> None:
                 await notify_analysis_failed(db, scan_id, scan.get("project_id"), error)
 
 
-async def sync_branch_status() -> None:
-    db = await get_database()
+async def sync_branch_status(db: Any) -> None:
     # Held to expiry, never released: its TTL is the cadence across pods.
     if not await DistributedLocksRepository(db).acquire_lock(
         "branch_sync", new_lock_holder(), ttl_seconds=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS * 3600
@@ -663,9 +661,24 @@ async def reconcile_update_frequency_ledger() -> None:
     await _best_effort("Update-frequency reconcile", run_update_frequency_reconcile, await get_database())
 
 
-async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
-    last_update_frequency_reconcile = datetime.min.replace(tzinfo=timezone.utc)
+async def update_frequency_reconcile_loop() -> None:
+    last_run = datetime.min.replace(tzinfo=timezone.utc)
+    while True:
+        # Stamped whatever the reconcile did, so the pods that lost the lock do not retry it every five minutes.
+        now = datetime.now(timezone.utc)
+        if _reconcile_due(now, last_run):
+            await reconcile_update_frequency_ledger()
+            last_run = now
+        await asyncio.sleep(HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS)
 
+
+async def _every_main_interval(label: str, job: Callable[[Any], Awaitable[object]]) -> None:
+    while True:
+        await _best_effort(label, job, await get_database())
+        await asyncio.sleep(HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS)
+
+
+async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
     while True:
         await _best_effort("Stuck scan recovery", recover_stuck_scans, worker_manager)
         await _best_effort("Scheduled re-scan check", check_scheduled_rescans, worker_manager)
@@ -675,15 +688,17 @@ async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
         await update_archive_stats(db)
         await update_cache_stats()
 
-        await _best_effort("Waiver recalculation", run_waiver_recalc, db)
-        await _best_effort("Housekeeping task", run_housekeeping)
-        await _best_effort("Housekeeping: retention", _run_retention, db)
-        await _best_effort("Branch status sync", sync_branch_status)
-
-        # Stamped whatever the reconcile did, so the pods that lost the lock do not retry it every five minutes.
-        now = datetime.now(timezone.utc)
-        if _reconcile_due(now, last_update_frequency_reconcile):
-            await reconcile_update_frequency_ledger()
-            last_update_frequency_reconcile = now
-
         await asyncio.sleep(HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS)
+
+
+def background_loops(worker_manager: "AnalysisWorkerManager") -> list[Coroutine[Any, Any, None]]:
+    """One loop per job: a long run on the pod holding a job's lock then delays no other job."""
+    return [
+        housekeeping_loop(worker_manager),
+        stale_scan_loop(worker_manager),
+        update_frequency_reconcile_loop(),
+        _every_main_interval("Waiver recalculation", run_waiver_recalc),
+        _every_main_interval("Housekeeping task", run_housekeeping),
+        _every_main_interval("Housekeeping: retention", _run_retention),
+        _every_main_interval("Branch status sync", sync_branch_status),
+    ]

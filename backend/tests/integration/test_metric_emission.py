@@ -93,8 +93,7 @@ async def test_the_stats_refresh_sets_the_cache_gauges_and_a_health_check_leaves
 
 @pytest.mark.asyncio
 async def test_the_worker_gauges_follow_the_queue_and_the_running_workers(monkeypatch):
-    monkeypatch.setattr("app.core.worker.housekeeping_loop", AsyncMock())
-    monkeypatch.setattr("app.core.worker.stale_scan_loop", AsyncMock())
+    monkeypatch.setattr("app.core.worker.background_loops", lambda _manager: [])
     monkeypatch.setattr("app.core.worker.get_database", AsyncMock(return_value=FakeDatabase()))
     queued = AnalysisWorkerManager(num_workers=3)
     await queued.add_job("a")

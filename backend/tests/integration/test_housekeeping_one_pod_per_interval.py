@@ -1,35 +1,21 @@
 """Every pod runs the housekeeping loop, so the daily sweep and branch sync must claim one pod per interval."""
 
 from datetime import timedelta
-from types import SimpleNamespace
 
 import pytest
 
 from app.core import housekeeping
-from app.core.worker import AnalysisWorkerManager
 from app.core.constants import HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS, HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
 
-_UNRELATED = (
-    "recover_stuck_scans",
-    "check_scheduled_rescans",
-    "update_db_stats",
-    "update_archive_stats",
-    "update_cache_stats",
-    "run_waiver_recalc",
-    "_run_retention",
-    "reconcile_update_frequency_ledger",
+_OTHER_SWEEPS = (
     "prune_old_audit_entries",
     "sweep_expired_compliance_reports",
     "_reap_orphan_s3_objects",
     "_reap_orphan_callgraphs",
     "reap_orphan_gridfs_files",
 )
-
-
-class _StopLoop(Exception):
-    """Ends a pod's housekeeping loop after its first pass."""
 
 
 async def test_pods_starting_within_an_interval_sweep_and_sync_branches_once(db, monkeypatch):
@@ -40,28 +26,20 @@ async def test_pods_starting_within_an_interval_sweep_and_sync_branches_once(db,
     async def _noop(*_args, **_kwargs):
         return None
 
-    async def _get_database():
-        return db
-
     async def _sweep(sweep_db):
         sweeps.append(sweep_db)
 
     async def _sync(project_data, _db):
         synced.append(project_data["_id"])
 
-    async def _sleep(_seconds):
-        raise _StopLoop
-
-    for name in _UNRELATED:
+    for name in _OTHER_SWEEPS:
         monkeypatch.setattr(housekeeping, name, _noop)
-    monkeypatch.setattr(housekeeping, "get_database", _get_database)
     monkeypatch.setattr(housekeeping, "reconcile_release_flags", _sweep)
     monkeypatch.setattr(housekeeping, "sync_project_branches", _sync)
-    monkeypatch.setattr(housekeeping, "asyncio", SimpleNamespace(sleep=_sleep))
 
     for _pod in range(2):
-        with pytest.raises(_StopLoop):
-            await housekeeping.housekeeping_loop(AnalysisWorkerManager(num_workers=1))
+        await housekeeping.run_housekeeping(db)
+        await housekeeping.sync_branch_status(db)
 
     assert (len(sweeps), synced) == (1, ["p1"])
     held_for = {lock["_id"]: lock["expires_at"] - lock["acquired_at"] async for lock in db.distributed_locks.find()}

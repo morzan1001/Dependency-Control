@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,7 +14,6 @@ from app.api.v1.endpoints import callgraph, cbom_ingest
 from app.core import housekeeping
 from app.core.constants import ARCHIVE_BATCH_SIZE, HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS, RESCAN_HISTORY_RUNS
 from app.core.housekeeping import _archive_scans_and_delete, _expire_group, _run_retention
-from app.core.worker import AnalysisWorkerManager
 from app.models.release import Release
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.archive_metadata import ArchiveMetadataRepository
@@ -219,40 +217,6 @@ async def test_only_a_finished_retention_run_keeps_the_other_pods_out(db, monkey
 
 class _StopLoop(Exception):
     """Ends the endless housekeeping loop."""
-
-
-@pytest.mark.asyncio
-async def test_every_housekeeping_pass_bids_for_retention(monkeypatch):
-    async def noop(*_args, **_kwargs):
-        return None
-
-    for task in (
-        "recover_stuck_scans",
-        "check_scheduled_rescans",
-        "get_database",
-        "update_db_stats",
-        "update_archive_stats",
-        "update_cache_stats",
-        "run_waiver_recalc",
-        "reconcile_release_flags",
-        "prune_old_audit_entries",
-        "sweep_expired_compliance_reports",
-        "_reap_orphan_s3_objects",
-        "_reap_orphan_callgraphs",
-        "reap_orphan_gridfs_files",
-        "sync_branch_status",
-        "reconcile_update_frequency_ledger",
-    ):
-        monkeypatch.setattr(housekeeping, task, noop)
-    bid = AsyncMock(side_effect=[AutoReconnect("primary stepped down"), None])
-    expire = AsyncMock()
-    monkeypatch.setattr(housekeeping, "_run_retention", bid)
-    monkeypatch.setattr(housekeeping, "_expire_scans", expire)
-    monkeypatch.setattr(housekeeping, "asyncio", SimpleNamespace(sleep=AsyncMock(side_effect=[None, _StopLoop])))
-    with pytest.raises(_StopLoop):
-        await housekeeping.housekeeping_loop(AnalysisWorkerManager(num_workers=1))
-
-    assert (bid.await_count, expire.await_count) == (2, 0)
 
 
 @pytest.mark.asyncio
