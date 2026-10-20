@@ -26,12 +26,16 @@ class ScanDeltaTotals(BaseModel):
     by_type: dict[str, int] = Field(default_factory=dict)
 
 
+FindingChange = Literal["added", "removed", "changed"]
+ComponentChange = Literal["added", "removed", "version_changed", "license_changed"]
+
+
 class FindingDeltaItem(BaseModel):
     """'changed' is a vulnerability record whose version or advisories moved."""
 
     model_config = ConfigDict(extra="forbid")
 
-    change: Literal["added", "removed", "changed"]
+    change: FindingChange
     finding_id: str
     finding_type: str
     severity: str
@@ -50,7 +54,7 @@ class FindingDeltaItem(BaseModel):
 class ComponentDeltaItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    change: Literal["added", "removed", "version_changed", "license_changed"]
+    change: ComponentChange
     name: str
     purl: str | None = None
     version: str | None = None

@@ -11,6 +11,7 @@ from app.core.constants import get_severity_value
 from app.models.finding import CRYPTO_FINDING_TYPES
 from app.schemas.scan_delta import (
     DeltaCategory,
+    FindingChange,
     FindingDeltaItem,
     ScanDeltaResponse,
     ScanDeltaTotals,
@@ -185,10 +186,11 @@ def _first_seen(doc: dict) -> Any:
     return doc.get("first_seen_at") or doc.get("scan_created_at")
 
 
-def _to_item(doc: dict, change: str) -> FindingDeltaItem:
+def _to_item(doc: dict, change: FindingChange) -> FindingDeltaItem:
     details = doc.get("details") or {}
     found_in = doc.get("found_in") or []
-    return FindingDeltaItem(
+    # Unvalidated: the values are our own projected rows, and an uncached comparison builds an item per changed row.
+    return FindingDeltaItem.model_construct(
         change=change,
         finding_id=str(doc.get("finding_id") or doc.get("_id") or ""),
         finding_type=_doc_type(doc),

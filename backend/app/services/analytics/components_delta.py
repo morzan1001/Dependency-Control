@@ -7,6 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.purl import package_identity
 from app.schemas.scan_delta import (
+    ComponentChange,
     ComponentDeltaItem,
     DeltaCategory,
     ScanDeltaResponse,
@@ -26,8 +27,9 @@ def _one_per_version(rows: list[dict]) -> list[dict]:
     return list({row.get("version") or "": row for row in rows}.values())
 
 
-def _to_added_or_removed(doc: dict, change: str) -> ComponentDeltaItem:
-    return ComponentDeltaItem(
+# Unvalidated: the values are our own projected rows, and an uncached comparison builds an item per changed row.
+def _to_added_or_removed(doc: dict, change: ComponentChange) -> ComponentDeltaItem:
+    return ComponentDeltaItem.model_construct(
         change=change,
         name=doc.get("name") or "",
         purl=doc.get("purl"),
@@ -36,8 +38,8 @@ def _to_added_or_removed(doc: dict, change: str) -> ComponentDeltaItem:
     )
 
 
-def _to_changed(from_doc: dict, to_doc: dict, change: str) -> ComponentDeltaItem:
-    return ComponentDeltaItem(
+def _to_changed(from_doc: dict, to_doc: dict, change: ComponentChange) -> ComponentDeltaItem:
+    return ComponentDeltaItem.model_construct(
         change=change,
         name=to_doc.get("name") or from_doc.get("name") or "",
         purl=to_doc.get("purl") or from_doc.get("purl"),
