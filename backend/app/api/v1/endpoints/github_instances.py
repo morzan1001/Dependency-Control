@@ -17,6 +17,7 @@ from app.api.v1.helpers.vcs_instances import (
     list_page,
     refused_listing,
     require_signing_keys,
+    signing_key_check,
     undetermined,
     why_refused,
 )
@@ -276,12 +277,9 @@ async def test_connection(
     github_service = GitHubService(instance)
 
     try:
-        jwks = await github_service.refresh_jwks()
-
-        if not jwks or not jwks.get("keys"):
-            return _failed_test(instance, "JWKS endpoint unreachable or returned no signing keys")
-
-        message = f"OIDC endpoint reachable. Found {len(jwks['keys'])} signing key(s)."
+        ok, message = await signing_key_check(github_service)
+        if not ok:
+            return _failed_test(instance, message)
         if instance.access_token:
             token_check = await _probe_token(github_service, instance)
             if isinstance(token_check, GitHubInstanceTestConnectionResponse):

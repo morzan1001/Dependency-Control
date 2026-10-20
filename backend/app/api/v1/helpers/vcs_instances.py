@@ -41,6 +41,13 @@ async def require_signing_keys(service: GitHubService | GitLabService) -> None:
         )
 
 
+async def signing_key_check(service: GitHubService | GitLabService) -> tuple[bool, str]:
+    jwks = await service.refresh_jwks()
+    if not jwks or not jwks.get("keys"):
+        return False, "JWKS endpoint unreachable or returned no signing keys"
+    return True, f"OIDC endpoint reachable. Found {len(jwks['keys'])} signing key(s)."
+
+
 async def list_page[T: VcsInstanceModel](
     repo: VcsInstanceRepository[T], page: int, size: int, active_only: bool, to_response: Callable[[T], BaseModel]
 ) -> dict[str, Any]:

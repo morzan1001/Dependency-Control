@@ -14,6 +14,7 @@ from app.api.v1.helpers.vcs_instances import (
     get_or_404,
     list_page,
     require_signing_keys,
+    signing_key_check,
 )
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
@@ -216,13 +217,9 @@ async def test_connection(
     gitlab_service = GitLabService(instance)
 
     try:
-        jwks = await gitlab_service.refresh_jwks()
-        if not jwks or not jwks.get("keys"):
-            return _test_result(
-                instance, success=False, message="JWKS endpoint unreachable or returned no signing keys"
-            )
-
-        message = f"OIDC endpoint reachable. Found {len(jwks['keys'])} signing key(s)."
+        ok, message = await signing_key_check(gitlab_service)
+        if not ok:
+            return _test_result(instance, success=False, message=message)
         version = None
         if instance.access_token:
             response = await gitlab_service.get_version()
