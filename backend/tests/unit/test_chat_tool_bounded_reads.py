@@ -529,20 +529,13 @@ async def test_a_remediation_plan_over_a_full_read_is_built_from_the_criticals_f
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("tool", "arguments", "rows_key"),
-    [
-        ("search_findings", {"query": "pkg", "limit": 2}, "findings"),
-        ("get_waiver_status", {"project_id": _PROJECT, "finding_id": _CVE}, "findings"),
-    ],
-)
-async def test_a_findings_read_cut_at_its_ceiling_lists_rows_in_index_key_order(
-    seeded, admin_user, monkeypatch, tool, arguments, rows_key
-):
+async def test_a_findings_read_cut_at_its_ceiling_lists_rows_in_index_key_order(seeded, admin_user, monkeypatch):
     monkeypatch.setattr(registry, "_WAIVER_STATE_READ", 2)
     for finding_id, severity in (("pkg-c", "LOW"), ("pkg-b", "HIGH"), ("pkg-a", "LOW"), ("pkg-d", "CRITICAL")):
         seeded.findings._docs[finding_id] = _finding(finding_id, severity)
 
-    result = await ChatToolRegistry().execute_tool(tool, arguments, admin_user, seeded)
+    result = await ChatToolRegistry().execute_tool(
+        "get_waiver_status", {"project_id": _PROJECT, "finding_id": _CVE}, admin_user, seeded
+    )
 
-    assert [f["component"] for f in result[rows_key]] == ["pkg-d", "pkg-b"]
+    assert [f["component"] for f in result["findings"]] == ["pkg-d", "pkg-b"]

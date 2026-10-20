@@ -127,7 +127,5 @@ async def test_the_search_and_its_total_stop_on_the_server_before_the_client_soc
     )
 
     reads = [e["command"] for e in entries if e["ns"].endswith(".findings") and e["op"] in ("query", "command")]
-    assert [("find" in c, c.get("maxTimeMS")) for c in reads] == [
-        (True, DEFAULT_MAX_TIME_MS),
-        (False, DEFAULT_MAX_TIME_MS),
-    ]
+    assert {c.get("maxTimeMS") for c in reads} == {DEFAULT_MAX_TIME_MS}
+    assert ["find" in c for c in reads][-1:] == [False]

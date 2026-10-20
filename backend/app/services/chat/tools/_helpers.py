@@ -102,10 +102,15 @@ async def bounded_read(
     # Counting one past the cap tells a total above it from one that lands on it.
     count_limit = count_cap + 1 if count_cap else None
     rows, total = await find_window(collection, query, limit, count_limit=count_limit, sort=sort, **find_kwargs)
-    ledger = _BOUNDED_READS.get()
-    if ledger is not None and total > len(rows):
-        ledger.append((subject, len(rows), f"more than {count_cap}" if count_cap and total > count_cap else total))
+    if total > len(rows):
+        note_bounded_read(subject, len(rows), f"more than {count_cap}" if count_cap and total > count_cap else total)
     return rows, total
+
+
+def note_bounded_read(subject: str, shown: int, total: int | str) -> None:
+    ledger = _BOUNDED_READS.get()
+    if ledger is not None:
+        ledger.append((subject, shown, total))
 
 
 def bounded_read_note() -> str | None:

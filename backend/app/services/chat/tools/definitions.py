@@ -156,8 +156,8 @@ _tool(
 )
 _tool(
     "search_findings",
-    "Search the head-build findings of every project the user has access to. Use for cross-project "
-    "queries like 'find all log4j vulnerabilities'. findings_total says how many findings match.",
+    "Search the head-build findings of every project the user has access to, worst first. Use for "
+    "cross-project queries like 'find all log4j vulnerabilities'. findings_total says how many findings match.",
     required=["query"],
     permissions=_ANALYTICS_SEARCH,
     query=_string("Search term (CVE ID, package name, description keyword)"),

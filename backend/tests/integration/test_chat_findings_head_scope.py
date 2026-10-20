@@ -153,4 +153,6 @@ async def test_a_term_matching_nothing_examines_only_the_head_builds_findings(db
 
     await db.command({"profile": 0})
     reads = await db["system.profile"].find({"ns": f"{db.name}.findings"}).to_list(None)
-    assert [(r["op"], r["docsExamined"]) for r in reads] == [("query", 1), ("query", 1)]
+    *search_tiers, cve_read = reads
+    assert {r["op"] for r in reads} == {"query"}
+    assert (sum(r["docsExamined"] for r in search_tiers), cve_read["docsExamined"]) == (1, 1)

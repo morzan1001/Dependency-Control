@@ -104,6 +104,7 @@ from ._helpers import (
     bounded_read,
     bounded_read_note,
     clamped_limit_note,
+    note_bounded_read,
     ranked_advisories,
 )
 from .crypto_tools import (
@@ -442,7 +443,11 @@ async def _ranked_findings(
             break
         # One past the cap tells a tier larger than it from one that lands on it, without counting the tier.
         cursor = db["findings"].find(
-            {**query, "severity": tier}, RANKED_FINDING_PROJECTION, limit=_FINDING_RANK_FETCH_CAP + 1
+            {**query, "severity": tier},
+            RANKED_FINDING_PROJECTION,
+            limit=_FINDING_RANK_FETCH_CAP + 1,
+            # A search's unanchored regexes read every head finding; past this nobody waits for the answer.
+            max_time_ms=DEFAULT_MAX_TIME_MS,
         )
         candidates = await cursor.to_list(length=None)
         if not candidates:
@@ -464,6 +469,13 @@ async def _ranked_findings(
         )
         out.extend(candidates[: limit - len(out)])
     return out, ranking
+
+
+async def _ranked_total(db: AsyncIOMotorDatabase, query: dict[str, Any], found: int, limit: int) -> int:
+    """Below the limit the tier walk read every match."""
+    if found < limit:
+        return found
+    return await db["findings"].count_documents(query, maxTimeMS=DEFAULT_MAX_TIME_MS)
 
 
 class _ToolRefusal(Exception):
@@ -666,9 +678,7 @@ class ChatToolRegistry:
         return {
             "findings": [_serialize_finding_for_llm(f) for f in findings],
             "count": len(findings),
-            "findings_total": len(findings)
-            if len(findings) < limit
-            else await ctx.db["findings"].count_documents(query),
+            "findings_total": await _ranked_total(ctx.db, query, len(findings), limit),
             "project_name": project.get("name"),
             "scan": build,
             **ranking,
@@ -697,20 +707,16 @@ class ChatToolRegistry:
             query["severity"] = ctx.args["severity"]
         if ctx.args.get("type"):
             query["type"] = ctx.args["type"]
-        # Unanchored regexes read every head finding; past the time limit nobody waits for the answer.
-        findings, findings_total = await bounded_read(
-            ctx.db["findings"],
-            query,
-            subject="matching findings",
-            limit=ctx.args["limit"],
-            sort=_FINDING_ROW_ORDER,
-            projection=RANKED_FINDING_PROJECTION,
-            max_time_ms=DEFAULT_MAX_TIME_MS,
-        )
+        limit = ctx.args["limit"]
+        findings, ranking = await _ranked_findings(ctx.db, query, limit)
+        findings_total = await _ranked_total(ctx.db, query, len(findings), limit)
+        if findings_total > len(findings):
+            note_bounded_read("matching findings", len(findings), findings_total)
         return {
             "findings": _slim_with_project(findings, names),
             "count": len(findings),
             "findings_total": findings_total,
+            **ranking,
         }
 
     async def _head_breakdown(self, ctx: _ToolContext, field: str) -> dict[str, Any]:
