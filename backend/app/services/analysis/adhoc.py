@@ -492,9 +492,16 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         report.skipped.update(dict.fromkeys(requested, _NO_PACKAGE_COMPONENTS))
 
     for sbom in package_inputs:
-        for name in requested:
-            keep = partial(_aggregate_unless_errored, aggregator, name, sbom.source)
-            _record_outcome(report, await run_analyzer(name, sbom, settings_for(name), keep), sbom.label)
+        outcomes = await asyncio.gather(
+            *(
+                run_analyzer(
+                    name, sbom, settings_for(name), partial(_aggregate_unless_errored, aggregator, name, sbom.source)
+                )
+                for name in requested
+            )
+        )
+        for outcome in outcomes:
+            _record_outcome(report, outcome, sbom.label)
 
     _aggregate_crypto_rules(parsed_inputs, aggregator, report)
     _aggregate_posted_scanners(request, aggregator, report)
