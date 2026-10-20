@@ -28,7 +28,13 @@ def _declared(collection: str) -> dict[_KeyPattern, dict[str, Any]]:
 
 def test_findings_declare_only_the_indexes_a_read_needs():
     assert _declared("findings") == {
-        (("scan_id", ASCENDING), ("severity", ASCENDING), ("type", ASCENDING), ("finding_id", ASCENDING)): {},
+        (
+            ("scan_id", ASCENDING),
+            ("severity", ASCENDING),
+            ("type", ASCENDING),
+            ("finding_id", ASCENDING),
+            ("waived", ASCENDING),
+        ): {},
         (("scan_id", ASCENDING), ("waived", ASCENDING)): {},
         (("scan_id", ASCENDING), ("type", ASCENDING)): {},
         (("scan_id", ASCENDING), ("component", ASCENDING), ("version", ASCENDING)): {},
