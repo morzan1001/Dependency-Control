@@ -158,7 +158,7 @@ async def recalculate_project_stats(
 
 
 async def restamp_single_scan(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) -> None:
-    """While the project's stats lock is taken, the queued waiver recalc restamps the scan instead."""
+    """Skips a scan stamped with the active waivers; while the stats lock is taken, the queued recalc restamps it."""
     lock_repo = DistributedLocksRepository(db)
     lock_name = f"stats_recalc:{project_id}"
     holder_id = new_lock_holder()
@@ -166,7 +166,9 @@ async def restamp_single_scan(db: AsyncIOMotorDatabase, project_id: str, scan_id
         return
     try:
         waivers = await WaiverRepository(db).find_active_for_project(project_id)
-        await _restamp_scan(scan_id, db, waivers, waiver_fingerprint(waivers), FindingRepository(db), None)
+        fingerprint = waiver_fingerprint(waivers)
+        if not await ScanRepository(db).count({"_id": scan_id, "waiver_fingerprint": fingerprint}):
+            await _restamp_scan(scan_id, db, waivers, fingerprint, FindingRepository(db), None)
     finally:
         await lock_repo.release_lock(lock_name, holder_id)
 

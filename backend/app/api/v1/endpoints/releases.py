@@ -23,6 +23,7 @@ from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import LineageAnalysis, ScanRepository
 from app.schemas.pagination import Page
 from app.schemas.release import ReleaseItem, ReleaseMarkRequest, ReleaseUnmarkResponse
+from app.services.stats import restamp_single_scan
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,11 @@ async def mark_release(
     # The stored row, not an echo: an unversioned re-mark keeps the recorded version, a fallback the repository owns.
     if row is None:
         raise HTTPException(status_code=409, detail=f"The release of {scan_id} to {environment} was withdrawn")
-    return _to_item(row, scan, (await scan_repo.freshest_in_lineage([scan_id])).get(scan_id))
+    analysis = (await scan_repo.freshest_in_lineage([scan_id])).get(scan_id)
+    # A waiver holds now, not for the build it was analysed under, so a build marked late takes today's waivers.
+    if analysis:
+        await restamp_single_scan(db, project_id, analysis.scan_id)
+    return _to_item(row, scan, analysis)
 
 
 @router.delete(
