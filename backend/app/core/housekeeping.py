@@ -643,6 +643,7 @@ async def reconcile_update_frequency_ledger() -> None:
 
 async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
     last_update_frequency_reconcile = datetime.min.replace(tzinfo=timezone.utc)
+    archives_summed_at: int | None = None
 
     while True:
         await _best_effort("Stuck scan recovery", recover_stuck_scans, worker_manager)
@@ -650,7 +651,7 @@ async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
 
         db = await get_database()
         await update_db_stats(db)
-        await update_archive_stats(db)
+        archives_summed_at = await update_archive_stats(db, archives_summed_at)
         await update_cache_stats()
 
         await _best_effort("Waiver recalculation", run_waiver_recalc, db)

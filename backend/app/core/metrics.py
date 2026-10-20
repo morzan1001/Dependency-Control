@@ -658,23 +658,19 @@ async def update_db_stats(database: Any) -> None:
         logger.warning(f"Failed to update database statistics metrics: {e}")
 
 
-async def update_archive_stats(database: Any) -> None:
+async def update_archive_stats(database: Any, summed_at_count: int | None) -> int | None:
+    """Returns the archive count the stored bytes were last summed at, which the next pass hands back."""
+    archives = database["archive_metadata"]
     try:
-        pipeline = [
-            {
-                "$group": {
-                    "_id": None,
-                    "count": {"$sum": 1},
-                    "total_bytes": {"$sum": {"$ifNull": ["$compressed_size_bytes", 0]}},
-                }
-            }
-        ]
-        result = await database["archive_metadata"].aggregate(pipeline).to_list(1)
-        if result:
-            archive_count_total.set(result[0]["count"])
-            archive_stored_bytes_total.set(result[0]["total_bytes"])
-        else:
-            archive_count_total.set(0)
-            archive_stored_bytes_total.set(0)
+        count: int = await archives.estimated_document_count()
+        archive_count_total.set(count)
+        # Archives are only inserted or deleted, so the summed bytes are re-read whenever the count moves.
+        if count == summed_at_count:
+            return count
+        pipeline = [{"$group": {"_id": None, "total_bytes": {"$sum": {"$ifNull": ["$compressed_size_bytes", 0]}}}}]
+        result = await archives.aggregate(pipeline).to_list(1)
+        archive_stored_bytes_total.set(result[0]["total_bytes"] if result else 0)
+        return count
     except Exception as e:
         logger.warning(f"Failed to update archive statistics metrics: {e}")
+        return summed_at_count

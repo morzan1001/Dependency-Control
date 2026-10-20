@@ -193,3 +193,50 @@ class TestMetricsEndpoint:
         assert response.status_code == 200
         assert len(generating_threads) == 1
         assert generating_threads[0] is not threading.current_thread()
+
+
+class _Archives:
+    """Counts its full-collection reads, the cost a housekeeping pass must not pay while nothing changed."""
+
+    def __init__(self, *sizes: int | None):
+        self.sizes = list(sizes)
+        self.scans = 0
+
+    async def estimated_document_count(self) -> int:
+        return len(self.sizes)
+
+    def aggregate(self, pipeline):
+        self.scans += 1
+        total = sum(size or 0 for size in self.sizes)
+        rows = [{"_id": None, "total_bytes": total}] if self.sizes else []
+
+        class _Rows:
+            async def to_list(self, _length):
+                return rows
+
+        return _Rows()
+
+
+def _archive_gauges() -> tuple[float | None, float | None]:
+    return REGISTRY.get_sample_value("archive_count_total"), REGISTRY.get_sample_value("archive_stored_bytes_total")
+
+
+class TestArchiveStats:
+    @pytest.mark.asyncio
+    async def test_the_stored_bytes_are_summed_again_only_once_the_archive_count_moves(self):
+        archives = _Archives(100, None, 50)
+        db = {"archive_metadata": archives}
+
+        counted = await metrics.update_archive_stats(db, None)
+        assert (_archive_gauges(), archives.scans) == ((3, 150), 1)
+
+        counted = await metrics.update_archive_stats(db, counted)
+        assert (_archive_gauges(), archives.scans) == ((3, 150), 1)
+
+        archives.sizes.append(25)
+        counted = await metrics.update_archive_stats(db, counted)
+        assert (_archive_gauges(), archives.scans) == ((4, 175), 2)
+
+        archives.sizes.clear()
+        await metrics.update_archive_stats(db, counted)
+        assert (_archive_gauges(), archives.scans) == ((0, 0), 3)

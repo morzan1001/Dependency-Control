@@ -62,3 +62,34 @@ async def test_a_failing_task_is_logged_by_label_and_the_loop_runs_the_others(mo
 
     assert ran == list(_LABELS)
     assert [record.getMessage() for record in caplog.records] == [f"{_LABELS[failing]} failed: mongo unreachable"]
+
+
+@pytest.mark.asyncio
+async def test_each_pass_hands_the_archive_count_its_bytes_were_summed_at_to_the_next(monkeypatch):
+    handed: list[int | None] = []
+    passes = iter(range(3))
+
+    async def _update_archive_stats(_db: Any, summed_at: int | None) -> int:
+        handed.append(summed_at)
+        return len(handed) * 10
+
+    async def _noop(*_args: Any) -> None:
+        return None
+
+    async def _get_database() -> FakeDatabase:
+        return FakeDatabase()
+
+    async def _sleep(_seconds: float) -> None:
+        if next(passes) == 2:
+            raise _StopLoop
+
+    for name in (*_LABELS, *_QUIET_TASKS):
+        monkeypatch.setattr(housekeeping, name, _noop)
+    monkeypatch.setattr(housekeeping, "update_archive_stats", _update_archive_stats)
+    monkeypatch.setattr(housekeeping, "get_database", _get_database)
+    monkeypatch.setattr(housekeeping, "asyncio", SimpleNamespace(sleep=_sleep))
+
+    with pytest.raises(_StopLoop):
+        await housekeeping.housekeeping_loop(AnalysisWorkerManager(num_workers=1))
+
+    assert handed == [None, 10, 20]
