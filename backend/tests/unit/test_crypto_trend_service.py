@@ -209,6 +209,24 @@ async def test_without_a_default_branch_the_latest_build_of_any_live_branch_coun
 
 
 @pytest.mark.asyncio
+async def test_a_project_with_only_tag_builds_counts_its_latest_tag_build(db):
+    await _project(db)
+    await _scan(db, "v1", _START + 1 * _DAY, branch="v1", commit_tag="v1", findings=2)
+    await _scan(db, "v2", _START + 3 * _DAY, branch="v2", commit_tag="v2", findings=3)
+
+    assert await _series(db) == _days(2, 2, 3, 3, 3, 3, first=_START + 1 * _DAY)
+
+
+@pytest.mark.asyncio
+async def test_a_newer_build_without_an_sbom_keeps_the_sbom_builds_count(db):
+    await _project(db)
+    await _scan(db, "sbom", _START + 1 * _DAY, findings=1, sbom_refs=[{"type": "gridfs_reference", "gridfs_id": "g1"}])
+    await _scan(db, "sast", _START + 3 * _DAY, sbom_refs=[])
+
+    assert await _series(db) == _days(1, 1, 1, 1, 1, 1, first=_START + 1 * _DAY)
+
+
+@pytest.mark.asyncio
 async def test_a_rescan_counts_from_when_it_reanalysed_the_head_build(db):
     await _project(db)
     await _scan(db, "old", _START, findings=7)

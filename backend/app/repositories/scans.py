@@ -44,6 +44,8 @@ _TIP_TIERS: tuple[dict[str, Any], ...] = tuple(
         {"status": {"$in": SCAN_USABLE_STATUSES}},
     )
 )
+# A rescan joins a head timeline through the build it re-analysed, so the timeline walks the build tiers only.
+_BUILD_TIERS = tuple(tier for tier in _TIP_TIERS if "is_rescan" in tier)
 _TIP_LOOKUP_CONCURRENCY = 16
 _CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}
 _TIP_PROJECTION = {**_CHAIN_PROJECTION, "branch": 1, "commit_tag": 1}
@@ -509,14 +511,14 @@ class ScanRepository:
     async def _head_builds_between(
         self, project_id: str, scope: _HeadScope, since: datetime, until: datetime
     ) -> list[dict[str, Any]]:
-        base = {"project_id": project_id, **USABLE_BUILD_MATCH}
         default = _live_default(scope)
-        if default and (on_default := await self._builds_between({**base, "branch": default}, since, until)):
-            return on_default
-        fallback = {**base, **BRANCH_SCAN_FILTER}
-        if scope.deleted:
-            fallback["branch"] = {"$nin": scope.deleted}
-        return await self._builds_between(fallback, since, until)
+        lines: list[dict[str, Any]] = [{"branch": default}] if default else []
+        lines.append({"branch": {"$nin": scope.deleted}} if scope.deleted else {})
+        for line in lines:
+            for tier in _BUILD_TIERS:
+                if builds := await self._builds_between({"project_id": project_id, **line, **tier}, since, until):
+                    return builds
+        return []
 
     async def _builds_between(self, match: dict[str, Any], since: datetime, until: datetime) -> list[dict[str, Any]]:
         """From the build current at ``since``, oldest first; a same-millisecond run ends on its lowest _id."""
