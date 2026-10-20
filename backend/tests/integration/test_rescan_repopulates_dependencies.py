@@ -6,7 +6,7 @@ from app.core.init_db import create_indexes
 from app.models.dependency import Dependency
 from app.models.project import Scan
 from app.services.analysis import engine
-from tests.helpers.analyzers import analyse_scan
+from tests.helpers.analyzers import analyse_scan, serve_analyzer
 from tests.helpers.sboms import sbom_ref, store_sbom
 
 pytestmark = pytest.mark.live_mongo
@@ -205,6 +205,26 @@ async def test_a_rescan_with_an_unreadable_sbom_fails_and_leaves_the_lineage_on_
     assert await analyse_scan(db, scan_id, refs, [], worker_id=_WORKER) == SCAN_STATUS_FAILED
 
     assert (await db.scans.find_one({"_id": _ORIGINAL_SCAN_ID})).get("latest_rescan_id") is None
+
+
+class _MatchesRequests:
+    async def analyze(self, sbom, settings=None, parsed_components=None):
+        artifact = {"name": "requests", "version": "2.31.0", "purl": "pkg:pypi/requests@2.31.0"}
+        return {"matches": [{"vulnerability": {"id": "CVE-2024-35195", "severity": "Medium"}, "artifact": artifact}]}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_rescan_persists_none_of_the_findings_of_its_readable_sbom(
+    db, _stored_sboms, _second_file_unreadable, monkeypatch
+):
+    serve_analyzer(monkeypatch, "grype", _MatchesRequests())
+    refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
+    await db.scans.insert_one({"_id": _ORIGINAL_SCAN_ID, "project_id": _PROJECT_ID, "status": "completed"})
+    scan_id = await _seed_rescan(db, refs)
+
+    assert await analyse_scan(db, scan_id, refs, ["grype"], worker_id=_WORKER) == SCAN_STATUS_FAILED
+
+    assert await db.findings.count_documents({"scan_id": scan_id}) == 0
 
 
 @pytest.mark.asyncio

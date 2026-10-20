@@ -816,9 +816,7 @@ def _partial_run_reasons(
     return reasons
 
 
-def _final_scan_status(scan_id: str, sboms_unusable: bool, partial_reasons: list[str]) -> tuple[ScanStatus, str | None]:
-    if sboms_unusable:
-        return SCAN_STATUS_FAILED, "SBOM could not be loaded or parsed for analysis"
+def _final_scan_status(scan_id: str, partial_reasons: list[str]) -> tuple[ScanStatus, str | None]:
     if partial_reasons:
         error = "; ".join(partial_reasons)
         logger.warning("Scan %s completed with errors: %s", scan_id, error)
@@ -842,11 +840,13 @@ async def _keep_previous_analysis(ctx: _RunContext, load_start: datetime) -> Sca
     scan_repo = ScanRepository(ctx.db)
     # Retried while the worker still re-queues, so the input that reopened the scan gets analysed.
     if ctx.scan.retry_count + 1 < ANALYSIS_MAX_RETRIES:
-        logger.warning("Scan %s: an SBOM failed to load; retrying the re-analysis", ctx.scan_id)
+        logger.warning("Scan %s: an SBOM failed to load or parse; retrying the re-analysis", ctx.scan_id)
         requeued = await scan_repo.requeue(ctx.scan_id, ctx.worker_id, counter="retry_count")
         return SCAN_STATUS_PENDING if requeued else None
-    logger.warning("Scan %s: an SBOM failed to load on the last attempt; keeping the previous analysis", ctx.scan_id)
-    error = "SBOM could not be loaded for re-analysis; findings are from the previous analysis"
+    logger.warning(
+        "Scan %s: an SBOM failed to load or parse on the last attempt; keeping the previous analysis", ctx.scan_id
+    )
+    error = "SBOM could not be loaded or parsed for re-analysis; findings are from the previous analysis"
     outcome = await _write_final_state(
         ctx,
         SCAN_STATUS_COMPLETED_WITH_ERRORS,
@@ -856,6 +856,19 @@ async def _keep_previous_analysis(ctx: _RunContext, load_start: datetime) -> Sca
     if outcome == SCAN_STATUS_COMPLETED_WITH_ERRORS:
         await scan_repo.sync_project_head(ctx.project_id)
         await _apply_handed_over_callgraphs(ctx.scan_id, ctx.project_id, ctx.db)
+    return outcome
+
+
+async def _conclude(
+    ctx: _RunContext, verdict: _Verdict, external_load_start: datetime, started: float
+) -> ScanStatus | None:
+    analysis_aggregation_duration_seconds.observe(time.time() - started)
+    outcome = await _finalize_scan_and_project(ctx, verdict, external_load_start)
+    if outcome != verdict.status:
+        return outcome
+    await _announce_outcome(ctx, verdict)
+    # Runs on the released findings: the rollup holds two dependency maps of its own.
+    await record_scan_update_delta(ctx.db, ctx.scan_id)
     return outcome
 
 
@@ -914,6 +927,33 @@ async def run_analysis(
 
     payload, sbom_load_failures, sbom_outcomes = await _analyse_sboms(ctx, fs, stored_ids, aggregator)
     outcomes.extend(sbom_outcomes)
+    sbom_parse_failures = payload.count(None) - sbom_load_failures
+
+    # A rescan has no stored inventory to fall back on, so a partial payload would leave it without one.
+    if (scan_doc.is_rescan and sbom_load_failures + sbom_parse_failures > 0) or (
+        sbom_load_failures > 0 and sbom_load_failures == len(stored_ids)
+    ):
+        del payload, aggregator
+        logger.error(
+            "Scan %s: %d/%d SBOMs failed to load and %d failed to parse; persisting nothing",
+            scan_id,
+            sbom_load_failures,
+            len(stored_ids),
+            sbom_parse_failures,
+        )
+        if scan_doc.completed_at is not None:
+            return await _keep_previous_analysis(ctx, load_start)
+        analyzer_outcomes = _worst_outcomes(outcomes)
+        verdict = _Verdict(
+            SCAN_STATUS_FAILED,
+            "SBOM could not be loaded or parsed for analysis",
+            Stats(),
+            0,
+            0,
+            analyzer_outcomes,
+            *_failed_analyzer_names(analyzer_outcomes),
+        )
+        return await _conclude(ctx, verdict, load_start, aggregation_start_time)
 
     if scan_doc.scan_type == SCAN_TYPE_CBOM or any(p is not None and p.crypto_assets for p in payload):
         outcomes.extend(await _run_crypto_analyzers(ctx, aggregator))
@@ -921,7 +961,6 @@ async def run_analysis(
     if not await _still_claimed(ctx):
         return None
 
-    sbom_parse_failures = payload.count(None) - sbom_load_failures
     stored = await store_scan_dependencies(payload, ctx.project_id, scan_id, DependencyRepository(db))
     if stored is not None:
         logger.info(f"Stored {stored} dependencies for scan {scan_id}")
@@ -954,19 +993,6 @@ async def run_analysis(
     del findings_to_insert, vulnerability_findings
     stats, ignored_count = await calculate_comprehensive_stats(db, scan_id, component_languages)
 
-    # A rescan has no stored inventory to fall back on, so a partial payload would leave it without one.
-    sboms_unusable = (scan_doc.is_rescan and sbom_load_failures + sbom_parse_failures > 0) or (
-        sbom_load_failures > 0 and sbom_load_failures == len(stored_ids)
-    )
-    if sboms_unusable:
-        logger.error(
-            "Scan %s: %d/%d SBOMs failed to load and %d failed to parse; marking failed",
-            scan_id,
-            sbom_load_failures,
-            len(stored_ids),
-            sbom_parse_failures,
-        )
-
     analyzer_outcomes = _worst_outcomes(outcomes)
     failed_analyzers, enrichment_failures = _failed_analyzer_names(analyzer_outcomes)
     partial_reasons = _partial_run_reasons(
@@ -977,7 +1003,7 @@ async def run_analysis(
         persisted_findings_count,
         total_findings_count,
     )
-    final_status, final_error = _final_scan_status(scan_id, sboms_unusable, partial_reasons)
+    final_status, final_error = _final_scan_status(scan_id, partial_reasons)
     verdict = _Verdict(
         final_status,
         final_error,
@@ -988,16 +1014,4 @@ async def run_analysis(
         failed_analyzers,
         enrichment_failures,
     )
-
-    analysis_aggregation_duration_seconds.observe(time.time() - aggregation_start_time)
-
-    outcome = await _finalize_scan_and_project(ctx, verdict, external_load_start)
-    if outcome != final_status:
-        return outcome
-
-    await _announce_outcome(ctx, verdict)
-
-    # Runs on the released findings: the rollup holds two dependency maps of its own.
-    await record_scan_update_delta(db, scan_id)
-
-    return outcome
+    return await _conclude(ctx, verdict, external_load_start, aggregation_start_time)

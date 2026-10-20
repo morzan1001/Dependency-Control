@@ -137,14 +137,14 @@ def _gridfs_outage(monkeypatch, while_listing=lambda: asyncio.sleep(0)) -> dict:
 async def test_a_result_that_arrives_during_a_failing_run_reschedules_it_instead_of_failing_it(
     db, notified, monkeypatch
 ):
-    ref = _gridfs_outage(monkeypatch)
-    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER)
-    await db.scans.insert_one(scan.model_dump(by_alias=True))
+    scan = Scan(project_id=_PROJECT_ID, branch="main", status="processing", worker_id=_WORKER)
 
-    async def _late_result(*_args):
+    async def _late_result():
         await db.scans.update_one({"_id": scan.id}, {"$set": {"last_result_at": datetime.now(timezone.utc)}})
+        await asyncio.sleep(0.01)
 
-    monkeypatch.setattr(engine, "_run_vuln_enrichments", _late_result)
+    ref = _gridfs_outage(monkeypatch, _late_result)
+    await db.scans.insert_one(scan.model_dump(by_alias=True) | {"sbom_refs": [ref]})
 
     assert await analyse_scan(db, scan.id, [ref], [], worker_id=_WORKER) == SCAN_STATUS_PENDING
 
@@ -432,6 +432,24 @@ async def test_the_worker_retries_an_unreadable_re_analysis_before_keeping_the_e
     assert (stored["status"], stored["retry_count"]) == (SCAN_STATUS_COMPLETED_WITH_ERRORS, _LAST_ATTEMPT)
     await _assert_the_earlier_analysis_is_intact(db, scan_id)
     failure_notice.assert_not_called()
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("retry_count", "status"), [(0, SCAN_STATUS_PENDING), (_LAST_ATTEMPT, SCAN_STATUS_COMPLETED_WITH_ERRORS)]
+)
+async def test_a_re_analysis_whose_sbom_fails_to_stream_keeps_the_earlier_findings(
+    db, notified, stored_sbom, monkeypatch, retry_count, status
+):
+    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", AsyncMock(side_effect=OSError("gridfs outage")))
+    scan_id = await _finished_scan_with_an_analysis(db, stored_sbom, retry_count)
+
+    assert await analyse_scan(db, scan_id, [stored_sbom], [], worker_id=_WORKER) == status
+
+    assert [f["_id"] async for f in db.findings.find({"scan_id": scan_id})] == ["f1"]
+    assert await db.dependencies.count_documents({"scan_id": scan_id}) == 1
+    assert notified == []
 
 
 @pytest.mark.asyncio
