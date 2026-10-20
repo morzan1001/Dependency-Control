@@ -47,7 +47,7 @@ async def _remaining(db) -> set[str]:
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_a_build_keeps_its_newest_usable_rescans_and_loses_the_older_ones(db):
+async def test_a_build_keeps_its_newest_rescans_and_loses_the_older_ones(db):
     runs = [_rescan(run) for run in range(RESCAN_HISTORY_RUNS + 3)]
     await db.projects.insert_one(_project())
     await db.scans.insert_many([_build(latest_rescan_id=runs[0]["_id"]), *runs])
@@ -59,17 +59,16 @@ async def test_a_build_keeps_its_newest_usable_rescans_and_loses_the_older_ones(
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_failed_runs_do_not_count_towards_the_kept_history(db):
-    """A failed run carries no usable analysis, so counting it would leave fewer readable runs."""
-    newest_failed = _rescan(0, "failed")
-    usable = [_rescan(run) for run in range(1, RESCAN_HISTORY_RUNS + 1)]
-    older = [_rescan(RESCAN_HISTORY_RUNS + 1, "failed"), _rescan(RESCAN_HISTORY_RUNS + 2)]
+async def test_failed_runs_count_towards_the_kept_history(db):
+    """A build whose rescans keep failing would otherwise keep every failed run until age retention."""
+    failed = [_rescan(run, "failed") for run in range(RESCAN_HISTORY_RUNS + 2)]
+    current = _rescan(RESCAN_HISTORY_RUNS + 2)
     await db.projects.insert_one(_project())
-    await db.scans.insert_many([_build(latest_rescan_id=usable[0]["_id"]), newest_failed, *usable, *older])
+    await db.scans.insert_many([_build(latest_rescan_id=current["_id"]), *failed, current])
 
     await _run_retention(db)
 
-    assert await _remaining(db) == {_ROOT, newest_failed["_id"], *(run["_id"] for run in usable)}
+    assert await _remaining(db) == {_ROOT, current["_id"], *(run["_id"] for run in failed[:RESCAN_HISTORY_RUNS])}
 
 
 @pytest.mark.asyncio

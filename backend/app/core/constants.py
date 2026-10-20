@@ -899,7 +899,7 @@ HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS: int = 6
 # Night in europe-west1, so the reconcile's repair writes stay out of the working day.
 HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC: int = 2
 
-# Usable rescans each build keeps; older runs are near-identical full copies of the same SBOM.
+# Rescans each build keeps, failed ones included; older runs are near-identical full copies of the same SBOM.
 RESCAN_HISTORY_RUNS: int = 7
 
 # Only the insert runs under this lock.

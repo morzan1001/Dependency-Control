@@ -282,6 +282,11 @@ async def send_scan_notifications(
 
 async def notify_analysis_failed(db: Database, scan_id: str, project_id: str | None, error: str) -> None:
     try:
+        scan = await db.scans.find_one({"_id": scan_id}, {"original_scan_id": 1})
+        root_id = scan.get("original_scan_id") if scan else None
+        # The scheduler reruns a failing rescan every interval, so a build announces each of its errors once.
+        if root_id and not await _first_announcement(db, root_id, NOTIFICATION_EVENT_ANALYSIS_FAILED, error):
+            return
         project = await db.projects.find_one({"_id": project_id})
         if not project:
             return

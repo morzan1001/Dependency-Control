@@ -33,7 +33,6 @@ from app.core.constants import (
     SCAN_ACTIVE_STATUSES,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
-    SCAN_USABLE_STATUSES,
     SCANS_TIP_SORT,
     SETTINGS_MODE_GLOBAL,
 )
@@ -407,7 +406,7 @@ async def _process_scans_in_batches(
 
 
 async def _superseded_rescans(db: Any, scope: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-    """Rescans past each build's newest RESCAN_HISTORY_RUNS usable ones, sparing the one latest_rescan_id names."""
+    """Rescans past each build's newest RESCAN_HISTORY_RUNS, sparing the one latest_rescan_id names."""
     # Keyed on original_scan_id so its index, not a pass over every build, finds the rescans.
     runs = {**scope, "original_scan_id": {"$ne": None}, **_EXPIRABLE}
     # Read up front: a cursor would sit idle past the session timeout while the batches archive.
@@ -421,16 +420,15 @@ async def _superseded_rescans(db: Any, scope: dict[str, Any]) -> AsyncIterator[d
     for groups in batched(crowded, ARCHIVE_BATCH_SIZE, strict=False):
         roots = [group["_id"] for group in groups]
         current = set(await db.scans.distinct("latest_rescan_id", {"_id": {"$in": roots}}))
-        usable_kept: Counter[str] = Counter()
+        newer: Counter[str] = Counter()
         group_runs = db.scans.find(
-            {**runs, "original_scan_id": {"$in": roots}}, {"project_id": 1, "original_scan_id": 1, "status": 1}
+            {**runs, "original_scan_id": {"$in": roots}}, {"project_id": 1, "original_scan_id": 1}
         )
         for run in await group_runs.sort(SCANS_TIP_SORT).to_list(None):
             root = run["original_scan_id"]
-            if usable_kept[root] < RESCAN_HISTORY_RUNS:
-                usable_kept[root] += run.get("status") in SCAN_USABLE_STATUSES
-            elif run["_id"] not in current:
+            if newer[root] >= RESCAN_HISTORY_RUNS and run["_id"] not in current:
                 yield run
+            newer[root] += 1
 
 
 async def _expire_group(db: Any, days: int, scope: dict[str, Any], action: str, label: str) -> None:
