@@ -55,6 +55,11 @@ def quota_lifts_at(response: httpx.Response) -> float | None:
     return max(lifts, default=now + _UNNAMED_QUOTA_WAIT_SECONDS)
 
 
+def _quota_outlasts_a_retry(outcome: httpx.Response | httpx.TransportError) -> bool:
+    lifts_at = quota_lifts_at(outcome) if isinstance(outcome, httpx.Response) else None
+    return lifts_at is not None and lifts_at > time.time() + _MAX_RETRY_AFTER_SECONDS
+
+
 class InstrumentedAsyncClient:
     def __init__(
         self,
@@ -145,7 +150,11 @@ class InstrumentedAsyncClient:
             if isinstance(outcome, httpx.Response) and outcome.status_code != 429 and outcome.status_code < 500:
                 return outcome
             delay = d if (d := _retry_after_seconds(outcome)) is not None else base_delay * 2**attempt
-            if attempt == attempts - 1 or (deadline is not None and loop.time() + delay >= deadline):
+            if (
+                attempt == attempts - 1
+                or _quota_outlasts_a_retry(outcome)
+                or (deadline is not None and loop.time() + delay >= deadline)
+            ):
                 break
             cause = outcome.status_code if isinstance(outcome, httpx.Response) else type(outcome).__name__
             logger.debug(f"{self.service_name} {method} failed with {cause}; retrying in {delay:.1f}s")

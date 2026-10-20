@@ -105,6 +105,21 @@ async def test_a_rate_limited_lookup_is_retried(fake_cache, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_spent_quota_429_is_sent_once_and_holds_every_lookup(fake_cache, monkeypatch):
+    reset = str(int(time.time()) + 3600)
+    seen = serve_enrichment(
+        monkeypatch,
+        fake_cache,
+        lambda r: httpx.Response(429, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset}),
+    )
+
+    await _resolve(_LOG4SHELL)
+    assert (await _resolve(_OTHER))[_OTHER].cve_id is None
+
+    assert len(seen) == 1
+
+
+@pytest.mark.asyncio
 async def test_a_failed_lookup_is_retried_on_the_next_run(fake_cache, monkeypatch):
     serve_enrichment(monkeypatch, fake_cache, Upstreams(down=frozenset({"api.github.com"})))
     assert (await _resolve(_LOG4SHELL))[_LOG4SHELL].cve_id is None
