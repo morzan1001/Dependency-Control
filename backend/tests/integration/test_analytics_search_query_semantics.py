@@ -744,3 +744,76 @@ async def test_dependency_search_returns_every_field_of_the_dependency(client, d
             **_DEPENDENCY_DETAILS,
         }
     ]
+
+
+_THREAT_INTEL = {
+    "epss_score": 0.4,
+    "epss_percentile": 0.9,
+    "in_kev": True,
+    "kev_ransomware_use": True,
+    "kev_due_date": "2026-01-01",
+    "fixed_version": "1.3.1",
+}
+
+
+def _row(component: str, vulnerability_id: str, **fields) -> dict:
+    return {
+        "component": component,
+        "version": "1.0.0",
+        "project_id": "p",
+        "project_name": "project-p",
+        "scan_id": _SCAN_ID,
+        "finding_id": f"{component}:1.0.0",
+        "finding_type": "vulnerability",
+        "vulnerability_id": vulnerability_id,
+        "epss_score": 0.4,
+        "epss_percentile": 0.9,
+        "in_kev": True,
+        "kev_ransomware": True,
+        "kev_due_date": "2026-01-01",
+        "fixed_version": "1.3.1",
+        "waived": True,
+        **fields,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_page_read_keeps_every_field_a_result_row_shows(client, db, scanned):
+    direct = {
+        **_vulnerability("left-pad", waived=True),
+        "aliases": ["GHSA-aaaa-bbbb-cccc"],
+        "description": "prototype pollution",
+        "details": {**_THREAT_INTEL, "vulnerabilities": [{"id": "CVE-2025-0001", "cvss_score": 7.1}]},
+    }
+    advisory = {"id": _CVE, "aliases": ["GHSA-dddd-eeee-ffff"], "severity": "HIGH", "cvss_score": 8.1}
+    nested = _named("right-pad", "HIGH", {**advisory, **_THREAT_INTEL, "description": "nested", "waived": True})
+    nested["details"]["vulnerabilities"][0]["waiver_reason"] = "accepted upstream"
+    await db.findings.insert_many([direct, nested])
+
+    rows = []
+    for query in ("left-pad", _CVE):
+        resp = await client.get(_VULN_SEARCH_PATH, params={"q": query, "include_waived": "true"}, headers=scanned)
+        assert resp.status_code == 200, resp.text
+        rows += resp.json()["items"]
+
+    assert rows == [
+        _row(
+            "left-pad",
+            "left-pad:1.0.0",
+            aliases=["GHSA-aaaa-bbbb-cccc"],
+            severity="HIGH",
+            cvss_score=7.1,
+            description="prototype pollution",
+            waiver_reason="accepted risk",
+        ),
+        _row(
+            "right-pad",
+            _CVE,
+            aliases=["GHSA-dddd-eeee-ffff"],
+            severity="HIGH",
+            cvss_score=8.1,
+            description="nested",
+            waiver_reason="accepted upstream",
+        ),
+    ]

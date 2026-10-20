@@ -329,6 +329,18 @@ def _build_vuln_query(
     return query, rows
 
 
+# FindingRecord's required fields plus every finding field the result rows read; the rows carry their advisories.
+_VULN_PAGE_PROJECTION = dict.fromkeys(
+    [
+        *("id", "scanners", "finding_id", "aliases", "severity", "component", "version", "project_id", "scan_id"),
+        *("type", "description", "waived", "waiver_reason", "rows", "details.vulnerabilities.cvss_score"),
+        *("details.fixed_version", "details.epss_score", "details.epss_percentile", "details.kev_due_date"),
+        f"details.{DETAILS_KEY_IN_KEV}",
+        f"details.{DETAILS_KEY_KEV_RANSOMWARE}",
+    ],
+    1,
+)
+
 _RowKey = Callable[[VulnerabilitySearchResult], float]
 
 _VULN_SORTS: dict[str, tuple[Any, Any, _RowKey | None]] = {
@@ -399,7 +411,9 @@ async def search_vulnerabilities(
         {"$sort": {"sort_key": direction, "_id": 1}},
     ]
     page, total_count = await _page_ids(finding_repo, query, ordered, skip, limit, FINDINGS_SCAN_TYPE_INDEX)
-    findings = await finding_repo.aggregate([{"$match": {"_id": {"$in": page}}}, {"$addFields": {"rows": rows}}])
+    findings = await finding_repo.aggregate(
+        [{"$match": {"_id": {"$in": page}}}, {"$addFields": {"rows": rows}}, {"$project": _VULN_PAGE_PROJECTION}]
+    )
     by_id = {finding["_id"]: finding for finding in findings}
 
     results = []
