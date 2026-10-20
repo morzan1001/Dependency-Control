@@ -774,18 +774,8 @@ async def compute_update_frequency(
 
     state = _AccumulatorState(track_adoption=release_fetcher is not None)
 
-    analysed: list[dict[str, Any]] = []
+    analysed: list[tuple[dict[str, Any], set[str] | None]] = []
     prev_deps: dict[str, dict[str, str]] = {}
-    prev_outdated: set[str] | None = None
-    latest_outdated: set[str] | None = None
-
-    def _close_bar() -> None:
-        """The previous survivor ended its run, so it is the scan the bar tallies read."""
-        nonlocal latest_outdated
-        state.record_bar_outdated(prev_outdated)
-        if prev_outdated is not None:
-            latest_outdated = prev_outdated
-
     for curr_scan in completed_scans:
         curr_deps = await load_scan_deps(dep_repo, curr_scan["_id"])
         # An SBOM-less scan measured nothing, so it is dropped as in the delta ledger.
@@ -800,9 +790,7 @@ async def compute_update_frequency(
 
         kinds: Counter[str] = Counter()
         if analysed:
-            prev_scan = analysed[-1]
-            if not curr_scan["commit_hash"] or prev_scan["commit_hash"] != curr_scan["commit_hash"]:
-                _close_bar()
+            prev_scan, prev_outdated = analysed[-1]
             state.record_resolved(prev_outdated, curr_outdated, curr_deps, curr_failed)
             kinds = state.absorb_changes(
                 list(version_changes(prev_deps, curr_deps)),
@@ -814,13 +802,16 @@ async def compute_update_frequency(
             _build_timeline_entry(curr_scan["_id"], curr_scan["created_at"], kinds, _measured_count(curr_outdated))
         )
 
-        analysed.append(curr_scan)
+        analysed.append((curr_scan, curr_outdated))
         prev_deps = curr_deps
-        prev_outdated = curr_outdated
 
-    if analysed:
-        _close_bar()
-    bars = fold_runs_into_bars(state.scan_timeline, [scan["commit_hash"] for scan in analysed])
+    latest_outdated: set[str] = set()
+    for run in same_commit_runs(analysed, commit_of=lambda member: member[0]["commit_hash"]):
+        run_outdated = run[-1][1]
+        state.record_bar_outdated(run_outdated)
+        if run_outdated is not None:
+            latest_outdated = run_outdated
+    bars = fold_runs_into_bars(state.scan_timeline, [scan["commit_hash"] for scan, _outdated in analysed])
 
     if len(bars) < MIN_COMPARABLE_BARS:
         return short_window(bars).to_metrics(project_id, project_name, branch=branch)
@@ -830,7 +821,7 @@ async def compute_update_frequency(
         state.package_outdated_counts,
         state.package_latest_info,
         state.dep_type_map,
-        latest_outdated or set(),
+        latest_outdated,
         _final_versions_by_name(prev_deps),
     )
     retained = None if truncated or window_days is None else retained_window(window_days, retention_days)
