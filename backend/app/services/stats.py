@@ -6,6 +6,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError
+from pymongo.errors import ConnectionFailure
 
 from app.core.constants import WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS
 from app.core.log_utils import sanitize_for_log
@@ -256,7 +257,8 @@ async def _recalculate_changed(
             return False
         try:
             await recalculate_project_stats(project_id, db, project_reach, restamp=restamps.get(project_id, ()))
-        except TimeoutError:
+        # Unlike a write refused for one project's data, an unreachable server leaves the change queued for a retry.
+        except (TimeoutError, ConnectionFailure):
             return False
         except Exception:
             failed += 1

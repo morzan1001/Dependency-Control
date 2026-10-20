@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pymongo.errors import AutoReconnect, OperationFailure, ServerSelectionTimeoutError
 
 import app.services.stats as stats_module
 from app.models.waiver import Waiver
@@ -129,7 +130,10 @@ async def test_changes_queued_together_share_one_pass_over_the_projects(monkeypa
     assert sorted(visited) == ["p-1", "p-2"]
 
 
-async def test_one_failing_project_does_not_stop_the_recalculation_of_the_others(monkeypatch):
+@pytest.mark.parametrize(
+    "failure", [RuntimeError("legacy document"), OperationFailure("BSONObj size is invalid")], ids=["code", "write"]
+)
+async def test_one_failing_project_does_not_stop_the_recalculation_of_the_others(monkeypatch, failure):
     db = FakeDatabase()
     for project_id in ("p-1", "p-broken", "p-3"):
         await _seed_project(db, project_id, _GPL)
@@ -138,7 +142,7 @@ async def test_one_failing_project_does_not_stop_the_recalculation_of_the_others
     async def recalculate(project_id, database, reach=None, **kwargs):
         visited.append(project_id)
         if project_id == "p-broken":
-            raise RuntimeError("legacy document")
+            raise failure
 
     monkeypatch.setattr(stats_module, "recalculate_project_stats", recalculate)
 
@@ -147,6 +151,26 @@ async def test_one_failing_project_does_not_stop_the_recalculation_of_the_others
 
     assert visited == ["p-1", "p-broken", "p-3"]
     assert await _queued(db) == 0
+
+
+@pytest.mark.parametrize("outage", [AutoReconnect("connection reset"), ServerSelectionTimeoutError("no primary")])
+async def test_a_database_outage_keeps_the_change_queued_for_the_next_run(monkeypatch, outage):
+    db = FakeDatabase()
+    await _seed_project(db, "p-1", _GPL)
+    await request_waiver_recalc(db, await _store(db, _gpl_waiver()))
+
+    async def unreachable(project_id, database, reach=None, **kwargs):
+        raise outage
+
+    with monkeypatch.context() as patched:
+        patched.setattr(stats_module, "recalculate_project_stats", unreachable)
+        await run_waiver_recalc(db)
+    assert await _queued(db) == 1
+
+    await run_waiver_recalc(db)
+
+    assert await _queued(db) == 0
+    assert (await db.findings.find_one({"_id": "f-p-1"}))["waived"] is True
 
 
 async def test_a_run_that_lost_its_lock_partway_leaves_the_change_queued_for_the_next(monkeypatch):
