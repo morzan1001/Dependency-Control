@@ -39,6 +39,9 @@ _RELEASE_QUALIFIERS = frozenset({"final", "ga", "release"})
 def _token_key(token: str, prev_char: str, next_char: str) -> tuple[int, int | str]:
     if token.isdigit():
         return (_NUMBER, int(token))
+    # apk's -r revision repackages its version, so it ranks below a suffix of the version itself (2.4.1_p1).
+    if token == "r" and prev_char == "-":
+        return (_SUFFIX, "")
     rank = _PRERELEASE_RANK.get(token)
     # A lone letter is a prerelease only before a number (1.0a1); OpenSSL's 1.1.1a and Debian's +b6 follow their base.
     if rank is None or (len(token) == 1 and (prev_char == "+" or not next_char.isdigit())):

@@ -78,6 +78,7 @@ class TestParseVersionKey:
             pytest.param("1.1.1", "1.1.1a", id="openssl-letter-a-is-no-alpha"),
             pytest.param("1.1.1n", "1.1.2", id="openssl-letter-release-below-next-patch"),
             pytest.param("0.6.0", "0.6.0+incompatible", id="go-incompatible-above-bare"),
+            pytest.param("2.4.1-r0", "2.4.1_p1", id="apk-patch-suffix-above-package-revision"),
         ],
     )
     def test_higher_version_compares_as_greater(self, lower, higher):
