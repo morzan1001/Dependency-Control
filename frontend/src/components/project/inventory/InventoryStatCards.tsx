@@ -24,6 +24,7 @@ export function InventoryStatCards({ stats, isLoading }: Readonly<InventoryStatC
   }
   if (!stats) return null
 
+  const leadingEcosystems = stats.ecosystems.slice(0, 3).join(', ')
   const tiles = [
     {
       title: 'Components',
@@ -32,7 +33,12 @@ export function InventoryStatCards({ stats, isLoading }: Readonly<InventoryStatC
       description: `${stats.direct_count} direct · ${stats.transitive_count} transitive`,
     },
     { title: 'Licenses', value: stats.license_count.toLocaleString(), icon: Scale, description: 'Distinct licenses, unknown included' },
-    { title: 'Ecosystems', value: stats.ecosystem_count.toLocaleString(), icon: Boxes, description: 'Distinct ecosystems, unknown included' },
+    {
+      title: 'Ecosystems',
+      value: stats.ecosystem_count.toLocaleString(),
+      icon: Boxes,
+      description: stats.ecosystems.length > 3 ? `${leadingEcosystems}, …` : leadingEcosystems || 'Distinct ecosystems, unknown included',
+    },
     {
       title: 'Crypto Assets',
       value: stats.cbom_evaluated ? stats.crypto_asset_count.toLocaleString() : '—',

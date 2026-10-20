@@ -12,7 +12,7 @@ vi.mock('@/hooks/queries/use-projects')
 const stats = {
   scan: { scan_id: 's1', branch: 'main', created_at: '2026-08-10T12:00:00Z', commit_hash: 'abcdef1234' },
   components_total: 42, direct_count: 10, transitive_count: 32,
-  license_count: 7, ecosystem_count: 2, crypto_asset_count: 3, cbom_evaluated: true,
+  license_count: 7, ecosystem_count: 2, ecosystems: ['npm', 'pypi'], crypto_asset_count: 3, cbom_evaluated: true,
 }
 
 function renderInventory() {

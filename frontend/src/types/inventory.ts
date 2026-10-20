@@ -12,6 +12,7 @@ export interface InventoryStats {
   transitive_count: number;
   license_count: number;
   ecosystem_count: number;
+  ecosystems: string[];
   crypto_asset_count: number;
   cbom_evaluated: boolean;
 }
