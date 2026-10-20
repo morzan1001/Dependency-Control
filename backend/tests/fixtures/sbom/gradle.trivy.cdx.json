@@ -1,0 +1,134 @@
+{
+ "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
+ "bomFormat": "CycloneDX",
+ "specVersion": "1.7",
+ "serialNumber": "urn:uuid:b1dd840c-4758-4e45-9169-1086acb98e6c",
+ "version": 1,
+ "metadata": {
+  "timestamp": "2026-10-20T20:19:33+00:00",
+  "tools": {
+   "components": [
+    {
+     "type": "application",
+     "manufacturer": {
+      "name": "Aqua Security Software Ltd."
+     },
+     "group": "aquasecurity",
+     "name": "trivy",
+     "version": "0.76.0"
+    }
+   ]
+  },
+  "component": {
+   "bom-ref": "ef729087-7714-407c-859e-146ac98099ac",
+   "type": "application",
+   "name": "/src/gradle",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:SchemaVersion",
+     "value": "2"
+    }
+   ]
+  }
+ },
+ "components": [
+  {
+   "bom-ref": "5b00f0e2-3839-4ad9-b042-85d3d79b9865",
+   "type": "application",
+   "name": "gradle.lockfile",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:Class",
+     "value": "lang-pkgs"
+    },
+    {
+     "name": "aquasecurity:trivy:Type",
+     "value": "gradle"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:maven/ch.qos.logback/logback-classic@1.5.6",
+   "type": "library",
+   "group": "ch.qos.logback",
+   "name": "logback-classic",
+   "version": "1.5.6",
+   "purl": "pkg:maven/ch.qos.logback/logback-classic@1.5.6",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "ch.qos.logback:logback-classic:1.5.6"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "gradle"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:maven/ch.qos.logback/logback-core@1.5.6",
+   "type": "library",
+   "group": "ch.qos.logback",
+   "name": "logback-core",
+   "version": "1.5.6",
+   "purl": "pkg:maven/ch.qos.logback/logback-core@1.5.6",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "ch.qos.logback:logback-core:1.5.6"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "gradle"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:maven/org.slf4j/slf4j-api@2.0.13",
+   "type": "library",
+   "group": "org.slf4j",
+   "name": "slf4j-api",
+   "version": "2.0.13",
+   "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.13",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "org.slf4j:slf4j-api:2.0.13"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "gradle"
+    }
+   ]
+  }
+ ],
+ "dependencies": [
+  {
+   "ref": "5b00f0e2-3839-4ad9-b042-85d3d79b9865",
+   "dependsOn": [
+    "pkg:maven/ch.qos.logback/logback-classic@1.5.6",
+    "pkg:maven/ch.qos.logback/logback-core@1.5.6",
+    "pkg:maven/org.slf4j/slf4j-api@2.0.13"
+   ]
+  },
+  {
+   "ref": "ef729087-7714-407c-859e-146ac98099ac",
+   "dependsOn": [
+    "5b00f0e2-3839-4ad9-b042-85d3d79b9865"
+   ]
+  },
+  {
+   "ref": "pkg:maven/ch.qos.logback/logback-classic@1.5.6",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:maven/ch.qos.logback/logback-core@1.5.6",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:maven/org.slf4j/slf4j-api@2.0.13",
+   "dependsOn": []
+  }
+ ],
+ "vulnerabilities": []
+}

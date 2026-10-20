@@ -150,7 +150,11 @@ def _graph_entries(value: Any, field: str) -> list[dict[str, Any]]:
 
 
 def _resolve_directness(
-    forward: dict[Any, list[Any]], anchors: set[Any], transparent: set[Any], project: set[Any]
+    forward: dict[Any, list[Any]],
+    anchors: set[Any],
+    transparent: set[Any],
+    project: set[Any],
+    flat: set[Any] | frozenset[Any] = frozenset(),
 ) -> tuple[Callable[[Any], tuple[bool, bool]], set[Any]]:
     targets = {child for children in forward.values() for child in children}
     subjects = {ref for ref in anchors if forward.get(ref)}
@@ -162,14 +166,19 @@ def _resolve_directness(
         seeds = [ref for ref in roots if ref not in subjects]
     seeds += [child for ref in subjects for child in forward[ref]]
     direct: set[Any] = set()
+    guessed: set[Any] = set()
     while seeds:
         ref = seeds.pop()
         if ref not in direct:
             direct.add(ref)
+            # A lock-file node without a graph lists transitive packages beside the direct ones.
+            if ref in flat:
+                guessed.update(forward[ref])
             # Aggregator and OS-descriptor nodes are no dependency layer of their own.
-            if ref in transparent:
+            elif ref in transparent:
                 seeds.extend(forward.get(ref, ()))
     resolved = dict.fromkeys(targets, (False, inferred))
+    resolved.update(dict.fromkeys(guessed, (True, True)))
     resolved.update(dict.fromkeys(direct, (True, inferred)))
     resolved.update(dict.fromkeys(anchors - subjects, (True, False)))
     return lambda ref: resolved.get(ref, (True, True)), subjects
@@ -449,9 +458,10 @@ class SBOMParser:
     @classmethod
     def _cyclonedx_graph_roles(
         cls, components: list[dict[str, Any]], forward: dict[Any, list[Any]]
-    ) -> tuple[set[Any], set[Any], set[Any]]:
+    ) -> tuple[set[Any], set[Any], set[Any], set[Any]]:
         packages: set[str] = set()
         trivy_roots: set[Any] = set()
+        flat: set[Any] = set()
         refs_by_purl: dict[str, list[str]] = {}
         syft_roots_by_lock: dict[str, list[str]] = {}
         targets = set().union(*forward.values())
@@ -474,6 +484,8 @@ class SBOMParser:
                     and any(prop in _TRIVY_ROOT_PACKAGE_TYPES for prop in props)
                 ):
                     trivy_roots.add(children[0])
+                elif children and not any(forward.get(child) for child in children):
+                    flat.add(ref)
                 continue
             packages.add(ref)
             if forward.get(ref) and ref not in targets and any(prop in _SYFT_PROJECT_ROOT_PROPERTIES for prop in props):
@@ -483,7 +495,7 @@ class SBOMParser:
         trivy_roots.update(*(refs for refs in refs_by_purl.values() if trivy_roots.intersection(refs)))
         # A second root in one lock file (an unlinked npm peer, a uv dev group) leaves the project ambiguous.
         project = {roots[0] for roots in syft_roots_by_lock.values() if len(roots) == 1}
-        return set(forward).union(targets) - packages, trivy_roots, project
+        return set(forward).union(targets) - packages, trivy_roots, project, flat
 
     def _parse_cyclonedx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         metadata = sbom.get("metadata", {})
@@ -510,8 +522,8 @@ class SBOMParser:
         result.crypto_assets = parse_crypto_components(components)
 
         forward = self._build_cyclonedx_deps_graph(sbom.get("dependencies") or [])
-        transparent, trivy_roots, project = self._cyclonedx_graph_roles(components, forward)
-        directness, subjects = _resolve_directness(forward, main_refs, transparent | trivy_roots, project)
+        transparent, trivy_roots, project, flat = self._cyclonedx_graph_roles(components, forward)
+        directness, subjects = _resolve_directness(forward, main_refs, transparent | trivy_roots, project, flat)
         # A tuple compares by equality, so an unhashable bom-ref cannot fail the whole document.
         root_refs = (*main_refs, *trivy_roots, *subjects)
 

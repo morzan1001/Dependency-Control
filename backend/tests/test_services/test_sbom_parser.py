@@ -241,15 +241,21 @@ class TestDirectnessOfRealGraphs:
         assert _directness(result) == expected
         assert "root-component" not in result.skipped_reasons
 
-    def test_trivy_go_binary_without_main_module_keeps_every_package(self):
+    def test_trivy_go_binary_without_main_module_keeps_every_package_as_a_derived_direct_one(self):
         # gofmt (Go toolchain) and a `go build main.go` binary carry no main module, so trivy gives them no root.
         result = parse_sbom(_fixture("gobinnomain.trivy.cdx.json"))
 
         assert sorted((dep.name, dep.direct, dep.direct_inferred) for dep in result.dependencies) == [
-            ("github.com/google/uuid", True, False),
-            ("stdlib", True, False),
+            ("github.com/google/uuid", True, True),
+            ("stdlib", True, True),
         ]
         assert "root-component" not in result.skipped_reasons
+
+    def test_trivy_lock_file_without_a_graph_reports_its_packages_as_derived_direct(self):
+        # trivy 0.76.0 output of a gradle.lockfile with no Gradle cache to read POMs from.
+        result = parse_sbom(_fixture("gradle.trivy.cdx.json"))
+
+        assert _directness(result) == dict.fromkeys(("logback-classic", "logback-core", "slf4j-api"), (True, True))
 
     @pytest.mark.parametrize(
         ("fixture", "expected", "skipped_roots"),
