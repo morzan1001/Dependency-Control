@@ -8,6 +8,7 @@ import type { ReportFramework } from "@/types/compliance";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import { NewReportDialog } from "./NewReportDialog";
 import { ReportDetailDrawer } from "./ReportDetailDrawer";
+import { ReportScope } from "./ReportScope";
 
 export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultFramework?: ReportFramework }>) {
   const newReportDialog = useDialogState(defaultFramework !== undefined);
@@ -68,7 +69,7 @@ export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultF
                 <td className="p-2">{r.format.toUpperCase()}</td>
                 <td className="p-2"><ReportStatusBadge status={r.status} /></td>
                 <td className="p-2 text-xs">{formatDateTime(r.requested_at)}</td>
-                <td className="p-2 text-xs">{r.scope}{r.scope_id ? `: ${r.scope_name ?? r.scope_id}` : ""}</td>
+                <td className="p-2 text-xs"><ReportScope report={r} /></td>
               </tr>
             ))}
           </tbody>
