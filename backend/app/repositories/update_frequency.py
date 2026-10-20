@@ -127,7 +127,7 @@ def _commit_token(scan: dict[str, Any]) -> Any:
 async def _newest_scans(
     collection: AsyncIOMotorCollection, project_ids: Sequence[str], scope: dict[str, Any]
 ) -> AsyncIterator[tuple[tuple[str, str], dict[str, Any]]]:
-    """Each project's newest WINDOW_HARD_LIMIT scans off the tip index, as no read path folds more of a branch."""
+    """Each project's newest WINDOW_HARD_LIMIT scans off the tip index: older activity is no recent branch to elect."""
     for project_id in project_ids:
         cursor = collection.find({"project_id": project_id, **scope}, _ACTIVITY_PROJECTION).sort(SCANS_TIP_SORT)
         async for doc in cursor.limit(WINDOW_HARD_LIMIT):
