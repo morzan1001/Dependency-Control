@@ -15,7 +15,7 @@ from app.api.v1.helpers import (
     get_team_with_access,
     visible_teams_filter,
 )
-from app.api.v1.helpers.teams import enrich_teams_with_usernames
+from app.api.v1.helpers.teams import enrich_teams_with_usernames, mark_sync_owned_members, syncing_sources
 from app.api.v1.helpers.vcs_instances import get_or_404, refused_listing
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
@@ -25,7 +25,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
 )
 from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, parse_sort_direction
-from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, TEAM_SOURCE_SEPARATOR, team_source
+from app.core.constants import TEAM_ROLE_ADMIN, team_source
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember, binding_of
@@ -105,6 +105,7 @@ async def read_teams(
         final_query, sort_by, parse_sort_direction(sort_order), collation=CASE_INSENSITIVE
     )
     await enrich_teams_with_usernames(teams, db)
+    await mark_sync_owned_members(teams, db)
     return teams
 
 
@@ -321,13 +322,8 @@ async def _ensure_hand_editable_member(team: Team, user_id: str, db: AsyncIOMoto
     member = next((m for m in team.members if m.user_id == user_id), None)
     if member is None:
         raise HTTPException(status_code=404, detail="User not in team")
-    provider, _, instance_id = member.source.partition(TEAM_SOURCE_SEPARATOR)
-    binding = next((b for b in team.bindings if b.provider == provider and b.instance_id == instance_id), None)
-    if binding is None:
-        return
-    instances = GitHubInstanceRepository(db) if provider == TEAM_SOURCE_GITHUB else GitLabInstanceRepository(db)
-    instance = await instances.get_by_id(instance_id)
-    if instance is not None and instance.sync_teams:
+    binding = next((b for b in team.bindings if team_source(b.provider, b.instance_id) == member.source), None)
+    if binding is not None and await syncing_sources([(binding.provider, binding.instance_id)], db):
         raise HTTPException(
             status_code=409,
             detail=f"This member is synced from {_binding_conflict(binding)}; change their membership there",

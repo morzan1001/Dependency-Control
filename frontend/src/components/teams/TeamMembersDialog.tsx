@@ -7,6 +7,7 @@ import { canManageTeamMembers } from '@/lib/team-roles';
 import { PROVIDER_LABEL, sourceLabel } from '@/lib/team-binding';
 import { Button } from '@/components/ui/button';
 import { UserMinus, Loader2 } from 'lucide-react';
+import type { ReactNode } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -30,6 +31,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { toast } from "sonner"
 import { TEAM_ROLES } from '@/lib/constants';
 
@@ -43,6 +50,21 @@ interface TeamMembersDialogProps {
 function syncSource(source: string, instanceNames: ReadonlyMap<string, string>): string {
   const [provider, instanceId] = source.split(':');
   return provider in PROVIDER_LABEL ? sourceLabel(provider as BindingProvider, instanceId, instanceNames) : source;
+}
+
+// A disabled control fires no pointer events, so the tooltip hangs on a focusable wrapper.
+function SyncLock({ reason, children }: Readonly<{ reason: string | null; children: ReactNode }>) {
+  if (!reason) return children;
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span tabIndex={0} className="inline-flex">{children}</span>
+        </TooltipTrigger>
+        <TooltipContent>{reason}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
 }
 
 export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMembersDialogProps>) {
@@ -81,66 +103,74 @@ export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMember
               <TableBody>
                 {team?.members.map((member) => {
                   const isSelf = member.user_id === currentUser?.id;
-                  const canEditRole = canManage && !isSelf;
+                  const canEditRole = canManage && !isSelf && !member.sync_owned;
+                  const synced = member.source && member.source !== 'manual' ? syncSource(member.source, instanceNames) : null;
+                  const syncLock = member.sync_owned ? `Synced from ${synced}; change their membership there` : null;
+                  const name = member.username || 'Unknown';
                   return (
                     <TableRow key={member.user_id}>
                       <TableCell>
                         <div className="flex flex-col min-w-0">
-                          <span className="font-medium truncate">{member.username || 'Unknown'}</span>
+                          <span className="font-medium truncate">{name}</span>
                           <span className="text-xs text-muted-foreground break-all">{member.user_id}</span>
-                          {member.source && member.source !== 'manual' && (
-                            <span className="text-xs text-muted-foreground">Synced from {syncSource(member.source, instanceNames)}</span>
+                          {synced && (
+                            <span className="text-xs text-muted-foreground">Synced from {synced}</span>
                           )}
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Select
-                          value={member.role}
-                          onValueChange={(value) => {
-                              if (team) {
-                                  updateMemberMutation.mutate(
-                                    { teamId: team.id, userId: member.user_id, role: value },
-                                    { onSuccess: () => toast.success("Member role updated") }
-                                  );
-                              }
-                          }}
-                          disabled={!canEditRole || updateMemberMutation.isPending}
-                        >
-                          <SelectTrigger className="w-[120px]" aria-label={`${member.username || 'Unknown'}: Role`}>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {TEAM_ROLES.map((role) => (
-                              <SelectItem key={role.value} value={role.value}>
-                                {role.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <SyncLock reason={syncLock}>
+                          <Select
+                            value={member.role}
+                            onValueChange={(value) => {
+                                if (team) {
+                                    updateMemberMutation.mutate(
+                                      { teamId: team.id, userId: member.user_id, role: value },
+                                      { onSuccess: () => toast.success("Member role updated") }
+                                    );
+                                }
+                            }}
+                            disabled={!canEditRole || updateMemberMutation.isPending}
+                          >
+                            <SelectTrigger className="w-[120px]" aria-label={`${name}: Role`}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {TEAM_ROLES.map((role) => (
+                                <SelectItem key={role.value} value={role.value}>
+                                  {role.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </SyncLock>
                       </TableCell>
                       {canManage && (
                         <TableCell>
                           {canManage && (!isSelf || adminCount > 1) && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-destructive"
-                              disabled={removeMemberMutation.isPending}
-                              onClick={() => {
-                                  if (team) {
-                                      removeMemberMutation.mutate(
-                                        { teamId: team.id, userId: member.user_id },
-                                        { onSuccess: () => toast.success("Member removed") }
-                                      );
-                                  }
-                              }}
-                            >
-                              {removeMemberMutation.isPending ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <UserMinus className="h-4 w-4" />
-                              )}
-                            </Button>
+                            <SyncLock reason={syncLock}>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive"
+                                aria-label={`Remove ${name}`}
+                                disabled={member.sync_owned || removeMemberMutation.isPending}
+                                onClick={() => {
+                                    if (team) {
+                                        removeMemberMutation.mutate(
+                                          { teamId: team.id, userId: member.user_id },
+                                          { onSuccess: () => toast.success("Member removed") }
+                                        );
+                                    }
+                                }}
+                              >
+                                {removeMemberMutation.isPending ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <UserMinus className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </SyncLock>
                           )}
                         </TableCell>
                       )}

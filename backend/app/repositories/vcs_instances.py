@@ -1,3 +1,4 @@
+from collections.abc import Collection
 from typing import Any
 
 from app.models.base import VcsInstanceModel
@@ -14,6 +15,10 @@ class VcsInstanceRepository[T: VcsInstanceModel](BaseRepository[T]):
     async def get_usable(self, instance_id: str) -> T | None:
         instance = await self.get_by_id(instance_id)
         return instance if instance and instance.is_active and instance.access_token else None
+
+    async def team_syncing_ids(self, instance_ids: Collection[str]) -> set[str]:
+        docs = await self.find_all_raw({"_id": {"$in": list(instance_ids)}, "sync_teams": True}, {"_id": 1})
+        return {str(doc["_id"]) for doc in docs}
 
     async def get_by_url(self, url: str) -> T | None:
         return await self.find_one({"url": url.rstrip("/")})

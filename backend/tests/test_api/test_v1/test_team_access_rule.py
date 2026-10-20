@@ -245,3 +245,35 @@ class TestTeamWrites:
         await teams.remove_team_member("t-1", "u-synced", _user(Permissions.TEAM_UPDATE), db)
 
         assert [m["user_id"] for m in (await db.teams.find_one({"_id": "t-1"}))["members"]] == ["u-a"]
+
+
+_GITLAB_BINDING = {"provider": "gitlab", "instance_id": "gl-1", "external_id": 12, "key": "gitlab:gl-1:12"}
+
+
+class TestSyncOwnedMembers:
+    """The members dialog offers no edit the API would refuse with 409."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("sync_teams", "bindings", "owned"),
+        [
+            (True, (_GITLAB_BINDING,), {"u-synced"}),
+            (False, (_GITLAB_BINDING,), set()),
+            (True, (), set()),
+        ],
+        ids=["live sync", "sync off", "unbound"],
+    )
+    async def test_a_member_is_marked_exactly_when_a_live_sync_owns_the_entry(self, sync_teams, bindings, owned):
+        db = await _db(
+            members=(_member("u-a", TEAM_ROLE_ADMIN), _member("u-synced", source=_GITLAB)), bindings=bindings
+        )
+        await db.gitlab_instances.insert_one(
+            {"_id": "gl-1", "name": "gl", "url": "https://gitlab.corp", "sync_teams": sync_teams, "created_by": "u-a"}
+        )
+        caller = _user(Permissions.TEAM_READ_ALL)
+
+        listed = next(team for team in await teams.read_teams(caller, db) if team["_id"] == "t-1")
+        single = await teams.read_team("t-1", caller, db)
+
+        assert {m["user_id"] for m in listed["members"] if m["sync_owned"]} == owned
+        assert {m.user_id for m in single.members if m.sync_owned} == owned
