@@ -196,6 +196,8 @@ class ProjectUpdate(BaseModel):
         "github_pr_comments_enabled",
     )(reject_null)
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class ProjectMemberInvite(BaseModel):
     email: str = Field(
