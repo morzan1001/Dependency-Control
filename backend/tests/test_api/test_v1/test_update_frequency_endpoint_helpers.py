@@ -475,6 +475,24 @@ class TestProjectEndpointCaching:
         assert live.await_count == 2
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(("re_finalised", "computes"), [("s02-twin", 2), ("s02", 1)])
+    async def test_a_same_millisecond_twin_at_the_stretch_edge_counts_only_if_the_walk_reads_it(
+        self, re_finalised: str, computes: int
+    ):
+        # Two bars read ten scans; the walk breaks the tie at the tenth by _id descending, so it reads the twin.
+        db = FakeDatabase()
+        await db.scans.insert_many([_scan(f"s{i:02d}", days_ago=20 - i) for i in range(12)])
+        await db.scans.insert_one(_scan("s02-twin", days_ago=18))
+        live = AsyncMock(return_value=_metrics("live"))
+
+        with _project_patched(FakeCache(), live):
+            await _view(db, max_scans=2)
+            await db.scans.update_one({"_id": re_finalised}, {"$set": {"completed_at": _NOW}})
+            await _view(db, max_scans=2)
+
+        assert live.await_count == computes
+
+    @pytest.mark.asyncio
     async def test_a_re_finalised_scan_misses(self):
         db = await _scanned_db()
         live = AsyncMock(return_value=_metrics("live"))

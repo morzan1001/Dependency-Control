@@ -286,6 +286,8 @@ async def test_the_cache_token_reads_only_the_stretch_the_walk_reads(db, monkeyp
     await create_indexes(db)
     for index in range(30):
         await _scan(db, f"s{index:02d}", "p-a", "main", _at(index), commit_hash=f"c{index}", completed_at=_at(index))
+    # The walk breaks this tie by _id descending, so the twin, not s25, closes its stretch of five.
+    await _scan(db, "s25-twin", "p-a", "main", _at(25), commit_hash="c25", completed_at=_at(25))
     pipelines: list[list[dict[str, Any]]] = []
     real_aggregate = ScanRepository.aggregate
 
@@ -303,3 +305,5 @@ async def test_the_cache_token_reads_only_the_stretch_the_walk_reads(db, monkeyp
     )
     stats = explain.get("executionStats") or explain["stages"][0]["$cursor"]["executionStats"]
     assert stats["totalDocsExamined"] == 5
+    await db.scans.update_one({"_id": "s25-twin"}, {"$set": {"completed_at": _at(60)}})
+    assert await _branch_scan_token(db, "p-a", "main", None, 5) == f"5@{_at(60)}@{_at(25)}"

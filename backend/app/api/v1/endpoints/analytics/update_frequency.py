@@ -18,7 +18,7 @@ from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.api.v1.helpers.teams import resolve_team_names, team_refs
 from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.config import settings
-from app.core.constants import SCANS_TIP_SORT, UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS
+from app.core.constants import UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS
 from app.core.permissions import Permissions
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
@@ -42,6 +42,7 @@ from app.schemas.analytics import (
 from app.services.release_history import DepsDevReleaseHistoryFetcher
 from app.services.update_frequency import (
     MIN_COMPARABLE_BARS,
+    WALK_SCAN_SORT,
     compute_update_frequency,
     compute_update_frequency_comparison,
     elect_primary_branch,
@@ -127,8 +128,8 @@ async def _branch_scan_token(
     rows = await ScanRepository(db).aggregate(
         [
             {"$match": match},
-            # The tip order is indexed, so the read stops at the walk's stretch instead of grouping the branch.
-            {"$sort": dict(SCANS_TIP_SORT)},
+            # The walk's order, off the branch index, so the read stops at its stretch instead of grouping the branch.
+            {"$sort": dict(WALK_SCAN_SORT)},
             {"$limit": limit},
             {
                 "$group": {

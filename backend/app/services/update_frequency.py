@@ -727,6 +727,9 @@ def fold_runs_into_bars(entries: Sequence[ScanTimelineEntry], commits: Sequence[
 # A bar can hold a whole run, so over-fetch lest a CI retry burst starves the window below max_scans.
 _BAR_FETCH_HEADROOM = 5
 
+# The delta ledger's chain order, so both read paths cut a same-millisecond tie at the same scan.
+WALK_SCAN_SORT: list[tuple[str, int]] = [("created_at", -1), ("_id", -1)]
+
 
 def walk_fetch_limit(max_scans: int, since: datetime | None) -> int:
     """With since set, the calendar window (capped by WINDOW_HARD_LIMIT) applies and max_scans is ignored."""
@@ -744,7 +747,7 @@ async def _load_completed_scans(
     # Filtered in the query so the limit counts only usable scans, even when the newest ones failed.
     docs = await scan_repo.find_many_raw(
         {**usable_scan_match(since), "project_id": project_id, "branch": branch},
-        sort=[("created_at", -1), ("_id", -1)],
+        sort=WALK_SCAN_SORT,
         limit=fetch_limit,
         projection={"_id": 1, "created_at": 1, "commit_hash": 1},
     )
