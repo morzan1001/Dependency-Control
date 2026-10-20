@@ -35,6 +35,7 @@ _BOTH_PERMISSIONS = [Permissions.MCP_ACCESS, Permissions.ANALYZE_ADHOC]
 _NO_KEYS = 0
 _ONE_KEY = 1
 _OVER_THE_PAGE = 3
+_A_DAY = timedelta(days=1)
 
 
 def _headers(permissions, subject=_OWNER):
@@ -224,6 +225,22 @@ async def test_a_saturated_listing_names_the_keys_it_did_not_show(client, db):
         "returned": LIST_LIMIT,
         "total": LIST_LIMIT + _OVER_THE_PAGE,
     }
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_revoked_keys_never_push_a_live_key_off_the_listing(client, db):
+    repo = ApiKeyRepository(db)
+    live, _ = await repo.create(_OWNER, "older-live", _BOTH_SURFACES, _EXPIRY_DAYS)
+    await db[_COLLECTION].update_one({"_id": live["_id"]}, {"$set": {"created_at": live["created_at"] - _A_DAY}})
+    for index in range(LIST_LIMIT):
+        doc, _ = await repo.create(_OWNER, f"{_KEY_NAME}-{index}", _BOTH_SURFACES, _EXPIRY_DAYS)
+        await repo.revoke(doc["_id"], _OWNER)
+
+    listed = await client.get(f"{_BASE}/", headers=_headers(_BOTH_PERMISSIONS))
+
+    assert listed.status_code == _OK, listed.text
+    assert listed.json()["keys"][0]["id"] == live["_id"]
 
 
 @pytest.mark.asyncio

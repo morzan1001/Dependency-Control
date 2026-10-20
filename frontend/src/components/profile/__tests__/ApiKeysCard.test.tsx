@@ -346,9 +346,8 @@ describe("ApiKeysCard", () => {
     expect(
       await screen.findByText(
         new RegExp(
-          `Showing the newest ${LIST_PAGE} of ${TOTAL_KEYS} keys\\. ` +
-            "Revoked keys keep their place in the listing, so the " +
-            `${UNREACHABLE_KEYS} older ones cannot be reached from here\\.`,
+          `Showing ${LIST_PAGE} of ${TOTAL_KEYS} keys, the ones you have not revoked first; ` +
+            `the ${UNREACHABLE_KEYS} left out cannot be reached from here\\.`,
         ),
       ),
     ).toBeInTheDocument();
@@ -362,7 +361,7 @@ describe("ApiKeysCard", () => {
       await screen.findByText(/Failed to load your API keys/i),
     ).toBeInTheDocument();
     expect(screen.queryByText(/No API keys yet/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Showing the newest/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Showing \d+ of/i)).not.toBeInTheDocument();
   });
 
   it("keeps the rows and calls them stale when the refetch after a revoke fails", async () => {
@@ -382,7 +381,7 @@ describe("ApiKeysCard", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(MCP_KEY_NAME)).toBeInTheDocument();
     expect(
-      screen.getByText(new RegExp(`Showing the newest ${LIST_PAGE}`)),
+      screen.getByText(new RegExp(`Showing ${LIST_PAGE} of`)),
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/Failed to load your API keys/i),

@@ -64,7 +64,10 @@ class ApiKeyRepository:
         return doc, token
 
     async def list_for_user(self, user_id: str) -> tuple[list[dict[str, Any]], int]:
-        return await find_window(self.collection, {"user_id": user_id}, LIST_LIMIT, sort=[("created_at", -1)])
+        # A null revoked_at sorts first, so revoked keys can never push a live key off the page.
+        return await find_window(
+            self.collection, {"user_id": user_id}, LIST_LIMIT, sort=[("revoked_at", 1), ("created_at", -1)]
+        )
 
     async def get_by_plaintext(self, plaintext: str) -> dict[str, Any] | None:
         if not plaintext.startswith(_TOKEN_PREFIX):
