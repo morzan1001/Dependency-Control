@@ -20,9 +20,10 @@ from app.core.constants import (
     TOP_PYPI_PACKAGES_URL,
 )
 from app.models.crypto_asset import CryptoAsset
+from app.models.finding import FindingType
 from app.models.system import SystemSettings
 from app.models.waiver import Waiver
-from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport
+from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport, WaiversApplied
 from app.schemas.bearer import BearerFinding
 from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
 from app.schemas.enrichment import VulnerabilityEnrichment
@@ -73,7 +74,6 @@ _PARTIAL_COVERAGE = "partial coverage: {reason}"
 _ENRICHMENT = "epss_kev"
 _NO_ENRICHABLE_IDS = "no CVE or GHSA id to look up"
 _REACHABILITY = "reachability"
-_VULNERABILITY = "vulnerability"
 _NO_COMPONENTS = "no components could be parsed (detected format: {sbom_format})"
 _DROPPED_COMPONENTS = "{count} component(s) dropped by the parser ({reasons})"
 
@@ -178,9 +178,6 @@ _ADHOC_CRYPTO_RULES = tuple(r for r in load_seed_rules() if r.enabled and r.find
 _NO_CALLGRAPH = "no callgraph supplied"
 # Identifies the graph within this request only; nothing here is stored or looked up by it.
 _POSTED_CALLGRAPH_ID = "posted"
-
-_WAIVERS_GLOBAL = "global"
-_WAIVERS_NONE = "none"
 
 
 def _posted_entries(name: str, payload: dict[str, Any], key: str) -> list[Any] | None:
@@ -381,9 +378,8 @@ def _aggregate_crypto_rules(
 
 
 async def _enrich_vulnerabilities(
-    records: list[dict[str, Any]], report: AnalyzerReport
+    records: list[dict[str, Any]], vulnerabilities: list[dict[str, Any]], report: AnalyzerReport
 ) -> tuple[dict[str, Any], dict[str, VulnerabilityEnrichment]]:
-    vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
     threat_intel: dict[str, VulnerabilityEnrichment] = {}
     sends = sends_ids(vulnerabilities)
     try:
@@ -421,7 +417,7 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> CallgraphMinimal:
 
 
 def _run_reachability(
-    records: list[dict[str, Any]],
+    vulnerabilities: list[dict[str, Any]],
     callgraph_payload: dict[str, Any] | None,
     languages: ComponentLanguages,
     report: AnalyzerReport,
@@ -437,8 +433,6 @@ def _run_reachability(
         _record_errored(report, _REACHABILITY, str(exc))
         return None
 
-    # Same dict objects as records, so store_reachability's in-place mirroring reaches every later stage.
-    vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
     enrich_findings_with_reachability(vulnerabilities, [callgraph], languages)
     _record_ran(report, _REACHABILITY)
     return dict(build_reachability_summary(vulnerabilities, [callgraph]))
@@ -447,7 +441,11 @@ def _run_reachability(
 def _apply_vulnerability_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:
     scope = waiver_criteria(waiver)
     for record in records:
-        if record.get("type") == _VULNERABILITY and record_matches(record, scope) and waive_advisories(record, waiver):
+        if (
+            record.get("type") == FindingType.VULNERABILITY
+            and record_matches(record, scope)
+            and waive_advisories(record, waiver)
+        ):
             roll_up_advisories(record)
 
 
@@ -504,22 +502,26 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     for record in records:
         # Findings are addressed by ``finding_id`` everywhere the scan-backed API exposes them.
         record["finding_id"] = record["id"]
+    # Same dict objects as records, so every stage's in-place enrichment reaches the response.
+    vulnerabilities = [record for record in records if record["type"] == FindingType.VULNERABILITY]
 
-    epss_kev_summary, threat_intel = await _enrich_vulnerabilities(records, report)
+    epss_kev_summary, threat_intel = await _enrich_vulnerabilities(records, vulnerabilities, report)
 
     # One row per package across every posted SBOM, the invariant a stored scan's inventory holds.
     merged, _ = merge_duplicate_dependencies([dep for pi in parsed_inputs for dep in pi.parsed.dependencies])
     components = [dep.model_dump() for dep in merged]
     languages = component_language_map(components)
-    reachability_summary = await asyncio.to_thread(_run_reachability, records, request.callgraph, languages, report)
+    reachability_summary = await asyncio.to_thread(
+        _run_reachability, vulnerabilities, request.callgraph, languages, report
+    )
 
     waived_count = 0
-    waivers_applied = _WAIVERS_NONE
+    waivers_applied: WaiversApplied = "none"
     if request.apply_global_waivers:
         from app.repositories.waivers import WaiverRepository
 
         waived_count = apply_global_waivers_in_memory(records, await WaiverRepository(db).find_active_global())
-        waivers_applied = _WAIVERS_GLOBAL
+        waivers_applied = "global"
 
     # After the waivers, so an accepted risk neither scores nor generates work to do.
     stats = compute_stats(records, languages)
