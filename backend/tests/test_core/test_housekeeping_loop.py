@@ -11,13 +11,13 @@ from tests.mocks.fake_mongo import FakeDatabase
 _LABELS = {
     "recover_stuck_scans": "Stuck scan recovery",
     "check_scheduled_rescans": "Scheduled re-scan check",
+    "update_db_stats": "Database statistics",
+    "update_archive_stats": "Archive statistics",
+    "update_cache_stats": "Cache statistics",
     "run_housekeeping": "Housekeeping task",
     "sync_branch_status": "Branch status sync",
 }
 _QUIET_TASKS = (
-    "update_db_stats",
-    "update_archive_stats",
-    "update_cache_stats",
     "run_waiver_recalc",
     "_run_retention",
     "reconcile_update_frequency_ledger",
@@ -61,16 +61,20 @@ async def test_a_failing_task_is_logged_by_label_and_the_loop_runs_the_others(mo
         await housekeeping.housekeeping_loop(AnalysisWorkerManager(num_workers=1))
 
     assert ran == list(_LABELS)
-    assert [record.getMessage() for record in caplog.records] == [f"{_LABELS[failing]} failed: mongo unreachable"]
+    assert [(record.getMessage(), record.exc_info is not None) for record in caplog.records] == [
+        (f"{_LABELS[failing]} failed: mongo unreachable", True)
+    ]
 
 
 @pytest.mark.asyncio
-async def test_each_pass_hands_the_archive_count_its_bytes_were_summed_at_to_the_next(monkeypatch):
+async def test_each_pass_hands_the_archive_count_its_bytes_were_summed_at_to_the_next_and_a_failure_none(monkeypatch):
     handed: list[int | None] = []
-    passes = iter(range(3))
+    passes = iter(range(4))
 
     async def _update_archive_stats(_db: Any, summed_at: int | None) -> int:
         handed.append(summed_at)
+        if len(handed) == 3:
+            raise RuntimeError("mongo unreachable")
         return len(handed) * 10
 
     async def _noop(*_args: Any) -> None:
@@ -80,7 +84,7 @@ async def test_each_pass_hands_the_archive_count_its_bytes_were_summed_at_to_the
         return FakeDatabase()
 
     async def _sleep(_seconds: float) -> None:
-        if next(passes) == 2:
+        if next(passes) == 3:
             raise _StopLoop
 
     for name in (*_LABELS, *_QUIET_TASKS):
@@ -92,4 +96,4 @@ async def test_each_pass_hands_the_archive_count_its_bytes_were_summed_at_to_the
     with pytest.raises(_StopLoop):
         await housekeeping.housekeeping_loop(AnalysisWorkerManager(num_workers=1))
 
-    assert handed == [None, 10, 20]
+    assert handed == [None, 10, 20, None]

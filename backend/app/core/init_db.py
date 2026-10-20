@@ -14,7 +14,6 @@ from app.core.constants import (
     TEAM_SOURCE_GITLAB,
     team_source,
 )
-from app.core.metrics import update_db_stats
 from app.core.permissions import ALL_PERMISSIONS
 from app.core.security import get_password_hash
 from app.db.mongodb import get_database
@@ -490,6 +489,3 @@ async def init_db() -> None:
         logger.info("Users already exist. Skipping initial user creation.")
 
     await seed_crypto_policies(database)
-
-    await update_db_stats(database)
-    logger.info("Database statistics metrics initialized.")

@@ -533,26 +533,23 @@ cache_service = CacheService()
 
 
 async def update_cache_stats() -> None:
-    try:
-        if not cache_service._available:
-            return
+    if not cache_service._available:
+        return
 
-        client = await cache_service.get_client()
+    client = await cache_service.get_client()
 
-        memory_info = await client.info(section="memory")
-        clients_info = await client.info(section="clients")
+    memory_info = await client.info(section="memory")
+    clients_info = await client.info(section="clients")
 
-        total_keys = await client.dbsize()
+    total_keys = await client.dbsize()
 
-        connected_clients_count = clients_info.get("connected_clients", 0)
-        used_memory = memory_info.get("used_memory", 0)
+    connected_clients_count = clients_info.get("connected_clients", 0)
+    used_memory = memory_info.get("used_memory", 0)
 
-        cache_keys_total.set(total_keys)
-        cache_connected_clients.set(connected_clients_count)
-        cache_size_bytes.set(used_memory)
+    cache_keys_total.set(total_keys)
+    cache_connected_clients.set(connected_clients_count)
+    cache_size_bytes.set(used_memory)
 
-        logger.debug(
-            f"Updated cache stats: keys={total_keys}, clients={connected_clients_count}, memory={used_memory} bytes"
-        )
-    except Exception as e:
-        logger.warning(f"Failed to update cache statistics metrics: {e}")
+    logger.debug(
+        f"Updated cache stats: keys={total_keys}, clients={connected_clients_count}, memory={used_memory} bytes"
+    )

@@ -272,3 +272,20 @@ class TestArchiveStats:
         archives.sizes.clear()
         await metrics.update_archive_stats(db, counted)
         assert (_archive_gauges(), archives.scans) == ((0, 0), 3)
+
+
+class _Unreachable:
+    def __getitem__(self, _name: str) -> "_Unreachable":
+        return self
+
+    async def estimated_document_count(self) -> int:
+        raise RuntimeError("mongo unreachable")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "update", [metrics.update_db_stats, lambda db: metrics.update_archive_stats(db, None)], ids=["db", "archive"]
+)
+async def test_a_failed_stats_read_reaches_the_housekeeping_loop(update) -> None:
+    with pytest.raises(RuntimeError, match="mongo unreachable"):
+        await update(_Unreachable())

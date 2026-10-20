@@ -746,3 +746,12 @@ class TestFailuresFallBackToTheDefault:
         assert await fake_cache.mset({"k": circular}, _TTL) is False
         assert await fake_cache._client.exists(fake_cache._make_key("k")) == 0
         assert fake_cache._available is True
+
+
+@pytest.mark.asyncio
+async def test_a_failed_stats_read_reaches_the_housekeeping_loop(fake_cache, monkeypatch):
+    fake_cache._client = AsyncMock(info=AsyncMock(side_effect=redis.ConnectionError("reset")))
+    monkeypatch.setattr(cache_module, "cache_service", fake_cache)
+
+    with pytest.raises(redis.ConnectionError):
+        await cache_module.update_cache_stats()

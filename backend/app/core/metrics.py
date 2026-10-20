@@ -648,38 +648,31 @@ class DbHeartbeatFailures(monitoring.ServerHeartbeatListener):
 
 
 async def update_db_stats(database: Any) -> None:
-    try:
-        users_count = await database["users"].estimated_document_count()
-        projects_count = await database["projects"].estimated_document_count()
-        scans_count = await database["scans"].estimated_document_count()
-        findings_count = await database["findings"].estimated_document_count()
+    users_count = await database["users"].estimated_document_count()
+    projects_count = await database["projects"].estimated_document_count()
+    scans_count = await database["scans"].estimated_document_count()
+    findings_count = await database["findings"].estimated_document_count()
 
-        db_users_total.set(users_count)
-        db_projects_total.set(projects_count)
-        db_scans_total.set(scans_count)
-        db_findings_total.set(findings_count)
+    db_users_total.set(users_count)
+    db_projects_total.set(projects_count)
+    db_scans_total.set(scans_count)
+    db_findings_total.set(findings_count)
 
-        logger.debug(
-            f"Updated DB stats: users={users_count}, projects={projects_count}, "
-            f"scans={scans_count}, findings={findings_count}"
-        )
-    except Exception as e:
-        logger.warning(f"Failed to update database statistics metrics: {e}")
+    logger.debug(
+        f"Updated DB stats: users={users_count}, projects={projects_count}, "
+        f"scans={scans_count}, findings={findings_count}"
+    )
 
 
-async def update_archive_stats(database: Any, summed_at_count: int | None) -> int | None:
+async def update_archive_stats(database: Any, summed_at_count: int | None) -> int:
     """Returns the archive count the stored bytes were last summed at, which the next pass hands back."""
     archives = database["archive_metadata"]
-    try:
-        count: int = await archives.estimated_document_count()
-        archive_count_total.set(count)
-        # Archives are only inserted or deleted, so the summed bytes are re-read whenever the count moves.
-        if count == summed_at_count:
-            return count
-        pipeline = [{"$group": {"_id": None, "total_bytes": {"$sum": {"$ifNull": ["$compressed_size_bytes", 0]}}}}]
-        result = await archives.aggregate(pipeline).to_list(1)
-        archive_stored_bytes_total.set(result[0]["total_bytes"] if result else 0)
+    count: int = await archives.estimated_document_count()
+    archive_count_total.set(count)
+    # Archives are only inserted or deleted, so the summed bytes are re-read whenever the count moves.
+    if count == summed_at_count:
         return count
-    except Exception as e:
-        logger.warning(f"Failed to update archive statistics metrics: {e}")
-        return summed_at_count
+    pipeline = [{"$group": {"_id": None, "total_bytes": {"$sum": {"$ifNull": ["$compressed_size_bytes", 0]}}}}]
+    result = await archives.aggregate(pipeline).to_list(1)
+    archive_stored_bytes_total.set(result[0]["total_bytes"] if result else 0)
+    return count
