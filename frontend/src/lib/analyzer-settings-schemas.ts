@@ -152,7 +152,7 @@ export const ANALYZER_SETTINGS_SCHEMAS: Record<string, AnalyzerSettingsSchema> =
         type: 'number',
         label: 'Minimum Similarity (0–1)',
         description:
-          "Packages above this similarity ratio are flagged, and so is one swapped or replaced letter in a name of four or more letters. A name sharing a popular package's prefix up to a hyphen is compared on the rest only. Default: 0.82",
+          "Packages above this similarity ratio are flagged, and so is one swapped or replaced letter in a name of five or more letters. A name sharing a popular package's prefix up to a hyphen is compared on the rest only. Default: 0.82",
         default: 0.82,
         min: 0.5,
         max: 1.0,

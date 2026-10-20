@@ -76,9 +76,9 @@ def _has_legitimate_prefix(longer: str, shorter: str) -> bool:
     return longer.startswith(shorter + "-")
 
 
-def _one_typo_apart(name: str, popular: str) -> bool:
+def _one_typo_apart(name: str, popular: str, min_length: int = 4) -> bool:
     """One replaced letter or one swap of neighbours; under four letters such pairs are mostly unrelated words."""
-    if len(name) != len(popular) or len(name) < 4:
+    if len(name) != len(popular) or len(name) < min_length:
         return False
     match [i for i in range(len(name)) if name[i] != popular[i]]:
         case [_]:
@@ -242,8 +242,8 @@ class TyposquattingAnalyzer(Analyzer):
                     continue
                 floor = best_ratio
             else:
-                # One typo in a five-letter name scores 0.8, so such a pair need not reach the threshold.
-                floor = best_ratio if _one_typo_apart(name, popular) else max(best_ratio, similarity_threshold)
+                # One typo in a five-letter name scores 0.8; four-letter pairs (0.75) are mostly unrelated scoped names.
+                floor = best_ratio if _one_typo_apart(name, popular, 5) else max(best_ratio, similarity_threshold)
             # Both quick ratios bound ratio() from above in either orientation; ratio() itself is not symmetric.
             matcher.set_seq1(popular)
             if matcher.real_quick_ratio() <= floor or matcher.quick_ratio() <= floor:

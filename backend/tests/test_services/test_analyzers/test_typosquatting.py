@@ -433,6 +433,15 @@ class TestOneTypoInAShortName:
         assert issues == {}
 
     @pytest.mark.asyncio
+    async def test_a_four_letter_name_one_letter_from_a_popular_one_is_not_flagged(self, monkeypatch):
+        """@acme/core is compared as core, one letter from cors."""
+        components = [_npm("@acme/core")]
+
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), components)
+
+        assert issues == {}
+
+    @pytest.mark.asyncio
     async def test_a_three_letter_name_one_letter_from_a_popular_one_is_not_flagged(self):
         analyzer = TyposquattingAnalyzer()
         corpus = {"npm": ["vue", "chalk"]}
