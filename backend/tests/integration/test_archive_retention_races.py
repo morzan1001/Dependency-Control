@@ -25,7 +25,7 @@ from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
 from app.services import archive, stats
 from app.services.analysis.stats import _STATS_CURSOR_HINT
-from app.services.archive import restore_scan
+from app.services.archive import RestoreFailed, restore_scan
 
 _NOW = datetime.now(timezone.utc)
 _PROJECT_ID = "test-project-id"
@@ -629,7 +629,8 @@ async def test_a_restore_beaten_to_the_scan_by_an_ingest_leaves_the_ingested_sca
 
     monkeypatch.setattr(archive, "_handle_header_event", retry_before_the_header_insert)
 
-    assert await restore_scan(db, scan_id) is None
+    with pytest.raises(RestoreFailed):
+        await restore_scan(db, scan_id)
     assert await _remaining(db) == {scan_id}
     assert await _analyzers(db, scan_id) == {"opengrep"}
 

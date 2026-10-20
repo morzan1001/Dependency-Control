@@ -330,34 +330,54 @@ class TestRestoreArchive:
             db=MagicMock(),
         )
 
-    def test_raises_500_when_restore_fails(self, admin_user):
+    @pytest.mark.parametrize(
+        ("reason", "status_code", "detail"),
+        [
+            ("lock_held", 409, "Restore already in progress"),
+            ("already_exists", 409, "Scan already exists in MongoDB"),
+            ("not_found", 404, "Archive not found for this project"),
+            ("integrity", 500, "Failed to restore archive"),
+            ("s3_error", 500, "Failed to restore archive"),
+        ],
+    )
+    def test_a_failed_restore_answers_by_its_reason(self, admin_user, reason, status_code, detail):
         from app.api.v1.endpoints.archives import restore_archive
+        from app.services.archive import RestoreFailed
 
-        metadata = _make_archive_metadata()
         mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-
-        # find_one None so the endpoint maps to 500, not 409
-        mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value=None)
+        mock_repo.find_by_scan_id = AsyncMock(return_value=_make_archive_metadata())
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
             patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.restore_scan", new_callable=AsyncMock, return_value=None),
+            patch(f"{MODULE}.restore_scan", new_callable=AsyncMock, side_effect=RestoreFailed(reason)),
             pytest.raises(HTTPException) as exc_info,
         ):
-            asyncio.run(
-                restore_archive(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=admin_user,
-                    db=mock_db,
-                )
-            )
+            asyncio.run(restore_archive(project_id="proj-1", scan_id="scan-1", current_user=admin_user, db=MagicMock()))
 
-        assert exc_info.value.status_code == 500
+        assert (exc_info.value.status_code, exc_info.value.detail) == (status_code, detail)
+
+    def test_a_restore_while_another_one_runs_is_409(self, admin_user, archive_env):
+        from app.api.v1.endpoints.archives import restore_archive
+        from app.repositories.distributed_locks import DistributedLocksRepository
+
+        db = FakeDatabase()
+
+        async def restore_during_another() -> HTTPException:
+            await db.archive_metadata.insert_one(_make_archive_metadata().model_dump(by_alias=True))
+            assert await DistributedLocksRepository(db).acquire_lock("restore:scan-1", "other-pod", ttl_seconds=600)
+            with pytest.raises(HTTPException) as exc_info:
+                await restore_archive(project_id="proj-1", scan_id="scan-1", current_user=admin_user, db=db)
+            return exc_info.value
+
+        with (
+            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
+        ):
+            error = asyncio.run(restore_during_another())
+
+        assert (error.status_code, error.detail) == (409, "Restore already in progress")
 
 
 class TestDownloadArchive:
@@ -826,37 +846,6 @@ class TestDownloadFailureMetric:
             asyncio.run(download())
 
         assert REGISTRY.get_sample_value("archive_failures_total", labels) == before + 1
-
-
-class TestRestoreReturns409WhenScanAlreadyExists:
-    def test_returns_409_when_scan_already_exists_in_mongo(self, admin_user):
-        from app.api.v1.endpoints.archives import restore_archive
-
-        metadata = _make_archive_metadata()
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-
-        mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value={"_id": "scan-1"})
-
-        with (
-            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.restore_scan", new_callable=AsyncMock, return_value=None),
-            pytest.raises(HTTPException) as exc_info,
-        ):
-            asyncio.run(
-                restore_archive(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=admin_user,
-                    db=mock_db,
-                )
-            )
-
-        assert exc_info.value.status_code == 409
-        assert "already exists" in exc_info.value.detail
 
 
 class TestPinEmitsAuditLog:

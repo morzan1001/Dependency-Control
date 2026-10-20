@@ -22,7 +22,7 @@ from app.models.project import Project, Scan
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.services import archive, gridfs_maintenance
-from app.services.archive import archive_scan, restore_scan, stream_bundle_for_download
+from app.services.archive import RestoreFailed, archive_scan, restore_scan, stream_bundle_for_download
 from app.services.archive_bundle import BundleFrames, BundleStats, json_line, read_bundle_frames
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
 from app.services.rescan import build_rescan
@@ -339,7 +339,8 @@ async def test_a_restore_that_lost_its_file_lock_fails_and_leaves_the_new_holder
 
     _replay_with(monkeypatch, take_the_file_over_after_its_first_chunk)
 
-    assert await restore_scan(db, _SCAN_ID) is None
+    with pytest.raises(RestoreFailed):
+        await restore_scan(db, _SCAN_ID)
     assert await db["fs.chunks"].find({}, {"_id": 0, "files_id": 0}).to_list(None) == [peer_chunk]
 
 
@@ -357,7 +358,8 @@ async def test_a_restore_whose_abort_fails_still_releases_its_file_lock(db, arch
     _replay_with(monkeypatch, fail_mid_file)
     monkeypatch.setattr(AsyncIOMotorGridIn, "abort", AsyncMock(side_effect=AutoReconnect("primary stepped down")))
 
-    assert await restore_scan(db, _SCAN_ID) is None
+    with pytest.raises(RestoreFailed):
+        await restore_scan(db, _SCAN_ID)
     assert await db.distributed_locks.find({}).to_list(None) == []
 
 
@@ -426,7 +428,8 @@ async def test_a_restore_failing_mid_file_leaves_no_chunks_and_a_retry_succeeds(
             yield chunk
 
     monkeypatch.setattr(archive, "_open_bundle_stream", reset_once_chunks_are_stored)
-    assert await restore_scan(db, _SCAN_ID) is None
+    with pytest.raises(RestoreFailed):
+        await restore_scan(db, _SCAN_ID)
     assert await db["fs.chunks"].count_documents({}) == 0
     assert await db["fs.files"].count_documents({}) == 0
     assert await db.scans.find_one({"_id": _SCAN_ID}) is None

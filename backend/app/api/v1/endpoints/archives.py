@@ -17,6 +17,7 @@ from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.constants import PROJECT_ROLE_ADMIN
 from app.core.log_utils import sanitize_for_log
 from app.core.metrics import (
+    ArchiveFailureReason,
     archive_operation_duration_seconds,
     archive_operations_total,
     count_archive_failure,
@@ -34,7 +35,7 @@ from app.schemas.archive import (
     ScanPinResponse,
 )
 from app.schemas.pagination import Page
-from app.services.archive import bundle_failure_reason, restore_scan, stream_bundle_for_download
+from app.services.archive import RestoreFailed, bundle_failure_reason, restore_scan, stream_bundle_for_download
 from app.services.inventory.csv_stream import export_filename
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,12 @@ router = CustomAPIRouter()
 admin_router = CustomAPIRouter()
 
 _MSG_ARCHIVE_NOT_CONFIGURED = "Archive storage is not configured"
+_MSG_ARCHIVE_NOT_FOUND = "Archive not found for this project"
+_RESTORE_FAILURE_RESPONSES = {
+    ArchiveFailureReason.NOT_FOUND: (404, _MSG_ARCHIVE_NOT_FOUND),
+    ArchiveFailureReason.LOCK_HELD: (409, "Restore already in progress"),
+    ArchiveFailureReason.ALREADY_EXISTS: (409, "Scan already exists in MongoDB"),
+}
 
 
 ArchiveReaderDep = Annotated[User, Depends(PermissionChecker(Permissions.ARCHIVE_READ))]
@@ -55,7 +62,7 @@ async def _archive_for_project(db: AsyncIOMotorDatabase, project_id: str, scan_i
     """The scan's archive, 404 unless it belongs to ``project_id``: access to one project opens no other's bundle."""
     metadata = await ArchiveMetadataRepository(db).find_by_scan_id(scan_id)
     if not metadata or metadata.project_id != project_id:
-        raise HTTPException(status_code=404, detail="Archive not found for this project")
+        raise HTTPException(status_code=404, detail=_MSG_ARCHIVE_NOT_FOUND)
     return metadata
 
 
@@ -130,20 +137,18 @@ async def restore_archive(
     current_user: ArchiveRestorerDep,
     db: DatabaseDep,
 ) -> ArchiveRestoreResponse:
-    """Restore an archived scan from S3 back into MongoDB (404 if absent, 409 if already present, 500 otherwise)."""
+    """Restore an archived scan from S3 back into MongoDB (404 if absent, 409 if present or restoring, else 500)."""
     await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
 
     _require_archive_enabled()
 
     await _archive_for_project(db, project_id, scan_id)
 
-    result = await restore_scan(db, scan_id)
-    if not result:
-        # restore_scan returns None for several failures; a scan that exists now was a concurrent restore (best-effort).
-        existing_scan = await db.scans.find_one({"_id": scan_id})
-        if existing_scan:
-            raise HTTPException(status_code=409, detail="Scan already exists in MongoDB")
-        raise HTTPException(status_code=500, detail="Failed to restore archive")
+    try:
+        result = await restore_scan(db, scan_id)
+    except RestoreFailed as failure:
+        status_code, detail = _RESTORE_FAILURE_RESPONSES.get(failure.reason, (500, "Failed to restore archive"))
+        raise HTTPException(status_code=status_code, detail=detail) from None
 
     logger.info(
         "archive.restore user_id=%s scan_id=%s project_id=%s collections_restored=%s",

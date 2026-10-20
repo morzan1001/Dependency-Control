@@ -10,7 +10,7 @@ from app.core.housekeeping import _reap_stale_metadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.distributed_locks import new_lock_holder
-from app.services.archive import archive_scan, restore_scan
+from app.services.archive import RestoreFailed, archive_scan, restore_scan
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.services.archive"
@@ -48,8 +48,9 @@ async def _restore_dying_after_the_header(db: FakeDatabase) -> None:
     with (
         patch.object(db.dependencies, "insert_many", AsyncMock(side_effect=outage)),
         patch.object(db.scans, "delete_one", AsyncMock(side_effect=outage)),
+        pytest.raises(RestoreFailed),
     ):
-        assert await restore_scan(db, SCAN_ID) is None
+        await restore_scan(db, SCAN_ID)
     assert await db.scans.find_one({"_id": SCAN_ID}) is not None, "the rollback was meant to leave the scan behind"
 
 
@@ -65,11 +66,24 @@ async def test_a_rollback_failing_midway_leaves_the_scan_marked_for_the_next_res
     with (
         patch.object(db.dependencies, "insert_many", AsyncMock(side_effect=outage)),
         patch.object(db.dependencies, "delete_many", AsyncMock(side_effect=outage)),
+        pytest.raises(RestoreFailed),
     ):
-        assert await restore_scan(db, SCAN_ID) is None
+        await restore_scan(db, SCAN_ID)
 
     assert (await db.scans.find_one({"_id": SCAN_ID}))["restore_in_progress"] is True
     assert await restore_scan(db, SCAN_ID) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_restore_queued_behind_a_finished_one_finds_the_scan_already_there(archive_env):
+    db = FakeDatabase()
+    await _archived_scan(db)
+    assert await restore_scan(db, SCAN_ID) is not None
+
+    with pytest.raises(RestoreFailed) as second:
+        await restore_scan(db, SCAN_ID)
+
+    assert second.value.reason == "already_exists"
 
 
 @pytest.mark.asyncio
@@ -165,11 +179,12 @@ async def test_a_restore_outliving_the_lock_ttl_keeps_a_retry_out(archive_env, m
         first = asyncio.create_task(restore_scan(db, SCAN_ID))
         await stall.reached.wait()
         await asyncio.sleep(0.9)
-        retry = await restore_scan(db, SCAN_ID)
+        with pytest.raises(RestoreFailed) as retry:
+            await restore_scan(db, SCAN_ID)
         stall.release.set()
         result = await first
 
-    assert retry is None
+    assert retry.value.reason == "lock_held"
     assert result is not None
     scan = await db.scans.find_one({"_id": SCAN_ID})
     assert scan["restored_at"] is not None
@@ -191,9 +206,9 @@ async def test_a_restore_stops_writing_once_another_restore_took_its_lock_over(a
         taker = await _take_over_the_restore_lock(db)
         await asyncio.sleep(1.0)
         stall.release.set()
-        result = await first
+        with pytest.raises(RestoreFailed):
+            await first
 
-    assert result is None
     assert await db.dependencies.find_one({"scan_id": SCAN_ID}) is None
     assert (await db.scans.find_one({"_id": SCAN_ID}))["restore_in_progress"] is True
     await _assert_the_archive_survived(db, archive_env)
@@ -211,9 +226,9 @@ async def test_a_restore_that_lost_its_lock_before_completing_keeps_the_archive(
         await stall.reached.wait()
         await _take_over_the_restore_lock(db)
         stall.release.set()
-        result = await first
+        with pytest.raises(RestoreFailed):
+            await first
 
-    assert result is None
     count_failure.assert_called_once_with("restore", "lock_held")
     scan = await db.scans.find_one({"_id": SCAN_ID})
     assert scan["restore_in_progress"] is True
@@ -232,9 +247,9 @@ async def test_a_restore_whose_scan_vanished_keeps_the_archive(archive_env):
         await stall.reached.wait()
         await db.scans.delete_one({"_id": SCAN_ID})
         stall.release.set()
-        result = await first
+        with pytest.raises(RestoreFailed):
+            await first
 
-    assert result is None
     assert await db.scans.find_one({"_id": SCAN_ID}) is None
     assert await db.dependencies.find_one({"scan_id": SCAN_ID}) is None
     assert await db.analysis_results.find_one({"scan_id": SCAN_ID}) is None
@@ -270,10 +285,10 @@ async def test_a_restore_failing_after_another_restore_completed_leaves_its_scan
         await db.distributed_locks.update_one({"_id": LOCK_NAME}, {"$set": {"expires_at": expired}})
         second = await restore_scan(db, SCAN_ID)
         stall.release.set()
-        result = await first
+        with pytest.raises(RestoreFailed):
+            await first
 
     assert second is not None
-    assert result is None
     scan = await db.scans.find_one({"_id": SCAN_ID})
     assert scan["restored_at"] is not None
     assert "restore_in_progress" not in scan

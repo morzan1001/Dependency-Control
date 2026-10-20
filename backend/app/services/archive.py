@@ -87,6 +87,17 @@ class _ArchiveSourceReadError(Exception):
     """Aborts the upload so housekeeping, which deletes only archived scans, cannot lose an unread document."""
 
 
+class RestoreFailed(Exception):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _restore_failed(reason: str) -> RestoreFailed:
+    count_archive_failure("restore", reason)
+    return RestoreFailed(reason)
+
+
 def _hash_plaintext_secrets(collection: str, doc: dict[str, Any]) -> None:
     """Legacy rows and bundles can hold TruffleHog's plaintext Raw; only its digest prefix may leave them."""
     if collection != "analysis_results" or doc.get("analyzer_name") != "trufflehog":
@@ -622,25 +633,24 @@ async def _load_restore_metadata(
     db: Any,
     repo: ArchiveMetadataRepository,
     scan_id: str,
-) -> ArchiveMetadata | None:
+) -> ArchiveMetadata:
+    # Checked first: a restore that finished while this one waited for the lock has removed the metadata.
+    existing = await db.scans.find_one({"_id": scan_id}, {"restore_in_progress": 1})
+    if existing and not existing.get("restore_in_progress"):
+        logger.warning("Scan %s already exists in MongoDB, aborting its restore", sanitize_for_log(scan_id))
+        raise _restore_failed(ArchiveFailureReason.ALREADY_EXISTS)
+
     metadata = await repo.find_by_scan_id(scan_id)
     if not metadata:
         logger.error("No archive metadata for scan %s", sanitize_for_log(scan_id))
-        count_archive_failure("restore", ArchiveFailureReason.NOT_FOUND)
-        return None
+        raise _restore_failed(ArchiveFailureReason.NOT_FOUND)
 
-    existing = await db.scans.find_one({"_id": scan_id}, {"restore_in_progress": 1})
-    if existing and existing.get("restore_in_progress"):
+    if existing:
         # A running restore keeps renewing its lock, so while we hold it nobody still writes this leftover.
         logger.warning(
             "Rolling back an unfinished restore of scan %s before restoring it again", sanitize_for_log(scan_id)
         )
         await _rollback_partial_restore(db, scan_id)
-    elif existing:
-        logger.warning("Scan %s already exists in MongoDB, aborting its restore", sanitize_for_log(scan_id))
-        count_archive_failure("restore", ArchiveFailureReason.ALREADY_EXISTS)
-        return None
-
     return metadata
 
 
@@ -715,7 +725,7 @@ async def _run_restore_pipeline(
     metadata: ArchiveMetadata,
     scan_id: str,
     renew_lock: Callable[[], Awaitable[bool]],
-) -> ArchiveRestoreResponse | None:
+) -> ArchiveRestoreResponse:
     start_time = time.monotonic()
     decompressed = _open_bundle_stream(metadata)
     failure_reason, collections_restored = await _replay_bundle(db, scan_id, decompressed)
@@ -725,8 +735,7 @@ async def _run_restore_pipeline(
         # Before its header insert the restore wrote nothing, and a scan already there belongs to an ingest.
         await _abandon_restore(db, scan_id, renew_lock)
     if failure_reason is not None:
-        count_archive_failure("restore", failure_reason)
-        return None
+        raise _restore_failed(failure_reason)
 
     # The restored scan re-enters its branch timeline, so the rollup also re-points the successor.
     await record_scan_update_delta(db, scan_id)
@@ -752,10 +761,8 @@ async def _run_restore_pipeline(
 async def restore_scan(
     db: AsyncIOMotorDatabase,
     scan_id: str,
-) -> ArchiveRestoreResponse | None:
-    if not is_archive_enabled():
-        return None
-
+) -> ArchiveRestoreResponse:
+    """Raises RestoreFailed with the reason it counted."""
     repo = ArchiveMetadataRepository(db)
     lock_repo = DistributedLocksRepository(db)
     lock_name = ARCHIVE_RESTORE_LOCK_TEMPLATE.format(scan_id=scan_id)
@@ -764,18 +771,14 @@ async def restore_scan(
 
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
         logger.info("Restore of scan %s blocked, lock held", sanitize_for_log(scan_id))
-        count_archive_failure("restore", ArchiveFailureReason.LOCK_HELD)
-        return None
+        raise _restore_failed(ArchiveFailureReason.LOCK_HELD)
 
     try:
         metadata = await _load_restore_metadata(db, repo, scan_id)
-        if metadata is None:
-            return None
         pipeline = _run_restore_pipeline(db, repo, metadata, scan_id, renew_lock)
         return await run_holding_lock(renew_lock, _ARCHIVE_LOCK_TTL_SECONDS, pipeline)
     except LockLost:
         logger.error("Restore of scan %s lost its lock to another restore, aborting", sanitize_for_log(scan_id))
-        count_archive_failure("restore", ArchiveFailureReason.LOCK_HELD)
-        return None
+        raise _restore_failed(ArchiveFailureReason.LOCK_HELD) from None
     finally:
         await lock_repo.release_lock(lock_name, holder)

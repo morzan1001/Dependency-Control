@@ -13,7 +13,7 @@ from pymongo.errors import AutoReconnect
 
 from app.core.constants import ENCRYPTION_MAGIC, SCAN_SCOPED_COLLECTIONS
 from app.models.archive import ArchiveMetadata
-from app.services.archive import _gzip_decompress_stream, archive_scan, restore_scan
+from app.services.archive import RestoreFailed, _gzip_decompress_stream, archive_scan, restore_scan
 
 MODULE = "app.services.archive"
 _NO_IDS: list[str] = []
@@ -291,7 +291,7 @@ async def test_a_failed_cleanup_of_a_dropped_upload_logs_its_key(monkeypatch, ca
 
 @pytest.mark.asyncio
 async def test_a_restore_without_metadata_logs_its_scan(archive_env, caplog):
-    with _patch_repos()(), caplog.at_level(logging.ERROR, logger=MODULE):
+    with _patch_repos()(), caplog.at_level(logging.ERROR, logger=MODULE), pytest.raises(RestoreFailed):
         await restore_scan(_make_mock_db(), "scan-1")
 
     assert [record.getMessage() for record in caplog.records] == ["No archive metadata for scan scan-1"]
@@ -346,9 +346,10 @@ async def test_restore_scan_aborts_when_lock_held(archive_env):
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=False)
 
-        result = await restore_scan(db, "scan-1")
+        with pytest.raises(RestoreFailed) as failure:
+            await restore_scan(db, "scan-1")
 
-    assert result is None
+    assert failure.value.reason == "lock_held"
     db.scans.insert_one.assert_not_awaited()
 
 
@@ -366,14 +367,15 @@ async def test_restore_scan_aborts_when_scan_already_exists(archive_env):
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
 
-        result = await restore_scan(db, "scan-1")
+        with pytest.raises(RestoreFailed) as failure:
+            await restore_scan(db, "scan-1")
 
-    assert result is None
+    assert failure.value.reason == "already_exists"
     db.scans.insert_one.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_restore_scan_returns_none_when_no_metadata(archive_env):
+async def test_restore_scan_fails_as_not_found_without_metadata(archive_env):
     db = _make_mock_db()
 
     with (
@@ -384,9 +386,10 @@ async def test_restore_scan_returns_none_when_no_metadata(archive_env):
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
 
-        result = await restore_scan(db, "scan-1")
+        with pytest.raises(RestoreFailed) as failure:
+            await restore_scan(db, "scan-1")
 
-    assert result is None
+    assert failure.value.reason == "not_found"
 
 
 @pytest.mark.asyncio
@@ -503,9 +506,10 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
         LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
-        result = await restore_scan(db, "scan-1")
+        with pytest.raises(RestoreFailed) as failure:
+            await restore_scan(db, "scan-1")
 
-    assert result is None
+    assert failure.value.reason == "integrity"
     db.scans.delete_one.assert_awaited_once_with({"_id": "scan-1"})
     db.findings.delete_many.assert_awaited()
     db.dependencies.delete_many.assert_awaited()
@@ -576,9 +580,10 @@ async def test_a_failed_replay_rolls_back_only_while_holding_its_lock(archive_en
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
         LockCls.return_value.renew_lock = AsyncMock(**renewal)
 
-        result = await restore_scan(db, "scan-1")
+        with pytest.raises(RestoreFailed) as failure:
+            await restore_scan(db, "scan-1")
 
-    assert result is None
+    assert failure.value.reason == reason
     assert [coll for coll in SCAN_SCOPED_COLLECTIONS if getattr(db, coll).delete_many.await_count] == []
     db.scans.delete_one.assert_not_awaited()
     count_failure.assert_called_once_with("restore", reason)
