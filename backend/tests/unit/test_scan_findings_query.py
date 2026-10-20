@@ -100,8 +100,7 @@ class TestScanFindingsPipelineKeepsId:
         sort_idx = next(i for i, st in enumerate(pipeline) if "$sort" in st)
         pre_sort_projects = [st["$project"] for st in pipeline[:sort_idx] if "$project" in st]
         assert all(p.get("_id") != 0 for p in pre_sort_projects)
-        facet = next(st["$facet"] for st in pipeline if "$facet" in st)
-        data_project = facet["data"][-1]["$project"]
+        data_project = pipeline[-1]["$project"]
         assert data_project.get("_id") == 0
         assert data_project.get("first_scanner") == 0
         assert data_project.get("_folded") == 0
@@ -122,8 +121,8 @@ class TestScanFindingsDirectOnly:
         assert direct_matches, "expected a $match on direct when direct_only is set"
         # Must run after direct is computed and before pagination.
         assert direct_matches[0] > addfields_idx
-        facet_idx = next(i for i, st in enumerate(pipeline) if "$facet" in st)
-        assert direct_matches[0] < facet_idx
+        skip_idx = next(i for i, st in enumerate(pipeline) if "$skip" in st)
+        assert direct_matches[0] < skip_idx
 
     def test_default_keeps_transitive_findings(self):
         pipeline = self._pipeline(False)

@@ -1,0 +1,62 @@
+"""A findings page streams its rows instead of building them into one document."""
+
+import pytest
+
+from tests.helpers.databases import DATABASES
+
+pytestmark = pytest.mark.asyncio
+
+_SCAN = "scan-page"
+
+
+def _finding(i: int, **overrides) -> dict:
+    return {
+        "_id": f"f-{i:04}",
+        "finding_id": f"CVE-2026-{i:04}",
+        "scan_id": _SCAN,
+        "project_id": "p",
+        "type": "vulnerability",
+        "severity": "HIGH",
+        "component": f"lib{i}",
+        "version": "1.0",
+        "description": "",
+        "scanners": ["trivy"],
+        "waived": False,
+        **overrides,
+    }
+
+
+async def _seed_scan(db) -> None:
+    await db.scans.insert_one({"_id": _SCAN, "project_id": "p", "branch": "main", "status": "completed"})
+
+
+@pytest.mark.live_mongo
+async def test_a_page_larger_than_one_bson_document_is_answered(client, db, owner_auth_headers_proj):
+    """500 rows of ~40 KB overflow the 16 MB a single aggregation result document may hold."""
+    await _seed_scan(db)
+    bulky = {"advisory": "x" * 40_000}
+    await db.findings.insert_many([_finding(i, details=bulky) for i in range(500)])
+
+    resp = await client.get(
+        f"/api/v1/projects/scans/{_SCAN}/findings", params={"limit": 500}, headers=owner_auth_headers_proj
+    )
+
+    assert resp.status_code == 200, resp.text[:300]
+    assert (resp.json()["total"], len(resp.json()["items"])) == (500, 500)
+
+
+@pytest.mark.parametrize("database", DATABASES)
+async def test_the_direct_only_total_counts_after_the_dependency_join(client, db, database, owner_auth_headers_proj):
+    await _seed_scan(db)
+    await db.findings.insert_many([_finding(i) for i in range(5)])
+    await db.dependencies.insert_many(
+        [{"_id": f"d-{i}", "scan_id": _SCAN, "name": f"lib{i}", "version": "1.0", "direct": i >= 2} for i in range(4)]
+    )
+    url = f"/api/v1/projects/scans/{_SCAN}/findings"
+
+    every = (await client.get(url, params={"limit": 2}, headers=owner_auth_headers_proj)).json()
+    direct = (await client.get(url, params={"limit": 2, "direct_only": True}, headers=owner_auth_headers_proj)).json()
+
+    # lib0 and lib1 are transitive; lib4 has no inventory row, so its finding stays.
+    assert (every["total"], len(every["items"])) == (5, 2)
+    assert (direct["total"], len(direct["items"])) == (3, 2)

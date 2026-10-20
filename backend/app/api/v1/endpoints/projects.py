@@ -1127,6 +1127,9 @@ def _scan_findings_sort_stages(sort_by: str, sort_dir: int) -> list[dict[str, An
     return case_insensitive_sort([(field, sort_dir), ("_id", 1)], {"component"})
 
 
+_DIRECT_ONLY = {"$match": {"direct": {"$ne": False}}}
+
+
 def _build_scan_findings_pipeline(
     query: dict[str, Any],
     *,
@@ -1142,30 +1145,24 @@ def _build_scan_findings_pipeline(
     stages: list[dict[str, Any]] = [{"$match": query}, _scan_findings_add_fields_stage(), *early_join]
     if direct_only:
         # Drop known-transitive findings; direct=null (code findings / unmatched packages) stays visible.
-        stages.append({"$match": {"direct": {"$ne": False}}})
-    stages += [
+        stages.append(_DIRECT_ONLY)
+    return [
+        *stages,
         *_scan_findings_sort_stages(sort_by, sort_dir),
-        {
-            "$facet": {
-                "metadata": [{"$count": "total"}],
-                "data": [
-                    {"$skip": skip},
-                    {"$limit": limit},
-                    *page_join,
-                    {"$project": {"_id": 0, "first_scanner": 0, "_folded": 0}},
-                ],
-            }
-        },
+        {"$skip": skip},
+        {"$limit": limit},
+        *page_join,
+        {"$project": {"_id": 0, "first_scanner": 0, "_folded": 0}},
     ]
-    return stages
 
 
-def _unpack_scan_findings_facet(result: list[dict[str, Any]]) -> tuple:
-    bucket = result[0]
-    data = bucket.get("data") or []
-    metadata = bucket.get("metadata") or []
-    total = metadata[0]["total"] if metadata else 0
-    return data, total
+async def _count_scan_findings(finding_repo: FindingRepository, query: dict[str, Any], direct_only: bool) -> int:
+    if not direct_only:
+        return await finding_repo.count(query)
+    counted = await finding_repo.aggregate(
+        [{"$match": query}, *_scan_findings_dependency_join(), _DIRECT_ONLY, {"$count": "total"}]
+    )
+    return int(counted[0]["total"]) if counted else 0
 
 
 async def _require_scan_access(scan_id: str, current_user: User, db: Any) -> tuple[ScanMinimal, Project]:
@@ -1231,8 +1228,10 @@ async def read_scan_findings(
     )
 
     finding_repo = FindingRepository(db)
-    result = await finding_repo.aggregate(pipeline)
-    data, total = _unpack_scan_findings_facet(result)
+    # A page of rows streams off a cursor; a $facet would have to fit them all into one 16 MB document.
+    data, total = await asyncio.gather(
+        finding_repo.aggregate(pipeline), _count_scan_findings(finding_repo, query, bool(direct_only))
+    )
 
     return build_pagination_response(data, total, skip, limit)
 
