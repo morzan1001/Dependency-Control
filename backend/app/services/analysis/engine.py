@@ -7,6 +7,7 @@ import re
 import tempfile
 import time
 import uuid
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -435,10 +436,12 @@ async def _analyse_sboms(
 
 
 def _track_findings_metrics(aggregated_findings: list[Finding]) -> None:
-    for finding in aggregated_findings:
-        analysis_findings_by_type_total.labels(type=finding.type, severity=finding.severity).inc()
-        for scanner_name in finding.scanners:
-            analysis_findings_total.labels(analyzer=scanner_name, severity=finding.severity).inc()
+    by_type = Counter((finding.type, finding.severity) for finding in aggregated_findings)
+    by_scanner = Counter((name, finding.severity) for finding in aggregated_findings for name in finding.scanners)
+    for (finding_type, severity), count in by_type.items():
+        analysis_findings_by_type_total.labels(type=finding_type, severity=severity).inc(count)
+    for (scanner_name, severity), count in by_scanner.items():
+        analysis_findings_total.labels(analyzer=scanner_name, severity=severity).inc(count)
 
 
 _DEP_ENRICHMENT_COPY_KEYS = ("license", "license_expression", "license_category", "license_risks")

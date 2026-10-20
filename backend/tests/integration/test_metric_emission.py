@@ -213,23 +213,28 @@ async def test_sbom_downloads_count_their_attempt_success_and_failure(monkeypatc
 
 
 def test_findings_are_counted_by_type_and_by_scanner():
-    finding = Finding(
-        id="CVE-1",
-        type=FindingType.VULNERABILITY,
-        severity=Severity.HIGH,
-        component="c",
-        description="d",
-        scanners=["trivy", "grype"],
-    )
+    def finding(finding_id, finding_type, severity, *scanners):
+        return Finding(
+            id=finding_id, type=finding_type, severity=severity, component="c", description="d", scanners=list(scanners)
+        )
+
     moved = _deltas(
         [
             ("analysis_findings_by_type_total", {"type": "vulnerability", "severity": "HIGH"}),
+            ("analysis_findings_by_type_total", {"type": "license", "severity": "MEDIUM"}),
             ("analysis_findings_total", {"analyzer": "trivy", "severity": "HIGH"}),
             ("analysis_findings_total", {"analyzer": "grype", "severity": "HIGH"}),
+            ("analysis_findings_total", {"analyzer": "license_compliance", "severity": "MEDIUM"}),
         ]
     )
-    engine._track_findings_metrics([finding])
-    assert moved() == [1, 1, 1]
+    engine._track_findings_metrics(
+        [
+            finding("CVE-1", FindingType.VULNERABILITY, Severity.HIGH, "trivy", "grype"),
+            finding("CVE-2", FindingType.VULNERABILITY, Severity.HIGH, "trivy"),
+            finding("LIC-GPL", FindingType.LICENSE, Severity.MEDIUM, "license_compliance"),
+        ]
+    )
+    assert moved() == [2, 1, 2, 1, 1]
 
 
 @pytest.mark.asyncio
