@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from functools import partial
 from typing import Any
 
-from bson import Binary, ObjectId, json_util
+from bson import Binary, ObjectId
 from cryptography.exceptions import InvalidTag
 from gridfs.errors import FileExists, NoFile
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket, AsyncIOMotorGridIn
@@ -70,6 +70,7 @@ from app.services.archive_bundle import (
     BundleStats,
     BundleVersionError,
     json_line,
+    load_json_line,
     read_bundle_frames,
     rewrite_bundle_frames,
 )
@@ -472,7 +473,7 @@ def _hash_plaintext_secrets_in_line(collection: str, line: bytes) -> bytes:
     # json_util never escapes ASCII, so every serialized trufflehog result spells out its analyzer name.
     if collection != "analysis_results" or b"trufflehog" not in line:
         return line
-    doc = json_util.loads(line)
+    doc = load_json_line(line)
     _hash_plaintext_secrets(collection, doc)
     return json_line(doc)
 

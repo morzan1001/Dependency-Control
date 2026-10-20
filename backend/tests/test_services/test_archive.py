@@ -898,6 +898,11 @@ def _bundle_with_a_list_line() -> AsyncIterator[bytes]:
     return _aiter([header + b'{"collection":"findings"}\n' + b"[1, 2]\n"])
 
 
+def _bundle_with_a_bad_object_id() -> AsyncIterator[bytes]:
+    header = json.dumps({"version": 2, "scan": {"_id": "scan-1", "project_id": "p"}}).encode() + b"\n"
+    return _aiter([header + b'{"collection":"findings"}\n' + b'{"_id":{"$oid":"not-an-object-id"}}\n'])
+
+
 def _unknown_encryption_version() -> AsyncIterator[bytes]:
     from app.core.encryption import decrypt_stream
 
@@ -911,9 +916,10 @@ def _unknown_encryption_version() -> AsyncIterator[bytes]:
         (lambda: _bundle_with_collection("version_audit"), "integrity"),
         (lambda: _gzip_decompress_stream(_aiter([b"not a gzip stream"])), "integrity"),
         (_bundle_with_a_list_line, "integrity"),
+        (_bundle_with_a_bad_object_id, "integrity"),
         (_unknown_encryption_version, "version_mismatch"),
     ],
-    ids=["collection-named-version", "not-gzip", "line-not-an-object", "unknown-encryption-version"],
+    ids=["collection-named-version", "not-gzip", "line-not-an-object", "bad-object-id", "unknown-encryption-version"],
 )
 async def test_replay_labels_a_broken_bundle_by_its_cause(monkeypatch, source, reason):
     from app.services.archive import _replay_bundle
@@ -923,6 +929,17 @@ async def test_replay_labels_a_broken_bundle_by_its_cause(monkeypatch, source, r
     failure, _ = await _replay_bundle(_make_mock_db(), "scan-1", "p", source())
 
     assert failure == reason
+
+
+def test_download_labels_a_bad_object_id_in_a_trufflehog_line_as_integrity():
+    from app.services.archive import _hash_plaintext_secrets_in_line, bundle_failure_reason
+
+    line = b'{"_id":{"$oid":"not-an-object-id"},"analyzer_name":"trufflehog"}\n'
+
+    with pytest.raises(Exception) as failure:
+        _hash_plaintext_secrets_in_line("analysis_results", line)
+
+    assert bundle_failure_reason(failure.value) == "integrity"
 
 
 @pytest.mark.asyncio

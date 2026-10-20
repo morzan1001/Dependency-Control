@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, NamedTuple
 
 from bson import json_util
+from bson.errors import BSONError
 
 from app.core.constants import ARCHIVE_BUNDLE_VERSION
 from app.models.finding import FindingType
@@ -91,10 +92,10 @@ class _Frame(NamedTuple):
     data: Any
 
 
-def _loads(line: bytes) -> dict[str, Any]:
+def load_json_line(line: bytes) -> dict[str, Any]:
     try:
         obj = json_util.loads(line)
-    except json.JSONDecodeError as e:
+    except (json.JSONDecodeError, BSONError) as e:
         raise ValueError(f"Malformed bundle line: {e}") from e
     if not isinstance(obj, dict):
         raise ValueError(f"Malformed bundle line: a {type(obj).__name__}, not an object")
@@ -119,7 +120,7 @@ async def _bundle_lines(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
 
 
 def _parse_header(line: bytes) -> dict[str, Any]:
-    header = _loads(line)
+    header = load_json_line(line)
     version = header.get("version")
     if version != ARCHIVE_BUNDLE_VERSION:
         raise BundleVersionError(f"Unsupported bundle version: {version}")
@@ -144,7 +145,7 @@ async def _read_frames(source: AsyncIterator[bytes], *, decode_docs: bool) -> As
     current_collection: str | None = None
     async for line in lines:
         decoded = decode_docs or line.startswith((_MARKER_PREFIX, _FOOTER_PREFIX))
-        obj: Any = _loads(line) if decoded else None
+        obj: Any = load_json_line(line) if decoded else None
         if decoded and obj.get("footer") is True:
             _verify_footer(obj, pre_footer_sha.hexdigest())
             yield _Frame("footer", line, "", obj)
