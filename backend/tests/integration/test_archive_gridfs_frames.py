@@ -252,11 +252,12 @@ async def test_a_legacy_gridfs_sboms_bundle_still_restores(db, archive_env):
 async def test_a_rescan_shared_file_present_at_restore_is_left_untouched(db, archive_env, chunk_frames):
     sbom = _sbom_fixture()
     scan = await _seed_scan(db, sbom)
-    await db.scans.insert_one(build_rescan(scan.model_dump(by_alias=True)).model_dump(by_alias=True))
     if chunk_frames:
         await _archive(db)
     else:
         await _archive_without_chunk_frames(db, archive_env, sbom)
+    # Rescanned only now: archive_scan refuses a scan a rescan still points at.
+    await db.scans.insert_one(build_rescan(scan.model_dump(by_alias=True)).model_dump(by_alias=True))
     await _expire(db)
     (shared,) = await db["fs.files"].find({}).to_list(None)
     chunk_ids = await db["fs.chunks"].distinct("_id")
@@ -277,9 +278,10 @@ async def test_concurrent_restores_of_scans_sharing_an_absent_file_both_finish_w
     scan = await _seed_scan(db, _sbom_of(sbom_size))
     rescan = await _seed_finished_rescan(db, scan)
     before = await _stored_files(db)
-    for scan_id in (_SCAN_ID, rescan.id):
+    # The rescan goes first: archive_scan refuses a scan a rescan still points at.
+    for scan_id in (rescan.id, _SCAN_ID):
         assert await archive_scan(db, scan_id) is not None
-    await _expire(db, (_SCAN_ID, rescan.id))
+        await _expire(db, (scan_id,))
     assert await db["fs.files"].count_documents({}) == 0
     both_reached_the_file = asyncio.Barrier(2)
 

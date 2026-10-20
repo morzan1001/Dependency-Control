@@ -313,8 +313,9 @@ async def _load_scan_for_archive(
         scan_doc.get("pinned") in RETENTION_PROTECTED_FLAG_VALUES
         or scan_doc.get("status") in SCAN_ACTIVE_STATUSES
         or await DistributedLocksRepository(db).held_locks([REACHABILITY_LOCK_TEMPLATE.format(scan_id=scan_id)])
+        or await db.scans.find_one({"is_rescan": True, "original_scan_id": scan_id}, {"_id": 1})
     ):
-        logger.info("Scan %s pinned or under analysis, not archiving it", sanitize_for_log(scan_id))
+        logger.info("Scan %s pinned, under analysis or rescanned, not archiving it", sanitize_for_log(scan_id))
         count_archive_failure("archive", ArchiveFailureReason.PROTECTED)
         return None, None
     if existing is None:

@@ -78,7 +78,8 @@ def _make_mock_db(
     db = MagicMock()
     # Repositories reach collections by name, the fixtures below by attribute.
     db.__getitem__.side_effect = lambda name: getattr(db, name)
-    db.scans.find_one = AsyncMock(return_value=scan_doc)
+    # Only the scan itself; a lookup of its rescans finds none.
+    db.scans.find_one = AsyncMock(side_effect=lambda query, *_: scan_doc if "_id" in query else None)
     db.scans.find = MagicMock(return_value=_AsyncCursorMock([scan_doc] if scan_doc else []))
     db.scans.insert_one = AsyncMock()
     db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
