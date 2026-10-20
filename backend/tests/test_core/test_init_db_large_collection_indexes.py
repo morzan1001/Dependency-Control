@@ -44,7 +44,6 @@ def test_findings_declare_only_the_indexes_a_read_needs():
         (("project_id", ASCENDING), ("finding_id", ASCENDING), ("created_at", DESCENDING)): {
             "partialFilterExpression": {"type": "vulnerability"}
         },
-        (("type", ASCENDING), ("scan_created_at", ASCENDING)): {},
     }
 
 
