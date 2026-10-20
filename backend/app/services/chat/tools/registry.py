@@ -27,8 +27,10 @@ from app.api.v1.helpers.webhooks import (
 )
 from app.core.constants import (
     ANALYTICS_MAX_SCOPE_PROJECTS,
+    DEPENDENCIES_SCAN_PACKAGE_INDEX,
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
+    FINDINGS_SCAN_SEVERITY_INDEX,
     RETENTION_ACTION_DELETE,
     SCAN_USABLE_STATUSES,
     SETTINGS_MODE_GLOBAL,
@@ -216,6 +218,11 @@ _WAIVER_STATE_READ = 50
 _EXPIRING_WAIVER_READ = 25
 _TEAM_RISK_PROJECT_READ = 500
 
+# In key order of the index bounding the read, so it stops at its limit; an _id sort walks the whole collection.
+_FINDING_ROW_ORDER = list(FINDINGS_SCAN_SEVERITY_INDEX.items())
+_DEPENDENCY_ROW_ORDER = list(DEPENDENCIES_SCAN_PACKAGE_INDEX.items())
+_NEWEST_FIRST = [("created_at", -1)]
+
 # Stored graphs can carry megabyte `imports`/`calls` edge lists; the tool answers from the aggregates only.
 _CALLGRAPH_SUMMARY_PROJECTION = {
     "_id": 1,
@@ -248,7 +255,9 @@ def _callgraph_summary(graph: dict[str, Any]) -> dict[str, Any]:
 
 async def _waiver_rows(db: AsyncIOMotorDatabase, query: dict[str, Any], subject: str) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
-    waivers, waivers_total = await bounded_read(db["waivers"], query, subject=subject, limit=_WAIVER_READ)
+    waivers, waivers_total = await bounded_read(
+        db["waivers"], query, subject=subject, limit=_WAIVER_READ, sort=_NEWEST_FIRST
+    )
     waivers = await resolve_usernames(db, waivers, "created_by")
     return {
         "waivers": [
@@ -689,6 +698,7 @@ class ChatToolRegistry:
             query,
             subject="matching findings",
             limit=ctx.args["limit"],
+            sort=_FINDING_ROW_ORDER,
             projection=RANKED_FINDING_PROJECTION,
             max_time_ms=DEFAULT_MAX_TIME_MS,
         )
@@ -795,6 +805,7 @@ class ChatToolRegistry:
             {"scan_id": head_scan_id, **({"direct": True} if ctx.args.get("direct_only") else {})},
             subject="dependencies",
             limit=ctx.args["limit"],
+            sort=None,
             stages=[
                 *case_insensitive_sort([("direct", -1), ("name", 1), ("_id", 1)], {"name"}),
                 {"$project": _DEPENDENCY_ROW_PROJECTION},
@@ -874,6 +885,7 @@ class ChatToolRegistry:
             query,
             subject="team projects",
             limit=_TEAM_PROJECT_READ,
+            sort=[("last_scan_at", -1)],
             projection=_PROJECT_ROW_PROJECTION,
         )
         stats = await self._head_scan_stats(ctx.db, await ScanRepository(ctx.db).get_latest_active_scan_ids(projects))
@@ -894,6 +906,7 @@ class ChatToolRegistry:
             {"scan_id": head_scan_id, "$or": [{"finding_id": wanted}, advisory_match(vulnerability_id)]},
             subject=f"findings named {wanted}",
             limit=_WAIVER_STATE_READ,
+            sort=_FINDING_ROW_ORDER,
             projection=_WAIVER_STATE_PROJECTION,
         )
         if findings:
@@ -977,6 +990,7 @@ class ChatToolRegistry:
             },
             subject="unwaived CRITICAL/HIGH findings",
             limit=_REMEDIATION_FINDING_READ,
+            sort=_FINDING_ROW_ORDER,
             projection=_PLAN_PROJECTION,
         )
         if not findings:
@@ -1231,6 +1245,7 @@ class ChatToolRegistry:
             dep_query,
             subject="dependency rows naming this component",
             limit=_COMPONENT_USAGE_READ,
+            sort=_DEPENDENCY_ROW_ORDER,
             count_cap=_COMPONENT_USAGE_COUNT_CAP,
             projection={
                 "name": 1,
@@ -1415,6 +1430,7 @@ class ChatToolRegistry:
             and_filters(ctx.user_project_query, {"team_ids": team.id}),
             subject="team projects",
             limit=_TEAM_RISK_PROJECT_READ,
+            sort=[("_id", 1)],
             projection=_PROJECT_ROW_PROJECTION,
         )
         stats = await self._head_scan_stats(ctx.db, await ScanRepository(ctx.db).get_latest_active_scan_ids(projects))
@@ -1536,7 +1552,7 @@ class ChatToolRegistry:
         if has_permission(ctx.user.permissions, Permissions.SYSTEM_MANAGE):
             scopes.append({"project_id": None, "team_id": None})
         webhooks, webhooks_total = await bounded_read(
-            ctx.db["webhooks"], {"$or": scopes}, subject="webhooks", limit=_WEBHOOK_READ
+            ctx.db["webhooks"], {"$or": scopes}, subject="webhooks", limit=_WEBHOOK_READ, sort=_NEWEST_FIRST
         )
         return {
             "webhooks": [

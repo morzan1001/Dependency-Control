@@ -93,13 +93,15 @@ async def bounded_read(
     *,
     subject: str,
     limit: int,
+    # Required, as a read cut in collection order keeps arbitrary rows; None only where the stages sort.
+    sort: list[tuple[str, int]] | None,
     count_cap: int | None = None,
     **find_kwargs: Any,
 ) -> tuple[list[dict[str, Any]], int]:
     """A truncated read is recorded so the answer says so even where the caller never named a limit."""
     # Counting one past the cap tells a total above it from one that lands on it.
     count_limit = count_cap + 1 if count_cap else None
-    rows, total = await find_window(collection, query, limit, count_limit=count_limit, **find_kwargs)
+    rows, total = await find_window(collection, query, limit, count_limit=count_limit, sort=sort, **find_kwargs)
     ledger = _BOUNDED_READS.get()
     if ledger is not None and total > len(rows):
         ledger.append((subject, len(rows), f"more than {count_cap}" if count_cap and total > count_cap else total))

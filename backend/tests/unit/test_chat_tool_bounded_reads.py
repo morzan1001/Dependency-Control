@@ -397,3 +397,151 @@ async def test_a_component_s_usage_is_counted_exactly_up_to_the_cap_and_past_it_
 
     assert (result["count"], result["matches_total"], result["matches_total_capped"]) == (_USAGE_PAGE, total, capped)
     assert f"{_USAGE_PAGE} of {named_total} dependency rows naming this component" in result["_bounded_read_note"]
+
+
+def _fill_oldest_first(collection, count: int, field: str, row) -> list[str]:
+    """Collection order alone would keep the oldest rows; returns the ids newest first."""
+    ids = [f"row-{i:03d}" for i in range(count)]
+    for i, row_id in enumerate(ids):
+        collection._docs[row_id] = {"_id": row_id, field: _NOW - timedelta(days=count - i), **row(i)}
+    return ids[::-1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "arguments", "collection", "ceiling", "field", "row"),
+    [
+        (
+            "list_project_waivers",
+            {"project_id": _PROJECT},
+            "waivers",
+            _WAIVER_READ,
+            "created_at",
+            lambda i: {"project_id": _PROJECT, "finding_id": f"f-{i}"},
+        ),
+        ("list_global_waivers", {}, "waivers", _WAIVER_READ, "created_at", lambda i: {"project_id": None}),
+        (
+            "list_project_webhooks",
+            {"project_id": _PROJECT},
+            "webhooks",
+            _WEBHOOK_READ,
+            "created_at",
+            lambda i: {"project_id": _PROJECT, "url": f"https://example.invalid/{i}"},
+        ),
+        (
+            "get_team_projects",
+            {"team_id": _TEAM},
+            "projects",
+            _TEAM_PROJECT_READ,
+            "last_scan_at",
+            lambda i: {"name": f"p{i}", "team_ids": [_TEAM]},
+        ),
+    ],
+)
+async def test_a_listing_cut_at_its_ceiling_keeps_the_newest_rows(
+    seeded, admin_user, tool, arguments, collection, ceiling, field, row
+):
+    newest_first = _fill_oldest_first(getattr(seeded, collection), ceiling + _OVER_THE_CEILING, field, row)
+
+    result = await ChatToolRegistry().execute_tool(tool, arguments, admin_user, seeded)
+
+    # The byte cap may cut the page further; whatever is shown leads with the newest.
+    shown = [r["id"] for r in result[collection]]
+    assert shown
+    assert shown == newest_first[: len(shown)]
+
+
+@pytest.mark.asyncio
+async def test_a_team_risk_read_cut_at_its_ceiling_sums_the_projects_first_by_id(seeded, admin_user, monkeypatch):
+    monkeypatch.setattr(registry, "_TEAM_RISK_PROJECT_READ", 2)
+    for project_id in ("zz-2", "zz-1", "aa-risky"):
+        seeded.projects._docs[project_id] = {
+            "_id": project_id,
+            "name": project_id,
+            "team_ids": [_TEAM],
+            "default_branch": "main",
+            "latest_scan_id": f"scan-{project_id}",
+        }
+        seeded.scans._docs[f"scan-{project_id}"] = {
+            "_id": f"scan-{project_id}",
+            "project_id": project_id,
+            "branch": "main",
+            "status": "completed",
+            "created_at": _NOW,
+            "stats": {"critical": 9 if project_id == "aa-risky" else 0},
+        }
+
+    result = await ChatToolRegistry().execute_tool("get_team_risk_overview", {"team_id": _TEAM}, admin_user, seeded)
+
+    assert result["projects_summed"] == 2
+    assert result["top_risky_projects"][0]["project_id"] == "aa-risky"
+
+
+@pytest.mark.asyncio
+async def test_a_component_s_usage_cut_at_its_ceiling_lists_rows_in_inventory_key_order(
+    seeded, admin_user, monkeypatch
+):
+    monkeypatch.setattr(registry, "_COMPONENT_USAGE_READ", _USAGE_PAGE)
+    for minor in reversed(range(5)):
+        seeded.dependencies._docs[f"row-{minor}"] = {
+            "_id": f"row-{minor}",
+            "scan_id": _SCAN,
+            "project_id": _PROJECT,
+            "name": "log4j-core",
+            "version": f"2.{minor}",
+        }
+
+    result = await ChatToolRegistry().execute_tool(
+        "find_component_usage", {"component_name": "log4j"}, admin_user, seeded
+    )
+
+    assert [m["version"] for m in result["matches"]] == ["2.0", "2.1"]
+
+
+def _finding(finding_id: str, severity: str, **extra) -> dict:
+    return {
+        "_id": finding_id,
+        "finding_id": finding_id,
+        "scan_id": _SCAN,
+        "project_id": _PROJECT,
+        "type": "vulnerability",
+        "severity": severity,
+        "component": finding_id,
+        "version": "1.0.0",
+        "description": "",
+        "waived": False,
+        "details": {"fixed_version": "2.0.0", "vulnerabilities": [{"id": _CVE, "fixed_version": "2.0.0"}]},
+        **extra,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_remediation_plan_over_a_full_read_is_built_from_the_criticals_first(seeded, admin_user):
+    _fill(seeded.findings, _REMEDIATION_FINDING_READ, lambda i: _finding(f"high-{i:03d}", "HIGH"))
+    seeded.findings._docs["critical"] = _finding("critical", "CRITICAL")
+
+    result = await ChatToolRegistry().execute_tool(
+        "generate_remediation_plan", {"project_id": _PROJECT}, admin_user, seeded
+    )
+
+    assert result["plan"][0]["component"] == "critical"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "arguments", "rows_key"),
+    [
+        ("search_findings", {"query": "pkg", "limit": 2}, "findings"),
+        ("get_waiver_status", {"project_id": _PROJECT, "finding_id": _CVE}, "findings"),
+    ],
+)
+async def test_a_findings_read_cut_at_its_ceiling_lists_rows_in_index_key_order(
+    seeded, admin_user, monkeypatch, tool, arguments, rows_key
+):
+    monkeypatch.setattr(registry, "_WAIVER_STATE_READ", 2)
+    for finding_id, severity in (("pkg-c", "LOW"), ("pkg-b", "HIGH"), ("pkg-a", "LOW"), ("pkg-d", "CRITICAL")):
+        seeded.findings._docs[finding_id] = _finding(finding_id, severity)
+
+    result = await ChatToolRegistry().execute_tool(tool, arguments, admin_user, seeded)
+
+    assert [f["component"] for f in result[rows_key]] == ["pkg-d", "pkg-b"]

@@ -9,6 +9,7 @@ from app.core.constants import (
     DEPENDENCIES_SCAN_PACKAGE_INDEX,
     DEPENDENCIES_SCAN_VERSION_INDEX,
     FINDINGS_SCAN_COMPONENT_INDEX,
+    FINDINGS_SCAN_SEVERITY_INDEX,
     FINDINGS_SCAN_TYPE_INDEX,
     SCANS_TIP_SORT,
     TEAM_SOURCE_GITLAB,
@@ -227,14 +228,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await scan_update_deltas.create_index([("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.DESCENDING)])
 
     # The CSV export streams each severity bucket in (type, finding_id) order straight off this key.
-    await findings.create_index(
-        [
-            ("scan_id", pymongo.ASCENDING),
-            ("severity", pymongo.ASCENDING),
-            ("type", pymongo.ASCENDING),
-            ("finding_id", pymongo.ASCENDING),
-        ]
-    )
+    await findings.create_index(FINDINGS_SCAN_SEVERITY_INDEX)
 
     # A $type of "int" would match int32 alone.
     await _create_unique_index(
