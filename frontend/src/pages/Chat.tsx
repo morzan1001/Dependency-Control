@@ -115,7 +115,7 @@ export default function Chat() {
   return (
     <TooltipProvider delayDuration={200}>
     <div className="flex h-[calc(100vh-4rem)] flex-col">
-      <header className="flex items-center justify-between gap-4 border-b bg-background px-6 py-4">
+      <header className="flex flex-col gap-4 border-b bg-background px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3 overflow-hidden">
           <MessagesSquare className="h-5 w-5 shrink-0 text-primary" />
           <div className="overflow-hidden">

@@ -186,3 +186,13 @@ describe('Chat history deletion', () => {
     });
   });
 });
+
+describe('Chat header on a phone', () => {
+  it('stacks New chat and History under the title, like the other page headers, so the title keeps its width', () => {
+    renderChat();
+
+    const header = screen.getByRole('heading', { level: 1 }).closest('header');
+    expect(header).toHaveClass('flex-col', 'sm:flex-row', 'sm:items-center', 'sm:justify-between');
+    expect(header).toContainElement(screen.getByRole('button', { name: /New chat/ }));
+  });
+});
