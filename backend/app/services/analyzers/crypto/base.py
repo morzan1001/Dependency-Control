@@ -36,6 +36,7 @@ def asset_details(asset: CryptoAsset) -> dict[str, Any]:
         occurrence_count=len(asset.occurrence_locations),
         protocol_type=asset.protocol_type,
         protocol_version=asset.version,
+        mode=asset.mode,
     ).model_dump(exclude_none=True)
 
 

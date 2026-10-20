@@ -358,6 +358,7 @@ class CryptoAssetDetails(_DetailsModel):
     occurrence_count: int | None = None
     protocol_type: str | None = None
     protocol_version: str | None = None
+    mode: str | None = None
 
 
 class CryptoRuleDetails(CryptoAssetDetails):

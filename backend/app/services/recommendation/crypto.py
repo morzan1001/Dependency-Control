@@ -120,8 +120,11 @@ def process_crypto(findings: list[ModelOrDict]) -> list[Recommendation]:
         # Asset names and legacy component labels often carry the version already.
         base = details.get("protocol_type") or details.get("asset_name")
         version = details.get("protocol_version")
+        mode = details.get("mode")
         if base and version:
             label = f"{base} {version}"
+        elif mode and mode.lower() not in label.lower():
+            label = f"{label}-{mode.upper()}"
         grouped[(_CRYPTO_CARDS[finding_type], label)].append(f)
     return [_build_recommendation(card, label, group) for (card, label), group in grouped.items()]
 

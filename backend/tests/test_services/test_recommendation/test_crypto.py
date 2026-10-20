@@ -45,6 +45,25 @@ def test_the_weak_algorithm_card_reads_its_table_row():
     assert rec.action["suggested_replacement"] == "SHA-256 or SHA-3"
 
 
+@pytest.mark.parametrize(("name", "title"), [("AES", "AES-ECB"), ("AES-128-ECB", "AES-128-ECB")])
+def test_an_ecb_card_names_the_mode_once_and_not_the_bare_cipher(name, title):
+    aes = CryptoAsset(
+        project_id="p",
+        scan_id="s",
+        bom_ref="crypto/algorithm/aes",
+        name=name,
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=CryptoPrimitive.BLOCK_CIPHER,
+        mode="ecb",
+        key_size_bits=256,
+    )
+    findings = crypto_findings_for_assets([aes], load_seed_rules(), scanner="crypto_weak_algorithm")
+
+    (rec,) = process_crypto(findings)
+
+    assert rec.title == f"Replace weak algorithm: {title}"
+
+
 def test_the_action_names_every_rule_that_matched_the_asset_not_only_the_lead():
     findings = _md5_findings()
     matched = sorted({entry["rule_id"] for f in findings for entry in f["details"]["matched_rules"]})
