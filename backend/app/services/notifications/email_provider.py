@@ -9,7 +9,7 @@ from pathlib import Path
 import aiosmtplib
 
 from app.core.constants import SMTP_TIMEOUT_SECONDS
-from app.core.metrics import notifications_failed_total, notifications_sent_total
+from app.core.metrics import record_notification
 from app.models.system import SystemSettings
 
 logger = logging.getLogger(__name__)
@@ -79,9 +79,9 @@ class EmailProvider:
                 await smtp.send_message(msg)
         except Exception as e:
             logger.exception("Failed to send email to %s: %s", destination, e)
-            notifications_failed_total.labels(type="email").inc()
-            return False
-
-        logger.info("Email sent to %s", destination)
-        notifications_sent_total.labels(type="email").inc()
-        return True
+            delivered = False
+        else:
+            logger.info("Email sent to %s", destination)
+            delivered = True
+        record_notification("email", delivered)
+        return delivered

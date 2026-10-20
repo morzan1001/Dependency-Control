@@ -9,7 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.config import settings
 from app.core.constants import SLACK_TOKEN_EXPIRY_BUFFER_SECONDS
 from app.core.http_utils import InstrumentedAsyncClient
-from app.core.metrics import notifications_failed_total, notifications_sent_total
+from app.core.metrics import record_notification
 from app.models.system import SystemSettings
 from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.repositories.system_settings import SystemSettingsRepository
@@ -126,32 +126,26 @@ class SlackProvider:
             logger.warning("SLACK_BOT_TOKEN not configured. Skipping Slack notification.")
             return False
 
-        url = "https://slack.com/api/chat.postMessage"
-        headers = {
-            "Authorization": f"Bearer {slack_token}",
-            "Content-Type": "application/json",
-        }
-
         # text is the fallback for notifications and accessibility
         payload: dict[str, Any] = {
             "channel": destination,
             "text": f"*{_escape_mrkdwn(subject)}*\n{_escape_mrkdwn(message)}",
             "blocks": blocks or build_generic_blocks(subject, message),
         }
-
         try:
-            async with InstrumentedAsyncClient(
-                "Slack API", timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
-            ) as client:
-                response = await client.post(url, headers=headers, json=payload)
-                if response.status_code == 200 and response.json().get("ok"):
-                    logger.info(f"Slack message sent to {destination}")
-                    notifications_sent_total.labels(type="slack").inc()
-                    return True
-                logger.error(f"Failed to send Slack message: {response.text}")
-                notifications_failed_total.labels(type="slack").inc()
-                return False
+            delivered = await self._deliver(slack_token, payload)
         except Exception as e:
             logger.exception("Error sending Slack message: %s", e)
-            notifications_failed_total.labels(type="slack").inc()
-            return False
+            delivered = False
+        record_notification("slack", delivered)
+        return delivered
+
+    async def _deliver(self, slack_token: str, payload: dict[str, Any]) -> bool:
+        headers = {"Authorization": f"Bearer {slack_token}", "Content-Type": "application/json"}
+        async with InstrumentedAsyncClient("Slack API", timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS) as client:
+            response = await client.post("https://slack.com/api/chat.postMessage", headers=headers, json=payload)
+        if response.status_code == 200 and response.json().get("ok"):
+            logger.info(f"Slack message sent to {payload['channel']}")
+            return True
+        logger.error(f"Failed to send Slack message: {response.text}")
+        return False

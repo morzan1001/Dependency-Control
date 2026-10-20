@@ -10,6 +10,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
+from prometheus_client import REGISTRY
 
 from app.models.system import SystemSettings
 from app.services.notifications.email_provider import EmailProvider
@@ -156,3 +157,21 @@ async def test_the_delivered_message_carries_a_date_and_a_message_id_of_the_send
     headers = server.data.decode().split("\r\n\r\n", 1)[0]
     assert "\r\nDate: " in f"\r\n{headers}"
     assert "@example.com>" in next(h for h in headers.split("\r\n") if h.startswith("Message-ID: "))
+
+
+def _email_counts() -> tuple[float, float]:
+    sent = REGISTRY.get_sample_value("notifications_sent_total", {"type": "email"}) or 0.0
+    failed = REGISTRY.get_sample_value("notifications_failed_total", {"type": "email"}) or 0.0
+    return sent, failed
+
+
+@pytest.mark.asyncio
+async def test_a_delivery_and_a_failure_are_each_counted_once_and_an_unconfigured_send_not_at_all(cert):
+    before = _email_counts()
+    refused = SystemSettings(smtp_host="127.0.0.1", smtp_port=1, smtp_encryption="none")
+
+    await _send(cert, "none")
+    await EmailProvider().send("to@example.com", "Subject", "Body", system_settings=refused)
+    await EmailProvider().send("to@example.com", "Subject", "Body", system_settings=SystemSettings())
+
+    assert _email_counts() == (before[0] + 1, before[1] + 1)

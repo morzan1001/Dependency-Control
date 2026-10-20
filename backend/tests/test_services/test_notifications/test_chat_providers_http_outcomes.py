@@ -1,6 +1,7 @@
 from typing import Any
 
 import pytest
+from prometheus_client import REGISTRY
 
 from app.models.system import SystemSettings
 from app.services.notifications import mattermost_provider, slack_provider
@@ -174,3 +175,50 @@ async def test_the_slack_fallback_text_keeps_a_version_range_out_of_slacks_contr
 
     [(_url, payload)] = client.posted
     assert payload["text"] == "*a &lt; b*\naffected: &lt;2.17.1 &amp; &gt;=2.0"
+
+
+def _counts(channel: str) -> tuple[float, float]:
+    sent = REGISTRY.get_sample_value("notifications_sent_total", {"type": channel}) or 0.0
+    failed = REGISTRY.get_sample_value("notifications_failed_total", {"type": channel}) or 0.0
+    return sent, failed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("routes", "counted"),
+    [
+        ({}, (1, 0)),
+        ({"/api/v4/posts": _Response(500)}, (0, 1)),
+        ({"/api/v4/users/username/alice": _Response(404)}, (0, 1)),
+        ({"/api/v4/channels/direct": _Response(403)}, (0, 1)),
+    ],
+    ids=["posted", "post refused", "unknown user", "channel refused"],
+)
+async def test_each_mattermost_send_is_counted_once(monkeypatch, routes, counted):
+    client = _mattermost_server()
+    client.routes.update(routes)
+    _use_client(monkeypatch, mattermost_provider, client)
+    before = _counts("mattermost")
+
+    await MattermostProvider().send(
+        "alice", "Subj", "Body", system_settings=SystemSettings(mattermost_url=_BASE, mattermost_bot_token="tok")
+    )
+    await MattermostProvider().send("alice", "Subj", "Body", system_settings=SystemSettings())
+
+    assert _counts("mattermost") == (before[0] + counted[0], before[1] + counted[1])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("payload", "counted"), [({"ok": True}, (1, 0)), ({"ok": False}, (0, 1))])
+async def test_each_slack_send_is_counted_once(monkeypatch, payload, counted):
+    _use_client(
+        monkeypatch, slack_provider, _Client({"https://slack.com/api/chat.postMessage": _Response(200, payload)})
+    )
+    before = _counts("slack")
+
+    await SlackProvider().send(
+        "#alerts", "Subj", "Body", db=FakeDatabase(), system_settings=SystemSettings(slack_bot_token="xoxb")
+    )
+    await SlackProvider().send("#alerts", "Subj", "Body", db=FakeDatabase(), system_settings=SystemSettings())
+
+    assert _counts("slack") == (before[0] + counted[0], before[1] + counted[1])
