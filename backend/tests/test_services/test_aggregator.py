@@ -43,6 +43,8 @@ class TestParseVersionKey:
             pytest.param("4.1.0", "4.1", id="trailing-zero"),
             pytest.param("1:2.30-1", "2.30-1", id="epoch"),
             pytest.param("2", "2.0.0", id="bare-major"),
+            pytest.param("1.0pre1", "1.0rc1", id="pep440-pre-spells-rc"),
+            pytest.param("1.0.0-preview1", "1.0.0-rc1", id="pep440-preview-spells-rc"),
         ],
     )
     def test_spellings_of_one_release_share_a_key(self, spelling, same):
@@ -58,6 +60,7 @@ class TestParseVersionKey:
             pytest.param("3.0.0a1", "3.0.0", id="pep440-prerelease-below-release"),
             pytest.param("5.0.0-beta.2", "5.0.0-rc.1", id="rc-above-beta"),
             pytest.param("1.0.0-rc1", "1.0.0-rc2", id="prerelease-number"),
+            pytest.param("1.0.0-rc1", "1.0.0-preview2", id="pep440-preview-ranks-with-rc"),
             pytest.param("1.0.0-rc", "1.0.0.1", id="longer-release-above-prerelease"),
             pytest.param("1.0.0", "1.0.0.1", id="longer-release-above-release"),
             pytest.param("1.0.0-SNAPSHOT", "1.0.0", id="maven-snapshot-below-release"),
