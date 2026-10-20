@@ -19,7 +19,6 @@ from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     WINDOW_PROJECT_BATCH,
     LedgerEntry,
-    ScanOutdatedSetRepository,
     ScanUpdateDeltaRepository,
     usable_scan_match,
     window_scan_ids_by_branch,
@@ -202,12 +201,11 @@ async def _delete_orphans(
     if not doomed:
         return set()
     # Scoped to the diagnosing chain: the scan id can sit in another chain already re-derived correctly.
-    await ScanUpdateDeltaRepository(db).delete_many(
+    deleted = await ScanUpdateDeltaRepository(db).discard(
         {"_id": {"$in": doomed}, "project_id": project_id, "branch": branch}
     )
-    await ScanOutdatedSetRepository(db).delete_many({"_id": {"$in": doomed}})
-    report.resolved[RepairKind.ORPHAN] += len(doomed)
-    return set(doomed)
+    report.resolved[RepairKind.ORPHAN] += len(deleted)
+    return set(deleted)
 
 
 async def _dependents_of(

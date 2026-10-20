@@ -263,6 +263,14 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
             _NEIGHBOUR_PROJECTION,
         ).to_list(None)
 
+    async def discard(self, query: dict[str, Any]) -> list[str]:
+        """Deletes the matching deltas and exactly their outdated sets, so a delta the query spares keeps its set."""
+        ids = [doc["_id"] for doc in await self.collection.find(query, {"_id": 1}).to_list(None)]
+        if ids:
+            await self.collection.delete_many({**query, "_id": {"$in": ids}})
+            await ScanOutdatedSetRepository(self.db).delete_many({"_id": {"$in": ids}})
+        return ids
+
     async def _neighbour(self, query: dict[str, Any], direction: int) -> dict[str, Any] | None:
         docs = (
             await self.collection.find(query, _NEIGHBOUR_PROJECTION)

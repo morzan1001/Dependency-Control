@@ -425,9 +425,11 @@ class TestOrphanDelta:
 
         monkeypatch.setattr(ScanUpdateDeltaRepository, "window_ledger_by_branch", _census_then_reingest)
 
-        await run_update_frequency_reconcile(db)
+        report = await run_update_frequency_reconcile(db)
 
         assert await _delta(db, "s1") is not None
+        assert await db.scan_outdated_sets.find_one({"_id": "s1"}) is not None
+        assert (report.resolved["orphan"], spy) == (0, [])
 
     @pytest.mark.asyncio
     async def test_a_scan_that_finalised_after_the_census_keeps_its_fresh_delta(

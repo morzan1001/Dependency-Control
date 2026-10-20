@@ -178,9 +178,8 @@ async def _resolve_predecessor(db: Any, scan: _ScanRef) -> tuple[dict[str, Any] 
 
 async def _discard_delta(db: Any, scan: _ScanRef) -> None:
     """The delta would keep counting dependencies the re-ingest already deleted."""
-    if not await ScanUpdateDeltaRepository(db).delete(scan.scan_id):
+    if not await ScanUpdateDeltaRepository(db).discard({"_id": scan.scan_id}):
         return
-    await ScanOutdatedSetRepository(db).delete(scan.scan_id)
     logger.info("Scan %s is no longer usable; dropped its update delta", scan.scan_id)
     await _repair_successors(
         db,
