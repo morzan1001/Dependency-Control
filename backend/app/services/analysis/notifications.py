@@ -12,6 +12,7 @@ from app.core.constants import (
     NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
     NOTIFICATION_EVENT_ANALYSIS_FAILED,
     NOTIFICATION_EVENT_VULNERABILITY_FOUND,
+    SCAN_STATUS_COMPLETED_WITH_ERRORS,
     ScanStatus,
     get_severity_value,
 )
@@ -125,6 +126,13 @@ def _build_vulnerability_message(
     return subject, message
 
 
+def _completion_warning(status: ScanStatus, failed_analyzers: list[str]) -> str | None:
+    if status != SCAN_STATUS_COMPLETED_WITH_ERRORS:
+        return None
+    failed = f" ({', '.join(failed_analyzers)})" if failed_analyzers else ""
+    return f"Completed with errors{failed}: results may be incomplete."
+
+
 async def _announcement_revision(db: Database, scan_id: str, event: str, content: Any) -> int | None:
     """Claim ``event`` for ``content`` on the scan; None when a re-analysis changed nothing to announce."""
     fingerprint = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
@@ -156,6 +164,7 @@ async def send_scan_notifications(
     if revision is not None:
         results_summary = [str(outcome) for outcome in analyzer_outcomes]
         analyzer_count = sum(1 for outcome in analyzer_outcomes if outcome.name not in POST_PROCESSOR_ANALYZERS)
+        warning = _completion_warning(status, failed_analyzers)
         try:
             brand = (await SystemSettingsRepository(db).get()).brand
             html_content = get_analysis_completed_template(
@@ -169,6 +178,7 @@ async def send_scan_notifications(
                 severity_low=stats.low,
                 results_summary=results_summary,
                 brand=brand,
+                warning=warning,
             )
 
             results_text = "\n".join(results_summary) if results_summary else "No analyzer details available."
@@ -180,12 +190,14 @@ async def send_scan_notifications(
                 "results_summary": results_summary,
                 "analyzer_count": analyzer_count,
                 "scan_link": link,
+                "warning": warning,
             }
+            outcome_line = f"Scan {scan_id} completed." + (f"\n{warning}" if warning else "")
             await notification_service.notify_project_members(
                 project=project,
                 event_type=NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
                 subject=f"Analysis Completed: {project.name}",
-                message=f"Scan {scan_id} completed.\nFound {len(findings)} issues.\nResults:\n{results_text}",
+                message=f"{outcome_line}\nFound {len(findings)} issues.\nResults:\n{results_text}",
                 db=db,
                 html_message=html_content,
                 slack_blocks=build_analysis_completed_blocks(**completed_card),

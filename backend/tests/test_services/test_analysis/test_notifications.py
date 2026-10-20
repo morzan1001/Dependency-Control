@@ -306,6 +306,47 @@ class TestAnalysisCompletedAnalyzers:
         assert sent["message"].count("osv: Partial (7 component(s) were not scanned)") == 1
 
 
+class TestAnalysisCompletedWithErrors:
+    @staticmethod
+    async def _sent(**outcome):
+        notify = SimpleNamespace(notify_project_members=AsyncMock())
+        with (
+            patch.object(notifications, "notification_service", notify),
+            patch.object(notifications, "webhook_service", SimpleNamespace(trigger_scan_completed=AsyncMock())),
+        ):
+            await send_scan_notifications(
+                scan_id="scan-abc-123",
+                project=Project(id="proj-1", name="MyProject"),
+                findings=[],
+                db=await _db_with_scan(),
+                **_outcome(**outcome),
+            )
+        return notify.notify_project_members.await_args.kwargs
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("failed", "warning"),
+        [
+            (["grype", "osv"], "Completed with errors (grype, osv): results may be incomplete."),
+            ([], "Completed with errors: results may be incomplete."),
+        ],
+        ids=["failed analyzers", "other errors"],
+    )
+    async def test_every_channel_warns_that_results_may_be_incomplete(self, failed, warning):
+        sent = await self._sent(status=SCAN_STATUS_COMPLETED_WITH_ERRORS, failed_analyzers=failed)
+
+        assert warning in sent["html_message"]
+        assert warning in sent["message"]
+        assert warning in json.dumps(sent["slack_blocks"])
+        assert warning.replace("(", "\\(").replace(")", "\\)") in sent["mattermost_props"]["attachments"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_a_clean_completion_carries_no_warning(self):
+        sent = await self._sent()
+
+        assert "Completed with errors" not in json.dumps(sent, default=str)
+
+
 class TestScanCompletedWebhook:
     @pytest.mark.asyncio
     async def test_the_webhook_reports_the_runs_outcome_not_the_stored_scan(self):

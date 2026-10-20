@@ -77,11 +77,13 @@ def get_analysis_completed_template(
     results_summary: list | None = None,
     *,
     brand: str,
+    warning: str | None = None,
 ) -> str:
     return render_template(
         "analysis_completed.html",
         brand,
         {
+            "warning": warning,
             "link": analysis_link,
             "project_name_scanned": project_name_scanned,
             "total_findings": total_findings,

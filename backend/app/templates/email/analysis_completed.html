@@ -3,6 +3,15 @@
 {% block title %}Analysis Completed - {{ project_name }}{% endblock %}
 
 {% block content %}
+{% if warning %}
+<h2>Analysis Completed with Errors</h2>
+
+<p>The dependency analysis for project <strong>{{ project_name_scanned }}</strong> has finished with errors.</p>
+
+<div style="background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 4px; border: 1px solid #ffeeba; margin-bottom: 20px;">
+    <strong>{{ warning }}</strong> — {{ analyzer_count }} analyzer{{ 's' if analyzer_count != 1 else '' }} ran.
+</div>
+{% else %}
 <h2>Analysis Completed</h2>
 
 <p>The dependency analysis for project <strong>{{ project_name_scanned }}</strong> has finished successfully.</p>
@@ -10,6 +19,7 @@
 <div style="background-color: #d4edda; color: #155724; padding: 15px; border-radius: 4px; border: 1px solid #c3e6cb; margin-bottom: 20px;">
     <strong>Scan completed</strong> — {{ analyzer_count }} analyzer{{ 's' if analyzer_count != 1 else '' }} ran.
 </div>
+{% endif %}
 
 <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
     <thead>

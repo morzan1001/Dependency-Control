@@ -176,6 +176,22 @@ class TestGetAnalysisCompletedTemplate:
 
         assert headline in self._render(results_summary=summary, analyzer_count=analyzer_count)
 
+    def test_a_scan_completed_with_errors_is_not_called_successful(self):
+        result = self._render(warning="Completed with errors (grype): results may be incomplete.")
+
+        assert "<h2>Analysis Completed with Errors</h2>" in result
+        assert "Completed with errors (grype): results may be incomplete." in result
+        assert "#fff3cd" in result
+        assert "successfully" not in result
+        assert "<strong>Scan completed</strong>" not in result
+
+    def test_a_clean_scan_is_called_successful(self):
+        result = self._render()
+
+        assert "<h2>Analysis Completed</h2>" in result
+        assert "finished successfully" in result
+        assert "<strong>Scan completed</strong>" in result
+
 
 _ADVISED_PROJECT = {"id": "p1", "name": "billing", "findings": ["log4j-core (2.14.1)"]}
 

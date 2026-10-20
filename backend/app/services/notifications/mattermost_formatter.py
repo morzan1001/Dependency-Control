@@ -44,6 +44,7 @@ def build_analysis_completed_props(
     results_summary: list[str],
     analyzer_count: int,
     scan_link: str,
+    warning: str | None = None,
 ) -> dict[str, Any]:
     critical = severity_counts.get("CRITICAL", 0)
     high = severity_counts.get("HIGH", 0)
@@ -65,6 +66,8 @@ def build_analysis_completed_props(
     ]
 
     text = f"Scan `{scan_id[:12]}` completed for **{_escape_markdown(project_name)}**."
+    if warning:
+        text += f"\n\n\u26a0\ufe0f **{_escape_markdown(warning)}**"
 
     if results_summary:
         analyzer_lines = "\n".join(f"- {_escape_markdown(r)}" for r in results_summary)
@@ -72,10 +75,11 @@ def build_analysis_completed_props(
 
     text += f"\n\n[View Report \u2192]({scan_link})"
 
+    level = scan_alert_level(critical, high)
     return {
         "attachments": [
             {
-                "color": _ALERT_COLOR[scan_alert_level(critical, high)],
+                "color": _ALERT_COLOR["warning" if warning and level == "ok" else level],
                 "title": f"\U0001f4ca Analysis Completed: {project_name}",
                 "title_link": scan_link,
                 "text": text,

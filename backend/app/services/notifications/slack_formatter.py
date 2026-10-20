@@ -86,6 +86,7 @@ def build_analysis_completed_blocks(
     results_summary: list[str],
     analyzer_count: int,
     scan_link: str,
+    warning: str | None = None,
 ) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = [
         {
@@ -103,6 +104,12 @@ def build_analysis_completed_blocks(
                 "text": f"Scan `{scan_id[:12]}` completed for *{_escape_mrkdwn(project_name)}*.",
             },
         },
+    ]
+    if warning:
+        blocks.append(
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"\u26a0\ufe0f *{_escape_mrkdwn(warning)}*"}}
+        )
+    blocks += [
         {"type": "divider"},
         {
             "type": "section",
