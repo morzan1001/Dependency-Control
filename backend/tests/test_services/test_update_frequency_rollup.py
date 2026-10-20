@@ -856,6 +856,7 @@ class TestFailures:
     async def test_unwritable_error_document_does_not_reach_the_caller(self):
         db = FakeDatabase()
         await _seed_scan(db, "s1", _at(0), [_dep("s1", "requests", "2.0.0")])
+        errors_before = _counter("error")
 
         async def _raise(*_args: Any, **_kwargs: Any) -> Any:
             raise RuntimeError("not authorized on scan_update_deltas")
@@ -863,9 +864,38 @@ class TestFailures:
         db.scan_update_deltas.update_one = _raise
 
         with _failing_dependency_reads(db):
-            await record_scan_update_delta(db, "s1")
+            written = await record_scan_update_delta(db, "s1")
 
+        assert written is False
         assert await _delta(db, "s1") is None
+        assert _counter("error") == errors_before + 1
+
+    @pytest.mark.asyncio
+    async def test_a_successor_whose_error_document_cannot_be_written_does_not_end_the_repair_walk(self):
+        db = FakeDatabase()
+        for index, scan_id in enumerate(("s1", "s2", "s3", "s4")):
+            await _seed_scan(db, scan_id, _at(index), [_dep(scan_id, "requests", f"{index + 1}.0.0")], ())
+        for scan_id in ("s1", "s3", "s4"):
+            await record_scan_update_delta(db, scan_id)
+        await db.scan_update_deltas.update_one({"_id": "s4"}, {"$set": {"computed_at": T0}})
+        real_find, real_update_one = db.analysis_results.find, db.scan_update_deltas.update_one
+
+        def _find(query: Any = None, *args: Any, **kwargs: Any) -> Any:
+            if (query or {}).get("scan_id") == "s3":
+                raise RuntimeError("connection reset by peer")
+            return real_find(query, *args, **kwargs)
+
+        async def _update_one(query: Any, *args: Any, **kwargs: Any) -> Any:
+            if query.get("_id") == "s3":
+                raise RuntimeError("not authorized on scan_update_deltas")
+            return await real_update_one(query, *args, **kwargs)
+
+        db.analysis_results.find = _find
+        db.scan_update_deltas.update_one = _update_one
+
+        assert await record_scan_update_delta(db, "s2") is True
+
+        assert (await _delta(db, "s4"))["computed_at"] != T0
 
     @pytest.mark.asyncio
     async def test_successful_write_counts_as_ok(self):

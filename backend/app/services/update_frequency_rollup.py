@@ -93,7 +93,10 @@ async def _compute_and_persist(db: Any, scan: _ScanRef) -> ScanUpdateDelta | Non
     except Exception as exc:
         logger.exception("Update-frequency delta failed for scan %s", scan.scan_id)
         update_frequency_delta_writes_total.labels(result="error").inc()
-        await _save_error_delta(db, scan, f"{type(exc).__name__}: {exc}")
+        try:
+            await _save_error_delta(db, scan, f"{type(exc).__name__}: {exc}")
+        except Exception as save_exc:
+            logger.warning("Could not store the error delta of scan %s either: %s", scan.scan_id, save_exc)
         return None
 
     update_frequency_delta_writes_total.labels(result="ok").inc()
