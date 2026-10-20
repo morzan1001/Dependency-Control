@@ -88,9 +88,7 @@ async def _bounded_gather[T](awaitables: Iterable[Awaitable[T]]) -> list[T]:
 _MINIMAL_PROJECTION = {
     "_id": 1,
     "pipeline_id": 1,
-    "is_rescan": 1,
     "original_scan_id": 1,
-    "status": 1,
     "reachability_pending": 1,
     "project_id": 1,
     "branch": 1,

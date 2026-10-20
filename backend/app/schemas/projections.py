@@ -28,9 +28,7 @@ class ScanWithStats(BaseModel):
 class ScanMinimal(BaseModel):
     id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
     pipeline_id: int | None = None
-    is_rescan: bool | None = None
     original_scan_id: str | None = None
-    status: str | None = None
     reachability_pending: bool | None = None
     project_id: str | None = None
     branch: str | None = None
