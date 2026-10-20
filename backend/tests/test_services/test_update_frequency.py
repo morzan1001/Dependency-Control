@@ -1820,6 +1820,16 @@ class TestRankSummaries:
         assert result.team_avg_updates_per_month == 4.0
         assert result.partial_projects == 1
 
+    @pytest.mark.parametrize(
+        ("status", "rate"), [("partial", 2.0), ("pending", None), ("insufficient_data", None), ("error", None)]
+    )
+    def test_an_unranked_list_orders_names_whatever_their_case(self, status, rate):
+        names = ["zeta", "Beta", "alpha", "Élan"]
+
+        result = rank_summaries([self._summary(name, status, rate) for name in names])
+
+        assert [p.project_name for p in result.projects] == ["alpha", "Beta", "Élan", "zeta"]
+
     def test_an_unavailable_rate_ranks_below_a_measured_zero(self):
         result = rank_summaries(
             [

@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from packaging.version import InvalidVersion, Version
 
+from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.constants import (
     COUNTED_UPDATE_KINDS,
     RECENT_UPDATES_LIMIT,
@@ -894,13 +895,17 @@ def _rate(summary: ProjectUpdateSummary) -> float:
     return summary.updates_per_month if summary.updates_per_month is not None else -1.0
 
 
+def _name_key(summary: ProjectUpdateSummary) -> tuple[str, str]:
+    return case_insensitive_key(summary.project_name)
+
+
 def rank_summaries(summaries: list[ProjectUpdateSummary]) -> UpdateFrequencyComparison:
     """Unmeasured rows are named, not counted, so a reader can go and look at them."""
     ready = [s for s in summaries if s.data_status == "ready"]
-    partial = sorted((s for s in summaries if s.data_status == "partial"), key=lambda s: (-_rate(s), s.project_name))
-    pending = sorted((s for s in summaries if s.data_status == "pending"), key=lambda s: s.project_name)
-    thin = sorted((s for s in summaries if s.data_status == "insufficient_data"), key=lambda s: s.project_name)
-    failed = sorted((s for s in summaries if s.data_status == "error"), key=lambda s: s.project_name)
+    partial = sorted((s for s in summaries if s.data_status == "partial"), key=lambda s: (-_rate(s), _name_key(s)))
+    pending = sorted((s for s in summaries if s.data_status == "pending"), key=_name_key)
+    thin = sorted((s for s in summaries if s.data_status == "insufficient_data"), key=_name_key)
+    failed = sorted((s for s in summaries if s.data_status == "error"), key=_name_key)
 
     measured = [s for s in ready if s.update_coverage_pct is not None]
     unmeasured = [s for s in ready if s.update_coverage_pct is None]
