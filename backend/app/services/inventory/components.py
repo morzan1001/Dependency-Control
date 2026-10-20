@@ -25,8 +25,8 @@ COMPONENT_COLUMNS = [
     "purl",
 ]
 
-_TEXT_SORT_FIELDS = {"name", "version", "type", "license"}
-_SORT_FIELDS = {*_TEXT_SORT_FIELDS, "direct"}
+TEXT_SORT_FIELDS = frozenset({"name", "version", "type", "license"})
+_SORT_FIELDS = {*TEXT_SORT_FIELDS, "direct"}
 
 _DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "license": 1, "license_category": 1, "direct": 1, "purl": 1}
 
@@ -86,7 +86,7 @@ def _ordered(query: dict[str, Any], sort_field: str, direction: int) -> list[dic
         if sort_field == "name"
         else [(sort_field, direction), ("name", 1), ("version", 1), ("_id", 1)]
     )
-    return [{"$match": query}, {"$project": _DEP_PROJECTION}, *case_insensitive_sort(order, _TEXT_SORT_FIELDS)]
+    return [{"$match": query}, {"$project": _DEP_PROJECTION}, *case_insensitive_sort(order, TEXT_SORT_FIELDS)]
 
 
 async def get_components_page(

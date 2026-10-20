@@ -16,7 +16,7 @@ _DEPENDENCIES = {"zeta": True, "beta-lib": False, "alpha": True, "a-lib": False}
 _DIRECT_FIRST = ["alpha", "zeta", "a-lib", "beta-lib"]
 
 
-def _seeded() -> FakeDatabase:
+def _seeded(dependencies: dict[str, bool] = _DEPENDENCIES) -> FakeDatabase:
     db = FakeDatabase()
     db.projects._docs[_PROJECT] = {"_id": _PROJECT, "name": "checkout", "default_branch": "main"}
     db.scans._docs[_HEAD] = {
@@ -26,7 +26,7 @@ def _seeded() -> FakeDatabase:
         "status": SCAN_STATUS_COMPLETED,
         "created_at": datetime(2026, 9, 1, tzinfo=timezone.utc),
     }
-    for name, direct in _DEPENDENCIES.items():
+    for name, direct in dependencies.items():
         db.dependencies._docs[f"dep-{name}"] = {
             "_id": f"dep-{name}",
             "project_id": _PROJECT,
@@ -42,10 +42,10 @@ def _seeded() -> FakeDatabase:
     return db
 
 
-async def _tree(args: dict) -> dict:
+async def _tree(args: dict, db: FakeDatabase | None = None) -> dict:
     admin = User(id="u-admin", username="admin", email="admin@test.com", permissions=PRESET_ADMIN)
     return await ChatToolRegistry().execute_tool(
-        "get_dependency_tree", {"project_id": _PROJECT, **args}, admin, _seeded()
+        "get_dependency_tree", {"project_id": _PROJECT, **args}, admin, db or _seeded()
     )
 
 
@@ -54,6 +54,15 @@ async def test_direct_dependencies_come_first_then_by_name():
     rows = (await _tree({}))["dependencies"]
 
     assert [row["name"] for row in rows] == _DIRECT_FIRST
+
+
+@pytest.mark.asyncio
+async def test_names_order_whatever_their_case():
+    db = _seeded({**_DEPENDENCIES, "Zlib": True, "Beta": False})
+
+    rows = (await _tree({}, db))["dependencies"]
+
+    assert [row["name"] for row in rows] == ["alpha", "zeta", "Zlib", "a-lib", "Beta", "beta-lib"]
 
 
 @pytest.mark.asyncio

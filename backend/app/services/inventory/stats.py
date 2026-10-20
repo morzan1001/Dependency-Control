@@ -1,3 +1,5 @@
+from collections import Counter
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.project import Project, Scan
@@ -18,7 +20,10 @@ async def build_inventory_stats(db: AsyncIOMotorDatabase, project: Project, scan
     total = await deps.count({"scan_id": scan.id})
     direct = await deps.count({"scan_id": scan.id, "direct": True})
     licenses = await deps.collection.distinct("license", {"scan_id": scan.id})
-    ecosystems = await deps.collection.distinct("type", {"scan_id": scan.id})
+    by_ecosystem: Counter[str] = Counter()
+    for row in await deps.get_type_distribution([scan.id]):
+        by_ecosystem[row["_id"] or "unknown"] += row["count"]
+    ecosystems = sorted(by_ecosystem, key=lambda e: (-by_ecosystem[e], e == "unknown"))
     crypto_assets = CryptoAssetRepository(db)
     crypto_count = await crypto_assets.count_by_scan(project.id, scan.id)
     return InventoryStatsResponse(
@@ -27,7 +32,8 @@ async def build_inventory_stats(db: AsyncIOMotorDatabase, project: Project, scan
         direct_count=direct,
         transitive_count=total - direct,
         license_count=len({t for lic in licenses for t in license_ids(lic)}),
-        ecosystem_count=len({e or "unknown" for e in ecosystems}),
+        ecosystem_count=len(ecosystems),
+        ecosystems=ecosystems,
         crypto_asset_count=crypto_count,
         cbom_evaluated=scan.id in await crypto_assets.evaluated_scan_ids([project.id], [scan.id]),
     )

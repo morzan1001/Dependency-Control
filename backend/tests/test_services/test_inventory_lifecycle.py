@@ -18,7 +18,7 @@ async def test_a_package_ahead_of_the_registry_default_is_not_outdated():
     analyzer = OutdatedAnalyzer()
     for name, version in (("urllib3", "1.26.0"), ("requests", "3.0.0")):
         component = {"name": name, "version": version, "purl": f"pkg:pypi/{name}@{version}"}
-        analyzer._classify_version(component, "2.32.0", outdated, ahead)
+        analyzer._classify_version(component, {"default": "2.32.0", "stable": "2.32.0"}, outdated, ahead)
     agg = ResultAggregator()
     agg.aggregate("outdated_packages", {"outdated_dependencies": outdated, "ahead_of_default": ahead})
 

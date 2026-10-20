@@ -175,7 +175,7 @@ class TestAheadOfDefaultIsNotOutdated:
     def _findings_by_type() -> dict:
         ahead: list = []
         component = {"name": "requests", "version": "1.0.0", "purl": "pkg:pypi/requests@1.0.0"}
-        OutdatedAnalyzer()._classify_version(component, "0.9.0", [], ahead)
+        OutdatedAnalyzer()._classify_version(component, {"default": "0.9.0", "stable": "0.9.0"}, [], ahead)
         agg = ResultAggregator()
         agg.aggregate("outdated_packages", {"outdated_dependencies": [], "ahead_of_default": ahead})
         agg.add_finding(_finding("CVE-2026-1", FindingType.VULNERABILITY, Severity.HIGH, "requests"))
@@ -227,7 +227,10 @@ class TestContextBlocksOnTheVulnerability:
     def test_outdated_info(self):
         outdated: list = []
         OutdatedAnalyzer()._classify_version(
-            {"name": "lib", "version": "1.0.0", "purl": "pkg:npm/lib@1.0.0"}, "2.0.0", outdated, []
+            {"name": "lib", "version": "1.0.0", "purl": "pkg:npm/lib@1.0.0"},
+            {"default": "2.0.0", "stable": "2.0.0"},
+            outdated,
+            [],
         )
 
         vuln = _vulnerability_beside("outdated_packages", {"outdated_dependencies": outdated})

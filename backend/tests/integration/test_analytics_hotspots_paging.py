@@ -69,3 +69,19 @@ async def test_infinite_scroll_shows_every_group_exactly_once(client, db, owner_
         seen += [(row["component"], row["version"]) for row in response.json()]
 
     assert len(seen) == len(set(seen)) == groups
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sort_by", ["component", "finding_count"])
+async def test_hotspot_components_order_whatever_their_case(client, db, owner_auth_headers_proj, sort_by):
+    """Every component has one finding, so the finding_count order is its tie-break alone."""
+    await _seed_groups(db, 4)
+    for index, name in enumerate(["Zlib", "élan", "axios", "Élan"]):
+        await db.findings.update_one({"_id": f"f-{index}"}, {"$set": {"component": name, "version": "1.0"}})
+
+    response = await client.get(
+        _PATH, params={"sort_by": sort_by, "sort_order": "asc"}, headers=owner_auth_headers_proj
+    )
+
+    assert response.status_code == 200, response.text
+    assert [row["component"] for row in response.json()] == ["axios", "Élan", "élan", "Zlib"]

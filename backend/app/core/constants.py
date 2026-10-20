@@ -338,6 +338,9 @@ SCORECARD_POOR_QUALITY_THRESHOLD: float = 4.0
 STALE_PACKAGE_THRESHOLD_DAYS: int = 730
 STALE_PACKAGE_WARNING_DAYS: int = 365
 
+# unaddressed_issues stays out: a busy tracker on a half-year-quiet repo is no sign of abandonment.
+MAINTENANCE_RISK_TYPES = frozenset({"stale_package", "infrequent_updates", "archived_repo", "inactive_repo"})
+
 # Days past an end-of-life date at which the finding is raised to HIGH, then to MEDIUM.
 EOL_HIGH_AFTER_DAYS: int = 365
 EOL_MEDIUM_AFTER_DAYS: int = 180
@@ -748,6 +751,7 @@ SCANS_TIP_SORT: list[tuple[str, int]] = [("created_at", -1), ("_id", 1)]
 FINDINGS_SCAN_TYPE_INDEX: dict[str, int] = {"scan_id": 1, "type": 1}
 FINDINGS_SCAN_COMPONENT_INDEX: dict[str, int] = {"scan_id": 1, "component": 1, "version": 1}
 DEPENDENCIES_SCAN_PACKAGE_INDEX: dict[str, int] = {"scan_id": 1, "name": 1, "version": 1, "purl": 1}
+DEPENDENCIES_SCAN_VERSION_INDEX: dict[str, int] = {"scan_id": 1, "version": 1}
 
 RECENT_UPDATES_LIMIT: int = 30
 UpdateKind = Literal["major", "minor", "patch", "unknown", "downgrade"]

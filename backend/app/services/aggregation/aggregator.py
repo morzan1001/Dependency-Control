@@ -5,6 +5,7 @@ from typing import Any
 from app.core.constants import (
     AGG_KEY_QUALITY,
     AGG_KEY_VULNERABILITY,
+    MAINTENANCE_RISK_TYPES,
     MAX_CROSS_LINK_GROUP_SIZE,
     UNKNOWN_LICENSE_PATTERNS,
 )
@@ -39,7 +40,6 @@ from app.services.analyzers.license_compliance.normalizer import (
 from app.services.analyzers.license_compliance.normalizer import (
     tokenize_license_string,
 )
-from app.services.analyzers.maintainer_risk import MAINTENANCE_RISK_TYPES
 from app.core.purl import canonical_purl
 from app.services.normalizers.crypto import normalize_crypto
 from app.services.normalizers.iac import normalize_kics

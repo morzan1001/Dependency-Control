@@ -275,6 +275,7 @@ def test_every_crypto_finding_names_the_asset_it_flags():
         ("SHA1withRSA", "algorithm", "signature"): 1,
         ("RSA", "algorithm", "pke"): 1,
         ("MD5", "algorithm", "hash"): 1,
+        ("RSA-1024", "related-crypto-material", None): 1,
     }
     assert all(f["details"]["asset_name"] == by_ref[f["details"]["bom_ref"]].name for f in findings)
 
@@ -300,7 +301,7 @@ async def test_every_finding_of_a_scanned_cbom_counts_under_its_asset_in_the_hot
         "algorithm": (4, 3),
         "certificate": (1, 4),
         "protocol": (1, 3),
-        "related-crypto-material": (1, 0),
+        "related-crypto-material": (1, 1),
     }
     assert sum(findings for _, findings in by_type.values()) == await db.findings.count_documents({"scan_id": scan_id})
     assert await hotspots("name") == {
@@ -309,7 +310,7 @@ async def test_every_finding_of_a_scanned_cbom_counts_under_its_asset_in_the_hot
         "SHA1withRSA": (1, 1),
         "RSA": (1, 1),
         "MD5": (1, 1),
-        "RSA-1024": (1, 0),
+        "RSA-1024": (1, 1),
         "AES": (1, 0),
     }
     assert await hotspots("primitive") == {"signature": (1, 1), "pke": (1, 1), "hash": (1, 1), "block-cipher": (1, 0)}

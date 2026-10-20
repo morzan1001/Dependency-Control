@@ -117,12 +117,14 @@ def process_crypto(findings: list[ModelOrDict]) -> list[Recommendation]:
         finding_type = FindingType(get_attr(f, "type"))
         details = get_attr(f, "details", {})
         label = details.get("asset_name") or get_attr(f, "component") or "unknown"
-        if finding_type == FindingType.CRYPTO_WEAK_PROTOCOL:
-            # Asset names and legacy component labels often carry the version already.
-            base = details.get("protocol_type") or details.get("asset_name")
-            version = details.get("protocol_version")
-            if base and version:
-                label = f"{base} {version}"
+        # Asset names and legacy component labels often carry the version already.
+        base = details.get("protocol_type") or details.get("asset_name")
+        version = details.get("protocol_version")
+        mode = details.get("mode")
+        if base and version:
+            label = f"{base} {version}"
+        elif mode and mode.lower() not in label.lower():
+            label = f"{label}-{mode.upper()}"
         grouped[(_CRYPTO_CARDS[finding_type], label)].append(f)
     return [_build_recommendation(card, label, group) for (card, label), group in grouped.items()]
 

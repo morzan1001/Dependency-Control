@@ -52,10 +52,12 @@ class DependencyRepository(BaseRepository[Dependency]):
         return result[0]["count"] if result else 0
 
     async def get_type_distribution(self, scan_ids: list[str]) -> list[dict[str, Any]]:
+        from app.api.v1.helpers.sorting import case_insensitive_sort  # app.api.v1.helpers imports this module
+
         pipeline: list[dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},
             {"$group": {"_id": "$type", "count": {"$sum": 1}}},
             # Ties break by name: $group order is arbitrary and the summary tile names the leading types.
-            {"$sort": {"count": -1, "_id": 1}},
+            *case_insensitive_sort([("count", -1), ("_id", 1)], {"_id"}),
         ]
         return await self.aggregate(pipeline)

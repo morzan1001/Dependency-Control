@@ -94,7 +94,7 @@ _BEARER_FINDINGS = {
 
 class _DepsDevAnswers(OutdatedAnalyzer):
     async def _resolve_package_infos(self, components: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
-        return [{"default": "5.0.0", "withdrawn": []} for _ in components]
+        return [{"default": "5.0.0", "stable": "5.0.0", "withdrawn": []} for _ in components]
 
 
 def _sbom(root: str) -> dict[str, Any]:

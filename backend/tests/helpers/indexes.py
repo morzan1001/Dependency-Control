@@ -1,4 +1,9 @@
-from app.core.constants import DEPENDENCIES_SCAN_PACKAGE_INDEX, FINDINGS_SCAN_COMPONENT_INDEX, FINDINGS_SCAN_TYPE_INDEX
+from app.core.constants import (
+    DEPENDENCIES_SCAN_PACKAGE_INDEX,
+    DEPENDENCIES_SCAN_VERSION_INDEX,
+    FINDINGS_SCAN_COMPONENT_INDEX,
+    FINDINGS_SCAN_TYPE_INDEX,
+)
 
 
 async def create_hinted_indexes(db) -> None:
@@ -6,3 +11,4 @@ async def create_hinted_indexes(db) -> None:
     await db.findings.create_index(FINDINGS_SCAN_TYPE_INDEX)
     await db.findings.create_index(FINDINGS_SCAN_COMPONENT_INDEX)
     await db.dependencies.create_index(DEPENDENCIES_SCAN_PACKAGE_INDEX)
+    await db.dependencies.create_index(DEPENDENCIES_SCAN_VERSION_INDEX)

@@ -24,7 +24,13 @@ from app.api.v1.helpers.analytics import (
     SLIM_DETAILS_EXPR,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
-from app.api.v1.helpers.sorting import SortOrder, SortOrderQuery, parse_sort_direction
+from app.api.v1.helpers.sorting import (
+    SortOrder,
+    SortOrderQuery,
+    case_insensitive_key,
+    case_insensitive_sort,
+    parse_sort_direction,
+)
 from app.core.cache import scope_digest
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
 from app.core.permissions import Permissions
@@ -304,7 +310,8 @@ async def _hotspots(
     sort_direction = parse_sort_direction(sort_order)
     pipeline = _vulnerable_groups(scan_ids)
     if sort_by in _MONGO_SORTS:
-        pipeline += [{"$sort": {_MONGO_SORTS[sort_by]: sort_direction, "_id": 1}}, {"$skip": skip}, {"$limit": limit}]
+        order = [(_MONGO_SORTS[sort_by], sort_direction), ("_id", 1)]
+        pipeline += [*case_insensitive_sort(order, {"_id.component"}), {"$skip": skip}, {"$limit": limit}]
     groups = await FindingRepository(db).aggregate(pipeline, allow_disk_use=True)
 
     # A component may be group-qualified while the inventory keeps the bare artifact name, so both spellings match.
@@ -331,7 +338,7 @@ async def _hotspots(
     enrichments = await _enrich(groups) if sort_by in ("epss", "risk") else None
     if rank := _PYTHON_RANKS.get(sort_by):
         # $group emits its rows in no fixed order, so ties need an order of their own to page through.
-        groups.sort(key=lambda r: (r["_id"]["component"], r["_id"].get("version") or "unknown"))
+        groups.sort(key=lambda r: (case_insensitive_key(r["_id"]["component"]), r["_id"].get("version") or "unknown"))
         groups.sort(key=lambda r: rank(r, enrichments or {}), reverse=sort_direction == -1)
         groups = groups[skip : skip + limit]
     if enrichments is None:

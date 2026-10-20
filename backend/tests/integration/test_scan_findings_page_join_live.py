@@ -114,6 +114,20 @@ async def test_the_severity_sort_lists_the_most_severe_finding_first(db):
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
+@pytest.mark.parametrize("sort_by", ["component", "severity"])
+async def test_components_sort_whatever_their_case(db, sort_by):
+    names = ["Zlib", "élan", "axios", "Élan"]
+    await db.findings.insert_many([{**_finding(i, name), "severity": "HIGH"} for i, name in enumerate(names)])
+
+    pipeline = _build_scan_findings_pipeline({"scan_id": _SCAN}, sort_by=sort_by, sort_dir=1, skip=0, limit=50)
+    [bucket] = await db.findings.aggregate(pipeline).to_list(None)
+
+    assert [row["component"] for row in bucket["data"]] == ["axios", "Élan", "élan", "Zlib"]
+    assert all("_folded" not in row for row in bucket["data"])
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("variants", "taken"),
     [

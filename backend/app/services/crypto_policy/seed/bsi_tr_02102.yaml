@@ -77,6 +77,18 @@ rules:
     enabled: true
     source: bsi-tr-02102
 
+  - rule_id: bsi-02102-ecb-mode
+    name: ECB mode is not recommended
+    description: >
+      BSI TR-02102-1 recommends GCM, CCM, CBC or CTR as block cipher modes. ECB encrypts equal
+      plaintext blocks to equal ciphertext blocks, so the ciphertext shows the structure of the data.
+    finding_type: crypto_weak_algorithm
+    default_severity: MEDIUM
+    match_name_patterns: ["ECB"]
+    match_primitive: block-cipher
+    enabled: true
+    source: bsi-tr-02102
+
   - rule_id: bsi-02102-tls-min-12
     name: TLS versions below 1.2 are disallowed
     description: TLS 1.0 and 1.1 are non-compliant per BSI TR-02102-2. Known attacks include POODLE, BEAST, and CRIME.

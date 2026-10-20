@@ -152,10 +152,10 @@ class TestCacheKeysDepsDev:
 
 class TestCacheKeysLatestVersion:
     def test_pypi_package(self):
-        assert CacheKeys.latest_version("pypi", "requests") == "latest2:pypi:requests"
+        assert CacheKeys.latest_version("pypi", "requests") == "latest3:pypi:requests"
 
     def test_npm_package(self):
-        assert CacheKeys.latest_version("npm", "express") == "latest2:npm:express"
+        assert CacheKeys.latest_version("npm", "express") == "latest3:npm:express"
 
 
 class TestCacheKeysEol:

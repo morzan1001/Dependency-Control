@@ -9,6 +9,7 @@ from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, DEPS_DEV
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 from app.schemas.sbom import has_known_version
+from app.services.aggregation.versions import is_stable_release, parse_version_key
 
 from .base import Analyzer
 from .deps_dev import fetch_deps_dev_json
@@ -31,6 +32,18 @@ def _is_ahead_of(current: str, latest: str) -> bool:
         return False
 
 
+def _version(entry: dict[str, Any]) -> str:
+    return str(entry.get("versionKey", {}).get("version") or "")
+
+
+def _newest_stable(versions: list[dict[str, Any]], default: dict[str, Any], system: str) -> dict[str, Any]:
+    """deps.dev flags Maven's highest version as default, pre-release or not."""
+    if is_stable_release(_version(default), system):
+        return default
+    stable = [v for v in versions if not v.get("isDeprecated") and is_stable_release(_version(v), system)]
+    return max(stable, key=lambda v: parse_version_key(_version(v)), default=default)
+
+
 async def _fetch_package_info(
     client: InstrumentedAsyncClient, system: str, deps_dev_name: str
 ) -> dict[str, Any] | None:
@@ -38,8 +51,10 @@ async def _fetch_package_info(
     document = await fetch_deps_dev_json(client, url)
     if document is None:
         return None
-    default: dict[str, Any] = next((v for v in document.get("versions", []) if v.get("isDefault")), {})
-    return {"default": default.get("versionKey", {}).get("version"), "published_at": default.get("publishedAt")}
+    versions: list[dict[str, Any]] = document.get("versions", [])
+    default: dict[str, Any] = next((v for v in versions if v.get("isDefault")), {})
+    stable = _newest_stable(versions, default, system)
+    return {"default": _version(default), "stable": _version(stable), "published_at": stable.get("publishedAt")}
 
 
 async def fetch_package_info(client: InstrumentedAsyncClient, system: str, deps_dev_name: str) -> dict[str, Any] | None:
@@ -72,13 +87,21 @@ class OutdatedAnalyzer(Analyzer):
             if isinstance(info, BaseException):
                 failed.append(component.get("name", ""))
             elif info and info.get("default"):
-                self._classify_version(component, info["default"], outdated, ahead)
+                self._classify_version(component, info, outdated, ahead)
 
         result: dict[str, Any] = {"outdated_dependencies": outdated, "ahead_of_default": ahead}
         if failed:
             result["partial_components_skipped"] = len(failed)
             result["lookup_failed_components"] = sorted(set(failed))
         return result
+
+    @staticmethod
+    def _latest_for(component: dict[str, Any], info: dict[str, Any]) -> str:
+        """A pre-release install compares against the default, which may be a pre-release itself."""
+        parsed = parse_purl(component.get("purl", ""))
+        system = parsed.deps_dev_system if parsed else None
+        installed_stable = is_stable_release(component.get("version", ""), system or "")
+        return str(info["stable"] if installed_stable else info["default"])
 
     @staticmethod
     def _package_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
@@ -110,10 +133,12 @@ class OutdatedAnalyzer(Analyzer):
     def _classify_version(
         self,
         component: dict[str, Any],
-        latest_version: str,
+        info: dict[str, Any],
         outdated: list[dict[str, Any]],
         ahead: list[dict[str, Any]],
     ) -> None:
+        latest_version = self._latest_for(component, info)
+        default_version = str(info["default"])
         name = component.get("name", "")
         version = component.get("version", "")
         purl = component.get("purl", "")
@@ -130,17 +155,19 @@ class OutdatedAnalyzer(Analyzer):
                 }
             )
         elif _is_ahead_of(version, latest_version):
+            compared = (
+                f"the registry default {latest_version}. The registry may not have flagged this release as default yet."
+                if latest_version == default_version
+                else f"the newest stable release {latest_version} the registry lists."
+            )
             ahead.append(
                 {
                     "component": name,
                     "current_version": version,
-                    "default_version": latest_version,
+                    "default_version": default_version,
+                    "latest_version": latest_version,
                     "purl": purl,
                     "severity": Severity.INFO.value,
-                    "message": (
-                        f"Installed {version} is newer than the registry default "
-                        f"{latest_version}. The registry may not have flagged this "
-                        f"release as default yet."
-                    ),
+                    "message": f"Installed {version} is newer than {compared}",
                 }
             )

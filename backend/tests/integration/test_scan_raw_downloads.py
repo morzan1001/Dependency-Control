@@ -107,7 +107,9 @@ async def test_an_sbom_over_16_mib_downloads_byte_identical_for_the_scan_and_its
 
     assert served.status_code == 200, served.text[:500]
     assert served.headers["content-type"] == "application/json"
-    assert served.headers["content-disposition"] == f'attachment; filename="scan_{scan.id}_sbom_1.json"'
+    assert served.headers["content-disposition"] == (
+        f'attachment; filename="{export_filename("test-project", "sbom", "1", "main", extension="json")}"'
+    )
     stored = await _gridfs_bytes(db, scan.sbom_refs[0])
     assert len(stored) > _MONGO_DOCUMENT_LIMIT
     assert _sha(served.content) == _sha(rescanned.content) == _sha(stored)
@@ -249,6 +251,9 @@ async def test_an_engine_result_over_16_mib_downloads_as_the_stored_file(client,
 
     assert row["_id"] == f"{scan.id}:license_compliance:SBOM #1"
     assert served.status_code == 200, served.text[:500]
+    assert served.headers["content-disposition"] == (
+        f'attachment; filename="{export_filename("test-project", "license_compliance", "SBOM-1", "main", extension="json")}"'
+    )
     stored = await _gridfs_bytes(db, {"gridfs_id": row["result_gridfs_id"]})
     assert len(stored) > _MONGO_DOCUMENT_LIMIT
     assert _sha(served.content) == _sha(stored)

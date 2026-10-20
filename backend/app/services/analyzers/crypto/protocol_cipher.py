@@ -73,8 +73,6 @@ def _build_finding(
         "scanners": ["crypto_protocol_cipher"],
         "details": CryptoProtocolDetails(
             **asset_details(proto),
-            protocol_type=proto.protocol_type,
-            protocol_version=proto.version,
             cipher_suite=suite_name,
             cipher_suite_value=entry.value,
             key_exchange=entry.key_exchange,

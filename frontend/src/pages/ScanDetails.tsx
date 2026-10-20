@@ -41,7 +41,7 @@ interface FindingTab {
   readonly category?: string
 }
 
-// Listed per tab because AVAILABLE_ANALYZERS files CBOMkit under SAST, while its crypto findings are category "other".
+// Listed per tab because AVAILABLE_ANALYZERS files CBOMkit under SAST, while its crypto findings are category "crypto".
 const FINDING_TABS: readonly (FindingTab & { readonly analyzers: readonly string[] })[] = [
   { value: 'security', label: 'Security', category: 'security', analyzers: ['trivy', 'grype', 'osv', 'os_malware', 'typosquatting', 'deps_dev', 'hash_verification'] },
   { value: 'secrets', label: 'Secrets', category: 'secret', analyzers: ['trufflehog'] },
@@ -302,6 +302,7 @@ export default function ScanDetails() {
       { name: 'SAST', value: categoryStats.sast ?? 0, color: '#8b5cf6' },
       { name: 'Compliance', value: categoryStats.compliance ?? 0, color: '#3b82f6' },
       { name: 'Quality', value: categoryStats.quality ?? 0, color: '#10b981' },
+      { name: 'Crypto', value: categoryStats.crypto ?? 0, color: '#0891b2' },
       { name: 'Other', value: categoryStats.other ?? 0, color: '#9ca3af' },
   ] : [];
 

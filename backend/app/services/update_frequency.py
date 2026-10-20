@@ -531,7 +531,9 @@ def _build_slowest_packages(
 ) -> tuple[list[SlowPackage], int]:
     """A scan without the analysis is no cleared backlog; analyzer entries may be stale, so current_version is fresh."""
     remaining = {pkg: count for pkg, count in package_outdated_counts.items() if pkg in latest_outdated}
-    slowest = sorted(remaining.items(), key=lambda entry: (-entry[1], entry[0]))[:SLOWEST_PACKAGES_LIMIT]
+    slowest = sorted(remaining.items(), key=lambda entry: (-entry[1], case_insensitive_key(entry[0])))[
+        :SLOWEST_PACKAGES_LIMIT
+    ]
     return [
         SlowPackage(
             name=pkg_name,

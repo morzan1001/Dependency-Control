@@ -30,6 +30,12 @@ _GITLAB_CLAIM = _CiClaim(100, "grp/proj", None)
 _GITHUB_CLAIM = _CiClaim("123456", "acme/widgets", "ada")
 
 
+@pytest.fixture(autouse=True)
+def _fresh_sync_window(fake_cache, monkeypatch):
+    """A reachable Redis would carry one test's GitLab sync window into the next test and the next run."""
+    monkeypatch.setattr("app.api.deps.cache_service", fake_cache)
+
+
 async def _seed(db, **ownership) -> Project:
     doc = {
         "_id": _PROJECT_ID,

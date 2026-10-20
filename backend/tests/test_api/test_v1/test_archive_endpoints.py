@@ -9,10 +9,13 @@ import pytest
 from fastapi import HTTPException
 
 from app.models.archive import ArchiveMetadata
+from app.models.project import Project
+from app.services.inventory.csv_stream import export_filename
 from tests.helpers.fake_s3 import FakeS3Client, fake_get_s3_client
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.archives"
+_SHOP = Project(id="proj-1", name="shop")
 
 
 def _make_archive_metadata(**overrides):
@@ -366,7 +369,7 @@ class TestDownloadArchive:
         mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
 
         with (
-            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
+            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock, return_value=_SHOP),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
             patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
         ):
@@ -380,7 +383,9 @@ class TestDownloadArchive:
             )
 
         assert result.media_type == "application/gzip"
-        assert result.headers["Content-Disposition"] == 'attachment; filename="scan-1.json.gz"'
+        assert result.headers["Content-Disposition"] == (
+            f'attachment; filename="{export_filename("shop", "archive", "main", "scan-1", extension="json.gz")}"'
+        )
 
     def test_raises_501_when_s3_not_configured(self, admin_user):
         from app.api.v1.endpoints.archives import download_archive
@@ -768,7 +773,7 @@ class TestDownloadStripsPlaintextSecrets:
             return response, bundle, reason, db
 
         with (
-            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
+            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock, return_value=_SHOP),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
             patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
             patch("app.core.s3.get_s3_client", lambda: fake_get_s3_client(s3)),
@@ -778,7 +783,9 @@ class TestDownloadStripsPlaintextSecrets:
             response, bundle, reason, db = asyncio.run(run_download_and_restore())
 
         assert response.media_type == "application/gzip"
-        assert response.headers["Content-Disposition"] == 'attachment; filename="scan-1.json.gz"'
+        assert response.headers["Content-Disposition"] == (
+            f'attachment; filename="{export_filename("shop", "archive", "main", "scan-1", extension="json.gz")}"'
+        )
         assert s3.buckets_read == ["dc-archives"]
         assert _LEGACY_SECRET.encode() not in bundle
         assert reason is None

@@ -96,6 +96,18 @@ async def test_stats_counts_and_scan_context(client, db, member_auth_headers):
 
 
 @pytest.mark.asyncio
+async def test_stats_name_the_ecosystems_most_components_first(client, db, member_auth_headers):
+    await _seed_scan(db)
+    for name, dep_type in [("a", "pypi"), ("b", "npm"), ("c", "npm"), ("d", None), ("e", "Golang")]:
+        await _seed_dep(db, "s1", name, dep_type=dep_type)
+
+    body = (await client.get(f"/api/v1/projects/{_PID}/inventory/stats", headers=member_auth_headers)).json()
+
+    assert body["ecosystems"] == ["npm", "Golang", "pypi", "unknown"]
+    assert body["ecosystem_count"] == 4
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("scan_type", "assets", "evaluated"),
     [(None, [], False), ("cbom", [], True), (None, ["AES"], True), ("cbom", ["AES"], True)],

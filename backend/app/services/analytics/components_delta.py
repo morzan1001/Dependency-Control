@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.purl import package_identity
 from app.schemas.scan_delta import (
     ComponentDeltaItem,
@@ -77,7 +78,7 @@ async def compare_components(
 
     items = [*added, *removed, *changed]
     # Sort with purl and version tiebreakers so pagination does not depend on fetch order.
-    items.sort(key=lambda i: (i.change, i.name, i.purl or "", i.version or ""))
+    items.sort(key=lambda i: (i.change, case_insensitive_key(i.name), i.purl or "", i.version or ""))
 
     return ScanDeltaResponse(
         from_scan_id=from_scan,

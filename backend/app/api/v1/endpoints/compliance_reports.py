@@ -228,6 +228,7 @@ async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, u
             return
         status, summary = stored.status, stored.summary
 
+    [named] = await resolve_scope_names(db, [{"scope": report.scope, "scope_id": report.scope_id}])
     payload = {
         "event": WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -236,6 +237,7 @@ async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, u
         "format": _status_str(report.format),
         "scope": report.scope,
         "scope_id": report.scope_id,
+        "scope_name": named.get("scope_name"),
         "status": _status_str(status),
         "summary": summary,
     }

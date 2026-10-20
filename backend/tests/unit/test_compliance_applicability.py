@@ -106,6 +106,15 @@ def test_one_sizeless_rsa_key_withholds_the_verdict_beside_a_compliant_one():
     assert "2048-bit" in (result.status_reason or "")
 
 
+def test_a_sizeless_rsa_key_material_leaves_the_verdict_to_the_rsa_algorithm():
+    key = _asset(name="RSA", asset_type=CryptoAssetType.RELATED_CRYPTO_MATERIAL, bom_ref="r1")
+    compliant = _asset(name="RSA", primitive=CryptoPrimitive.PKE, bom_ref="r2", key_size_bits=4096)
+
+    result = default_evaluator(_RSA_CONTROL, _input([key, compliant]))
+
+    assert result.status == ControlStatus.PASSED
+
+
 def _weak_rsa_finding(*, waived):
     weak = _asset(name="RSA", primitive=CryptoPrimitive.PKE, bom_ref="r2", key_size_bits=1024)
     (finding,) = crypto_findings_for_assets([weak], [_RSA_RULE], scanner="crypto_weak_key")

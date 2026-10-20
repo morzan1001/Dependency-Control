@@ -19,7 +19,7 @@ from app.services.audit.history import record_policy_change
 logger = logging.getLogger(__name__)
 
 # Bump whenever any seed/*.yaml changes; an edited system policy regains every seed rule_id it lacks, deleted ones too.
-CURRENT_SEED_VERSION = 2
+CURRENT_SEED_VERSION = 3
 
 _SEED_DIR = Path(__file__).parent / "seed"
 

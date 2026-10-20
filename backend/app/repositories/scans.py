@@ -93,6 +93,7 @@ _MINIMAL_PROJECTION = {
     "status": 1,
     "reachability_pending": 1,
     "project_id": 1,
+    "branch": 1,
 }
 
 

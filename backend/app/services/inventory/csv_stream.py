@@ -60,7 +60,7 @@ def filename_part(part: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", part).strip("-")
 
 
-def export_filename(*parts: str, extension: str = "csv") -> str:
+def export_filename(*parts: str | None, extension: str = "csv") -> str:
     safe = [filename_part(part) for part in parts if part]
     return "_".join([*safe, datetime.now(timezone.utc).date().isoformat()]) + f".{extension}"
 

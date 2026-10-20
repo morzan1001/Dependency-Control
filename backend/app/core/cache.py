@@ -134,7 +134,7 @@ class CacheKeys:
 
     @staticmethod
     def latest_version(system: str, package: str) -> str:
-        return f"latest2:{system}:{package}"
+        return f"latest3:{system}:{package}"
 
     @staticmethod
     def eol(product: str) -> str:

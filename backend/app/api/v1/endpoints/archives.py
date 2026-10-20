@@ -35,6 +35,7 @@ from app.schemas.archive import (
 )
 from app.schemas.pagination import Page
 from app.services.archive import restore_scan, stream_bundle_for_download
+from app.services.inventory.csv_stream import export_filename
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +169,7 @@ async def download_archive(
     db: DatabaseDep,
 ) -> StreamingResponse:
     """Stream the bundle with TruffleHog plaintext hashed. Requires archive:download permission."""
-    await check_project_access(project_id, current_user, db)
+    project = await check_project_access(project_id, current_user, db)
     _require_archive_enabled()
 
     metadata = await _archive_for_project(db, project_id, scan_id)
@@ -208,7 +209,11 @@ async def download_archive(
     return StreamingResponse(
         _stream(),
         media_type="application/gzip",
-        headers={"Content-Disposition": f'attachment; filename="{scan_id}.json.gz"'},
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{export_filename(project.name, "archive", metadata.branch, scan_id, extension="json.gz")}"'
+            )
+        },
     )
 
 

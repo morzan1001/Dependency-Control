@@ -33,6 +33,7 @@ class ScanMinimal(BaseModel):
     status: str | None = None
     reachability_pending: bool | None = None
     project_id: str | None = None
+    branch: str | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 

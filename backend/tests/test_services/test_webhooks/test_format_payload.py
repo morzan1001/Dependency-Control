@@ -143,6 +143,16 @@ class TestEventsWithoutAProjectObject:
         assert "failed" in message
         assert "Unknown Project" not in message
 
+    @pytest.mark.parametrize("webhook_type", ["slack", "teams"])
+    def test_a_compliance_report_names_its_scope(self, webhook_type):
+        payload = {**_COMPLIANCE_PAYLOAD, "scope_name": "Shop"}
+
+        message = WebhookService()._format_payload(webhook_type, "compliance_report.generated", payload)
+
+        assert "Shop" in json.dumps(message)
+        if webhook_type == "slack":
+            assert message["text"] == "compliance_report.generated for Shop"
+
     def test_an_ingested_sbom_names_its_project_in_the_slack_text(self):
         message = WebhookService()._format_payload("slack", "sbom.ingested", _SBOM_PAYLOAD)
         assert "proj-1" in message["text"]

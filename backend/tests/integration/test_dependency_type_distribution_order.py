@@ -17,3 +17,13 @@ async def test_types_with_equal_counts_come_in_name_order(db):
     rows = await DependencyRepository(db).get_type_distribution([_SCAN_ID])
 
     assert [row["_id"] for row in rows] == ["npm", *sorted(_TIED_TYPES)]
+
+
+async def test_types_with_equal_counts_come_in_name_order_whatever_their_case(db):
+    await db.dependencies.insert_many(
+        [{"scan_id": _SCAN_ID, "name": f"lib-{t}", "type": t} for t in ["swift", "Maven", "cargo", "Golang"]]
+    )
+
+    rows = await DependencyRepository(db).get_type_distribution([_SCAN_ID])
+
+    assert [row["_id"] for row in rows] == ["cargo", "Golang", "Maven", "swift"]
