@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType
+from app.schemas.bearer import BearerFinding, BearerSourceLocation, bearer_entries
 from app.schemas.finding_details import LineSpan, SastScannerDetails
 from app.services.normalizers.utils import (
     FindingIdPrefix,
@@ -113,56 +114,32 @@ def normalize_opengrep(aggregator: "ResultAggregator", result: dict[str, Any], s
         aggregator.add_finding(_parse_opengrep_item(item), source=source)
 
 
-def bearer_entries(container: Any) -> list[Any] | None:
-    """Bearer posts a flat list or severity groups; a group's severity is each entry's default."""
-    if isinstance(container, list):
-        return container
-    if isinstance(container, dict):
-        return [
-            {"severity": key.lower(), **item} if isinstance(item, dict) else item
-            for key, items in container.items()
-            if isinstance(items, list)
-            for item in items
-        ]
-    return None
-
-
 def normalize_bearer(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     for item in bearer_entries(result.get("findings")) or []:
-        title = item.get("title") or "Unknown data risk"
-        sev_str = (item.get("severity") or "info").upper()
+        entry = BearerFinding.model_validate(item)
+        title = entry.title or "Unknown data risk"
+        sev_str = (entry.severity or "info").upper()
         severity = safe_severity(_BEARER_OVERRIDES.get(sev_str, sev_str))
+        filename = entry.full_filename or entry.filename or "unknown"
 
-        filename = item.get("full_filename") or item.get("filename") or item.get("file") or "unknown"
-
-        source_obj = item.get("source") or {}
-        line_number = item.get("line_number") or source_obj.get("start") or 0
-        end_line = source_obj.get("end") or item.get("end_line_number") or line_number
-
-        column_obj = source_obj.get("column") or {}
-        start_col = column_obj.get("start") or item.get("column_number") or 0
-        end_col = column_obj.get("end") or item.get("end_column_number") or 0
-
-        rule_id = item.get("id") or item.get("rule_id") or "unknown"
-
-        finding_id = build_finding_id(FindingIdPrefix.BEARER, rule_id, filename, line_number)
+        location = entry.source or BearerSourceLocation()
+        line_number = entry.line_number or location.start or 0
+        column = location.column or {}
 
         details = SastScannerDetails(
-            rule_id=rule_id,
+            rule_id=entry.id,
             title=title,
-            code_extract=item.get("code_extract") or item.get("snippet"),
-            start=LineSpan(line=line_number, column=start_col),
-            end=LineSpan(line=end_line, column=end_col),
-            cwe_ids=normalize_cwe_list(item.get("cwe_ids") or item.get("cwe_id")),
-            category=item.get("category"),
-            category_groups=item.get("category_groups") or [],
-            documentation_url=item.get("documentation_url"),
-            references=item.get("references") or [],
+            code_extract=entry.code_extract or entry.snippet,
+            start=LineSpan(line=line_number, column=column.get("start") or 0),
+            end=LineSpan(line=location.end or line_number, column=column.get("end") or 0),
+            cwe_ids=normalize_cwe_list(entry.cwe_ids),
+            category_groups=entry.category_groups,
+            documentation_url=entry.documentation_url,
         ).model_dump(exclude_none=True)
 
         aggregator.add_finding(
             Finding(
-                id=finding_id,
+                id=build_finding_id(FindingIdPrefix.BEARER, entry.id, filename, line_number),
                 type=FindingType.SAST,
                 severity=severity,
                 component=filename,

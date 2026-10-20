@@ -23,7 +23,7 @@ from app.models.crypto_asset import CryptoAsset
 from app.models.system import SystemSettings
 from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport
-from app.schemas.bearer import BearerFinding
+from app.schemas.bearer import BearerFinding, bearer_entries
 from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.kics import KicsQuery
@@ -49,7 +49,6 @@ from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.analyzers.malware import MISSING_API_KEY
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import sends_ids, vulnerability_enrichment_service
-from app.services.normalizers.sast import bearer_entries
 from app.services.reachability_enrichment import (
     ComponentLanguages,
     component_language_map,

@@ -1,6 +1,9 @@
 import json
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from app.services.aggregation import ResultAggregator
 
 # bearer 2.1.1 `scan . --format json` over a Python file hashing a password with MD5 and logging an email.
@@ -399,17 +402,6 @@ class TestNormalizeBearer:
         f = next(iter(self.agg.findings.values()))
         assert f.component == "fallback.py"
 
-    def test_file_is_the_last_filename_fallback(self):
-        """The filename also enters the finding id, so two files would otherwise collapse."""
-        result = {
-            "findings": [
-                {"id": "rule", "title": "test", "severity": "high", "file": "src/app.py", "line_number": 7},
-                {"id": "rule", "title": "test", "severity": "high", "file": "src/db.py", "line_number": 7},
-            ]
-        }
-        self.agg.aggregate("bearer", result)
-        assert {f.component for f in self.agg.findings.values()} == {"src/app.py", "src/db.py"}
-
     def test_end_line_falls_back_to_the_start_line(self):
         """An item without an end position spans its own line; a zero would invert the span."""
         result = {
@@ -458,3 +450,24 @@ class TestNormalizeBearer:
     def test_empty_findings_dict(self):
         self.agg.aggregate("bearer", {"findings": {}})
         assert len(self.agg.findings) == 0
+
+
+class TestBearerEntryContract:
+    """One BearerFinding model governs /ingest and /adhoc, so an entry is read on both or on neither."""
+
+    def test_an_entry_without_a_rule_id_is_unreadable(self):
+        with pytest.raises(ValidationError, match="id"):
+            ResultAggregator().aggregate(
+                "bearer", {"findings": {"high": [{"rule_id": "r", "full_filename": "a.py", "line_number": 1}]}}
+            )
+
+    def test_an_entry_with_a_wrongly_typed_field_is_unreadable(self):
+        with pytest.raises(ValidationError, match="severity"):
+            ResultAggregator().aggregate("bearer", {"findings": [{"id": "r", "severity": 3, "line_number": 1}]})
+
+    def test_the_parent_snippet_stands_in_for_a_missing_code_extract(self):
+        agg = ResultAggregator()
+        agg.aggregate("bearer", {"findings": {"low": [{"id": "r", "full_filename": "a.py", "snippet": "log(email)"}]}})
+
+        [finding] = agg.get_findings()
+        assert finding.details["sast_findings"][0]["details"]["code_extract"] == "log(email)"
