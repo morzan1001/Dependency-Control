@@ -3,6 +3,8 @@ import json
 import logging
 from typing import Any
 
+from pymongo import ReturnDocument
+
 from app.core.config import scan_link
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
@@ -123,14 +125,17 @@ def _build_vulnerability_message(
     return subject, message
 
 
-async def _first_announcement(db: Database, scan_id: str, event: str, content: Any) -> bool:
-    """Claim ``event`` for ``content`` on the scan, so a re-analysis that changed nothing announces nothing."""
+async def _announcement_revision(db: Database, scan_id: str, event: str, content: Any) -> int | None:
+    """Claim ``event`` for ``content`` on the scan; None when a re-analysis changed nothing to announce."""
     fingerprint = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+    revision = f"announced_revisions.{event}"
     claimed = await db.scans.find_one_and_update(
         {"_id": scan_id, f"announced.{event}": {"$ne": fingerprint}},
-        {"$set": {f"announced.{event}": fingerprint}},
+        {"$set": {f"announced.{event}": fingerprint}, "$inc": {revision: 1}},
+        projection={revision: 1},
+        return_document=ReturnDocument.AFTER,
     )
-    return claimed is not None
+    return None if claimed is None else int(claimed["announced_revisions"][event])
 
 
 async def send_scan_notifications(
@@ -147,7 +152,8 @@ async def send_scan_notifications(
     link = scan_link(str(project.id), scan_id)
     severity_counts = {"CRITICAL": stats.critical, "HIGH": stats.high, "MEDIUM": stats.medium, "LOW": stats.low}
     completion = [len(findings), severity_counts, status, failed_analyzers]
-    if await _first_announcement(db, scan_id, NOTIFICATION_EVENT_ANALYSIS_COMPLETED, completion):
+    revision = await _announcement_revision(db, scan_id, NOTIFICATION_EVENT_ANALYSIS_COMPLETED, completion)
+    if revision is not None:
         results_summary = [str(outcome) for outcome in analyzer_outcomes]
         analyzer_count = sum(1 for outcome in analyzer_outcomes if outcome.name not in POST_PROCESSOR_ANALYZERS)
         try:
@@ -197,6 +203,7 @@ async def send_scan_notifications(
             stats=stats.model_dump(),
             scan_status=status,
             failed_analyzers=failed_analyzers,
+            revision=revision,
             team_ids=project.team_ids,
         )
 
@@ -210,7 +217,7 @@ async def send_scan_notifications(
         if not priority_vulns:
             return
         alerted = sorted({(v.id, v.package, v.version, v.in_kev) for v in priority_vulns})
-        if not await _first_announcement(db, scan_id, NOTIFICATION_EVENT_VULNERABILITY_FOUND, alerted):
+        if await _announcement_revision(db, scan_id, NOTIFICATION_EVENT_VULNERABILITY_FOUND, alerted) is None:
             return
 
         top_vulns = sorted(

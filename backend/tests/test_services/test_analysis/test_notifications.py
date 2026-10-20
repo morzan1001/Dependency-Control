@@ -423,6 +423,14 @@ class TestReAnalysisAnnouncements:
         assert webhooks.trigger_vulnerability_found.await_count == 1
 
     @pytest.mark.asyncio
+    async def test_each_completion_the_scan_announces_carries_the_next_revision(self):
+        _events, webhooks = await _announce_twice(
+            [_finding("CVE-1", "CRITICAL")], [_finding("CVE-1", "CRITICAL"), _sast_finding("SAST-1")]
+        )
+
+        assert [call.kwargs["revision"] for call in webhooks.trigger_scan_completed.await_args_list] == [1, 2]
+
+    @pytest.mark.asyncio
     async def test_a_new_vulnerability_alerts_again(self):
         events, webhooks = await _announce_twice(
             [_finding("CVE-1", "CRITICAL")], [_finding("CVE-1", "CRITICAL"), _finding("CVE-2", "HIGH")]

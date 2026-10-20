@@ -385,6 +385,7 @@ class WebhookService:
         scan_status: str,
         failed_analyzers: list[str],
         *,
+        revision: int,
         team_ids: Sequence[str] | None = None,
     ) -> None:
         base_payload = self._build_base_payload(
@@ -401,6 +402,7 @@ class WebhookService:
             },
             "scan_status": scan_status,
             "failed_analyzers": failed_analyzers,
+            "revision": revision,
         }
 
         await self.safe_trigger_webhooks(

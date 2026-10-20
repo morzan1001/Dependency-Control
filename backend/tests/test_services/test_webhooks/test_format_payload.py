@@ -26,10 +26,18 @@ def make_webhook(webhook_type: str) -> Webhook:
     )
 
 
-async def _scan_payload() -> dict:
+async def _scan_payload(revision: int = 1) -> dict:
     _event, payload = await delivered(
         webhook_service.trigger_scan_completed(
-            MagicMock(), "scan-abc", "proj-1", "TestProject", 3, Stats(critical=1).model_dump(), "completed", []
+            MagicMock(),
+            "scan-abc",
+            "proj-1",
+            "TestProject",
+            3,
+            Stats(critical=1).model_dump(),
+            "completed",
+            [],
+            revision=revision,
         )
     )
     return payload
@@ -97,7 +105,15 @@ class TestFormatPayloadSlackWebhook:
     async def test_the_notification_text_escapes_what_slack_reads_as_markup(self):
         _event, payload = await delivered(
             webhook_service.trigger_scan_completed(
-                MagicMock(), "scan-abc", "proj-1", "<!channel> R&D", 3, Stats().model_dump(), "completed", []
+                MagicMock(),
+                "scan-abc",
+                "proj-1",
+                "<!channel> R&D",
+                3,
+                Stats().model_dump(),
+                "completed",
+                [],
+                revision=1,
             )
         )
         message = WebhookService()._format_payload("slack", "scan.completed", payload)
@@ -163,6 +179,11 @@ class TestFormatPayloadGenericWebhook:
     async def test_returns_raw_payload_unchanged(self):
         raw = await _scan_payload()
         assert WebhookService()._format_payload("generic", "scan.completed", raw) is raw
+
+    @pytest.mark.asyncio
+    async def test_the_scan_payload_carries_the_revision_of_its_announcement(self):
+        """A late result re-announces the scan; the revision lets a receiver tell the second notice from a retry."""
+        assert (await _scan_payload(revision=3))["revision"] == 3
 
     @pytest.mark.asyncio
     async def test_returns_raw_policy_payload(self):
@@ -271,7 +292,8 @@ class TestNonBlockingSemantics:
         "fire",
         [
             pytest.param(
-                lambda s: s.trigger_scan_completed(MagicMock(), "s1", "p1", "P", 0, {}, "completed", []), id="scan"
+                lambda s: s.trigger_scan_completed(MagicMock(), "s1", "p1", "P", 0, {}, "completed", [], revision=1),
+                id="scan",
             ),
             pytest.param(
                 lambda s: s.trigger_vulnerability_found(MagicMock(), "s1", "p1", "P", 1, 0, 0, 0, 1, []), id="vuln"

@@ -150,7 +150,11 @@ async def test_the_scan_and_its_webhook_carry_the_verdict_of_the_outcomes(db, mo
         ["epss_kev"],
     )
     webhook = sent.completed.await_args.kwargs
-    assert (webhook["scan_status"], webhook["failed_analyzers"]) == (SCAN_STATUS_COMPLETED_WITH_ERRORS, failed)
+    assert (webhook["scan_status"], webhook["failed_analyzers"], webhook["revision"]) == (
+        SCAN_STATUS_COMPLETED_WITH_ERRORS,
+        failed,
+        1,
+    )
 
 
 async def test_each_failed_or_partial_analyzer_leaves_one_scan_error_finding(db, monkeypatch, sent):
