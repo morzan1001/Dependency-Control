@@ -71,17 +71,9 @@ class FindingIdPrefix(StrEnum):
     EOL = "EOL"
 
 
-def build_finding_id(
-    prefix: str,
-    *parts: Any,
-    separator: str = "-",
-) -> str:
+def build_finding_id(prefix: str, *parts: Any) -> str:
     valid_parts = [str(p) for p in parts if p]
-
-    if not valid_parts:
-        return f"{prefix}{separator}unknown"
-
-    return f"{prefix}{separator}{separator.join(valid_parts)}"
+    return "-".join([prefix, *(valid_parts or ["unknown"])])
 
 
 _TRIVY_CVSS_SOURCES = ("nvd", "redhat", "ghsa", "bitnami")
