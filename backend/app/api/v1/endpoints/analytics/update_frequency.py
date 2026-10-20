@@ -1,6 +1,6 @@
 import asyncio
 import contextlib
-from collections.abc import Coroutine, Mapping
+from collections.abc import Coroutine
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, cast
@@ -232,22 +232,36 @@ class _ResolvedWindow:
     window_scan_cap: int | None = None
 
 
-def _resolve_window(
-    activity: Mapping[str, BranchWindowActivity],
-    deltas_by_branch: Mapping[str, list[dict[str, Any]]],
-    project: dict[str, Any],
-) -> _ResolvedWindow:
-    """The branch comes from the scans, not the deltas, so a ledger with holes cannot pick another branch than live."""
-    branch = select_primary_branch(activity, project.get("default_branch"), project.get("deleted_branches"))
-    if branch is None:
-        return _ResolvedWindow(None, [], "insufficient_data")
-    return _fold_branch(branch, deltas_by_branch.get(branch, []), activity[branch])
+async def _resolve_windows(
+    db: DatabaseDep, projects: list[dict[str, Any]], since: datetime
+) -> dict[str, _ResolvedWindow]:
+    """The scans pick the branch before any delta is read, so a ledger with holes cannot pick another one than live."""
+    project_ids = [str(p["_id"]) for p in projects]
+    activity = await window_scans_by_branch(ScanRepository(db), project_ids, since)
+    primaries = {
+        project_id: select_primary_branch(
+            activity.get(project_id, {}), project.get("default_branch"), project.get("deleted_branches")
+        )
+        for project_id, project in zip(project_ids, projects, strict=True)
+    }
+    # The live walk stops at the same count, so both paths truncate a branch busier than the cap to the same stretch.
+    chains = await ScanUpdateDeltaRepository(db).window_chains(
+        [(project_id, branch) for project_id, branch in primaries.items() if branch is not None],
+        since,
+        WINDOW_HARD_LIMIT,
+    )
+    return {
+        project_id: (
+            _ResolvedWindow(None, [], "insufficient_data")
+            if branch is None
+            else _fold_branch(branch, chains[project_id, branch], activity[project_id][branch])
+        )
+        for project_id, branch in primaries.items()
+    }
 
 
 def _fold_branch(branch: str, deltas: list[dict[str, Any]], activity: BranchWindowActivity) -> _ResolvedWindow:
-    # The live walk stops at the same count, so both paths truncate a branch busier than the cap to the same stretch.
     capped = len(deltas) >= WINDOW_HARD_LIMIT
-    deltas = deltas[-WINDOW_HARD_LIMIT:]
     if not deltas:
         return _ResolvedWindow(branch, [], "pending")
 
@@ -296,15 +310,7 @@ async def _compute_comparison_from_rollup(
     if not projects_raw:
         return UpdateFrequencyComparison(projects=[]).model_dump()
 
-    since = cast(datetime, window_cutoff(window_days))
-    project_ids = [str(p["_id"]) for p in projects_raw]
-    activity = await window_scans_by_branch(ScanRepository(db), project_ids, since)
-    buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(project_ids, since)
-
-    resolved = {
-        project_id: _resolve_window(activity.get(project_id, {}), buckets.get(project_id, {}), project)
-        for project_id, project in zip(project_ids, projects_raw, strict=True)
-    }
+    resolved = await _resolve_windows(db, projects_raw, cast(datetime, window_cutoff(window_days)))
 
     baselines = await ScanOutdatedSetRepository(db).names_by_scan(
         [r.window[0]["_id"] for r in resolved.values() if r.window]

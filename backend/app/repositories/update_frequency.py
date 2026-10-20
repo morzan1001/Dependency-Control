@@ -9,7 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorCollection
 
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION, ScanOutdatedSet, ScanUpdateDelta
 from app.repositories.base import BaseRepository
-from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
+from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository, bounded_gather
 
 _NEIGHBOUR_PROJECTION = {"_id": 1, "scan_created_at": 1, "prev_scan_id": 1, "dep_count": 1}
 
@@ -46,11 +46,6 @@ _ACTIVITY_PROJECTION = {**_SCAN_ID_PROJECTION, "commit_hash": 1}
 
 # Bounds one read's $in list.
 _WINDOW_PROJECT_BATCH = 100
-
-
-def _chain_order(doc: dict[str, Any]) -> tuple[datetime, str]:
-    """The writer's total order over one branch."""
-    return (doc["scan_created_at"], doc["_id"])
 
 
 def is_comparable_delta(delta: dict[str, Any]) -> bool:
@@ -204,17 +199,24 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
             direction=1,
         )
 
-    async def group_window_by_branch(
-        self, project_ids: Sequence[str], since: datetime
-    ) -> dict[str, dict[str, list[dict[str, Any]]]]:
-        scope = {"scan_created_at": {"$gte": since}, "schema_version": UPDATE_DELTA_SCHEMA_VERSION}
-        buckets: dict[str, dict[str, list[dict[str, Any]]]] = {}
-        async for (project_id, branch), delta in _window_docs(self.collection, project_ids, scope, _WINDOW_PROJECTION):
-            buckets.setdefault(project_id, {}).setdefault(branch, []).append(delta)
-        for branches in buckets.values():
-            for deltas in branches.values():
-                deltas.sort(key=_chain_order)
-        return buckets
+    async def window_chains(
+        self, chains: Sequence[tuple[str, str]], since: datetime, limit: int
+    ) -> dict[tuple[str, str], list[dict[str, Any]]]:
+        """Each chain oldest first, in the writer's (scan_created_at, _id) order, read newest first up to ``limit``."""
+
+        async def _read(project_id: str, branch: str) -> list[dict[str, Any]]:
+            query = {
+                "project_id": project_id,
+                "branch": branch,
+                "scan_created_at": {"$gte": since},
+                "schema_version": UPDATE_DELTA_SCHEMA_VERSION,
+            }
+            cursor = self.collection.find(query, _WINDOW_PROJECTION).sort([("scan_created_at", -1), ("_id", -1)])
+            docs: list[dict[str, Any]] = await cursor.limit(limit).to_list(limit)
+            docs.reverse()
+            return docs
+
+        return dict(zip(chains, await bounded_gather(_read(*chain) for chain in chains), strict=True))
 
     async def window_ledger_by_branch(
         self, project_ids: Sequence[str], since: datetime

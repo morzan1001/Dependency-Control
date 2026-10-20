@@ -10,6 +10,7 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
 )
+from app.core.init_db import create_indexes
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
@@ -210,3 +211,39 @@ async def test_the_reconcile_accumulates_neither_census_server_side(db):
     assert issued[("scan_update_deltas", "aggregate")] == 0
     assert issued[("scans", "aggregate")] == 0
     assert issued[("scan_update_deltas", "find")] >= 1
+
+
+async def _explained(collection: Any, read: Any) -> list[dict[str, Any]]:
+    """Runs ``read`` and explains every cursor it opened on ``collection``, sort and limit included."""
+    cursors: list[Any] = []
+    real_find = collection.find
+
+    def _find(*args: Any, **kwargs: Any) -> Any:
+        cursors.append(real_find(*args, **kwargs))
+        return cursors[-1]
+
+    collection.find = _find
+    try:
+        await read()
+    finally:
+        collection.find = real_find
+    return [await cursor.explain() for cursor in cursors]
+
+
+async def test_the_comparison_reads_a_busy_chain_only_up_to_its_cap_off_the_chain_index(db):
+    await create_indexes(db)
+    await db.scan_update_deltas.insert_many(
+        [
+            {"_id": f"{branch}-{index:03d}", "project_id": "p-a", "branch": branch, "schema_version": V,
+             "scan_created_at": _at(index), "dep_count": 1, "error": None}
+            for branch in ("main", "feature")
+            for index in range(40)
+        ]
+    )  # fmt: skip
+    repo = ScanUpdateDeltaRepository(db)
+
+    plans = await _explained(repo.collection, lambda: repo.window_chains([("p-a", "main")], SINCE, limit=5))
+
+    (plan,) = plans
+    assert plan["executionStats"]["totalDocsExamined"] == 5
+    assert "project_id_1_branch_1_scan_created_at_-1__id_-1" in str(plan["queryPlanner"]["winningPlan"])

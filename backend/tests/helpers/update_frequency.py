@@ -1,12 +1,7 @@
 from typing import Any
 
-from app.api.v1.endpoints.analytics.update_frequency import _resolve_window
-from app.repositories.scans import ScanRepository
-from app.repositories.update_frequency import (
-    ScanOutdatedSetRepository,
-    ScanUpdateDeltaRepository,
-    window_scans_by_branch,
-)
+from app.api.v1.endpoints.analytics.update_frequency import _resolve_windows
+from app.repositories.update_frequency import ScanOutdatedSetRepository
 from app.schemas.analytics import UpdateFrequencyMetrics
 from app.services.update_frequency import window_cutoff
 from app.services.update_frequency_fold import fold_window
@@ -16,9 +11,7 @@ async def rollup_metrics(db: Any, project: dict[str, Any], window_days: int) -> 
     project_id = str(project["_id"])
     since = window_cutoff(window_days)
     assert since is not None
-    activity = await window_scans_by_branch(ScanRepository(db), [project_id], since)
-    buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch([project_id], since)
-    resolved = _resolve_window(activity.get(project_id, {}), buckets.get(project_id, {}), project)
+    resolved = (await _resolve_windows(db, [project], since))[project_id]
     if resolved.status != "ready":
         return None
     anchor_id = resolved.window[0]["_id"]

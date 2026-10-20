@@ -11,7 +11,7 @@ from app.api.v1.endpoints.analytics.update_frequency import (
     _compute_comparison,
     _compute_comparison_from_rollup,
     _fold_branch,
-    _resolve_window,
+    _resolve_windows,
 )
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
@@ -97,6 +97,12 @@ async def _build_ledger(db: FakeDatabase) -> None:
     scans = await db.scans.find({}).to_list(None)
     for scan in sorted(scans, key=lambda s: (s["created_at"], s["_id"])):
         await record_scan_update_delta(db, scan["_id"])
+
+
+def _since() -> datetime:
+    since = window_cutoff(WINDOW_DAYS)
+    assert since is not None
+    return since
 
 
 def _project(**overrides: Any) -> dict[str, Any]:
@@ -579,25 +585,40 @@ def _fake_deltas(branch: str, count: int, newest_days_ago: float, retries: int =
 
 
 class TestBranchChoice:
-    def test_a_project_whose_only_branches_are_deleted_resolves_to_nothing(self):
-        resolved = _resolve_window(
-            {"gone": BranchWindowActivity(_one_scan_each(3), _days_ago(2))},
-            {"gone": _fake_deltas("gone", 3, 2)},
-            {"_id": PROJECT, "deleted_branches": ["gone"]},
-        )
-        assert (resolved.branch, resolved.status) == (None, "insufficient_data")
+    @pytest.mark.asyncio
+    async def test_a_project_whose_only_branches_are_deleted_resolves_to_nothing(self):
+        db = FakeDatabase()
+        for i, day in enumerate((60, 50, 40)):
+            await _seed_scan(db, f"g{i}", _days_ago(day), {"requests": f"2.0.{i}"}, (), branch="gone")
+        await _build_ledger(db)
 
-    def test_the_branch_comes_from_the_scans_not_from_the_ledger(self):
-        # A ledger that reached only the quieter branch must not move the project; the scans still elect the branch.
-        resolved = _resolve_window(
-            {
-                "old": BranchWindowActivity(_one_scan_each(3), _days_ago(60)),
-                "new": BranchWindowActivity(_one_scan_each(2), _days_ago(10)),
-            },
-            {"new": _fake_deltas("new", 2, 10)},
-            {"_id": PROJECT},
-        )
-        assert (resolved.branch, resolved.status) == ("old", "pending")
+        resolved = await _resolve_windows(db, [_project(deleted_branches=["gone"])], _since())
+
+        assert (resolved[PROJECT].branch, resolved[PROJECT].status) == (None, "insufficient_data")
+
+    @pytest.mark.asyncio
+    async def test_the_branch_comes_from_the_scans_and_only_its_deltas_are_read(self):
+        db = FakeDatabase()
+        for i, day in enumerate((80, 70, 60)):
+            await _seed_scan(db, f"o{i}", _days_ago(day), {"requests": f"2.0.{i}"}, (), branch="old")
+        for i, day in enumerate((20, 10)):
+            await _seed_scan(db, f"n{i}", _days_ago(day), {"requests": f"9.0.{i}"}, (), branch="new")
+        await _build_ledger(db)
+        # A ledger that reached only the quieter branch must not move the project.
+        await db.scan_update_deltas.delete_many({"branch": "old"})
+        real_find = db.scan_update_deltas.find
+        read: list[tuple[str, str]] = []
+
+        def _spy(query: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
+            read.append((query["project_id"], query["branch"]))
+            return real_find(query, *args, **kwargs)
+
+        db.scan_update_deltas.find = _spy  # type: ignore[method-assign]
+
+        resolved = await _resolve_windows(db, [_project()], _since())
+
+        assert (resolved[PROJECT].branch, resolved[PROJECT].status) == ("old", "pending")
+        assert read == [(PROJECT, "old")]
 
     @pytest.mark.asyncio
     async def test_the_chosen_branch_is_reported_on_the_row(self):
@@ -789,7 +810,8 @@ class TestWindowCap:
         deltas = _fake_deltas("main", documents, 1, retries=retries)
         assert len({d["commit_hash"] for d in deltas}) == window_commits
 
-        resolved = _fold_branch("main", deltas, BranchWindowActivity(_one_scan_each(window_commits), _days_ago(1)))
+        read = deltas[-WINDOW_HARD_LIMIT:]
+        resolved = _fold_branch("main", read, BranchWindowActivity(_one_scan_each(window_commits), _days_ago(1)))
 
         assert resolved.status == "ready"
         assert len(resolved.window) == min(documents, WINDOW_HARD_LIMIT)
