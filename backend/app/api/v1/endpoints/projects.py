@@ -99,6 +99,7 @@ from app.schemas.project import (
     ProjectApiKeyResponse,
     ProjectBranchTips,
     ProjectCreate,
+    ProjectDetail,
     ProjectMemberInvite,
     ProjectMemberUpdate,
     ProjectNotificationSettings,
@@ -433,11 +434,11 @@ async def read_project(
     return ProjectWithTeam(**data)
 
 
-async def _reload_project(project_repo: ProjectRepository, project_id: str) -> Project:
+async def _reload_project(project_repo: ProjectRepository, project_id: str) -> ProjectDetail:
     project = await project_repo.get_by_id(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-    return project
+    return ProjectDetail.model_validate(project, from_attributes=True)
 
 
 async def _assert_may_grant_teams(gained: set[str], current_user: User, team_repo: TeamRepository) -> None:
@@ -556,7 +557,7 @@ async def update_project(
     project_in: ProjectUpdate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Project:
+) -> ProjectDetail:
     """Update project details (name, owning teams, active analyzers). Requires 'admin' role."""
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
@@ -816,7 +817,7 @@ async def update_notification_settings(
     settings: ProjectNotificationSettings,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Project:
+) -> ProjectDetail:
     """Update notification preferences for the current user in this project."""
     project = await check_project_access(project_id, current_user, db)
     project_repo = ProjectRepository(db)
@@ -1272,7 +1273,7 @@ async def update_project_member(
     member_in: ProjectMemberUpdate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Project:
+) -> ProjectDetail:
     """Update the role of a project member. Requires 'admin' role."""
     project = await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
     _ensure_direct_member(project, user_id)
@@ -1295,7 +1296,7 @@ async def remove_project_member(
     user_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Project:
+) -> ProjectDetail:
     """Remove a user from the project. Requires 'admin' role."""
     project = await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
     _ensure_direct_member(project, user_id)

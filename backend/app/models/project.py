@@ -21,10 +21,6 @@ class ProjectMember(BaseModel):
     user_id: str
     role: ProjectRole = PROJECT_ROLE_VIEWER
     notification_preferences: NotificationPreferences = Field(default_factory=dict)
-    username: str | None = None
-    inherited_from: str | None = None
-    # Read-side only: the role check_project_access grants, MAX(direct, owning teams).
-    effective_role: ProjectRole | None = None
 
 
 class Project(MongoDocument, CreatedAtModel):

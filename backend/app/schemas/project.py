@@ -24,7 +24,7 @@ from app.core.constants import (
 from app.core.notification_prefs import StrictNotificationPreferences
 from app.models.finding import FindingType, Severity
 from app.models.license import DeploymentModel, DistributionModel, LibraryUsage
-from app.models.project import Project, Scan
+from app.models.project import Project, ProjectMember, Scan
 from app.schemas._not_null import reject_null
 from app.schemas.team import TeamRef
 
@@ -118,10 +118,21 @@ class BranchInfo(BaseModel):
     is_default: bool = False
 
 
-class ProjectWithTeam(Project):
-    teams: list[TeamRef] = Field(default_factory=list)
+class ProjectMemberView(ProjectMember):
+    username: str | None = None
+    inherited_from: str | None = None
+    # The role check_project_access grants, MAX(direct, owning teams).
+    effective_role: ProjectRole | None = None
+
+
+class ProjectDetail(Project):
+    members: list[ProjectMemberView] = Field(default_factory=list)  # type: ignore[assignment]
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ProjectWithTeam(ProjectDetail):
+    teams: list[TeamRef] = Field(default_factory=list)
 
 
 ProjectName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
