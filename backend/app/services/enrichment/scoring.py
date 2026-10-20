@@ -16,13 +16,13 @@ def fold_enrichments(enrichments: Iterable[VulnerabilityEnrichment]) -> Vulnerab
     if not items:
         return None
     epss = max((e for e in items if e.epss_score is not None), key=lambda e: (e.epss_score, e.cve), default=None)
-    kev = min((e for e in items if e.is_kev), key=lambda e: (e.kev_due_date or "~", e.cve), default=None)
+    kev = min((e for e in items if e.in_kev), key=lambda e: (e.kev_due_date or "~", e.cve), default=None)
     return VulnerabilityEnrichment(
         cve=min(e.cve for e in items),
         epss_score=epss.epss_score if epss else None,
         epss_percentile=epss.epss_percentile if epss else None,
         epss_date=epss.epss_date if epss else None,
-        is_kev=kev is not None,
+        in_kev=kev is not None,
         kev_date_added=kev.kev_date_added if kev else None,
         kev_due_date=kev.kev_due_date if kev else None,
         kev_required_action=kev.kev_required_action if kev else None,

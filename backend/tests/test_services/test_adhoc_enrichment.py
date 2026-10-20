@@ -163,7 +163,7 @@ async def test_the_kev_card_names_the_bundled_cve_the_enrichment_marks(monkeypat
     first, second = "CVE-2023-0001", "CVE-2023-0002"
     live = {
         first: VulnerabilityEnrichment(cve=first, risk_score=20.0),
-        second: VulnerabilityEnrichment(cve=second, risk_score=40.0, is_kev=True),
+        second: VulnerabilityEnrichment(cve=second, risk_score=40.0, in_kev=True),
     }
 
     async def enrich_findings(findings):

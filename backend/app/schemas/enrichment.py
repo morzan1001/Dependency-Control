@@ -40,7 +40,7 @@ class VulnerabilityEnrichment(BaseModel):
     epss_percentile: float | None = None  # 0.0 - 100.0
     epss_date: str | None = None
 
-    is_kev: bool = False
+    in_kev: bool = False
     kev_date_added: str | None = None
     kev_due_date: str | None = None
     kev_required_action: str | None = None

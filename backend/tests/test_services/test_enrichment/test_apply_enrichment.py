@@ -23,7 +23,7 @@ def test_the_fold_keeps_the_worst_case_whatever_the_order():
         _enrichment("CVE-1", epss_score=0.2, epss_percentile=40.0, risk_score=91.0, exploit_maturity="medium"),
         _enrichment(
             "CVE-2",
-            is_kev=True,
+            in_kev=True,
             kev_due_date="2025-06-01",
             kev_date_added="2025-01-02",
             kev_required_action="patch 2",
@@ -34,7 +34,7 @@ def test_the_fold_keeps_the_worst_case_whatever_the_order():
             "CVE-3",
             epss_score=0.7,
             epss_percentile=97.0,
-            is_kev=True,
+            in_kev=True,
             kev_due_date="2022-01-01",
             kev_date_added="2021-11-03",
             kev_required_action="patch 3",
@@ -53,8 +53,8 @@ def test_the_fold_keeps_the_worst_case_whatever_the_order():
 
 def test_a_kev_entry_without_a_due_date_yields_to_one_with_a_deadline():
     [first, *rest] = _folded(
-        _enrichment("CVE-1", is_kev=True, kev_required_action="no deadline"),
-        _enrichment("CVE-2", is_kev=True, kev_due_date="2026-01-01", kev_required_action="deadline"),
+        _enrichment("CVE-1", in_kev=True, kev_required_action="no deadline"),
+        _enrichment("CVE-2", in_kev=True, kev_due_date="2026-01-01", kev_required_action="deadline"),
     )
     assert all(fold == first for fold in rest)
     assert first is not None
@@ -89,7 +89,7 @@ def test_enrichment_reaches_the_entry_the_cve_names_and_no_other():
     }
     apply_enrichments(
         details,
-        {"CVE-1": _enrichment("CVE-1", epss_score=0.42, epss_percentile=97.0, is_kev=True, kev_due_date="2026-01-01")},
+        {"CVE-1": _enrichment("CVE-1", epss_score=0.42, epss_percentile=97.0, in_kev=True, kev_due_date="2026-01-01")},
     )
 
     by_id = {vuln["id"]: vuln for vuln in details["vulnerabilities"]}
@@ -104,7 +104,7 @@ def test_enrichment_reaches_the_entry_the_cve_names_and_no_other():
 
 def test_a_resolved_ghsa_scores_its_cve_on_the_advisorys_cvss():
     details: dict = {"vulnerabilities": [{"id": "GHSA-xxxx", "resolved_cve": "CVE-2024-1234", "cvss_score": 9.8}]}
-    apply_enrichments(details, {"CVE-2024-1234": _enrichment("CVE-2024-1234", is_kev=True)})
+    apply_enrichments(details, {"CVE-2024-1234": _enrichment("CVE-2024-1234", in_kev=True)})
     assert details["risk_score"] == pytest.approx(59.2)
 
 

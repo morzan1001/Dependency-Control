@@ -34,7 +34,7 @@ def _cve_signals(
             # A bundle's stored marks are any one CVE's; a single CVE keeps its own, which a KEV outage cannot clear.
             live = threat_intel.get(cve) if len(cves) > 1 else None
             if live is not None:
-                yield cve, live.is_kev, live.kev_ransomware_use, live.epss_score or 0.0
+                yield cve, live.in_kev, live.kev_ransomware_use, live.epss_score or 0.0
             else:
                 in_kev, ransomware = advisory.get(DETAILS_KEY_IN_KEV), advisory.get(DETAILS_KEY_KEV_RANSOMWARE)
                 yield cve, bool(in_kev), bool(ransomware), advisory.get("epss_score") or 0.0

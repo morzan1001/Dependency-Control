@@ -270,7 +270,7 @@ async def test_the_per_cve_enrichment_of_a_bundled_advisory_is_handed_back(monke
 
     threat_intel, unavailable = await service.enrich_findings([finding])
 
-    assert {cve: e.is_kev for cve, e in threat_intel.items()} == {"CVE-2023-0001": False, "CVE-2023-0002": True}
+    assert {cve: e.in_kev for cve, e in threat_intel.items()} == {"CVE-2023-0001": False, "CVE-2023-0002": True}
     assert unavailable == []
 
 

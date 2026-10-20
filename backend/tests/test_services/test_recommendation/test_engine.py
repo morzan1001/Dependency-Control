@@ -576,7 +576,7 @@ def test_the_kev_card_names_the_cve_the_live_threat_intel_marks():
     ]
     threat_intel = {
         "CVE-2023-0001": VulnerabilityEnrichment(cve="CVE-2023-0001", risk_score=20.0),
-        "CVE-2023-0002": VulnerabilityEnrichment(cve="CVE-2023-0002", risk_score=40.0, is_kev=True),
+        "CVE-2023-0002": VulnerabilityEnrichment(cve="CVE-2023-0002", risk_score=40.0, in_kev=True),
     }
 
     result = generate_recommendations(findings=[finding], threat_intel=threat_intel)
