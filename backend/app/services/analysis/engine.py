@@ -204,7 +204,9 @@ async def _carry_over_crypto_assets(scan_id: str, scan_doc: Scan, db: Database) 
         return
 
     try:
-        await CryptoAssetRepository(db).carry_over_to_scan(scan_doc.project_id, scan_doc.original_scan_id, scan_id)
+        await CryptoAssetRepository(db).carry_over_to_scan(
+            scan_doc.project_id, scan_doc.original_scan_id, scan_id, scan_doc.created_at
+        )
     except Exception as e:
         logger.exception("Failed to carry over crypto assets to rescan %s: %s", scan_id, e)
 

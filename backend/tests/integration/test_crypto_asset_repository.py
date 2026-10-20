@@ -108,7 +108,7 @@ async def test_an_asset_is_found_by_the_id_its_listing_names_and_so_is_its_resca
     assert fetched.name == "AES-128"
     assert listed.id == ingested.id
 
-    await repo.carry_over_to_scan("p1", "s1", "s2")
+    await repo.carry_over_to_scan("p1", "s1", "s2", datetime.now(timezone.utc))
     (carried,) = await repo.list_by_scan("p1", "s2", limit=10)
     fetched_copy = await repo.get("p1", carried.id)
 

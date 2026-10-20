@@ -89,12 +89,20 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
             ]
             await self.collection.bulk_write(ops, ordered=False)
 
-    async def carry_over_to_scan(self, project_id: str, from_scan_id: str, to_scan_id: str) -> None:
+    async def carry_over_to_scan(
+        self, project_id: str, from_scan_id: str, to_scan_id: str, created_at: datetime
+    ) -> None:
         """Copied, as /ingest/cbom assets have no SBOM to re-derive them from; rows the rescan already holds stay."""
         await self.aggregate(
             [
                 {"$match": {"project_id": project_id, "scan_id": from_scan_id}},
-                {"$set": {"_id": {"$concat": [to_scan_id, ":", {"$toString": "$_id"}]}, "scan_id": to_scan_id}},
+                {
+                    "$set": {
+                        "_id": {"$concat": [to_scan_id, ":", {"$toString": "$_id"}]},
+                        "scan_id": to_scan_id,
+                        "created_at": created_at,
+                    }
+                },
                 {
                     "$merge": {
                         "into": self.collection_name,
