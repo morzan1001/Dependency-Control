@@ -142,6 +142,43 @@ async def test_a_finding_dimension_total_counts_every_key_beyond_the_returned_pa
 
 
 @pytest.mark.asyncio
+async def test_a_key_lookup_returns_that_group_alone_whatever_its_rank(db):
+    names = ["MD5", "MD5", "MD5", "SHA-1", "SHA-1", "AES"]
+    await CryptoAssetRepository(db).bulk_upsert(
+        "pk", "sk", [_asset(f"k{i}", name, project_id="pk", scan_id="sk") for i, name in enumerate(names)]
+    )
+    for f in [
+        _crypto_finding("f1", asset_name="AES", project_id="pk", scan_id="sk", severity="LOW"),
+        _crypto_finding("f2", asset_name="MD5", project_id="pk", scan_id="sk"),
+    ]:
+        await db.findings.insert_one(f)
+    resolved = ResolvedScope(scope="project", scope_id="pk", project_ids=["pk"])
+
+    result = await CryptoHotspotService(db).hotspots(
+        resolved=resolved, group_by="name", scan_id="sk", key="AES", limit=1
+    )
+
+    [entry] = result.items
+    assert (entry.key, entry.asset_count, entry.finding_count, entry.severity_mix) == ("AES", 1, 1, {"LOW": 1})
+
+
+@pytest.mark.asyncio
+async def test_a_weakness_tag_lookup_counts_only_the_findings_carrying_that_tag(db):
+    for index, tags in enumerate([["short-key", "weak-hash"], ["weak-hash"], ["short-key"]]):
+        finding = _crypto_finding(f"f{index}", project_id="pt", scan_id="st", bom_ref=f"b{index}")
+        finding["details"]["weakness_tags"] = tags
+        await db.findings.insert_one(finding)
+    resolved = ResolvedScope(scope="project", scope_id="pt", project_ids=["pt"])
+
+    result = await CryptoHotspotService(db).hotspots(
+        resolved=resolved, group_by="weakness_tag", scan_id="st", key="weak-hash", limit=1
+    )
+
+    [entry] = result.items
+    assert (entry.key, entry.finding_count, entry.asset_count) == ("weak-hash", 2, 2)
+
+
+@pytest.mark.asyncio
 async def test_keys_on_as_many_assets_rank_by_name_whatever_its_case(db):
     names = ["md5", "Ed25519", "bcrypt", "AES", "SHA-1", "SHA-1"]
     await CryptoAssetRepository(db).bulk_upsert(

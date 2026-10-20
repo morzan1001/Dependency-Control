@@ -156,6 +156,36 @@ async def test_hotspots_return_the_requested_limit_of_every_group(client, db, ow
 
 
 @pytest.mark.asyncio
+async def test_hotspot_locations_return_the_named_group(client, db, owner_auth_headers_proj):
+    for name in ("MD5", "SHA1", "AES"):
+        await _seed_crypto_asset(db, "s-loc", name)
+    await db.scans.insert_one(
+        {
+            "_id": "s-loc",
+            "project_id": "p",
+            "branch": "main",
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
+
+    found = await client.get(
+        "/api/v1/analytics/crypto/hotspots/AES/locations",
+        params={"scope": "project", "scope_id": "p", "grouping": "name"},
+        headers=owner_auth_headers_proj,
+    )
+    missing = await client.get(
+        "/api/v1/analytics/crypto/hotspots/RC4/locations",
+        params={"scope": "project", "scope_id": "p", "grouping": "name"},
+        headers=owner_auth_headers_proj,
+    )
+
+    assert found.status_code == 200, found.text
+    assert (found.json()["key"], found.json()["asset_count"]) == ("AES", 1)
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_hotspots_user_scope_accepted(client, db, owner_auth_headers_proj):
     resp = await client.get(
         "/api/v1/analytics/crypto/hotspots",

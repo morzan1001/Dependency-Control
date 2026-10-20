@@ -47,20 +47,25 @@ class CryptoHotspotService:
         group_by: GroupBy,
         scan_id: str | None = None,
         limit: int = 100,
+        key: str | None = None,
     ) -> HotspotResponse:
+        """A key narrows the read to that one group."""
         latest_scan_ids = await self._pick_scan_ids(resolved, scan_id)
         scope = (resolved.scope, resolved.scope_id, scope_digest(resolved.project_ids))
-        key = ("crypto-hotspots", *scope, group_by, scope_digest(latest_scan_ids), limit)
-        return await self.cache.get_or_compute(key, lambda: self._build(resolved, group_by, latest_scan_ids, limit))
+        cache_key = ("crypto-hotspots", *scope, group_by, scope_digest(latest_scan_ids), limit, key)
+        return await self.cache.get_or_compute(
+            cache_key, lambda: self._build(resolved, group_by, latest_scan_ids, limit, key)
+        )
 
     async def _build(
-        self, resolved: ResolvedScope, group_by: GroupBy, scan_ids: list[str], limit: int
+        self, resolved: ResolvedScope, group_by: GroupBy, scan_ids: list[str], limit: int, key: str | None
     ) -> HotspotResponse:
         items, total = await self._aggregate(
             project_ids=resolved.project_ids,
             scan_ids=scan_ids,
             group_by=group_by,
             limit=limit,
+            key=key,
         )
         return HotspotResponse(
             scope=resolved.scope,
@@ -89,6 +94,7 @@ class CryptoHotspotService:
         scan_ids: list[str],
         group_by: GroupBy,
         limit: int,
+        key: str | None,
     ) -> tuple[list[HotspotEntry], int]:
         if group_by not in _ASSET_GROUPINGS:
             return await self._aggregate_by_finding_dimension(
@@ -96,6 +102,7 @@ class CryptoHotspotService:
                 scan_ids=scan_ids,
                 group_by=group_by,
                 limit=limit,
+                key=key,
             )
         group_key, join_field = _ASSET_GROUPINGS[group_by]
 
@@ -103,6 +110,8 @@ class CryptoHotspotService:
         match: dict[str, Any] = {"scan_id": {"$in": scan_ids}}
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
+        if key is not None:
+            match[group_key.removeprefix("$")] = key
 
         named_groups: list[dict[str, Any]] = [{"$match": {"_id": {"$nin": [None, ""]}}}]
         asset_pipeline: list[dict[str, Any]] = [
@@ -153,7 +162,7 @@ class CryptoHotspotService:
                 )
             )
 
-        await self._enrich_with_findings(out, project_ids, scan_ids, join_field)
+        await self._enrich_with_findings(out, project_ids, scan_ids, join_field, key)
         return out, counted[0]["groups"] if counted else 0
 
     async def _aggregate_by_finding_dimension(
@@ -163,6 +172,7 @@ class CryptoHotspotService:
         scan_ids: list[str],
         group_by: GroupBy,
         limit: int,
+        key: str | None,
     ) -> tuple[list[HotspotEntry], int]:
         # Waived findings are a risk decision, not posture; excluding them keeps hotspots in line with crypto_trends.
         match: dict[str, Any] = {
@@ -181,8 +191,10 @@ class CryptoHotspotService:
                     {"$unwind": "$details.weakness_tags"},
                 ]
             )
-
         group_field = "$severity" if group_by == "severity" else "$details.weakness_tags"
+        if key is not None:
+            pre_stages.append({"$match": {group_field.removeprefix("$"): key}})
+
         severity_pipeline: list[dict[str, Any]] = [
             *pre_stages,
             {
@@ -210,12 +222,12 @@ class CryptoHotspotService:
 
         accum: dict[str, dict[str, Any]] = {}
         for row in severity_rows:
-            key = row["_id"].get("key")
-            if not key:
+            group = row["_id"].get("key")
+            if not group:
                 continue
             sev = row["_id"].get("severity") or "UNKNOWN"
             entry = accum.setdefault(
-                key,
+                group,
                 {
                     "finding_count": 0,
                     "project_ids": set(),
@@ -232,13 +244,13 @@ class CryptoHotspotService:
                     entry[field] = value if entry[field] is None else pick(entry[field], value)
 
         now = datetime.now(timezone.utc)
-        tie_break = (lambda key: -get_severity_value(key)) if group_by == "severity" else case_insensitive_key
+        tie_break = (lambda group: -get_severity_value(group)) if group_by == "severity" else case_insensitive_key
         ranked = sorted(accum.items(), key=lambda kv: (-kv[1]["finding_count"], tie_break(kv[0])))[:limit]
         entries = [
             HotspotEntry(
-                key=str(key),
+                key=str(group),
                 grouping_dimension=group_by,
-                asset_count=asset_counts.get(key, 0),
+                asset_count=asset_counts.get(group, 0),
                 finding_count=data["finding_count"],
                 severity_mix=data["severity_mix"],
                 locations=[],
@@ -248,7 +260,7 @@ class CryptoHotspotService:
                 first_seen=data["first_seen"] or now,
                 last_seen=data["last_seen"] or now,
             )
-            for key, data in ranked
+            for group, data in ranked
         ]
         return entries, len(accum)
 
@@ -258,6 +270,7 @@ class CryptoHotspotService:
         project_ids: list[str] | None,
         scan_ids: list[str],
         join_field: str,
+        key: str | None,
     ) -> None:
         if not items:
             return
@@ -269,6 +282,8 @@ class CryptoHotspotService:
         }
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
+        if key is not None:
+            match[join_field.removeprefix("$")] = key
         pipeline = [
             {"$match": match},
             {
@@ -284,12 +299,12 @@ class CryptoHotspotService:
         mix: dict[str, dict[str, int]] = {}
         total: dict[str, int] = {}
         async for row in self.db.findings.aggregate(pipeline):
-            key = row["_id"].get("key") or ""
-            if not key:
+            group = row["_id"].get("key") or ""
+            if not group:
                 continue
             sev = row["_id"].get("severity") or "UNKNOWN"
-            mix.setdefault(key, {})[sev] = mix.setdefault(key, {}).get(sev, 0) + row["count"]
-            total[key] = total.get(key, 0) + row["count"]
+            mix.setdefault(group, {})[sev] = mix.setdefault(group, {}).get(sev, 0) + row["count"]
+            total[group] = total.get(group, 0) + row["count"]
 
         for item in items:
             if item.key in total:

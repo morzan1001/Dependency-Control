@@ -5,7 +5,7 @@ from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_400_403, RESP_403, RESP_404
 from app.core.constants import MAX_CRYPTO_HOTSPOT_PAGE, ScopeName
-from app.schemas.analytics import Bucket, GroupBy, HotspotResponse, Metric, TrendSeries
+from app.schemas.analytics import Bucket, GroupBy, HotspotEntry, HotspotResponse, Metric, TrendSeries
 from app.services.analytics.crypto_hotspots import CryptoHotspotService
 from app.services.analytics.crypto_trends import CryptoTrendService
 from app.services.analytics.scopes import ScopeResolver
@@ -43,20 +43,15 @@ async def get_hotspot_locations(
     scope: ScopeName = Query(...),
     scope_id: str | None = Query(None),
     grouping: GroupBy = Query("name"),
-) -> object:
+) -> HotspotEntry:
     resolved = await ScopeResolver(db, current_user).resolve(
         scope=scope,
         scope_id=scope_id,
     )
-    resp = await CryptoHotspotService(db).hotspots(
-        resolved=resolved,
-        group_by=grouping,
-        limit=500,
-    )
-    matches = [e for e in resp.items if e.key == key]
-    if not matches:
+    resp = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by=grouping, key=key, limit=1)
+    if not resp.items:
         raise HTTPException(status_code=404, detail="hotspot not found")
-    return matches[0]
+    return resp.items[0]
 
 
 @router.get("/trends", responses=RESP_400_403)
