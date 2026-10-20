@@ -2,10 +2,8 @@ import csv
 import io
 import re
 from collections.abc import AsyncIterator
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from typing import Any
-
-from fastapi.responses import StreamingResponse
 
 MULTI_VALUE_SEPARATOR = "; "
 # Excel only detects UTF-8 (umlauts!) when the payload starts with a BOM.
@@ -58,16 +56,3 @@ async def iter_csv(columns: list[str], rows: AsyncIterator[dict[str, Any]]) -> A
 
 def filename_part(part: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", part).strip("-")
-
-
-def export_filename(*parts: str | None, extension: str = "csv") -> str:
-    safe = [filename_part(part) for part in parts if part]
-    return "_".join([*safe, datetime.now(timezone.utc).date().isoformat()]) + f".{extension}"
-
-
-def csv_response(filename: str, columns: list[str], rows: AsyncIterator[dict[str, Any]]) -> StreamingResponse:
-    return StreamingResponse(
-        iter_csv(columns, rows),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )

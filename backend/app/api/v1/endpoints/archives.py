@@ -12,7 +12,7 @@ from app.api.deps import DatabaseDep, PermissionChecker
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.projects import check_project_access
-from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500
+from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500, attachment, export_filename
 from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.constants import PROJECT_ROLE_ADMIN
 from app.core.metrics import (
@@ -35,7 +35,6 @@ from app.schemas.archive import (
 )
 from app.schemas.pagination import Page
 from app.services.archive import restore_scan, stream_bundle_for_download
-from app.services.inventory.csv_stream import export_filename
 
 logger = logging.getLogger(__name__)
 
@@ -209,11 +208,7 @@ async def download_archive(
     return StreamingResponse(
         _stream(),
         media_type="application/gzip",
-        headers={
-            "Content-Disposition": (
-                f'attachment; filename="{export_filename(project.name, "archive", metadata.branch, scan_id, extension="json.gz")}"'
-            )
-        },
+        headers=attachment(export_filename(project.name, "archive", metadata.branch, scan_id, extension="json.gz")),
     )
 
 

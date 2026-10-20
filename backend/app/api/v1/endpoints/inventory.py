@@ -7,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
-from app.api.v1.helpers.responses import RESP_AUTH_404
+from app.api.v1.helpers.responses import RESP_AUTH_404, csv_response, export_filename
 from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.models.project import Project, Scan
 from app.repositories.scans import ScanRepository
@@ -27,7 +27,6 @@ from app.services.inventory.crypto import (
     get_crypto_page,
     iter_crypto_rows,
 )
-from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.licenses import (
     LICENSE_COLUMNS,
     build_license_rows,

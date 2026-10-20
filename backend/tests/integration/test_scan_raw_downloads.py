@@ -23,7 +23,7 @@ from app.models.user import User
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
 from app.services.gridfs_maintenance import make_gridfs_ref
-from app.services.inventory.csv_stream import export_filename
+from app.api.v1.helpers.responses import export_filename
 from app.services.rescan import build_rescan
 from tests.helpers.analyzers import process_sbom_document, run_context
 
