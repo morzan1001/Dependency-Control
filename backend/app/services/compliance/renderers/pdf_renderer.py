@@ -1,11 +1,14 @@
 from pathlib import Path
 from typing import Any
 
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import FrameworkEvaluation
 from app.services.compliance.renderers.base import coverage_statement
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
+_ENV = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True, undefined=StrictUndefined)
 
 
 def build_template_context(
@@ -30,6 +33,10 @@ def build_template_context(
     }
 
 
+def report_html(evaluation: FrameworkEvaluation, report: ComplianceReport, disclaimer: str | None = None) -> str:
+    return _ENV.get_template("base_report.html").render(**build_template_context(evaluation, report, disclaimer))
+
+
 class PdfRenderer:
     mime_type = "application/pdf"
     extension = "pdf"
@@ -41,16 +48,10 @@ class PdfRenderer:
         *,
         disclaimer: str | None = None,
     ) -> bytes:
-        # Lazy imports so module import never fails on missing native libs.
-        from jinja2 import Environment, FileSystemLoader, select_autoescape
+        # Lazy import so module import never fails on missing native libs.
         from weasyprint import CSS, HTML
 
-        env = Environment(
-            loader=FileSystemLoader(str(_TEMPLATE_DIR)),
-            autoescape=select_autoescape(["html"]),
-        )
-        tpl = env.get_template("base_report.html")
-        html = tpl.render(**build_template_context(evaluation, report, disclaimer))
+        html = report_html(evaluation, report, disclaimer)
         stylesheets = [CSS(filename=str(_TEMPLATE_DIR / "styles.css"))]
         pdf_bytes: bytes = HTML(string=html, base_url=str(_TEMPLATE_DIR)).write_pdf(stylesheets=stylesheets)
         return pdf_bytes
