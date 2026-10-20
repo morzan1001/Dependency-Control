@@ -216,7 +216,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         response = await self._get_ok(f"/repos/{owner}/{repo}")
         if response is None:
             return None
-        branch = response.json().get("default_branch")
+        branch = json_document(response).get("default_branch")
         return str(branch) if branch else None
 
     async def _cached(
@@ -807,7 +807,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         response = await self._get_ok(f"/repos/{owner}/{repo}/commits/{commit_sha}")
         if response is None:
             return None
-        parents = response.json().get("parents") or []
+        parents = json_document(response).get("parents") or []
         if len(parents) != 2:
             return None
         head_sha = parents[1].get("sha")

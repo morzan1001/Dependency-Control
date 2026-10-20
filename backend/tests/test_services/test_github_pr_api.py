@@ -54,6 +54,13 @@ def _commit_payload(*parent_shas):
     }
 
 
+def _html_page():
+    """A 200 an SSO proxy or captive portal answers with in place of the API's JSON."""
+    response = MagicMock(status_code=200)
+    response.json.side_effect = ValueError("Expecting value: line 1 column 1 (char 0)")
+    return response
+
+
 def _error_body(message):
     """Shape of a GitHub REST error response."""
     return {"message": message, "documentation_url": "https://docs.github.com/rest"}
@@ -233,6 +240,24 @@ class TestRejectedLookupsAreLoud:
 
         warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
         assert warnings == ["GitHub API GET /repos/acme/widget returned HTTP 401"]
+
+
+class TestNonJsonAnswers:
+    def test_a_default_branch_read_answered_with_a_page_names_no_branch(self):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        with patch.object(service, "_api_get", _routed_api_get({"/repos/acme/widget": _html_page()})):
+            assert asyncio.run(service.get_default_branch("acme", "widget")) is None
+
+    def test_a_commit_lookup_answered_with_a_page_finds_no_pull_request(self):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        routes = {
+            f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls": _json_response([]),
+            f"/repos/acme/widget/commits/{_MERGE_SHA}": _html_page(),
+        }
+        with patch.object(service, "_api_get", _routed_api_get(routes)):
+            result = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA, "42/merge"))
+
+        assert result == (_MERGE_SHA, [])
 
 
 class TestGetPullRequestComments:
