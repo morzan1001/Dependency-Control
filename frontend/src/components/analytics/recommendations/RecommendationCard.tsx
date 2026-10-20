@@ -396,9 +396,12 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
             {recommendation.action.type === 'standardize_versions' && recommendation.action.packages && (
               <ActionSection icon={GitBranch} title="Version Standardization Across Projects" bodyClassName="space-y-3">
                 {recommendation.action.packages.map((pkg) => (
-                  <div key={pkg.name} className="border-b last:border-0 pb-2 last:pb-0">
+                  <div key={`${pkg.type}:${pkg.name}`} className="border-b last:border-0 pb-2 last:pb-0">
                     <div className="flex items-center justify-between">
-                      <span className="font-medium">{pkg.name}</span>
+                      <div>
+                        <span className="font-medium">{pkg.name}</span>
+                        {pkg.type && <Badge variant="secondary" className="ml-2 text-xs">{pkg.type}</Badge>}
+                      </div>
                       {pkg.project_count && (
                         <Badge variant="secondary" className="text-xs">
                           {pkg.project_count} projects

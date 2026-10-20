@@ -345,7 +345,13 @@ def _cross_project_cards():
         for i in range(4)
     ]
     shared = [
-        {"name": f"shared-{i:02d}", "versions": ["1.0.0", "2.0.0"], "version_count": 2, "project_count": 3}
+        {
+            "name": f"shared-{i:02d}",
+            "type": "npm",
+            "versions": ["1.0.0", "2.0.0"],
+            "version_count": 2,
+            "project_count": 3,
+        }
         for i in range(_CROWD)
     ]
     return insights.analyze_cross_project_patterns(

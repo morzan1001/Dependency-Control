@@ -292,6 +292,7 @@ export interface RecommendationAction {
   rule_ids?: string[];
   packages?: Array<{
     name: string;
+    type?: string;
     versions?: string[];
     suggestion?: string;
     version_count?: number;

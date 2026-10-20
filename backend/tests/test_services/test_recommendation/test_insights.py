@@ -68,10 +68,11 @@ def _cross_project_data(projects, total_projects=None, shared_packages=None):
     }
 
 
-def _shared_package(name="requests", versions=("2.28.0", "2.31.0"), project_count=2):
+def _shared_package(name="requests", versions=("2.28.0", "2.31.0"), project_count=2, package_type="pypi"):
     """A row of the cross-project aggregation, which counts every dependency row in Mongo instead of sampling."""
     return {
         "name": name,
+        "type": package_type,
         "versions": list(versions),
         "version_count": len(versions),
         "project_count": project_count,
@@ -273,6 +274,20 @@ class TestAnalyzeCrossProjectPatternsInconsistentVersions:
             if r.type == RecommendationType.CROSS_PROJECT_PATTERN and "inconsistency" in r.title.lower()
         ]
         assert len(pattern_recs) == expected
+
+    def test_packages_sharing_a_name_across_ecosystems_are_named_with_their_type(self):
+        data = _cross_project_data(
+            [_project(project_id="p1"), _project(project_id="p2")],
+            shared_packages=[_shared_package("foo", package_type="npm"), _shared_package("foo", package_type="pypi")],
+        )
+
+        [card] = [r for r in analyze_cross_project_patterns(data) if r.type == RecommendationType.CROSS_PROJECT_PATTERN]
+
+        assert [(p["name"], p["type"]) for p in card.action["packages"]] == [("foo", "npm"), ("foo", "pypi")]
+        assert card.affected_components == [
+            "foo (npm): 2 versions across 2 projects",
+            "foo (pypi): 2 versions across 2 projects",
+        ]
 
 
 class TestAnalyzeCrossProjectPatternsPrioritizeProjects:

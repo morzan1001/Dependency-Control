@@ -214,3 +214,15 @@ def test_a_project_holding_a_copy_the_other_lacks_reports_every_version():
     [row] = _run(col, ["s1", "s2"])
 
     assert (sorted(row["versions"]), row["version_count"], row["project_count"]) == (["2.28.0", "2.31.0"], 2, 2)
+
+
+def test_packages_sharing_a_name_across_ecosystems_are_listed_apart_with_their_type():
+    col = FakeCollection()
+    docs = [
+        _dep(f"d-{ecosystem}-{scan}", scan, project, "foo", version, f"pkg:{ecosystem}/foo@{version}")
+        for ecosystem in ("pypi", "npm")
+        for scan, project, version in (("s1", "p1", "1.0.0"), ("s2", "p2", "2.0.0"))
+    ]
+    col._docs = {d["_id"]: d for d in docs}
+
+    assert sorted((r["name"], r["type"]) for r in _run(col, ["s1", "s2"])) == [("foo", "npm"), ("foo", "pypi")]

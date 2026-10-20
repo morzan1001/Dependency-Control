@@ -397,6 +397,7 @@ def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> li
         {
             "$project": {
                 "name": "$_id.path",
+                "type": "$_id.type",
                 "versions": 1,
                 "version_count": {"$size": "$versions"},
                 # One head scan per compared project, so distinct scans count the projects.
