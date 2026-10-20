@@ -159,8 +159,9 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await create_team_indexes(database)
 
     await database["scans"].create_index("pipeline_id")
-    await database["scans"].create_index([("created_at", pymongo.DESCENDING)])
-    await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
+    # The scan lists' date sort ends on the _id tiebreak, so same-millisecond scans keep their place across pages.
+    await database["scans"].create_index(SCANS_TIP_SORT)
+    await database["scans"].create_index([("project_id", pymongo.ASCENDING), *SCANS_TIP_SORT])
     await database["scans"].create_index("sbom_refs.gridfs_id")
 
     await database["analysis_results"].create_index(
@@ -221,11 +222,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
     await database["scans"].create_index(SCANS_TIP_INDEX_KEY)
     await database["scans"].create_index(
-        [
-            ("project_id", pymongo.ASCENDING),
-            ("branch", pymongo.ASCENDING),
-            ("created_at", pymongo.DESCENDING),
-        ]
+        [("project_id", pymongo.ASCENDING), ("branch", pymongo.ASCENDING), *SCANS_TIP_SORT]
     )
     # A branch's tip build is found in one seek, however many rescans of it pile up in front.
     await database["scans"].create_index(

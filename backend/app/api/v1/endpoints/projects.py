@@ -676,12 +676,12 @@ async def _with_releases(db: Any, docs: list[dict[str, Any]]) -> list[ScanWithRe
 def _scan_page_sort(field: str, direction: int) -> list[tuple[str, int]]:
     """Break ties so pages neither repeat nor skip scans, on keys an existing index already serves."""
     if field == "created_at":
-        return [("created_at", direction)]
+        return [("created_at", direction), ("_id", -direction)]
     if field == "status":
         # SCANS_TIP_INDEX_KEY walks (status, created_at desc, _id asc) in either direction.
         return [("status", direction), ("created_at", -direction), ("_id", direction)]
     if field == "branch":
-        return [("branch", direction), ("created_at", -direction)]
+        return [("branch", direction), ("created_at", -direction), ("_id", direction)]
     # Nothing indexes these, so the sort is blocking anyway and the extra keys cost nothing.
     return [(field, direction), ("created_at", -1), ("_id", 1)]
 

@@ -28,8 +28,9 @@ _USER = User(id="u1", username="u1", email="u1@test.com", permissions=[])
         ("status", "desc", [("status", -1), ("created_at", 1), ("_id", -1)]),
         ("findings_count", "desc", [("findings_count", -1), ("created_at", -1), ("_id", 1)]),
         ("pipeline_iid", "asc", [("pipeline_iid", 1), ("created_at", -1), ("_id", 1)]),
-        ("branch", "asc", [("branch", 1), ("created_at", -1)]),
-        ("created_at", "desc", [("created_at", -1)]),
+        ("branch", "asc", [("branch", 1), ("created_at", -1), ("_id", 1)]),
+        ("created_at", "desc", [("created_at", -1), ("_id", 1)]),
+        ("created_at", "asc", [("created_at", 1), ("_id", -1)]),
     ],
 )
 async def test_the_scan_list_breaks_ties_on_an_indexed_key(sort_by, sort_order, expected):
@@ -77,10 +78,9 @@ async def test_a_paged_find_breaks_ties_on_the_id(method):
     ("sort_by", "sort_order", "expected"),
     [
         ("status", "asc", {"status": 1, "created_at": -1, "_id": 1}),
-        ("branch", "desc", {"branch": -1, "created_at": 1}),
+        ("branch", "desc", {"branch": -1, "created_at": 1, "_id": -1}),
         ("pipeline_iid", "asc", {"pipeline_iid": 1, "created_at": -1, "_id": 1}),
-        # created_at alone, so the {created_at: -1} index serves the sort and stops after the page.
-        ("created_at", "desc", {"created_at": -1}),
+        ("created_at", "desc", {"created_at": -1, "_id": 1}),
     ],
 )
 async def test_the_recent_scans_list_breaks_ties_on_an_indexed_key(sort_by, sort_order, expected):
