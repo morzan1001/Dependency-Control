@@ -226,7 +226,7 @@ def test_packages_sharing_a_name_across_ecosystems_are_listed_apart_with_their_t
     ]
     col._docs = {d["_id"]: d for d in docs}
 
-    assert sorted((r["name"], r["type"]) for r in _run(col, ["s1", "s2"])) == [("foo", "npm"), ("foo", "pypi")]
+    assert [(r["name"], r["type"]) for r in _run(col, ["s1", "s2"])] == [("foo", "npm"), ("foo", "pypi")]
 
 
 def test_only_packages_the_viewed_project_holds_are_reported():

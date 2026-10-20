@@ -417,7 +417,7 @@ def cross_project_package_pipeline(scan_ids: list[str], min_projects: int, viewe
             }
         },
         {"$unset": ["least_shared", "scan_ids"]},
-        *case_insensitive_sort([("version_count", -1), ("name", 1)], {"name"}),
+        *case_insensitive_sort([("version_count", -1), ("name", 1), ("type", 1)], {"name"}),
     ]
 
 
