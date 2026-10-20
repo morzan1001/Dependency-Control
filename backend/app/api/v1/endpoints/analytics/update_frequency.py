@@ -41,6 +41,7 @@ from app.schemas.analytics import (
 )
 from app.services.release_history import DepsDevReleaseHistoryFetcher
 from app.services.update_frequency import (
+    MIN_COMPARABLE_BARS,
     compute_update_frequency,
     compute_update_frequency_comparison,
     elect_primary_branch,
@@ -151,7 +152,7 @@ async def get_project_update_frequency(
     request: Request,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    max_scans: Annotated[int, Query(ge=2, le=500)] = 20,
+    max_scans: Annotated[int, Query(ge=MIN_COMPARABLE_BARS, le=500)] = 20,
     window_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
     branch: Annotated[str | None, Query(min_length=1, max_length=512)] = None,
 ) -> UpdateFrequencyMetrics:
@@ -302,7 +303,7 @@ def _fold_branch(branch: str, deltas: list[dict[str, Any]], activity: BranchWind
 
     window = select_window(deltas)
     bars = window_bars(window)
-    if len(bars) < 2:
+    if len(bars) < MIN_COMPARABLE_BARS:
         # A writer failure is the reason there is nothing to fold, not a scan cadence.
         return _ResolvedWindow(branch, [], "error" if any(d.get("error") for d in deltas) else "insufficient_data")
     # Past the cap the commit count spans more than either path reads, so comparing to it demotes the busiest projects.

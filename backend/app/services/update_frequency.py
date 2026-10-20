@@ -375,7 +375,10 @@ def updates_per_month(total_updates: int, window_days: int | None) -> float | No
     return round(total_updates / (window_days / DAYS_PER_MONTH), 2)
 
 
-_NOT_ENOUGH_SCANS = "Not enough scans to analyze (need at least 2)"
+# Two bars make the first interval; a commit run is one bar, so it also takes two commits.
+MIN_COMPARABLE_BARS = 2
+
+_NOT_ENOUGH_SCANS = f"Not enough scans to analyze (need at least {MIN_COMPARABLE_BARS})"
 
 
 @dataclass(frozen=True)
@@ -641,9 +644,6 @@ class _AccumulatorState:
         return list(islice(chain.from_iterable(reversed(self.recent_events_by_scan)), RECENT_UPDATES_LIMIT))
 
 
-_MIN_COMPARABLE_COMMITS = 2
-
-
 def select_primary_branch(
     activity: Mapping[str, BranchWindowActivity],
     default_branch: str | None,
@@ -654,7 +654,7 @@ def select_primary_branch(
     live = {branch: seen for branch, seen in activity.items() if branch not in deleted}
     if not live:
         return None
-    if default_branch in live and live[default_branch].commit_count >= _MIN_COMPARABLE_COMMITS:
+    if default_branch in live and live[default_branch].commit_count >= MIN_COMPARABLE_BARS:
         return default_branch
     return max(live, key=lambda branch: (live[branch].commit_count, live[branch].last_scan_at, branch))
 
@@ -814,7 +814,7 @@ async def compute_update_frequency(
         _close_bar()
     bars = fold_runs_into_bars(state.scan_timeline, [scan["commit_hash"] for scan in analysed])
 
-    if len(bars) < 2:
+    if len(bars) < MIN_COMPARABLE_BARS:
         return short_window(bars).to_metrics(project_id, project_name, branch=branch)
 
     upstream = await _maybe_fetch_upstream_cadence(release_fetcher, state.package_specs, state.first_seen_versions)
@@ -1002,7 +1002,7 @@ async def compute_update_frequency_comparison(
                 logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)
                 return placeholder_summary(project, "error", window_days, primary)
 
-            if metrics.scan_count < 2:
+            if metrics.scan_count < MIN_COMPARABLE_BARS:
                 return placeholder_summary(project, "insufficient_data", window_days, primary)
 
             # The walk reads the very scans coverage is measured against, so it cannot lag like the delta ledger.
