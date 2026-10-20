@@ -173,5 +173,9 @@ spec:
           db: {{ .db }}
         {{- end }}
     {{- end }}
+  {{- with .Values.database.extraRoles }}
+  roles:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 {{- end }}
 
