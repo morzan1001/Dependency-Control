@@ -414,6 +414,62 @@ class TestRecalculateFindsTheHeadOffTheBuilds:
         assert (await seeded_db.projects.find_one({"_id": PROJECT_ID}))["latest_scan_id"] == NEWER_HEAD_SCAN_ID
 
 
+class TestRecalculateWithoutAHead:
+    """Every branch is gone, so only the shipped builds are stamped and one of them must own the outcomes."""
+
+    SHIPPED = (("scan-rel-1", "production", 30), ("scan-rel-2", "staging", 2))
+
+    @pytest_asyncio.fixture
+    async def headless_db(self, seeded_db):
+        await seeded_db.projects.update_one({"_id": PROJECT_ID}, {"$set": {"deleted_branches": ["main"]}})
+        now = datetime.now(timezone.utc)
+        for scan_id, environment, age in self.SHIPPED:
+            created = now - timedelta(days=age)
+            await seeded_db.scans.insert_one(
+                {
+                    "_id": scan_id,
+                    "project_id": PROJECT_ID,
+                    "branch": "main",
+                    "status": "completed",
+                    "created_at": created,
+                }
+            )
+            shipped = _finding(f"f-{scan_id}", "CRITICAL", cvss_score=9.0)
+            shipped.update(scan_id=scan_id, finding_id="f-waived")
+            await seeded_db.findings.insert_one(shipped)
+            await seeded_db.releases.insert_one(
+                {
+                    "_id": f"rel-{scan_id}",
+                    "project_id": PROJECT_ID,
+                    "environment": environment,
+                    "scan_id": scan_id,
+                    "released_at": created,
+                }
+            )
+        return seeded_db
+
+    @pytest.mark.asyncio
+    async def test_the_newest_released_build_records_the_outcomes(self, headless_db, monkeypatch):
+        await recalculate_project_stats(PROJECT_ID, headless_db)
+
+        for scan_id, _, _ in self.SHIPPED:
+            assert (await headless_db.findings.find_one({"_id": f"f-{scan_id}"}))["waived"] is True
+        assert (await headless_db.waivers.find_one({"_id": "w-1"})).get("last_eval_scan_id") == "scan-rel-2"
+        restamped = _record_restamps(monkeypatch)
+        await recalculate_project_stats(PROJECT_ID, headless_db)
+        assert restamped == []
+
+    @pytest.mark.asyncio
+    async def test_a_build_stamped_without_outcomes_still_gets_them(self, headless_db):
+        """A waiver written from a shipped build restamps it at once, without outcomes, before the queued recalc."""
+        for scan_id, _, _ in self.SHIPPED:
+            await stats.restamp_single_scan(headless_db, PROJECT_ID, scan_id)
+
+        await recalculate_project_stats(PROJECT_ID, headless_db)
+
+        assert (await headless_db.waivers.find_one({"_id": "w-1"})).get("last_eval_scan_id") == "scan-rel-2"
+
+
 BRANCH_SCAN_ID = "scan-w4-feature"
 
 
