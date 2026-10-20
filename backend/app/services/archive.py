@@ -349,10 +349,6 @@ async def archive_scan(
     db: AsyncIOMotorDatabase,
     scan_id: str,
 ) -> ArchiveMetadata | None:
-    if not is_archive_enabled():
-        logger.warning("Archive requested but S3 is not configured.")
-        return None
-
     repo = ArchiveMetadataRepository(db)
     lock_repo = DistributedLocksRepository(db)
     lock_name = f"archive:{scan_id}"
