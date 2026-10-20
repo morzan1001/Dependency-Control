@@ -845,16 +845,17 @@ class ChatToolRegistry:
 
     async def _tool_get_dependency_details(self, ctx: _ToolContext) -> dict[str, Any]:
         wanted = ctx.args["dependency_name"]
-        dep = await DependencyEnrichmentRepository(ctx.db).get_by_purl(wanted)
-        if not dep:
-            matches = (
-                [{"purl": {"$regex": f"^{re.escape(canonical_purl(wanted))}@"}}]
-                if wanted.startswith("pkg:")
-                # The whole name wins over the name after a ':' or '/' qualifier; an npm "@scope/name" stays whole.
-                else [{"name": {"$regex": f"^{q}{re.escape(wanted)}$", "$options": "i"}} for q in ("", "[^@][^:]*[:/]")]
+        enrichments = DependencyEnrichmentRepository(ctx.db)
+        dep = await enrichments.get_by_purl(wanted)
+        if not dep and wanted.startswith("pkg:"):
+            dep = await enrichments.collection.find_one(
+                {"purl": {"$regex": f"^{re.escape(canonical_purl(wanted))}@"}}, sort=[("_id", -1)]
             )
-            for match in matches:
-                dep = dep or await ctx.db["dependency_enrichments"].find_one(match, sort=[("_id", -1)])
+        elif not dep:
+            # The whole name wins over the name after a ':' or '/' qualifier; an npm "@scope/name" stays whole.
+            dep = await enrichments.get_newest_by_name(wanted) or await enrichments.collection.find_one(
+                {"name": {"$regex": f"^[^@][^:]*[:/]{re.escape(wanted)}$", "$options": "i"}}, sort=[("_id", -1)]
+            )
         if not dep:
             return {"error": "Dependency not found in enrichment data"}
         return {"dependency": _serialize_doc(dep)}

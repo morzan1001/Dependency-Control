@@ -26,7 +26,8 @@ from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.dependencies import DependencyRepository
-from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
+from app.api.v1.helpers.sorting import CASE_INSENSITIVE
+from app.repositories.dependency_enrichments import NAME_INDEX, NAME_INDEX_NAME, DependencyEnrichmentRepository
 from app.repositories.findings import (
     FIRST_DETECTION_INDEX,
     KEV_FINDINGS_INDEX,
@@ -366,6 +367,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await system_invitations.create_index([("is_used", pymongo.ASCENDING), ("expires_at", pymongo.ASCENDING)])
 
     await dependency_enrichments.create_index("purl", unique=True)
+    await dependency_enrichments.create_index(NAME_INDEX, name=NAME_INDEX_NAME, collation=CASE_INSENSITIVE)
 
     await archive_metadata.create_index("scan_id", unique=True)
     await archive_metadata.create_index([("project_id", pymongo.ASCENDING), ("archived_at", pymongo.DESCENDING)])

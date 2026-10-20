@@ -313,6 +313,16 @@ def _pull_matches(item: Any, condition: Any) -> bool:
     return _elem_matches(item, condition)
 
 
+def _casefolded(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.casefold()
+    if isinstance(value, dict):
+        return {key: _casefolded(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_casefolded(item) for item in value]
+    return value
+
+
 def _match_doc(doc: dict, query: dict) -> bool:
     _assert_known_operators(query)
     for key, condition in query.items():
@@ -1543,7 +1553,13 @@ class FakeCollection:
         else:
             self.created_indexes.append(tuple(key for key, _direction in keys))
 
-    async def find_one(self, query, projection=None, sort=None):
+    async def find_one(self, query, projection=None, sort=None, collation=None):
+        if collation is not None:
+            # The only collation passed is CASE_INSENSITIVE; equality under it compares case-folded strings.
+            folded = _casefolded(query)
+            matches = [doc for doc in self._docs.values() if _match_doc(_casefolded(doc), folded)]
+            matches = _sort_docs(matches, sort) if sort else matches
+            return _apply_projection(matches[0], projection) if matches else None
         if set(query.keys()) == {"_id"} and not isinstance(query["_id"], dict):
             return _apply_projection(self._docs.get(query["_id"]), projection)
         if sort:
