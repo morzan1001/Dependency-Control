@@ -319,6 +319,19 @@ async def test_weakness_tags_on_as_many_findings_rank_by_name_whatever_its_case(
 
 
 @pytest.mark.asyncio
+async def test_severities_on_as_many_findings_rank_most_severe_first(db):
+    for index, severity in enumerate(["LOW", "CRITICAL", "MEDIUM", "HIGH"]):
+        finding = _crypto_finding(f"f{index}", asset_name="RSA", project_id="pt", scan_id="st", severity=severity)
+        finding["details"]["bom_ref"] = f"b{index}"
+        await db.findings.insert_one(finding)
+    resolved = ResolvedScope(scope="project", scope_id="pt", project_ids=["pt"])
+
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="severity", scan_id="st", limit=3)
+
+    assert [e.key for e in result.items] == ["CRITICAL", "HIGH", "MEDIUM"]
+
+
+@pytest.mark.asyncio
 async def test_no_completed_scans_returns_empty_not_all_history(db):
     await CryptoAssetRepository(db).bulk_upsert(
         "pn",

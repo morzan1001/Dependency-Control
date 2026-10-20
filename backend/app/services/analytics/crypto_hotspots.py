@@ -5,6 +5,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.v1.helpers.sorting import case_insensitive_key, case_insensitive_sort
 from app.core.cache import scope_digest
+from app.core.constants import get_severity_value
 from app.models.finding import CRYPTO_FINDING_TYPES
 from app.schemas.analytics import GroupBy, HotspotEntry, HotspotResponse
 from app.services.analytics.cache import get_analytics_cache
@@ -211,7 +212,8 @@ class CryptoHotspotService:
                     entry[field] = value if entry[field] is None else pick(entry[field], value)
 
         now = datetime.now(timezone.utc)
-        ranked = sorted(accum.items(), key=lambda kv: (-kv[1]["finding_count"], case_insensitive_key(kv[0])))[:limit]
+        tie_break = (lambda key: -get_severity_value(key)) if group_by == "severity" else case_insensitive_key
+        ranked = sorted(accum.items(), key=lambda kv: (-kv[1]["finding_count"], tie_break(kv[0])))[:limit]
         return [
             HotspotEntry(
                 key=str(key),
