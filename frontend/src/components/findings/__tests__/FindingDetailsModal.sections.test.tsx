@@ -78,14 +78,19 @@ describe("FindingDetailsModal fixed version", () => {
     expect(screen.getByText("No known fix")).not.toHaveClass("text-success");
   });
 
-  it("says no fix is known on an advisory without one, like the header, instead of Fixed in: None", () => {
+  it("says no fix is known on an advisory without one instead of Fixed in: None", () => {
     renderModal(finding({ details: { vulnerabilities: [{ id: "CVE-2024-1", fixed_version: "4.17.21" }, { id: "CVE-2024-2" }] } }));
 
     expect(screen.queryByText("None")).not.toBeInTheDocument();
     expect(screen.getByText("4.17.21").parentElement).toHaveTextContent("Fixed in: 4.17.21");
-    const noFix = screen.getAllByText("No known fix");
-    expect(noFix).toHaveLength(2);
-    for (const text of noFix) expect(text).toHaveClass("text-muted-foreground");
+    expect(screen.getByText("No known fix")).toHaveClass("text-muted-foreground");
+  });
+
+  it("says the fix varies by advisory when no single version fixes the finding but an advisory names one", () => {
+    renderModal(finding({ details: { vulnerabilities: [{ id: "CVE-2024-1", fixed_version: "4.17.21" }, { id: "CVE-2024-2", fixed_version: "5.0.1" }] } }));
+
+    expect(screen.getByText("Varies by advisory")).toHaveClass("text-muted-foreground");
+    expect(screen.queryByText("No known fix")).not.toBeInTheDocument();
   });
 });
 

@@ -181,7 +181,9 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                                     {finding.details?.fixed_version ? (
                                         <p className="font-medium text-success wrap-anywhere">{finding.details.fixed_version}</p>
                                     ) : (
-                                        <p className="text-muted-foreground">No known fix</p>
+                                        <p className="text-muted-foreground">
+                                            {finding.details?.vulnerabilities?.some((v) => v.fixed_version) ? 'Varies by advisory' : 'No known fix'}
+                                        </p>
                                     )}
                                 </DetailSection>
                                 <DetailSection label="ID" compact>
