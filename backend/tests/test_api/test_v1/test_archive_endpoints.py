@@ -876,3 +876,28 @@ class TestPinEmitsAuditLog:
         assert "scan_id=scan-1" in audit
         assert "project_id=proj-1" in audit
         assert f"user_id={admin_user.id}" in audit
+
+
+_ROUTE_STATUSES = {"401", "403", "404", "422"}
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "statuses"),
+    [
+        ("get", "/api/v1/projects/{project_id}/archives", {"200", "501", *_ROUTE_STATUSES}),
+        ("get", "/api/v1/projects/{project_id}/archives/branches", {"200", "501", *_ROUTE_STATUSES}),
+        (
+            "post",
+            "/api/v1/projects/{project_id}/archives/{scan_id}/restore",
+            {"200", "409", "500", "501", *_ROUTE_STATUSES},
+        ),
+        ("get", "/api/v1/projects/{project_id}/archives/{scan_id}/download", {"200", "501", *_ROUTE_STATUSES}),
+        ("post", "/api/v1/projects/{project_id}/scans/{scan_id}/pin", {"200", *_ROUTE_STATUSES}),
+        ("post", "/api/v1/projects/{project_id}/scans/{scan_id}/unpin", {"200", *_ROUTE_STATUSES}),
+        ("get", "/api/v1/archives/all", {"200", "401", "403", "422", "501"}),
+    ],
+)
+def test_each_archive_route_documents_the_statuses_it_answers(method, path, statuses):
+    from app.main import app
+
+    assert set(app.openapi()["paths"][path][method]["responses"]) == statuses

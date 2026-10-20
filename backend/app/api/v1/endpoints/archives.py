@@ -12,7 +12,7 @@ from app.api.deps import DatabaseDep, PermissionChecker
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.projects import check_project_access
-from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500
+from app.api.v1.helpers.responses import RESP_500, RESP_501, RESP_AUTH, RESP_AUTH_404, RESP_AUTH_404_409
 from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.constants import PROJECT_ROLE_ADMIN
 from app.core.log_utils import sanitize_for_log
@@ -74,7 +74,7 @@ def _require_archive_enabled() -> None:
 @router.get(
     "/{project_id}/archives",
     summary="List archived scans for a project",
-    responses=RESP_AUTH_404,
+    responses={**RESP_AUTH_404, **RESP_501},
 )
 async def list_archives(
     project_id: str,
@@ -110,7 +110,7 @@ async def list_archives(
 @router.get(
     "/{project_id}/archives/branches",
     summary="Get distinct branch names in project archives",
-    responses=RESP_AUTH_404,
+    responses={**RESP_AUTH_404, **RESP_501},
 )
 async def list_archive_branches(
     project_id: str,
@@ -129,7 +129,7 @@ async def list_archive_branches(
 @router.post(
     "/{project_id}/archives/{scan_id}/restore",
     summary="Restore an archived scan back to MongoDB",
-    responses=RESP_AUTH_404_500,
+    responses={**RESP_AUTH_404_409, **RESP_500, **RESP_501},
 )
 async def restore_archive(
     project_id: str,
@@ -163,7 +163,7 @@ async def restore_archive(
 @router.get(
     "/{project_id}/archives/{scan_id}/download",
     summary="Download an archived scan bundle",
-    responses=RESP_AUTH_404_500,
+    responses={**RESP_AUTH_404, **RESP_501},
 )
 async def download_archive(
     project_id: str,
@@ -236,7 +236,7 @@ async def _set_pinned(
 @router.post(
     "/{project_id}/scans/{scan_id}/pin",
     summary="Pin a scan to prevent archival by housekeeping",
-    responses=RESP_AUTH_404_500,
+    responses=RESP_AUTH_404,
 )
 async def pin_scan(
     project_id: str,
@@ -251,7 +251,7 @@ async def pin_scan(
 @router.post(
     "/{project_id}/scans/{scan_id}/unpin",
     summary="Unpin a scan to allow archival by housekeeping",
-    responses=RESP_AUTH_404_500,
+    responses=RESP_AUTH_404,
 )
 async def unpin_scan(
     project_id: str,
@@ -266,7 +266,7 @@ async def unpin_scan(
 @admin_router.get(
     "/all",
     summary="List all archives across all projects (admin)",
-    responses=RESP_AUTH_404,
+    responses={**RESP_AUTH, **RESP_501},
 )
 async def list_all_archives(
     current_user: ArchiveAdminDep,

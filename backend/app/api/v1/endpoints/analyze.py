@@ -11,7 +11,7 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from app.api.deps import AdhocKeyDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.request_body import read_json_body
-from app.api.v1.helpers.responses import RESP_AUTH_400
+from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404_500
 from app.core.config import settings
 from app.core.constants import (
     ADHOC_JOB_TTL_SECONDS,
@@ -83,7 +83,7 @@ async def analyze(request: Request, db: DatabaseDep, authenticated: AdhocKeyDep)
 @router.get(
     "/analyze/{job_id}",
     response_model=AdhocAnalyzeResponse,
-    responses={202: {"model": AdhocJob}, **_HTML_RESPONSE},
+    responses={202: {"model": AdhocJob}, **_HTML_RESPONSE, **RESP_AUTH_404_500},
     summary="Fetch an ad-hoc analysis result",
 )
 async def analysis_result(
