@@ -225,7 +225,7 @@ class AnalysisWorkerManager:
             logger.warning(f"Scan {scan_id} was rescheduled {retry_count} times; leaving it to the stale loop.")
             return
         logger.info(f"Scan {scan_id} was rescheduled. Re-queueing (attempt {retry_count}/{ANALYSIS_MAX_RETRIES}).")
-        await self.queue.put(scan_id)
+        await self.add_job(scan_id)
 
     async def _process(self, scan_id: str, worker_id: str) -> None:
         logger.info(f"Worker {worker_id} picked up scan {scan_id}")
@@ -311,23 +311,17 @@ class AnalysisWorkerManager:
 
         while True:
             try:
-                if self._shutting_down and self.queue.empty():
-                    logger.info(f"Worker {worker_id} exiting - shutdown signaled and queue empty")
-                    break
-
                 # 1s timeout so we can periodically re-check the shutdown flag.
                 try:
                     scan_id = await asyncio.wait_for(self.queue.get(), timeout=1.0)
                 except asyncio.TimeoutError:
                     if self._shutting_down:
-                        logger.info(f"Worker {worker_id} exiting - shutdown signaled")
                         break
                     continue
 
                 try:
                     if self._shutting_down:
-                        # Leave the scan as 'pending' in DB so other pods can pick it up.
-                        logger.info(f"Worker {worker_id} returning scan {scan_id} to queue - shutting down")
+                        logger.info(f"Worker {worker_id} dropping scan {scan_id}; it stays pending in the DB")
                         break
                     if scan_id.startswith(_ADHOC_JOB):
                         await self._process_adhoc(scan_id.removeprefix(_ADHOC_JOB), worker_id)
@@ -342,6 +336,7 @@ class AnalysisWorkerManager:
             except Exception as e:
                 logger.exception("Worker %s crashed: %s", worker_id, e)
                 await asyncio.sleep(1)  # Prevents tight loop on persistent failure.
+        logger.info(f"Worker {worker_id} exiting - shutdown signaled")
 
 
 worker_manager = AnalysisWorkerManager(num_workers=settings.WORKER_COUNT)

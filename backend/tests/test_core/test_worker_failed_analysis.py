@@ -4,6 +4,8 @@ import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from prometheus_client import REGISTRY
+
 from app.core import worker
 from app.core.worker import AnalysisWorkerManager
 from app.services.analysis.notifications import notify_analysis_failed
@@ -31,6 +33,22 @@ class TestHandleRescheduled:
 
         assert mgr.queue.get_nowait() == "scan-1"
         assert mgr.queue.empty()
+
+    def test_a_reschedule_during_shutdown_is_left_pending_in_the_db(self):
+        mgr = _build_manager()
+        mgr._shutting_down = True
+
+        asyncio.run(mgr._handle_rescheduled({"_id": "scan-1", "retry_count": 1}))
+
+        assert mgr.queue.empty()
+
+    def test_a_requeue_updates_the_queue_gauge(self):
+        mgr = _build_manager()
+        worker.worker_queue_size.set(0)
+
+        asyncio.run(mgr._handle_rescheduled({"_id": "scan-1", "retry_count": 1}))
+
+        assert REGISTRY.get_sample_value("worker_queue_size") == 1
 
     def test_at_limit_leaves_the_scan_to_the_stale_loop(self):
         """Late scanner results reschedule a completed scan; failing it would drop it out of head."""
