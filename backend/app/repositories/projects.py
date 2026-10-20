@@ -135,6 +135,7 @@ class ProjectRepository(BaseRepository[Project]):
                 "_id": 1,
                 "name": 1,
                 "latest_scan_id": 1,
+                "last_scan_at": 1,
                 "deleted_branches": 1,
                 "default_branch": 1,
                 "active_analyzers": 1,

@@ -441,7 +441,10 @@ async def gather_cross_project_data(
     }
 
     scanned = [p for p in user_projects if p.latest_scan_id]
-    compared = sorted(scanned, key=lambda p: p.id != current_project_id)[:_CROSS_PROJECT_COMPARISON_LIMIT]
+    compared = sorted(
+        scanned,
+        key=lambda p: (p.id != current_project_id, -(p.last_scan_at.timestamp() if p.last_scan_at else 0)),
+    )[:_CROSS_PROJECT_COMPARISON_LIMIT]
     head_scan_ids = await scan_repo.get_latest_active_scan_ids(compared)
     scan_ids = list(head_scan_ids.values())
 

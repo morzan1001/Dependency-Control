@@ -97,3 +97,17 @@ async def test_only_packages_the_viewed_project_holds_are_compared(db):
 
     assert data is not None
     assert [(p["name"], p["project_count"]) for p in data["shared_packages"]] == [("flask", 2)]
+
+
+async def test_the_most_recently_scanned_projects_fill_the_comparison(db):
+    dormant_first = [f"p{i:02d}" for i in range(25)]
+    await _projects(db, *dormant_first, "current")
+    for day, project_id in enumerate(dormant_first, start=1):
+        await db.projects.update_one(
+            {"_id": project_id}, {"$set": {"last_scan_at": datetime(2026, 9, day, tzinfo=timezone.utc)}}
+        )
+
+    data = await gather_cross_project_data(await read_scope_projects(db, {}), "current", db)
+
+    assert data is not None
+    assert [p["project_id"] for p in data["projects"]] == ["current", *reversed(dormant_first[-19:])]

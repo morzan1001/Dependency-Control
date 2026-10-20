@@ -11,6 +11,7 @@ class ProjectWithScanId(BaseModel):
     id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
     name: str = ""
     latest_scan_id: str | None = None
+    last_scan_at: datetime | None = None
     deleted_branches: list[str] = Field(default_factory=list)
     default_branch: str | None = None
     active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
