@@ -13,7 +13,6 @@ from app.services.update_frequency import (
     FoldedWindow,
     fold_runs_into_bars,
     same_commit_runs,
-    short_window,
     summarise_window,
 )
 
@@ -72,17 +71,11 @@ def commit_coverage(
     return CommitCoverage(len(accounted), len(scans_per_commit) - len(skipped))
 
 
-def fold_window(
-    window: Sequence[dict[str, Any]],
-    baseline_outdated: set[str] | None,
-    window_days: int | None,
-) -> FoldedWindow:
-    """baseline_outdated is window[0]'s outdated set, None without an analysis; window_days is None for a scan count."""
-    per_scan = [_timeline_entry(window[0], baseline=True)] if window else []
+def fold_window(window: Sequence[dict[str, Any]], baseline_outdated: set[str] | None, window_days: int) -> FoldedWindow:
+    """baseline_outdated is window[0]'s outdated set, None without an analysis."""
+    per_scan = [_timeline_entry(window[0], baseline=True)]
     per_scan.extend(_timeline_entry(delta, baseline=False) for delta in window[1:])
     timeline = fold_runs_into_bars(per_scan, [delta.get("commit_hash") for delta in window])
-    if len(timeline) < 2:
-        return short_window(timeline)
 
     kinds: Counter[str] = Counter()
     for delta in window[1:]:

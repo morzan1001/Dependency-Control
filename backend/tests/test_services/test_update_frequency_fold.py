@@ -4,6 +4,8 @@ from typing import Any
 
 import pytest
 
+from app.api.v1.endpoints.analytics.update_frequency import _fold_branch
+from app.repositories.update_frequency import BranchWindowActivity
 from app.schemas.analytics import ScanTimelineEntry
 from app.schemas.team import TeamRef
 from app.services.release_history import UpstreamCadenceMetrics
@@ -86,7 +88,7 @@ def _chain(deltas: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _fold(
     deltas: list[dict[str, Any]],
     baseline_outdated: set[str] | None = None,
-    window_days: int | None = 90,
+    window_days: int = 90,
 ) -> FoldedWindow:
     return fold_window(select_window(deltas), baseline_outdated, window_days)
 
@@ -108,7 +110,7 @@ def _golden_deltas() -> list[dict[str, Any]]:
 GOLDEN_BASELINE_OUTDATED = {"a", "b", "c", "d"}
 
 
-def _fold_golden(window_days: int | None = 90) -> FoldedWindow:
+def _fold_golden(window_days: int = 90) -> FoldedWindow:
     return _fold(_golden_deltas(), GOLDEN_BASELINE_OUTDATED, window_days)
 
 
@@ -181,9 +183,6 @@ class TestUpdatesPerMonth:
     def test_window_denominator_ignores_the_observed_span(self) -> None:
         # The scans span 40 days; the 90-day window is what counts.
         assert _fold_golden().updates_per_month == 3.72
-
-    def test_without_a_window_no_rate_is_reported(self) -> None:
-        assert _fold_golden(window_days=None).updates_per_month is None
 
     def test_ci_cadence_cannot_change_the_rate(self) -> None:
         # Same 3 updates in the same 90-day window: minutes apart or months apart.
@@ -268,41 +267,33 @@ class TestSameCommitRuns:
 
 
 class TestShortWindows:
-    def test_empty_window(self) -> None:
-        folded = _fold([], {"a"})
-        assert folded.scan_count == 0
-        assert folded.first_scan_date == ""
-        assert folded.last_scan_date == ""
-        assert folded.scan_timeline == []
-        assert folded.updates_per_month is None
-        assert folded.update_coverage_pct is None
-        assert folded.trend_direction == "unknown"
-        assert folded.trend_detail == "Not enough scans to analyze (need at least 2)"
+    """Decided before the fold, which only ever sees two or more bars."""
+
+    @staticmethod
+    def _status(deltas: list[dict[str, Any]]) -> str:
+        scans_per_commit: dict[str, int] = {}
+        for delta in deltas:
+            token = delta.get("commit_hash") or delta["_id"]
+            scans_per_commit[token] = scans_per_commit.get(token, 0) + 1
+        return _fold_branch("main", deltas, BranchWindowActivity(scans_per_commit, BASE)).status
+
+    def test_a_branch_without_deltas_is_pending(self) -> None:
+        assert self._status([]) == "pending"
 
     def test_baseline_only(self) -> None:
-        folded = _fold([_delta("s0", 3, outdated_count=4)], {"a", "b", "c", "d"})
-        assert folded.scan_count == 1
-        assert folded.first_scan_date == folded.last_scan_date == _at(3).isoformat()
-        assert folded.total_updates == 0
-        assert folded.time_range_days == 0.0
-        assert folded.avg_days_between_scans == 0.0
-        # A single scan measures no resolution, so coverage stays unmeasured.
-        assert folded.total_outdated_detected == 0
-        assert folded.update_coverage_pct is None
-        assert folded.scan_timeline == []
+        assert self._status(_chain([_delta("s0", 3, outdated_count=4)])) == "insufficient_data"
 
     def test_window_that_collapses_to_one_usable_scan(self) -> None:
+        assert self._status(_chain([_delta("s0", 0), _delta("s1", 1, dep_count=0)])) == "insufficient_data"
+
+    def test_a_writer_failure_that_leaves_one_usable_scan_is_an_error(self) -> None:
         deltas = _chain([_delta("s0", 0), _delta("s1", 1, dep_count=0), _delta("s2", 2, error="boom")])
-        assert _fold(deltas).scan_count == 1
+        assert self._status(deltas) == "error"
 
     def test_a_window_of_one_run_has_no_interval_to_divide_by(self) -> None:
         # Several documents, one bar: dividing by the documents would divide by zero intervals.
         deltas = _chain([_delta(f"r{i}", i, patch=1, commit_hash="c1") for i in range(5)])
-        folded = _fold(deltas)
-        assert folded.scan_count == 1
-        assert folded.updates_per_scan == 0.0
-        assert folded.avg_days_between_scans == 0.0
-        assert folded.trend_detail == "Not enough scans to analyze (need at least 2)"
+        assert self._status(deltas) == "insufficient_data"
 
 
 class TestUnusableScans:
