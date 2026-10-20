@@ -5,12 +5,16 @@ from datetime import datetime, timezone
 import pytest
 
 from app.core.config import settings
+from app.core.permissions import Permissions
+from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
 
 _PROJECT = "p-links"
 _PROJECT_NAME = "links-project"
 _SCAN = "scan-links"
 _TEAM = "team-links"
+_ARCHIVE = "archive-links"
+_MEMBER = "u-member"
 _PROJECT_URL = f"{settings.FRONTEND_BASE_URL}/projects/{_PROJECT}"
 _SCAN_URL = f"{_PROJECT_URL}/scans/{_SCAN}"
 
@@ -75,3 +79,36 @@ async def test_the_scan_details_link_the_scan_not_its_project(seeded, admin_user
 
     assert (scan["id"], scan["scan_id"]) == (_SCAN, _SCAN)
     assert scan["url"] == _SCAN_URL
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("archive_permission", "url"),
+    [
+        (Permissions.ARCHIVE_READ_ALL, f"{settings.FRONTEND_BASE_URL}/archives"),
+        # /archives opens with archive:read_all alone; the project page holds the project's Archives tab.
+        (Permissions.ARCHIVE_READ, _PROJECT_URL),
+    ],
+)
+async def test_an_archive_links_an_archive_listing_its_reader_can_open_not_its_removed_scan(
+    seeded, archive_permission, url
+):
+    seeded.projects._docs[_PROJECT]["members"] = [{"user_id": _MEMBER, "role": "viewer"}]
+    seeded.archive_metadata._docs[_ARCHIVE] = {
+        "_id": _ARCHIVE,
+        "project_id": _PROJECT,
+        "scan_id": _SCAN,
+        "archived_at": datetime(2026, 10, 20, tzinfo=timezone.utc),
+    }
+    reader = User(
+        id=_MEMBER,
+        username="member",
+        email="member@test.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.CHAT_ACCESS, archive_permission],
+    )
+
+    listed = await _run(seeded, reader, "list_archives")
+    details = await _run(seeded, reader, "get_archive_details", archive_id=_ARCHIVE)
+
+    assert [archive["url"] for archive in listed["archives"]] == [url]
+    assert details["archive"]["url"] == url

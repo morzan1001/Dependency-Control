@@ -39,6 +39,7 @@ from app.core.constants import (
 )
 from app.core.cve import ADVISORY_ID_FIELDS, advisory_id, advisory_ids, advisory_match, canonical_cve
 from app.core.cache import cache_service
+from app.core.config import settings
 from app.core.housekeeping import resolve_rescan_interval
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
@@ -260,6 +261,12 @@ async def _waiver_rows(db: AsyncIOMotorDatabase, query: dict[str, Any], subject:
 def _project_row(project: dict[str, Any], fields: list[str]) -> dict[str, Any]:
     # The links key on project_id and project_name; id stays for callers that read it.
     return {**_serialize_doc(project, fields), "project_id": project["_id"], "project_name": project.get("name")}
+
+
+def _archive_row(archive: dict[str, Any], read_all: bool) -> dict[str, Any]:
+    # Archiving removed the scan page; /archives opens only with archive:read_all, the project page has an Archives tab.
+    path = "/archives" if read_all else f"/projects/{archive.get('project_id')}"
+    return {**_serialize_doc(archive, _ARCHIVE_FIELDS), "url": f"{settings.FRONTEND_BASE_URL}{path}"}
 
 
 def _rank_risky_projects(stats: dict[str, Stats], limit: int) -> list[str]:
@@ -1502,15 +1509,16 @@ class ChatToolRegistry:
         archives, archives_total = await bounded_read(
             ctx.db["archive_metadata"], query, subject="archives", limit=ctx.args["limit"], sort=[("archived_at", -1)]
         )
-        return {"archives": [_serialize_doc(a, _ARCHIVE_FIELDS) for a in archives], "archives_total": archives_total}
+        return {"archives": [_archive_row(a, read_all) for a in archives], "archives_total": archives_total}
 
     async def _tool_get_archive_details(self, ctx: _ToolContext) -> dict[str, Any]:
         archive = await ctx.db["archive_metadata"].find_one({"_id": ctx.args["archive_id"]})
         if not archive:
             return {"error": _ERR_ARCHIVE_NOT_FOUND}
-        if not has_permission(ctx.user.permissions, Permissions.ARCHIVE_READ_ALL):
+        read_all = has_permission(ctx.user.permissions, Permissions.ARCHIVE_READ_ALL)
+        if not read_all:
             await self._require_project(ctx, archive.get("project_id") or "", refusal=_ERR_ARCHIVE_NOT_FOUND)
-        return {"archive": _serialize_doc(archive, _ARCHIVE_FIELDS)}
+        return {"archive": _archive_row(archive, read_all)}
 
     async def _tool_list_project_webhooks(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
