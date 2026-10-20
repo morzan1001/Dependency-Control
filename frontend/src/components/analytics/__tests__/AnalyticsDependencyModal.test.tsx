@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ComponentFinding, DependencyMetadata } from "@/types/analytics";
@@ -12,10 +13,14 @@ vi.mock("@/hooks/queries/use-analytics", () => ({
   useComponentFindings: vi.fn(),
 }));
 
+vi.mock("@/api/projects", () => ({ projectApi: { getOne: vi.fn() } }));
+vi.mock("@/hooks/queries/use-instances", () => ({ useInstanceNames: () => new Map() }));
+
 import {
   useDependencyMetadata,
   useComponentFindings,
 } from "@/hooks/queries/use-analytics";
+import { projectApi } from "@/api/projects";
 
 const baseMetadata: DependencyMetadata = {
   name: "pkg",
@@ -421,6 +426,37 @@ describe("AnalyticsDependencyModal findings list", () => {
     const table = screen.getByRole("table");
     expect(table).toHaveClass("table-fixed", "min-w-[660px]");
     expect(table.parentElement).toHaveClass("overflow-auto");
+  });
+
+  it("names the owner of each row's project whose name another row's project shares, as the dependency search does", async () => {
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        items: [
+          { ...finding("CVE-1", "HIGH"), project_id: "p-retail", project_name: "checkout-service" },
+          { ...finding("CVE-2", "HIGH"), project_id: "p-pay", project_name: "checkout-service" },
+          { ...finding("CVE-3", "HIGH"), project_id: "p-search", project_name: "search" },
+        ],
+        total: 3,
+      },
+      isLoading: false,
+    });
+    vi.mocked(projectApi.getOne).mockImplementation(async (id: string) => ({
+      id,
+      name: id === "p-search" ? "search" : "checkout-service",
+      teams: [{ id: `t-${id}`, name: id === "p-retail" ? "Retail" : "Payments" }],
+    }));
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <AnalyticsDependencyModal component="pkg" version="1.0.0" open onOpenChange={() => {}} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Retail")).toBeInTheDocument();
+    expect(screen.getByText("Payments")).toBeInTheDocument();
+    expect(projectApi.getOne).not.toHaveBeenCalledWith("p-search");
   });
 });
 

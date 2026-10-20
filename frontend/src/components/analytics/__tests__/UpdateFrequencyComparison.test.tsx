@@ -441,4 +441,23 @@ describe("UpdateFrequencyComparison namesakes", () => {
     expect(await within(card("Best Project")).findByText("Retail")).toBeInTheDocument();
     expect(await within(card("Needs Attention")).findByText("Payments")).toBeInTheDocument();
   });
+
+  it("names the owner of a ranked project whose name another project in scope shares, as the best and worst cards do", async () => {
+    mockedComparison.mockResolvedValue(
+      makeComparison(0, {
+        projects: [
+          { ...makeProject(9), project_id: "p-retail", project_name: "checkout-service" },
+          { ...makeProject(5), project_id: "p-search", project_name: "search" },
+          { ...makeProject(2), project_id: "p-pay", project_name: "checkout-service" },
+        ],
+      }),
+    );
+    renderComparison();
+    clickLoad();
+
+    const ranking = (await screen.findByText("Project Ranking")).closest(".rounded-lg") as HTMLElement;
+    const projectCell = (name: string) => within(ranking).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell")[1]).filter((cell) => cell.textContent?.startsWith(name));
+    await waitFor(() => expect(projectCell("checkout-service").map((cell) => cell.textContent)).toEqual(["checkout-serviceRetail", "checkout-servicePayments"]));
+    expect(projectCell("search").map((cell) => cell.textContent)).toEqual(["search"]);
+  });
 });

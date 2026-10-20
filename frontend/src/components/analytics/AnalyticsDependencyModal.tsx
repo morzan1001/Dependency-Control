@@ -29,7 +29,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import { cn, formatDate } from '@/lib/utils'
+import { cn, formatDate, sharedNames } from '@/lib/utils'
 import { Link } from 'react-router-dom'
 import {
   Package,
@@ -60,6 +60,7 @@ import type { Severity } from '@/types/common'
 import { AdvisoryLink } from '@/components/findings/AdvisoryLink'
 import { SeverityBadge } from '@/components/findings/SeverityBadge'
 import { FindingTypeBadge } from '@/components/findings/FindingTypeBadge'
+import { ProjectOwnerById } from '@/components/project/ProjectOwner'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 
 function severityRank(severity?: string): number {
@@ -439,6 +440,7 @@ export function AnalyticsDependencyModal({
       return sort.sortOrder === 'asc' ? comparison : -comparison
     })
   }, [findingsPage, sort.sortBy, sort.sortOrder])
+  const namesakes = sharedNames(sortedFindings.map((f) => ({ id: f.project_id, name: f.project_name })))
 
   const metadataSection = metadata ? (
     <DependencyMetadataSection metadata={metadata} />
@@ -519,14 +521,19 @@ export function AnalyticsDependencyModal({
                       <TableCell>
                         <SeverityBadge severity={finding.severity || 'UNKNOWN'} />
                       </TableCell>
-                      <TableCell className="truncate">
-                        <Link
-                          to={`/projects/${finding.project_id}`}
-                          className="text-primary hover:underline"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {finding.project_name || 'Unknown'}
-                        </Link>
+                      <TableCell>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Link
+                            to={`/projects/${finding.project_id}`}
+                            className="truncate text-primary hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {finding.project_name || 'Unknown'}
+                          </Link>
+                          {namesakes.has(finding.project_name) && (
+                            <ProjectOwnerById projectId={finding.project_id} namesakes={namesakes.get(finding.project_name)} />
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

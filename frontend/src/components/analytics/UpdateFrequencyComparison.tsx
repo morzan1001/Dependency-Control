@@ -416,6 +416,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
   const visible = projects.slice(offset, offset + TABLE_PAGE_SIZE)
   // Ranked rows lead the list, so a row's position is its rank up to that count.
   const rankedCount = projects.filter(isMeasured).length
+  const namesakes = sharedNames(projects.map((p) => ({ id: p.project_id, name: p.project_name })))
 
   return (
     <Card>
@@ -462,6 +463,9 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                   <TableCell className="font-medium">
                     <span className="inline-flex flex-wrap items-center gap-2">
                       {project.project_name}
+                      {namesakes.has(project.project_name) && (
+                        <ProjectOwnerById projectId={project.project_id} namesakes={namesakes.get(project.project_name)} />
+                      )}
                       {project.data_status === 'partial' && <PartialBadge scanCount={project.scan_count} />}
                       {project.window_scan_cap !== null && (
                         <CappedBadge cap={project.window_scan_cap} windowDays={project.window_days} />
