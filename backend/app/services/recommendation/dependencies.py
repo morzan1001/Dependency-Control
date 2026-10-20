@@ -232,8 +232,9 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
         pkg = get_attr(f, "component", "")
         version = get_attr(f, "version", "")
         details = get_attr(f, "details", {})
-        eol_date = details.get("eol_date", "")
-        if eol_date:
+        eol_date = details.get("eol_date")
+        # endoflife.date reports an undated end of life as True.
+        if isinstance(eol_date, str) and eol_date:
             affected_packages.append(f"{pkg}@{version} (EOL: {eol_date})")
         else:
             affected_packages.append(f"{pkg}@{version}")

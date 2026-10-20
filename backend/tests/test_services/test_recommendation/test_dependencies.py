@@ -241,13 +241,13 @@ class TestAnalyzeEndOfLifeAffectedComponents:
         [
             pytest.param(None, id="missing_date"),
             pytest.param("", id="empty_date"),
+            pytest.param(True, id="undated_eol"),
         ],
     )
     def test_eol_without_a_date_is_just_name_version(self, eol_date):
         findings = [_eol_finding(component="node", version="16.0.0", eol_date=eol_date)]
         rec = analyze_end_of_life(findings)[0]
-        assert "node@16.0.0" in rec.affected_components
-        assert "(EOL:" not in rec.affected_components[0]
+        assert rec.affected_components == ["node@16.0.0"]
 
 
 class TestAnalyzeEndOfLifeMultiple:
