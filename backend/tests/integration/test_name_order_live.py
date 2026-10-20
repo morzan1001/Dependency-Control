@@ -2,6 +2,7 @@
 
 import pytest
 
+from app.api.v1.helpers.sorting import case_insensitive_key, case_insensitive_sort
 from app.core.permissions import Permissions
 from app.models.project import Project, ProjectMember
 from app.models.team import Team
@@ -138,3 +139,14 @@ async def test_the_chat_team_list_orders_names_whatever_their_case(db):
     result = await ChatToolRegistry().execute_tool("list_teams", {}, caller, db)
 
     assert [team["name"] for team in result["teams"]] == ["api-gateway", "Core", "Platform Engineering"]
+
+
+async def test_the_server_sorts_text_as_case_insensitive_key_does(db):
+    names = ["Zahlung", "strat", "éclair", "Straße", "Ärzte", "navy", "Bravo", "naïve", "ezra", "cello", "eclair"]
+    names += ["e\u0301clat", "Øresund", "oslo", "ŁÓDŹ", "lodz", "ȘTEFAN", "stefan", "Æsir", "aesir", "ABC", "abc", "_x"]
+    await db.dependencies.insert_many([{"name": name} for name in names])
+
+    for direction in (1, -1):
+        rows = await db.dependencies.aggregate(case_insensitive_sort([("name", direction)], {"name"})).to_list(None)
+
+        assert [row["name"] for row in rows] == sorted(names, key=case_insensitive_key, reverse=direction < 0)

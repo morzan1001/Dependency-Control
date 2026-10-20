@@ -1,5 +1,6 @@
 import unicodedata
-from typing import Annotated, Literal
+from collections.abc import Collection, Sequence
+from typing import Annotated, Any, Literal
 
 from fastapi import Query
 from pymongo.collation import Collation, CollationStrength
@@ -11,6 +12,32 @@ def case_insensitive_key(text: str) -> tuple[str, str]:
     """Case and combining accents decide only between otherwise equal texts, as under CASE_INSENSITIVE."""
     base = "".join(c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c))
     return base.casefold(), text
+
+
+# $toLower folds ASCII only; the letters and combining marks below U+0370 fold through this table.
+_FOLDS = [{"f": c, "t": folded} for c in map(chr, range(0x80, 0x370)) if (folded := case_insensitive_key(c)[0]) != c]
+
+
+def _folded_expr(text: str) -> dict[str, Any]:
+    replaced = {
+        "$reduce": {
+            "input": {"$literal": _FOLDS},
+            "initialValue": text,
+            "in": {"$replaceAll": {"input": "$$value", "find": "$$this.f", "replacement": "$$this.t"}},
+        }
+    }
+    return {"$toLower": {"$cond": [{"$regexMatch": {"input": text, "regex": "[\u0080-\u036f]"}}, replaced, text]}}
+
+
+def case_insensitive_sort(order: Sequence[tuple[str, int]], text_fields: Collection[str]) -> list[dict[str, Any]]:
+    """case_insensitive_key's order as pipeline stages, for reads a query collation would take off their indexes."""
+    folded = {f"_folded.{field}": _folded_expr(f"${field}") for field, _ in order if field in text_fields}
+    spec: dict[str, int] = {}
+    for field, direction in order:
+        if field in text_fields:
+            spec.setdefault(f"_folded.{field}", direction)
+        spec.setdefault(field, direction)
+    return [{"$addFields": folded}, {"$sort": spec}]
 
 
 SORT_FIELDS: dict[str, dict[str, str]] = {

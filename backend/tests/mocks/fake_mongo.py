@@ -613,7 +613,8 @@ def _eval_expr(doc: dict, expr):
     if "$replaceAll" in expr:
         spec = expr["$replaceAll"]
         val = _eval_expr(doc, spec["input"])
-        return val.replace(spec["find"], spec["replacement"]) if isinstance(val, str) else None
+        find, replacement = _eval_expr(doc, spec["find"]), _eval_expr(doc, spec["replacement"])
+        return val.replace(find, replacement) if isinstance(val, str) else None
     if "$regexMatch" in expr:
         spec = expr["$regexMatch"]
         val = _eval_expr(doc, spec["input"])

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.api.v1.helpers.sorting import case_insensitive_key
 from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 
 _PID = "test-project-id"
@@ -301,6 +302,76 @@ async def test_components_sort_by_version_descending(client, db, member_auth_hea
 
     assert resp.status_code == 200
     assert [i["version"] for i in resp.json()["items"]] == ["3.0.0", "2.0.0", "1.0.0"]
+
+
+# Each column's values sort differently by code point than whatever their case and accents.
+_CASE_MIXED = {
+    "name": ("lodash", "Newtonsoft.Json", "Autofac", "élan"),
+    "version": ("1.0.0-rc1", "1.0.0-RC2", "1.0.0-Beta", "1.0.0-alpha"),
+    "type": ("npm", "NuGet", "Maven", "golang"),
+    "license": ("mit", "MPL-2.0", "Apache-2.0", "bsd-3-clause"),
+}
+_SEED_ARGUMENT = {"version": "version", "type": "dep_type", "license": "license_id"}
+_ITEM_FIELD = {"name": "name", "version": "version", "type": "ecosystem", "license": "license"}
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sort_order", ["asc", "desc"])
+@pytest.mark.parametrize("column", sorted(_CASE_MIXED))
+async def test_components_sort_every_text_column_whatever_its_case(client, db, member_auth_headers, column, sort_order):
+    await _seed_scan(db)
+    for i, value in enumerate(_CASE_MIXED[column]):
+        if column == "name":
+            await _seed_dep(db, "s1", value)
+        else:
+            await _seed_dep(db, "s1", f"pkg-{i}", **{_SEED_ARGUMENT[column]: value})
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/components",
+        params={"sort_by": column, "sort_order": sort_order},
+        headers=member_auth_headers,
+    )
+
+    assert resp.status_code == 200
+    expected = sorted(_CASE_MIXED[column], key=case_insensitive_key, reverse=sort_order == "desc")
+    assert [i[_ITEM_FIELD[column]] for i in resp.json()["items"]] == expected
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_components_pages_cut_one_case_insensitive_name_order(client, db, member_auth_headers):
+    await _seed_scan(db)
+    names = (*_CASE_MIXED["name"], "Zlib", "axios")
+    for name in names:
+        await _seed_dep(db, "s1", name)
+
+    pages = [
+        (
+            await client.get(
+                f"/api/v1/projects/{_PID}/inventory/components",
+                params={"page": page, "page_size": 2},
+                headers=member_auth_headers,
+            )
+        ).json()["items"]
+        for page in (1, 2, 3)
+    ]
+
+    assert [i["name"] for items in pages for i in items] == sorted(names, key=case_insensitive_key)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_components_export_lists_names_whatever_their_case(client, db, member_auth_headers):
+    await _seed_scan(db)
+    for name in _CASE_MIXED["name"]:
+        await _seed_dep(db, "s1", name)
+
+    rows = _parse_csv(
+        await client.get(f"/api/v1/projects/{_PID}/inventory/components/export", headers=member_auth_headers)
+    )
+
+    assert [r["name"] for r in rows] == sorted(_CASE_MIXED["name"], key=case_insensitive_key)
 
 
 @pytest.mark.asyncio

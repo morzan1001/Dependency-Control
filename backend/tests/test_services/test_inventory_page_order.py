@@ -25,15 +25,36 @@ def _mock_db() -> tuple:
     return db, dependencies
 
 
+def _sort_stage(collection) -> list[tuple[str, int]]:
+    (pipeline,) = collection.aggregate.call_args.args
+    return next(list(stage["$sort"].items()) for stage in pipeline if "$sort" in stage)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("sort_by", "direction", "expected"),
     [
-        ("name", 1, [("name", 1), ("version", 1), ("purl", 1)]),
-        ("name", -1, [("name", -1), ("version", -1), ("purl", -1)]),
-        ("type", -1, [("type", -1), ("name", 1), ("version", 1), ("_id", 1)]),
-        ("direct", 1, [("direct", 1), ("name", 1), ("version", 1), ("_id", 1)]),
-        ("version", -1, [("version", -1), ("name", 1), ("_id", 1)]),
+        ("name", 1, [("_folded.name", 1), ("name", 1), ("_folded.version", 1), ("version", 1), ("purl", 1)]),
+        ("name", -1, [("_folded.name", -1), ("name", -1), ("_folded.version", -1), ("version", -1), ("purl", -1)]),
+        (
+            "type",
+            -1,
+            [
+                ("_folded.type", -1),
+                ("type", -1),
+                ("_folded.name", 1),
+                ("name", 1),
+                ("_folded.version", 1),
+                ("version", 1),
+                ("_id", 1),
+            ],
+        ),
+        (
+            "direct",
+            1,
+            [("direct", 1), ("_folded.name", 1), ("name", 1), ("_folded.version", 1), ("version", 1), ("_id", 1)],
+        ),
+        ("version", -1, [("_folded.version", -1), ("version", -1), ("_folded.name", 1), ("name", 1), ("_id", 1)]),
     ],
 )
 async def test_the_components_page_sorts_on_a_unique_key(sort_by, direction, expected):
@@ -41,7 +62,7 @@ async def test_the_components_page_sorts_on_a_unique_key(sort_by, direction, exp
 
     await get_components_page(db, _SCAN, page=2, page_size=25, search=None, sort_by=sort_by, direction=direction)
 
-    assert dependencies.find.return_value.sort.call_args.args == (expected,)
+    assert _sort_stage(dependencies) == expected
 
 
 @pytest.mark.asyncio

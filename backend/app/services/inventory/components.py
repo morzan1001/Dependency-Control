@@ -4,6 +4,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.models.finding import FindingType
 from app.models.project import Scan
 from app.repositories.dependencies import DependencyRepository
@@ -24,7 +25,8 @@ COMPONENT_COLUMNS = [
     "purl",
 ]
 
-_SORT_FIELDS = {"name", "version", "type", "license", "direct"}
+_TEXT_SORT_FIELDS = {"name", "version", "type", "license"}
+_SORT_FIELDS = {*_TEXT_SORT_FIELDS, "direct"}
 
 _DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "license": 1, "license_category": 1, "direct": 1, "purl": 1}
 
@@ -77,6 +79,16 @@ def _query(scan_id: str, search: str | None) -> dict[str, Any]:
     return query
 
 
+def _ordered(query: dict[str, Any], sort_field: str, direction: int) -> list[dict[str, Any]]:
+    # (name, version, purl) is unique within a scan, as is _id.
+    order = (
+        [("name", direction), ("version", direction), ("purl", direction)]
+        if sort_field == "name"
+        else [(sort_field, direction), ("name", 1), ("version", 1), ("_id", 1)]
+    )
+    return [{"$match": query}, {"$project": _DEP_PROJECTION}, *case_insensitive_sort(order, _TEXT_SORT_FIELDS)]
+
+
 async def get_components_page(
     db: AsyncIOMotorDatabase,
     scan: Scan,
@@ -91,21 +103,15 @@ async def get_components_page(
     query = _query(scan.id, search)
     total = await deps.count(query)
     sort_field = sort_by if sort_by in _SORT_FIELDS else "name"
-
-    # The unique scan_id/name/version/purl index serves name sorts; pymongo gives a repeated key its last direction.
-    sort_spec = (
-        [("name", direction), ("version", direction), ("purl", direction)]
-        if sort_field == "name"
-        else [(sort_field, direction), *((key, 1) for key in ("name", "version", "_id") if key != sort_field)]
+    docs = await deps.aggregate(
+        [*_ordered(query, sort_field, direction), {"$skip": (page - 1) * page_size}, {"$limit": page_size}]
     )
-    cursor = deps.collection.find(query, _DEP_PROJECTION).sort(sort_spec).skip((page - 1) * page_size).limit(page_size)
-    docs = await cursor.to_list(page_size)
 
-    lifecycle = await _lifecycle_by_component(db, scan.id, list(dict.fromkeys(d.get("name") for d in docs)))
+    lifecycle = await _lifecycle_by_component(db, scan.id, list(dict.fromkeys(d.get("name", "") for d in docs)))
     return [_to_item(d, lifecycle) for d in docs], total
 
 
 async def iter_component_rows(db: AsyncIOMotorDatabase, scan: Scan) -> AsyncIterator[dict[str, Any]]:
     lifecycle = await _lifecycle_by_component(db, scan.id)
-    async for doc in DependencyRepository(db).iterate_raw(_query(scan.id, None), _DEP_PROJECTION, [("name", 1)]):
+    async for doc in DependencyRepository(db).collection.aggregate(_ordered(_query(scan.id, None), "name", 1)):
         yield _to_item(doc, lifecycle).model_dump()
