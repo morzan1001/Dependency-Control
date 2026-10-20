@@ -107,6 +107,41 @@ async def test_a_truncated_ranking_keeps_the_keys_carrying_the_most_assets(db):
 
 
 @pytest.mark.asyncio
+async def test_the_total_counts_every_group_beyond_the_returned_page(db):
+    names = ["MD5", "MD5", "MD5", "SHA-1", "SHA-1", "AES"]
+    await CryptoAssetRepository(db).bulk_upsert(
+        "pt", "st", [_asset(f"t{i}", name, project_id="pt", scan_id="st") for i, name in enumerate(names)]
+    )
+    resolved = ResolvedScope(scope="project", scope_id="pt", project_ids=["pt"])
+
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", scan_id="st", limit=2)
+
+    assert (len(result.items), result.total) == (2, 3)
+
+
+@pytest.mark.asyncio
+async def test_assets_without_a_primitive_neither_take_a_place_nor_count_as_a_group(db):
+    certificates = [_asset(f"c{i}", f"cert-{i}", asset_type=CryptoAssetType.CERTIFICATE) for i in range(3)]
+    await CryptoAssetRepository(db).bulk_upsert("p1", "s1", [*certificates, _asset("h", "MD5", CryptoPrimitive.HASH)])
+    resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
+
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="primitive", scan_id="s1", limit=1)
+
+    assert ([e.key for e in result.items], result.total) == (["hash"], 1)
+
+
+@pytest.mark.asyncio
+async def test_a_finding_dimension_total_counts_every_key_beyond_the_returned_page(db):
+    for index, severity in enumerate(["LOW", "CRITICAL", "MEDIUM", "HIGH"]):
+        await db.findings.insert_one(_crypto_finding(f"f{index}", project_id="pt", scan_id="st", severity=severity))
+    resolved = ResolvedScope(scope="project", scope_id="pt", project_ids=["pt"])
+
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="severity", scan_id="st", limit=3)
+
+    assert (len(result.items), result.total) == (3, 4)
+
+
+@pytest.mark.asyncio
 async def test_keys_on_as_many_assets_rank_by_name_whatever_its_case(db):
     names = ["md5", "Ed25519", "bcrypt", "AES", "SHA-1", "SHA-1"]
     await CryptoAssetRepository(db).bulk_upsert(
@@ -440,7 +475,7 @@ async def test_concurrent_callers_of_one_view_share_one_aggregation(db):
         nonlocal runs
         runs += 1
         await asyncio.sleep(0)
-        return []
+        return [], 0
 
     resolved = ResolvedScope(scope="project", scope_id="pc", project_ids=["pc"])
     service = CryptoHotspotService(db)

@@ -29,6 +29,7 @@ export function HotspotHeatmap({ scope, scopeId, groupBy }: Readonly<Props>) {
   // Capped so a tenant with many projects/locations never renders an unbounded grid.
   const columns = everyColumn.slice(0, MAX_COLUMNS);
   const sampledRows = scope === "project" ? data.items.filter((e) => !e.locations_complete).length : 0;
+  const rowsCut = data.total > data.items.length;
 
   const projectNameById = new Map((projectsData?.items ?? []).map((p) => [p.id, p.name]));
 
@@ -43,8 +44,9 @@ export function HotspotHeatmap({ scope, scopeId, groupBy }: Readonly<Props>) {
 
   return (
     <div className="overflow-auto">
-      {(columns.length < everyColumn.length || sampledRows > 0) && (
+      {(rowsCut || columns.length < everyColumn.length || sampledRows > 0) && (
         <p className="pb-2 text-xs text-muted-foreground">
+          {rowsCut && `Showing ${data.items.length} of ${data.total} hotspots. `}
           {columns.length < everyColumn.length && `Showing ${columns.length} of ${everyColumn.length} ${axis}. `}
           {sampledRows > 0 &&
             `${sampledRows} row(s) list a sample of their locations — a "?" cell is unknown, not absent.`}

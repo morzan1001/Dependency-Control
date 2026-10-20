@@ -16,6 +16,7 @@ export function HotspotTable({ scope, scopeId, groupBy }: Readonly<Props>) {
     queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy }),
   });
   const items = data?.items ?? [];
+  const total = data?.total ?? 0;
 
   if (isLoading) {
     return <div className="p-4 text-sm text-muted-foreground">Loading hotspots…</div>;
@@ -28,35 +29,40 @@ export function HotspotTable({ scope, scopeId, groupBy }: Readonly<Props>) {
   }
 
   return (
-    <div className="rounded-md border overflow-x-auto">
-      <table className="w-full min-w-[640px] text-sm">
-        <thead className="bg-muted/50 text-left">
-          <tr>
-            <th className="p-2">Key</th>
-            <th className="p-2 w-24">Assets</th>
-            <th className="p-2 w-24">Findings</th>
-            <th className="p-2">Severity</th>
-            <th className="p-2">Projects</th>
-            <th className="p-2">Last seen</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((e) => (
-            <tr key={e.key} className="border-t hover:bg-muted/30">
-              <td className="p-2 font-mono">{e.key}</td>
-              <td className="p-2">{e.asset_count}</td>
-              <td className="p-2">{e.finding_count}</td>
-              <td className="p-2">
-                <SeverityBreakdownBadges
-                  breakdown={Object.fromEntries(Object.entries(e.severity_mix).map(([sev, n]) => [sev.toLowerCase(), n]))}
-                />
-              </td>
-              <td className="p-2 text-xs">{e.project_ids.length}</td>
-              <td className="p-2 text-xs">{formatDate(e.last_seen)}</td>
+    <div className="space-y-2">
+      {total > items.length && (
+        <p className="text-xs text-muted-foreground">{`Showing ${items.length} of ${total} hotspots`}</p>
+      )}
+      <div className="rounded-md border overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm">
+          <thead className="bg-muted/50 text-left">
+            <tr>
+              <th className="p-2">Key</th>
+              <th className="p-2 w-24">Assets</th>
+              <th className="p-2 w-24">Findings</th>
+              <th className="p-2">Severity</th>
+              <th className="p-2">Projects</th>
+              <th className="p-2">Last seen</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {items.map((e) => (
+              <tr key={e.key} className="border-t hover:bg-muted/30">
+                <td className="p-2 font-mono">{e.key}</td>
+                <td className="p-2">{e.asset_count}</td>
+                <td className="p-2">{e.finding_count}</td>
+                <td className="p-2">
+                  <SeverityBreakdownBadges
+                    breakdown={Object.fromEntries(Object.entries(e.severity_mix).map(([sev, n]) => [sev.toLowerCase(), n]))}
+                  />
+                </td>
+                <td className="p-2 text-xs">{e.project_ids.length}</td>
+                <td className="p-2 text-xs">{formatDate(e.last_seen)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

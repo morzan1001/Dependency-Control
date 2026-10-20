@@ -56,7 +56,7 @@ class CryptoHotspotService:
     async def _build(
         self, resolved: ResolvedScope, group_by: GroupBy, scan_ids: list[str], limit: int
     ) -> HotspotResponse:
-        items = await self._aggregate(
+        items, total = await self._aggregate(
             project_ids=resolved.project_ids,
             scan_ids=scan_ids,
             group_by=group_by,
@@ -67,7 +67,7 @@ class CryptoHotspotService:
             scope_id=resolved.scope_id,
             grouping_dimension=group_by,
             items=items,
-            total=len(items),
+            total=total,
             generated_at=datetime.now(timezone.utc),
         )
 
@@ -89,7 +89,7 @@ class CryptoHotspotService:
         scan_ids: list[str],
         group_by: GroupBy,
         limit: int,
-    ) -> list[HotspotEntry]:
+    ) -> tuple[list[HotspotEntry], int]:
         if group_by not in _ASSET_GROUPINGS:
             return await self._aggregate_by_finding_dimension(
                 project_ids=project_ids,
@@ -104,6 +104,7 @@ class CryptoHotspotService:
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
 
+        named_groups: list[dict[str, Any]] = [{"$match": {"_id": {"$nin": [None, ""]}}}]
         asset_pipeline: list[dict[str, Any]] = [
             {"$match": match},
             {
@@ -116,21 +117,30 @@ class CryptoHotspotService:
                     "last_seen": {"$max": "$created_at"},
                 }
             },
+            *named_groups,
             *case_insensitive_sort([("asset_count", -1), ("_id", 1)], {"_id"}),
             {"$limit": limit},
         ]
+        # A separate count, as a $facet would put every returned row's project_ids into one 16 MB document.
+        count_pipeline: list[dict[str, Any]] = [
+            {"$match": match},
+            {"$group": {"_id": group_key}},
+            *named_groups,
+            {"$count": "groups"},
+        ]
+        rows, counted = await asyncio.gather(
+            self.db.crypto_assets.aggregate(asset_pipeline).to_list(None),
+            self.db.crypto_assets.aggregate(count_pipeline).to_list(None),
+        )
 
         now = datetime.now(timezone.utc)
         out: list[HotspotEntry] = []
-        async for row in self.db.crypto_assets.aggregate(asset_pipeline):
-            key = row.get("_id")
-            if not isinstance(key, str) or not key:
-                continue
+        for row in rows:
             distinct = _distinct_locations(row.get("locations", []))
             sampled_every_asset = row["asset_count"] <= _LOCATION_SAMPLE_ASSETS
             out.append(
                 HotspotEntry(
-                    key=key,
+                    key=row["_id"],
                     grouping_dimension=group_by,
                     asset_count=row["asset_count"],
                     finding_count=0,
@@ -144,7 +154,7 @@ class CryptoHotspotService:
             )
 
         await self._enrich_with_findings(out, project_ids, scan_ids, join_field)
-        return out
+        return out, counted[0]["groups"] if counted else 0
 
     async def _aggregate_by_finding_dimension(
         self,
@@ -153,7 +163,7 @@ class CryptoHotspotService:
         scan_ids: list[str],
         group_by: GroupBy,
         limit: int,
-    ) -> list[HotspotEntry]:
+    ) -> tuple[list[HotspotEntry], int]:
         # Waived findings are a risk decision, not posture; excluding them keeps hotspots in line with crypto_trends.
         match: dict[str, Any] = {
             "type": {"$in": sorted(CRYPTO_FINDING_TYPES)},
@@ -224,7 +234,7 @@ class CryptoHotspotService:
         now = datetime.now(timezone.utc)
         tie_break = (lambda key: -get_severity_value(key)) if group_by == "severity" else case_insensitive_key
         ranked = sorted(accum.items(), key=lambda kv: (-kv[1]["finding_count"], tie_break(kv[0])))[:limit]
-        return [
+        entries = [
             HotspotEntry(
                 key=str(key),
                 grouping_dimension=group_by,
@@ -240,6 +250,7 @@ class CryptoHotspotService:
             )
             for key, data in ranked
         ]
+        return entries, len(accum)
 
     async def _enrich_with_findings(
         self,

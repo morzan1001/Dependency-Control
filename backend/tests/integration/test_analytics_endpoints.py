@@ -131,7 +131,7 @@ async def test_hotspots_pins_the_aggregation_to_an_explicit_scan_id(client, db, 
 
 
 @pytest.mark.asyncio
-async def test_hotspots_returns_at_most_the_requested_limit(client, db, owner_auth_headers_proj):
+async def test_hotspots_return_the_requested_limit_of_every_group(client, db, owner_auth_headers_proj):
     for name in ("MD5", "SHA1", "SHA256", "RSA", "AES"):
         await _seed_crypto_asset(db, "s-lim", name)
     await db.scans.insert_one(
@@ -152,8 +152,7 @@ async def test_hotspots_returns_at_most_the_requested_limit(client, db, owner_au
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert len(body["items"]) == 3
-    assert body["total"] == 3
+    assert (len(body["items"]), body["total"]) == (3, 5)
 
 
 @pytest.mark.asyncio

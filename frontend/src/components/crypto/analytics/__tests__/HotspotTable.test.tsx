@@ -75,6 +75,29 @@ describe("HotspotTable", () => {
     expect(screen.getByText("N:2")).toHaveClass("bg-severity-negligible", "text-severity-negligible-foreground");
   });
 
+  it("says how many of the scope's hotspots it lists", async () => {
+    vi.mocked(getCryptoHotspots).mockResolvedValueOnce({
+      scope: "user",
+      scope_id: null,
+      grouping_dimension: "name",
+      items: [{
+        key: "RSA", grouping_dimension: "name", asset_count: 4, finding_count: 7, severity_mix: {}, locations: [],
+        locations_complete: true, project_ids: ["p"], first_seen: "2026-01-01", last_seen: "2026-04-01",
+      }],
+      total: 150,
+      generated_at: "2026-04-20",
+    });
+    renderWithClient(<HotspotTable scope="user" groupBy="name" />);
+
+    expect(await screen.findByText("Showing 1 of 150 hotspots")).toBeInTheDocument();
+  });
+
+  it("adds no count when it lists every hotspot", async () => {
+    renderWithClient(<HotspotTable scope="project" scopeId="p" groupBy="name" />);
+    await screen.findByText("MD5");
+    expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+  });
+
   it("says the hotspots failed to load instead of reporting none", async () => {
     vi.mocked(getCryptoHotspots).mockRejectedValueOnce(new Error("Request failed"));
     renderWithClient(

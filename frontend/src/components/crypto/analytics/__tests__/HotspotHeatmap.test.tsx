@@ -54,7 +54,7 @@ vi.mock("@/api/cryptoAnalytics", () => ({
           last_seen: "",
         },
       ],
-      total: 1,
+      total: 12,
       generated_at: "",
     });
   }),
@@ -89,6 +89,12 @@ describe("HotspotHeatmap (org scope columns)", () => {
     renderWithClient(<HotspotHeatmap scope="global" groupBy="name" />);
     await screen.findByText("RSA-2048");
     expect(screen.getByText(/Showing 30 of 42 projects/)).toBeInTheDocument();
+  });
+
+  it("says how many of the scope's hotspots it lists as rows", async () => {
+    renderWithClient(<HotspotHeatmap scope="global" groupBy="name" />);
+    await screen.findByText("RSA-2048");
+    expect(screen.getByText(/Showing 1 of 12 hotspots/)).toBeInTheDocument();
   });
 
   it("resolves a project ObjectId to its name in the column header", async () => {
