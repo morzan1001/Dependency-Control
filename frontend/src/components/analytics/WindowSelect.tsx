@@ -12,7 +12,7 @@ const CALENDAR_OPTIONS = [
   { value: '365', label: 'Last 12 months' },
 ]
 
-const SCANS_OPTION = { value: 'scans', label: 'Last 20 scans' }
+const SCANS_OPTION = { value: 'scans', label: 'Last 20 commits' }
 
 export function WindowSelect({
   value,

@@ -92,8 +92,8 @@ const STATUS_CONFIG: Record<
     className: 'bg-gray-500/10 text-gray-500 border-gray-500/20',
   },
   insufficient_data: {
-    label: 'Too few scans',
-    hint: 'Fewer than 2 comparable scans in this window.',
+    label: 'Too few commits',
+    hint: 'Fewer than 2 scanned commits in this window.',
     icon: Hourglass,
     className: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20',
   },
@@ -200,7 +200,7 @@ function unmeasuredNote(data: Comparison): string | null {
   const parts = [
     data.partial_projects > 0 && `${data.partial_projects} on a partial window`,
     data.pending_projects > 0 && `${data.pending_projects} not computed yet`,
-    data.skipped_insufficient_data > 0 && `${data.skipped_insufficient_data} with too few scans`,
+    data.skipped_insufficient_data > 0 && `${data.skipped_insufficient_data} with too few commits`,
     data.skipped_error > 0 && `${data.skipped_error} failed`,
   ].filter((part): part is string => typeof part === 'string')
 

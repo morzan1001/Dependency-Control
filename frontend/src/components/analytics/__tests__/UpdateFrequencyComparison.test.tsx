@@ -326,7 +326,7 @@ describe("UpdateFrequencyComparison", () => {
     expect(screen.getByText("across 1 measured project")).toBeInTheDocument();
   });
 
-  it("tells too few scans apart from a failed measurement and drops the banner", async () => {
+  it("tells too few commits apart from a failed measurement and drops the banner", async () => {
     mockedComparison.mockResolvedValue(
       makeComparison(1, {
         projects: [
@@ -341,9 +341,9 @@ describe("UpdateFrequencyComparison", () => {
     clickLoad();
 
     await screen.findByText("Project Ranking");
-    expect(within(rowFor("thin-project")).getByText("Too few scans")).toBeInTheDocument();
+    expect(within(rowFor("thin-project")).getByText("Too few commits")).toBeInTheDocument();
     expect(within(rowFor("broken-project")).getByText("Measurement failed")).toBeInTheDocument();
-    expect(screen.getByText("1 with too few scans · 1 failed")).toBeInTheDocument();
+    expect(screen.getByText("1 with too few commits · 1 failed")).toBeInTheDocument();
     expect(screen.queryByText(/not computed yet/i)).not.toBeInTheDocument();
     expect(screen.queryByTestId("bar-chart")).not.toBeInTheDocument();
   });
