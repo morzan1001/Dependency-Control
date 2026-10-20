@@ -1,6 +1,6 @@
 from app.api.v1.endpoints.projects import (
     _build_scan_findings_match,
-    _scan_findings_sort_stage,
+    _scan_findings_sort_stages,
 )
 
 
@@ -62,28 +62,32 @@ class TestBuildScanFindingsMatch:
         assert match["$nor"] == [{"type": "secret", "details.in_current_tree": False}]
 
 
-class TestScanFindingsSortStage:
+class TestScanFindingsSortStages:
     """finding_id is not unique per scan, so every sort ends on _id for stable pagination."""
 
+    @staticmethod
+    def _sort(sort_by: str, sort_dir: int) -> dict:
+        return _scan_findings_sort_stages(sort_by, sort_dir)[-1]["$sort"]
+
     def test_severity_sort_has_unique_tiebreaker(self):
-        stage = _scan_findings_sort_stage("severity", -1)
-        assert stage == {"$sort": {"severity_rank": -1, "component": 1, "_id": 1}}
+        assert self._sort("severity", -1) == {
+            "severity_rank": -1,
+            "_folded.component": 1,
+            "component": 1,
+            "_id": 1,
+        }
 
     def test_component_sort_has_unique_tiebreaker(self):
-        stage = _scan_findings_sort_stage("component", 1)
-        assert stage == {"$sort": {"component": 1, "_id": 1}}
+        assert self._sort("component", 1) == {"_folded.component": 1, "component": 1, "_id": 1}
 
     def test_legacy_vuln_id_maps_to_finding_id_with_unique_tiebreaker(self):
-        stage = _scan_findings_sort_stage("vuln_id", -1)
-        assert stage == {"$sort": {"finding_id": -1, "_id": 1}}
+        assert self._sort("vuln_id", -1) == {"finding_id": -1, "_id": 1}
 
     def test_scanner_maps_to_first_scanner_scalar(self):
-        stage = _scan_findings_sort_stage("scanner", 1)
-        assert stage == {"$sort": {"first_scanner": 1, "_id": 1}}
+        assert self._sort("scanner", 1) == {"first_scanner": 1, "_id": 1}
 
     def test_unknown_sort_by_falls_back_to_severity(self):
-        stage = _scan_findings_sort_stage("does_not_exist", -1)
-        assert stage == {"$sort": {"severity_rank": -1, "component": 1, "_id": 1}}
+        assert self._sort("does_not_exist", -1) == self._sort("severity", -1)
 
 
 class TestScanFindingsPipelineKeepsId:
@@ -100,6 +104,7 @@ class TestScanFindingsPipelineKeepsId:
         data_project = facet["data"][-1]["$project"]
         assert data_project.get("_id") == 0
         assert data_project.get("first_scanner") == 0
+        assert data_project.get("_folded") == 0
 
 
 class TestScanFindingsDirectOnly:

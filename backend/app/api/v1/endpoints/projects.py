@@ -44,7 +44,7 @@ from app.api.v1.helpers.projects import (
     load_project_with_members,
     reject_unknown_analyzers,
 )
-from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, case_insensitive_key
+from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, case_insensitive_key, case_insensitive_sort
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
@@ -1115,12 +1115,12 @@ _SCAN_FINDINGS_SORT_FIELDS: dict[str, str] = {
 }
 
 
-def _scan_findings_sort_stage(sort_by: str, sort_dir: int) -> dict[str, Any]:
+def _scan_findings_sort_stages(sort_by: str, sort_dir: int) -> list[dict[str, Any]]:
     """Ends on the unique _id, since finding_id is not unique within a scan and skip/limit needs a stable order."""
     field = _SCAN_FINDINGS_SORT_FIELDS.get(sort_by, "severity")
     if field == "severity":
-        return {"$sort": {"severity_rank": sort_dir, "component": 1, "_id": 1}}
-    return {"$sort": {field: sort_dir, "_id": 1}}
+        return case_insensitive_sort([("severity_rank", sort_dir), ("component", 1), ("_id", 1)], {"component"})
+    return case_insensitive_sort([(field, sort_dir), ("_id", 1)], {"component"})
 
 
 def _build_scan_findings_pipeline(
@@ -1140,7 +1140,7 @@ def _build_scan_findings_pipeline(
         # Drop known-transitive findings; direct=null (code findings / unmatched packages) stays visible.
         stages.append({"$match": {"direct": {"$ne": False}}})
     stages += [
-        _scan_findings_sort_stage(sort_by, sort_dir),
+        *_scan_findings_sort_stages(sort_by, sort_dir),
         {
             "$facet": {
                 "metadata": [{"$count": "total"}],
@@ -1148,7 +1148,7 @@ def _build_scan_findings_pipeline(
                     {"$skip": skip},
                     {"$limit": limit},
                     *page_join,
-                    {"$project": {"_id": 0, "first_scanner": 0}},
+                    {"$project": {"_id": 0, "first_scanner": 0, "_folded": 0}},
                 ],
             }
         },
