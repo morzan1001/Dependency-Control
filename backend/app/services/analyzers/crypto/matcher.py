@@ -25,11 +25,13 @@ def asset_in_rule_scope(asset: CryptoAsset, rule: CryptoRule) -> bool:
         return False
 
     # CycloneDX gives key material no primitive, so only its name ties it to an algorithm (RSA-1024).
-    if (
-        rule.match_primitive is not None
-        and asset.primitive != rule.match_primitive
-        and asset.asset_type != CryptoAssetType.RELATED_CRYPTO_MATERIAL
-    ):
+    # A sizeless key could only withhold a key-size rule's verdict, never fail it.
+    judged_by_name = (
+        asset.asset_type == CryptoAssetType.RELATED_CRYPTO_MATERIAL
+        and bool(rule.match_name_patterns)
+        and (rule.match_min_key_size_bits is None or asset.key_size_bits is not None)
+    )
+    if rule.match_primitive is not None and asset.primitive != rule.match_primitive and not judged_by_name:
         return False
 
     if rule.match_name_patterns and not name_matches(asset, rule.match_name_patterns):

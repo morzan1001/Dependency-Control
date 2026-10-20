@@ -242,6 +242,21 @@ def test_key_material_is_judged_by_its_name_since_cyclonedx_gives_it_no_primitiv
     assert _seeded_rule_ids_matching(component) == expected
 
 
+@pytest.mark.parametrize(
+    "rule",
+    [
+        _rule(match_primitive=CryptoPrimitive.HASH),
+        _rule(match_primitive=CryptoPrimitive.BLOCK_CIPHER, match_min_key_size_bits=128),
+    ],
+    ids=["hash", "block-cipher-min-size"],
+)
+def test_a_rule_without_name_patterns_keeps_key_material_out_by_its_primitive(rule):
+    key = _asset(name="RSA-1024", asset_type=CryptoAssetType.RELATED_CRYPTO_MATERIAL, key_size_bits=64)
+
+    assert asset_in_rule_scope(key, rule) is False
+    assert rule_matches(key, rule) is False
+
+
 def test_a_family_name_token_matches_a_bare_pattern():
     assert _seeded_rule_ids_matching(_algorithm("DES-CBC", "block-cipher")) == {"nist-131a-des"}
 
