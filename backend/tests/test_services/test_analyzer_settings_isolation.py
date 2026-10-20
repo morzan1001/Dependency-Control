@@ -67,8 +67,8 @@ async def test_two_projects_scanning_at_once_keep_their_own_maintainer_threshold
     default = build_analyzer(_MAINTAINER_RISK)
 
     await asyncio.gather(
-        tight.analyze(_NO_COMPONENTS, _TIGHT_MAINTAINER),
-        default.analyze(_NO_COMPONENTS, _DEFAULT_MAINTAINER),
+        tight.analyze(_NO_COMPONENTS, _TIGHT_MAINTAINER, parsed_components=[]),
+        default.analyze(_NO_COMPONENTS, _DEFAULT_MAINTAINER, parsed_components=[]),
     )
 
     info = {"days_since_release": _DAYS_SINCE_RELEASE}

@@ -291,7 +291,7 @@ async def test_failing_analyzer_is_reported_and_not_turned_into_a_system_warning
     class _Boom:
         name = "osv"
 
-        async def analyze(self, sbom, settings=None, parsed_components=None):
+        async def analyze(self, sbom, settings=None, *, parsed_components):
             raise RuntimeError(_ANALYZER_ERROR)
 
     serve_analyzer(monkeypatch, "osv", _Boom())
@@ -310,7 +310,7 @@ async def test_error_shaped_analyzer_result_is_reported_not_aggregated(monkeypat
     class _Timeout:
         name = "osv"
 
-        async def analyze(self, sbom, settings=None, parsed_components=None):
+        async def analyze(self, sbom, settings=None, *, parsed_components):
             return {"error": _ANALYZER_TIMEOUT, "vulnerabilities": []}
 
     serve_analyzer(monkeypatch, "osv", _Timeout())
@@ -485,7 +485,7 @@ async def test_blank_error_string_is_reported_not_aggregated(monkeypatch):
     class _Blank:
         name = "osv"
 
-        async def analyze(self, sbom, settings=None, parsed_components=None):
+        async def analyze(self, sbom, settings=None, *, parsed_components):
             return {"error": ""}
 
     serve_analyzer(monkeypatch, "osv", _Blank())
@@ -507,7 +507,7 @@ async def test_an_analyzer_that_failed_on_one_sbom_is_not_also_reported_as_ran(m
         def __init__(self):
             self.calls = 0
 
-        async def analyze(self, sbom, settings=None, parsed_components=None):
+        async def analyze(self, sbom, settings=None, *, parsed_components):
             self.calls += 1
             if self.calls == 1:
                 return {"vulnerabilities": []}
@@ -613,7 +613,7 @@ async def test_opengrep_entries_under_results_are_validated_like_those_under_fin
 class _BrokenOsv:
     name = _OSV_NAME
 
-    async def analyze(self, sbom, settings=None, parsed_components=None):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
         raise RuntimeError(_ANALYZER_ERROR)
 
 
@@ -756,7 +756,7 @@ async def test_every_failure_reason_is_kept_and_attributed_to_its_input(monkeypa
         def __init__(self):
             self.calls = 0
 
-        async def analyze(self, sbom, settings=None, parsed_components=None):
+        async def analyze(self, sbom, settings=None, *, parsed_components):
             self.calls += 1
             if self.calls == 2:
                 return {"osv_vulnerabilities": []}
@@ -779,7 +779,7 @@ async def test_a_normalizer_that_cannot_read_an_analyzer_result_is_reported_not_
     class _Reshaped:
         name = "osv"
 
-        async def analyze(self, sbom, settings=None, parsed_components=None):
+        async def analyze(self, sbom, settings=None, *, parsed_components):
             # The normalizers dereference analyzer output without type checks.
             return {"osv_vulnerabilities": [None]}
 
@@ -798,7 +798,7 @@ def _partial_osv(monkeypatch, result):
     class _Partial:
         name = _OSV_NAME
 
-        async def analyze(self, sbom, settings=None, parsed_components=None):
+        async def analyze(self, sbom, settings=None, *, parsed_components):
             return result
 
     serve_analyzer(monkeypatch, _OSV_NAME, _Partial())

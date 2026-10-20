@@ -15,7 +15,7 @@ _SBOM = {
 
 
 class _Raising:
-    async def analyze(self, sbom, settings=None, parsed_components=None):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
         raise RuntimeError("license feed down")
 
 

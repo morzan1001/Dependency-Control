@@ -41,7 +41,7 @@ async def test_an_adhoc_grype_run_reads_a_temp_copy_of_the_document_and_removes_
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_dir))
     sbom = json.loads(await asyncio.to_thread((_FIXTURES / "sbom" / "uvdev.syft.cdx.json").read_text))
 
-    result = await GrypeAnalyzer().analyze(sbom)
+    result = await GrypeAnalyzer().analyze(sbom, parsed_components=[])
 
     assert [match["artifact"]["name"] for match in result["matches"]] == ["brace-expansion", "libgnutls30", "libc-bin"]
     assert Path((await asyncio.to_thread(scanned_log.read_text)).strip()).name.startswith("dc-sbom-")

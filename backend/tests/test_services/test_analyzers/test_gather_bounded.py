@@ -123,6 +123,6 @@ async def test_a_run_that_makes_no_request_never_pauses(monkeypatch, analyzer, b
     monkeypatch.setattr(asyncio, "sleep", record_pause)
     components = _components_without_a_registry(ANALYZER_BATCH_SIZES[batch_key] * 2 + 1)
 
-    await analyzer.analyze({}, settings, components)
+    await analyzer.analyze({}, settings, parsed_components=components)
 
     assert pauses == []

@@ -353,8 +353,8 @@ class TestDepsDevLookups:
         _serve(monkeypatch, fake_cache, _babel_routes())
         analyzer = DepsDevAnalyzer()
 
-        lenient = await analyzer.analyze({}, {"scorecard_threshold": 4.0}, [_CORE])
-        strict = await analyzer.analyze({}, {"scorecard_threshold": 7.0}, [_CORE])
+        lenient = await analyzer.analyze({}, {"scorecard_threshold": 4.0}, parsed_components=[_CORE])
+        strict = await analyzer.analyze({}, {"scorecard_threshold": 7.0}, parsed_components=[_CORE])
 
         assert lenient["scorecard_issues"] == []
         assert [issue["component"] for issue in strict["scorecard_issues"]] == ["@babel/core"]

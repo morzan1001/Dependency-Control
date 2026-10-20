@@ -74,16 +74,16 @@ class OutdatedAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        components = parsed_components or []
         outdated: list[dict[str, Any]] = []
         ahead: list[dict[str, Any]] = []
         failed: list[str] = []
 
-        infos = await self._resolve_package_infos(components)
+        infos = await self._resolve_package_infos(parsed_components)
 
-        for component, info in zip(components, infos, strict=True):
+        for component, info in zip(parsed_components, infos, strict=True):
             if isinstance(info, BaseException):
                 failed.append(component.get("name", ""))
             elif info and info.get("default"):

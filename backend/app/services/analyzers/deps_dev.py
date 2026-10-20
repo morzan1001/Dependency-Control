@@ -67,9 +67,9 @@ class DepsDevAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        components = parsed_components or []
         scorecard_issues: list[Any] = []
         package_metadata: dict[str, Any] = {}
 
@@ -77,7 +77,7 @@ class DepsDevAnalyzer(Analyzer):
         threshold = (settings or {}).get("scorecard_threshold", SCORECARD_FLAG_THRESHOLD)
 
         targets: dict[str, tuple[dict[str, Any], str, str]] = {}
-        for component in components:
+        for component in parsed_components:
             target = _lookup_target(component)
             if target is not None:
                 targets.setdefault(target[0], (component, target[1], target[2]))

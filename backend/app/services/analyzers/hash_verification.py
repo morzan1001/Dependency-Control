@@ -32,11 +32,11 @@ class HashVerificationAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        components = parsed_components or []
         checks = []
-        for component in components:
+        for component in parsed_components:
             parsed = parse_purl(component.get("purl") or "")
             registry = parsed.registry_system if parsed else None
             name, version, sbom_hashes = component.get("name"), component.get("version", ""), component.get("hashes")
@@ -60,7 +60,7 @@ class HashVerificationAnalyzer(Analyzer):
             "hash_issues": issues,
             "summary": {
                 "verified_count": verified_count,
-                "unverifiable_count": len(components) - verified_count - len(issues),
+                "unverifiable_count": len(parsed_components) - verified_count - len(issues),
                 "mismatch_count": len(issues),
             },
         }

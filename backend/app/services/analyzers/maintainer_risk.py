@@ -67,7 +67,8 @@ class MaintainerRiskAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
         settings = settings or {}
         github_token = settings.get("github_token")
@@ -77,7 +78,7 @@ class MaintainerRiskAnalyzer(Analyzer):
 
         async with InstrumentedAsyncClient("Maintainer Risk API", timeout=timeout) as client:
             results = await gather_bounded(
-                parsed_components or [],
+                parsed_components,
                 lambda component: self._check_component(client, component, github_token),
                 ANALYZER_BATCH_SIZES["maintainer_risk"],
             )

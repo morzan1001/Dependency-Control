@@ -197,7 +197,7 @@ class TestCorpusDepthIsDeclaredAndReported:
         corpus = {"pypi": deep_ranking, "npm": ["react"]}
 
         with patch.object(analyzer, "_ensure_popular_packages", new=AsyncMock(return_value=corpus)):
-            result = await analyzer.analyze({"components": []})
+            result = await analyzer.analyze({"components": []}, parsed_components=[])
 
         assert result["popular_packages_compared"] == {"npm": 1, "pypi": TYPOSQUATTING_POPULAR_PACKAGE_RANKS}
 

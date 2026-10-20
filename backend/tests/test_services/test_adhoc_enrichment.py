@@ -54,7 +54,7 @@ def _vulnerable_osv(*vulnerabilities: dict) -> object:
     class _Osv:
         name = "osv"
 
-        async def analyze(self, sbom, settings=None, parsed_components=None):
+        async def analyze(self, sbom, settings=None, *, parsed_components):
             return {
                 "osv_vulnerabilities": [
                     {"component": _VULNERABLE_COMPONENT, "version": "2.31.0", "vulnerabilities": list(vulnerabilities)}

@@ -507,7 +507,7 @@ async def test_adhoc_analysis_persists_nothing_when_an_analyzer_fails(
     class _Boom:
         name = _FAILING_ANALYZER
 
-        async def analyze(self, sbom, settings=None, parsed_components=None):
+        async def analyze(self, sbom, settings=None, *, parsed_components):
             raise RuntimeError("upstream exploded")
 
     serve_analyzer(monkeypatch, _FAILING_ANALYZER, _Boom())
@@ -545,7 +545,7 @@ async def test_an_analyzer_that_caches_publishes_nothing_through_this_path(
     class _Caching:
         name = _CACHING_ANALYZER
 
-        async def analyze(self, sbom, settings=None, parsed_components=None):
+        async def analyze(self, sbom, settings=None, *, parsed_components):
             await cache_service.set(_CALLER_DERIVED_CACHE_KEY, [_CALLER_ONLY_COMPONENT])
             await cache_service.mset({_CALLER_DERIVED_CACHE_KEY: [_CALLER_ONLY_COMPONENT]})
             await cache_service.get_or_fetch_with_lock(_CALLER_DERIVED_CACHE_KEY, _fetch)

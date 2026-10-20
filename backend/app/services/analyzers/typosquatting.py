@@ -148,13 +148,14 @@ class TyposquattingAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
         popular_packages = await self._ensure_popular_packages()
         settings = settings or {}
         issues = await asyncio.to_thread(
             self._scan_components,
-            parsed_components or [],
+            parsed_components,
             popular_packages,
             settings.get("similarity_threshold", TYPOSQUATTING_SIMILARITY_THRESHOLD),
             settings.get("critical_similarity", TYPOSQUATTING_CRITICAL_SIMILARITY),

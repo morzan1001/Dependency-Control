@@ -263,7 +263,7 @@ class _SettingsProbe:
     def __init__(self) -> None:
         self.settings: dict = {}
 
-    async def analyze(self, sbom, settings=None, parsed_components=None):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
         self.settings = settings or {}
         return {"maintainer_issues": []}
 
@@ -609,7 +609,7 @@ class _CannedReport:
     def __init__(self, report: dict) -> None:
         self.report = report
 
-    async def analyze(self, sbom, settings=None, parsed_components=None):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
         return self.report
 
 

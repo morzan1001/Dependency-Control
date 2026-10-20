@@ -74,7 +74,7 @@ class TestGrypeRetryLoop:
         mock_exec = _exec_results((b'{"matches": []}', b"", 0))
 
         with patch.object(analyzer, "_execute_command", mock_exec):
-            result = await analyzer.analyze(SBOM)
+            result = await analyzer.analyze(SBOM, parsed_components=[])
 
         assert "error" not in result
         assert mock_exec.await_count == 1
@@ -89,7 +89,7 @@ class TestGrypeRetryLoop:
         )
 
         with patch.object(analyzer, "_execute_command", mock_exec):
-            result = await analyzer.analyze(SBOM)
+            result = await analyzer.analyze(SBOM, parsed_components=[])
 
         assert "error" not in result
         assert mock_exec.await_count == 3
@@ -103,7 +103,7 @@ class TestGrypeRetryLoop:
         )
 
         with patch.object(analyzer, "_execute_command", mock_exec):
-            result = await analyzer.analyze(SBOM)
+            result = await analyzer.analyze(SBOM, parsed_components=[])
 
         assert result.get("error") == "grype analysis failed"
         assert mock_exec.await_count == 4
@@ -114,7 +114,7 @@ class TestGrypeRetryLoop:
         mock_exec = _exec_results((b"", NON_RETRYABLE_STDERR, 1))
 
         with patch.object(analyzer, "_execute_command", mock_exec):
-            result = await analyzer.analyze(SBOM)
+            result = await analyzer.analyze(SBOM, parsed_components=[])
 
         assert result.get("error") == "grype analysis failed"
         assert mock_exec.await_count == 1
@@ -128,7 +128,7 @@ class TestGrypeRetryLoop:
         )
 
         with patch.object(analyzer, "_execute_command", mock_exec):
-            result = await analyzer.analyze(SBOM)
+            result = await analyzer.analyze(SBOM, parsed_components=[])
 
         assert "error" not in result
         assert mock_exec.await_count == 2

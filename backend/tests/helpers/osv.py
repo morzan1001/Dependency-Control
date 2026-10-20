@@ -49,11 +49,11 @@ class FakeOsv:
         self._advisories = list(advisories)
         self._components = components
 
-    async def analyze(self, sbom, settings=None, parsed_components=None):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
         return {
             "osv_vulnerabilities": [
                 {"component": component["name"], "version": component["version"], "vulnerabilities": self._advisories}
-                for component in parsed_components or []
+                for component in parsed_components
                 if self._advisories and (self._components is None or component["name"] in self._components)
             ]
         }

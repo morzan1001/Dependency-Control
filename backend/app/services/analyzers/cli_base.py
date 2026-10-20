@@ -60,7 +60,8 @@ class CLIAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
         sbom_path = await asyncio.to_thread(self._create_temp_sbom, sbom)
         try:
