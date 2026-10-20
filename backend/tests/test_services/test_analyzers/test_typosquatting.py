@@ -388,6 +388,43 @@ class TestTheShippedNpmRanking:
         assert issues == {"browser": "bowser"}
 
 
+class TestOneTypoInAShortName:
+    """One swapped or replaced letter of a five-letter name scores 0.8, under the similarity threshold."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("component", "imitated"),
+        [(_npm("axois"), "axios"), (_npm("raect"), "react"), (_pypi("numpi"), "numpy")],
+        ids=["axois", "raect", "numpi"],
+    )
+    async def test_one_swapped_or_replaced_letter_is_flagged_with_its_ratio(self, monkeypatch, component, imitated):
+        monkeypatch.setattr(typosquatting, "cache_service", _CorpusCache({_PYPI_KEY: {}}))
+
+        result = await analyze_cyclonedx(TyposquattingAnalyzer(), [component])
+
+        assert [
+            (issue["imitated_package"], issue["similarity"], issue["severity"])
+            for issue in result["typosquatting_issues"]
+        ] == [(imitated, 0.8, "MEDIUM")]
+
+    @pytest.mark.asyncio
+    async def test_a_ranked_name_one_letter_from_another_is_not_flagged(self, monkeypatch):
+        """blob is ranked, one letter from glob."""
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), [_npm("blob")])
+
+        assert issues == {}
+
+    @pytest.mark.asyncio
+    async def test_a_three_letter_name_one_letter_from_a_popular_one_is_not_flagged(self):
+        analyzer = TyposquattingAnalyzer()
+        corpus = {"npm": ["vue", "chalk"]}
+
+        with patch.object(analyzer, "_ensure_popular_packages", new=AsyncMock(return_value=corpus)):
+            result = await analyze_cyclonedx(analyzer, [_npm("vae"), _npm("chakl")])
+
+        assert [issue["component"] for issue in result["typosquatting_issues"]] == ["chakl"]
+
+
 class TestTheEcosystemComesFromThePurl:
     """The purl's registry is the ecosystem rule every analyzer shares, so a generic purl names none."""
 

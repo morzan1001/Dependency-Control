@@ -76,6 +76,18 @@ def _has_legitimate_prefix(longer: str, shorter: str) -> bool:
     return longer.startswith(shorter + "-")
 
 
+def _one_typo_apart(name: str, popular: str) -> bool:
+    """One replaced letter or one swap of neighbours; under four letters such pairs are mostly unrelated words."""
+    if len(name) != len(popular) or len(name) < 4:
+        return False
+    match [i for i in range(len(name)) if name[i] != popular[i]]:
+        case [_]:
+            return True
+        case [i, j]:
+            return j == i + 1 and name[i : j + 1] == popular[i : j + 1][::-1]
+    return False
+
+
 def _severity_for_ratio(ratio: float, critical_at: float, high_at: float) -> str:
     if ratio > critical_at:
         return Severity.CRITICAL.value
@@ -211,16 +223,18 @@ class TyposquattingAnalyzer(Analyzer):
             return None
 
         matcher = difflib.SequenceMatcher(None, b=name)
-        best_ratio, best_popular = similarity_threshold, None
+        best_ratio, best_popular = 0.0, None
         for popular in top:
             if abs(len(name) - len(popular)) > 2:
                 continue
+            # One typo in a five-letter name scores 0.8, so such a pair need not reach the threshold.
+            floor = best_ratio if _one_typo_apart(name, popular) else max(best_ratio, similarity_threshold)
             # Both quick ratios bound ratio() from above in either orientation; ratio() itself is not symmetric.
             matcher.set_seq1(popular)
-            if matcher.real_quick_ratio() <= best_ratio or matcher.quick_ratio() <= best_ratio:
+            if matcher.real_quick_ratio() <= floor or matcher.quick_ratio() <= floor:
                 continue
             ratio = difflib.SequenceMatcher(None, name, popular).ratio()
-            if ratio > best_ratio and self._is_suspicious(name, popular):
+            if ratio > floor and self._is_suspicious(name, popular):
                 best_ratio, best_popular = ratio, popular
         if best_popular is None:
             return None
