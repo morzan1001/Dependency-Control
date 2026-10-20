@@ -228,6 +228,7 @@ async def test_the_occurrence_count_for_a_cve_is_the_population_not_the_page(see
             "_id": f"row-{i}",
             "scan_id": _SCAN,
             "project_id": _PROJECT,
+            "type": "vulnerability",
             "severity": "HIGH",
             "component": f"pkg-{i}",
             "details": {"vulnerabilities": [{"id": _CVE}]},

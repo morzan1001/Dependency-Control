@@ -62,7 +62,7 @@ from app.models.webhook import Webhook
 from app.repositories.base import and_filters
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
-from app.repositories.findings import KEV_FINDINGS_ONLY, FindingRepository
+from app.repositories.findings import KEV_FINDINGS_ONLY, VULNERABILITIES_ONLY, FindingRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
@@ -1280,7 +1280,8 @@ class ChatToolRegistry:
     async def _tool_get_findings_by_cve(self, ctx: _ToolContext) -> dict[str, Any]:
         cve = advisory_id(ctx.args["cve_id"]) or ""
         heads, names = await self._require_heads(ctx, "findings")
-        query = {"scan_id": {"$in": heads}, **advisory_match(cve)}
+        # No index holds an advisory id; the type bound keeps the walk to the findings that carry advisories.
+        query = {"scan_id": {"$in": heads}, **VULNERABILITIES_ONLY, **advisory_match(cve)}
         counts = await (
             ctx.db["findings"]
             .aggregate(
@@ -1324,7 +1325,9 @@ class ChatToolRegistry:
     async def _tool_get_cve_details(self, ctx: _ToolContext) -> dict[str, Any]:
         cve = advisory_id(ctx.args["cve_id"]) or ""
         head, _ = await self._heads_in_scope(ctx)
-        finding = await ctx.db["findings"].find_one({"scan_id": {"$in": list(head.values())}, **advisory_match(cve)})
+        finding = await ctx.db["findings"].find_one(
+            {"scan_id": {"$in": list(head.values())}, **VULNERABILITIES_ONLY, **advisory_match(cve)}
+        )
         if not finding:
             return {"error": f"{cve} not found in any of your projects' scan data"}
         advisory = next(v for v in finding["details"]["vulnerabilities"] if cve in advisory_ids(v))
