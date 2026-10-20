@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -92,9 +93,7 @@ async def test_the_stats_refresh_sets_the_cache_gauges_and_a_health_check_leaves
 
 
 @pytest.mark.asyncio
-async def test_the_worker_gauges_follow_the_queue_and_the_running_workers(monkeypatch):
-    monkeypatch.setattr("app.core.worker.housekeeping_loop", AsyncMock())
-    monkeypatch.setattr("app.core.worker.stale_scan_loop", AsyncMock())
+async def test_the_queue_gauge_follows_the_queue(monkeypatch):
     monkeypatch.setattr("app.core.worker.get_database", AsyncMock(return_value=FakeDatabase()))
     queued = AnalysisWorkerManager(num_workers=3)
     await queued.add_job("a")
@@ -105,11 +104,36 @@ async def test_the_worker_gauges_follow_the_queue_and_the_running_workers(monkey
     await queued.stop()
     assert _sample("worker_queue_size") == 0
 
-    running = AnalysisWorkerManager(num_workers=3)
-    await running.start()
-    assert _sample("worker_active_count") == 3
-    await running.stop()
-    assert _sample("worker_active_count") == 0
+
+@pytest.mark.asyncio
+async def test_the_active_worker_gauge_counts_the_workers_busy_with_a_job(monkeypatch):
+    db = FakeDatabase()
+    await db.projects.insert_one({"_id": "proj-1", "active_analyzers": []})
+    await db.scans.insert_one({"_id": "scan-1", "project_id": "proj-1", "status": "pending", "sbom_refs": []})
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def _held_analysis(**_kwargs):
+        started.set()
+        await release.wait()
+        return SCAN_STATUS_COMPLETED
+
+    monkeypatch.setattr("app.core.worker.housekeeping_loop", AsyncMock())
+    monkeypatch.setattr("app.core.worker.stale_scan_loop", AsyncMock())
+    monkeypatch.setattr("app.core.worker.get_database", AsyncMock(return_value=db))
+    monkeypatch.setattr("app.core.worker.run_analysis", _held_analysis)
+    manager = AnalysisWorkerManager(num_workers=3)
+    await manager.start()
+    try:
+        assert _sample("worker_active_count") == 0
+        await manager.add_job("scan-1")
+        await asyncio.wait_for(started.wait(), timeout=5)
+        assert _sample("worker_active_count") == 1
+        release.set()
+        await asyncio.wait_for(manager.queue.join(), timeout=5)
+        assert _sample("worker_active_count") == 0
+    finally:
+        release.set()
+        await manager.stop()
 
 
 @pytest.mark.asyncio

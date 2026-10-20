@@ -128,8 +128,6 @@ class AnalysisWorkerManager:
             task = asyncio.create_task(self.worker(f"worker-{i}"))
             self.workers.append(task)
 
-        worker_active_count.set(self.num_workers)
-
         self.housekeeping_task = asyncio.create_task(housekeeping_loop(self))
         logger.info("Housekeeping task started.")
 
@@ -148,11 +146,13 @@ class AnalysisWorkerManager:
     def _track_scan(self, scan_id: str) -> None:
         self._active_scans.add(scan_id)
         self._no_active_scans.clear()
+        worker_active_count.set(len(self._active_scans))
 
     def _untrack_scan(self, scan_id: str) -> None:
         self._active_scans.discard(scan_id)
         if not self._active_scans:
             self._no_active_scans.set()
+        worker_active_count.set(len(self._active_scans))
 
     async def _await_active_scans(self) -> None:
         if not self._active_scans:
@@ -194,7 +194,6 @@ class AnalysisWorkerManager:
         if self.workers:
             await asyncio.gather(*self.workers, return_exceptions=True)
 
-        worker_active_count.set(0)
         worker_queue_size.set(0)
 
         logger.info("Graceful shutdown complete.")

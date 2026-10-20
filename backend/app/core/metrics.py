@@ -168,7 +168,7 @@ worker_queue_size = Gauge(
 
 worker_active_count = Gauge(
     "worker_active_count",
-    "Number of active workers",
+    "Number of workers busy with a job",
 )
 
 worker_jobs_processed_total = Counter(
