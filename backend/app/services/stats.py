@@ -109,7 +109,8 @@ async def recalculate_project_stats(
     if not project:
         return None
 
-    scan_id = await scan_repo.get_latest_active_scan_id(project)
+    # Derived off the builds, as a stale pointer to a stamped scan would pass for a current head.
+    scan_id = await scan_repo.get_latest_active_scan_id(project.model_copy(update={"latest_scan_id": None}))
     others = {*await _released_analysis_ids(db, project_id), *await _branch_tip_ids(scan_repo, project), *restamp}
     other_ids = sorted(others - {scan_id})
     scan_ids = [*([scan_id] if scan_id else []), *other_ids]

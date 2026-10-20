@@ -386,6 +386,34 @@ class TestRecalculateReachesTheReleasedBuild:
         assert (await released_db.findings.find_one({"_id": "loc-shipped"}))["waived"] is True
 
 
+NEWER_HEAD_SCAN_ID = "scan-w4-newer"
+
+
+class TestRecalculateFindsTheHeadOffTheBuilds:
+    @pytest.mark.asyncio
+    async def test_a_pointer_left_on_an_older_build_does_not_keep_the_outcomes_off_the_head(self, seeded_db):
+        """The older build is stamped and owns the outcomes, so a pointer-seeded head would look current."""
+        await recalculate_project_stats(PROJECT_ID, seeded_db)
+        await seeded_db.scans.insert_one(
+            {
+                "_id": NEWER_HEAD_SCAN_ID,
+                "project_id": PROJECT_ID,
+                "branch": "main",
+                "status": "completed",
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+        newer = _finding("f-newer", "CRITICAL", cvss_score=9.0, risk_score=90.0)
+        newer.update(scan_id=NEWER_HEAD_SCAN_ID, finding_id="f-waived")
+        await seeded_db.findings.insert_one(newer)
+
+        await recalculate_project_stats(PROJECT_ID, seeded_db)
+
+        assert (await seeded_db.findings.find_one({"_id": "f-newer"}))["waived"] is True
+        assert (await seeded_db.waivers.find_one({"_id": "w-1"}))["last_eval_scan_id"] == NEWER_HEAD_SCAN_ID
+        assert (await seeded_db.projects.find_one({"_id": PROJECT_ID}))["latest_scan_id"] == NEWER_HEAD_SCAN_ID
+
+
 BRANCH_SCAN_ID = "scan-w4-feature"
 
 
