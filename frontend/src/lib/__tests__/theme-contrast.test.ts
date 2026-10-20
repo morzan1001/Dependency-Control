@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
+import type { ReactElement } from 'react'
 import { describe, expect, it } from 'vitest'
 
+import { Badge } from '@/components/ui/badge'
 import { SEVERITY_CHART_COLORS, SEVERITY_ORDER, getSeverityBgColor } from '@/lib/finding-utils'
 
 type Rgb = [number, number, number]
@@ -79,6 +81,30 @@ describe('dark-theme severity pill outline', () => {
       expect(outline).not.toBeNull()
       const fill = token(darkTheme, `severity-${severity.toLowerCase()}`)
       const edge = over(token(darkTheme, 'foreground'), fill, Number(outline![1]) / 100)
+      expect(contrast(edge, highlight)).toBeGreaterThanOrEqual(3)
+    },
+  )
+})
+
+describe.each([
+  ['light', lightTheme],
+  ['dark', darkTheme],
+])('%s-theme neutral badge outline', (_name, theme) => {
+  const muted = token(theme, 'muted')
+  const rows = [
+    ['selected', muted],
+    ['hovered', over(muted, token(theme, 'background'), 0.5)],
+  ] as const
+
+  // The secondary fill and the outline variant's border equal the muted row highlight, as the severity pills' did.
+  it.each((['secondary', 'outline'] as const).flatMap((variant) => rows.map(([row, highlight]) => [variant, row, highlight] as const)))(
+    'sets the %s badge off a %s row at a WCAG non-text contrast of at least 3:1',
+    (variant, _row, highlight) => {
+      const { className } = (Badge({ variant }) as ReactElement<{ className: string }>).props
+      const outline = /(?:^| )border-foreground\/(\d+)(?: |$)/.exec(className)
+      expect(outline).not.toBeNull()
+      const behind = variant === 'secondary' ? token(theme, 'secondary') : highlight
+      const edge = over(token(theme, 'foreground'), behind, Number(outline![1]) / 100)
       expect(contrast(edge, highlight)).toBeGreaterThanOrEqual(3)
     },
   )
