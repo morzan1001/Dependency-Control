@@ -49,6 +49,11 @@ describe("MigrationPlanTable", () => {
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ asset_bom_ref: "rsa-1" }));
   });
 
+  it("heads the count column Occurrences, as it counts the places an asset was found", () => {
+    render(<MigrationPlanTable items={items} onSelect={() => {}} />);
+    expect(screen.getByRole("columnheader", { name: "Occurrences" })).toBeInTheDocument();
+  });
+
   it("renders priority score visibly", () => {
     render(<MigrationPlanTable items={items} onSelect={() => {}} />);
     expect(screen.getByText("88")).toBeInTheDocument();

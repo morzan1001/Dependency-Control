@@ -316,3 +316,18 @@ async def test_dsa_is_past_its_deadline_and_dh_shares_the_2030_one():
     assert items["dsa"].recommended_deadline == "2023-02-03T00:00:00+00:00"
     assert items["dh"].recommended_deadline == "2030-01-01T00:00:00+00:00"
     assert items["dsa"].priority_score > items["rsa"].priority_score
+
+
+@pytest.mark.asyncio
+async def test_an_asset_counts_every_place_it_was_found():
+    """A group is one bom_ref, so counting assets would score every project-plan item as found once."""
+    items = await _plan_for(
+        [
+            _asset(bom_ref="spread").model_copy(update={"occurrence_locations": ["a.py", "b.py", "c.py"]}),
+            _asset(bom_ref="once").model_copy(update={"occurrence_locations": ["a.py"]}),
+            _asset(bom_ref="unplaced"),
+        ]
+    )
+
+    assert {ref: item.asset_count for ref, item in items.items()} == {"spread": 3, "once": 1, "unplaced": 1}
+    assert items["spread"].priority_score > items["once"].priority_score == items["unplaced"].priority_score

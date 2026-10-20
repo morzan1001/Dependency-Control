@@ -74,12 +74,13 @@ class PQCMigrationPlanGenerator:
         canonical = resolve_family(first_asset, self.mappings)
         mapping = self._find_mapping(canonical, first_asset.primitive)
         deadline = self._nearest_deadline(canonical, self.mappings.timelines)
+        occurrences = sum(max(1, len(a.occurrence_locations)) for a in group)
         score = priority_score(
             asset=first_asset,
             source_family=canonical,
             deadline=deadline,
             now=now,
-            asset_count=len(group),
+            asset_count=occurrences,
         )
         return MigrationItem(
             asset_bom_ref=first_asset.bom_ref,
@@ -87,7 +88,7 @@ class PQCMigrationPlanGenerator:
             asset_variant=variant,
             asset_key_size_bits=key_size_bits,
             project_ids=sorted({a.project_id for a in group}),
-            asset_count=len(group),
+            asset_count=occurrences,
             source_family=canonical,
             source_primitive=first_asset.primitive or "",
             use_case=mapping.use_case,

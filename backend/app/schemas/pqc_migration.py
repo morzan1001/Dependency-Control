@@ -17,7 +17,7 @@ class MigrationItem(BaseModel):
     asset_variant: str | None = None
     asset_key_size_bits: int | None = None
     project_ids: list[str] = Field(default_factory=list)
-    asset_count: int = Field(..., ge=1)
+    asset_count: int = Field(..., ge=1, description="Places the asset was found, at least one per project")
 
     source_family: str
     source_primitive: str
