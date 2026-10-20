@@ -308,6 +308,16 @@ class TestPayloadValidation:
         assert await db.callgraphs.count_documents({}) == 0
 
     @pytest.mark.asyncio
+    async def test_a_generic_payload_without_imports_calls_or_universe_is_rejected(self, client, db):
+        frozen_scanner_go = {"nodes": [{"id": "main.main"}], "edges": [{"from": "main.main", "to": "fmt.Println"}]}
+
+        response = await _upload(client, _envelope("generic", "go", frozen_scanner_go))
+
+        assert response.status_code == 400
+        assert "imports, calls, analyzed_modules" in response.json()["detail"]
+        assert await db.callgraphs.count_documents({}) == 0
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("sent", "stored"), [("golang", "go"), ("Python", "python"), (" JS ", "javascript"), ("ts", "typescript")]
     )

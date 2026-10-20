@@ -7,6 +7,7 @@ from app.services.component_identity import canonical_callgraph_language, canoni
 _NODE_MODULES = "node_modules/"
 _TYPES_SCOPE = "@types/"
 _ANALYZED_MODULES_KEY = "__analyzed_modules__"
+_GENERIC_KEYS = ("imports", "calls", "analyzed_modules")
 
 
 class ParsedCallgraph(NamedTuple):
@@ -140,7 +141,7 @@ def parse_generic_format(data: dict[str, Any], language: str) -> ParsedCallgraph
 
 
 def detect_format(data: dict[str, Any]) -> str:
-    if "imports" in data or "calls" in data or "analyzed_modules" in data:
+    if any(key in data for key in _GENERIC_KEYS):
         return "generic"
 
     file_entries = {key: value for key, value in data.items() if key != _ANALYZED_MODULES_KEY}
@@ -169,6 +170,8 @@ def resolve_callgraph_payload(
     format_type = detect_format(data) if request_format == "auto" else request_format
     if format_type == "unknown":
         raise ValueError("Could not auto-detect callgraph format. Please specify 'format' explicitly.")
+    if format_type == "generic" and not any(key in data for key in _GENERIC_KEYS):
+        raise ValueError(f"A generic callgraph needs at least one of {', '.join(_GENERIC_KEYS)}")
     language = language or _FORMAT_LANGUAGES.get(format_type)
     if not language:
         raise ValueError(f"'language' is required for '{format_type}' callgraph payloads")

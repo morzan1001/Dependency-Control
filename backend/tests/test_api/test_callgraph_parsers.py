@@ -342,6 +342,14 @@ class TestFormatDetectionRegressions:
         with pytest.raises(ValueError, match="auto-detect"):
             resolve_callgraph_payload("auto", "python", payload)
 
+    @pytest.mark.parametrize(
+        "payload",
+        [pytest.param({}, id="empty_payload"), pytest.param(NODE_EDGE_PAYLOAD, id="frozen_scanner_go_payload")],
+    )
+    def test_an_explicit_generic_payload_without_its_keys_is_rejected(self, payload):
+        with pytest.raises(ValueError, match="imports, calls, analyzed_modules"):
+            resolve_callgraph_payload("generic", "go", payload)
+
     def test_pyan_format_is_no_longer_parseable(self):
         with pytest.raises(ValueError, match="pyan"):
             resolve_callgraph_payload("pyan", "python", {})
