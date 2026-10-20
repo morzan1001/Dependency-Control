@@ -74,17 +74,12 @@ from app.schemas.project import license_policy_from_settings
 from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
 from app.services.aggregation.versions import aggregate_fixed_version, parse_version_key, split_fixed_versions
-from app.services.component_identity import (
-    artifact_segment,
-    build_component_index,
-    canonical_callgraph_language,
-    lookup_component,
-)
+from app.services.component_identity import artifact_segment, canonical_callgraph_language
 from app.services.analytics.crypto_trends import auto_bucket
 from app.services.analytics.scan_delta import InvalidDeltaQuery, compute_scan_delta_dispatch
 from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError, read_scope_projects
 from app.services.compliance.visibility import report_visibility_filter
-from app.services.recommendation.common import live_advisories, max_advisory_cvss
+from app.services.recommendation.common import installed_copy_lookup, live_advisories, max_advisory_cvss
 
 from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (
@@ -1012,31 +1007,23 @@ class ChatToolRegistry:
                 "message": "No unwaived CRITICAL/HIGH findings on the head build.",
             }
 
-        # Keyed by lowercase name: findings do not consistently carry a purl.
-        dep_index: dict[str, dict[str, Any]] = {}
-        async for dep in ctx.db["dependencies"].find(
-            {"scan_id": head_scan_id},
-            {"name": 1, "version": 1, "direct": 1, "direct_inferred": 1, "type": 1, "purl": 1},
-        ):
-            key = (dep.get("name") or "").lower()
-            existing = dep_index.get(key)
-            if key and (
-                existing is None
-                or _DIRECT_CONFIDENCE_RANK[_direct_confidence(dep)]
-                < _DIRECT_CONFIDENCE_RANK[_direct_confidence(existing)]
-            ):
-                dep_index[key] = dep
-        # Findings carry the qualified component while the inventory keeps the bare name.
-        dep_index = build_component_index(dep_index)
+        deps = await (
+            ctx.db["dependencies"]
+            .find(
+                {"scan_id": head_scan_id},
+                {"name": 1, "version": 1, "direct": 1, "direct_inferred": 1, "type": 1, "purl": 1},
+            )
+            .to_list(length=None)
+        )
+        # The lookup keeps a name@version's last row, so the most direct one goes last.
+        deps.sort(key=lambda dep: _DIRECT_CONFIDENCE_RANK[_direct_confidence(dep)], reverse=True)
+        installed = installed_copy_lookup(deps, "name")
 
         groups: dict[tuple[str, str | None], list[dict[str, Any]]] = {}
         for f in findings:
             if comp := f.get("component"):
                 groups.setdefault((comp.lower(), f.get("version")), []).append(f)
-        steps = sorted(
-            (_plan_step(group, lookup_component(dep_index, comp) or {}) for (comp, _), group in groups.items()),
-            key=_plan_sort_key,
-        )
+        steps = sorted((_plan_step(group, installed(group[0]) or {}) for group in groups.values()), key=_plan_sort_key)
 
         resolved = {r["cve_id"]: r["severity"] for s in steps for r in s["resolves_findings"]}
         summary = {
