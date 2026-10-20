@@ -15,7 +15,9 @@ def event_summary(event_type: str, payload: Mapping[str, Any]) -> tuple[str, str
     """SBOM, CBOM and compliance payloads are flat."""
     project = payload.get("project")
     name = project.get("name") if isinstance(project, Mapping) else None
-    where = name or (f"project {payload['project_id']}" if payload.get("project_id") else None)
+    where = (
+        name or payload.get("scope_name") or (f"project {payload['project_id']}" if payload.get("project_id") else None)
+    )
     subject = f"{event_type} for {where}" if where else event_type
     details = "\n".join(
         f"{key}: {value}"
