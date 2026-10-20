@@ -984,6 +984,9 @@ async def compute_update_frequency_comparison(
         primary = select_primary_branch(branches, project.get("default_branch"), project.get("deleted_branches"))
         if primary is None:
             return placeholder_summary(project, "insufficient_data", window_days)
+        # The window holds every scan the walk would read, so one commit can only ever fold into one bar.
+        if branches[primary].commit_count < MIN_COMPARABLE_BARS:
+            return placeholder_summary(project, "insufficient_data", window_days, primary)
 
         async with semaphore:
             try:

@@ -1468,6 +1468,22 @@ class TestStreamingOrchestrator:
         assert result.skipped_error == 1
 
     @pytest.mark.asyncio
+    async def test_a_primary_branch_of_one_commit_is_not_walked(self):
+        now = datetime.now(tz=timezone.utc)
+        scans = [
+            _make_scan(f"s{i}", 0, project_id="proj-c", commit_hash="c1") | {"created_at": now - timedelta(days=i)}
+            for i in range(3)
+        ]
+        deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(3)}
+        walk = AsyncMock(side_effect=AssertionError("a single commit was walked"))
+
+        with patch.object(update_frequency_module, "compute_update_frequency", walk):
+            result = await _compare([{"_id": "proj-c", "name": "C"}], scans, deps)
+
+        assert [(p.data_status, p.branch) for p in result.projects] == [("insufficient_data", "main")]
+        walk.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_outdated_loaded_per_pair_not_upfront(self):
         scans = [_make_scan(f"s{i}", i) for i in range(5)]
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", "1.0.0")] for i in range(5)}
