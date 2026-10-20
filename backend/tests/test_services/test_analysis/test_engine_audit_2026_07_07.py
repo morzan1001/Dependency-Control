@@ -65,7 +65,7 @@ class TestAggregateExternalSkipsEngineRows:
 
         db = FakeDatabase()
         for analyzer_name, result in (
-            ("epss_kev", build_epss_kev_summary([])),
+            ("epss_kev", build_epss_kev_summary([], {})),
             ("reachability", build_reachability_summary([], [])),
             *((name, {"findings": []}) for name in sorted(CRYPTO_ANALYZERS)),
         ):

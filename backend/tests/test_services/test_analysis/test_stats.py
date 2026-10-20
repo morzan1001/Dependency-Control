@@ -65,57 +65,57 @@ _NON_NUMERIC_EPSS_VALUES = (True, [0.5], "0.5")
 
 class TestBuildEpssKevSummaryEmpty:
     def test_empty_list_returns_zero_totals(self):
-        result = build_epss_kev_summary([])
+        result = build_epss_kev_summary([], {})
         assert result["total_vulnerabilities"] == 0
         assert result["epss_enriched"] == 0
         assert result["kev_matches"] == 0
         assert result["kev_ransomware"] == 0
 
     def test_empty_list_scores_are_none(self):
-        result = build_epss_kev_summary([])
+        result = build_epss_kev_summary([], {})
         assert result["avg_epss_score"] is None
         assert result["max_epss_score"] is None
         assert result["avg_risk_score"] is None
         assert result["max_risk_score"] is None
 
     def test_empty_list_has_timestamp(self):
-        result = build_epss_kev_summary([])
+        result = build_epss_kev_summary([], {})
         assert result["timestamp"] is not None
 
 
 class TestBuildEpssKevSummaryEpss:
     def test_single_finding_with_epss(self):
         findings = [_make_finding(epss_score=0.05)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["epss_enriched"] == 1
         assert result["total_vulnerabilities"] == 1
 
     def test_epss_high_bucket(self):
         findings = [_make_finding(epss_score=0.5)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["epss_scores"]["high"] == 1
         assert result["epss_scores"]["medium"] == 0
         assert result["epss_scores"]["low"] == 0
 
     def test_epss_medium_bucket(self):
         findings = [_make_finding(epss_score=0.05)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["epss_scores"]["medium"] == 1
 
     def test_epss_low_bucket(self):
         findings = [_make_finding(epss_score=0.001)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["epss_scores"]["low"] == 1
 
     def test_epss_boundary_high(self):
         findings = [_make_finding(epss_score=0.1)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["epss_scores"]["high"] == 1
         assert result["epss_scores"]["medium"] == 0
 
     def test_epss_boundary_medium(self):
         findings = [_make_finding(epss_score=0.01)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["epss_scores"]["medium"] == 1
         assert result["epss_scores"]["low"] == 0
 
@@ -124,7 +124,7 @@ class TestBuildEpssKevSummaryEpss:
             _make_finding(finding_id="CVE-1", epss_score=0.2),
             _make_finding(finding_id="CVE-2", epss_score=0.4),
         ]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["avg_epss_score"] == round((0.2 + 0.4) / 2, 4)
 
     def test_max_epss_score(self):
@@ -132,19 +132,19 @@ class TestBuildEpssKevSummaryEpss:
             _make_finding(finding_id="CVE-1", epss_score=0.1),
             _make_finding(finding_id="CVE-2", epss_score=0.9),
         ]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["max_epss_score"] == 0.9
 
     def test_finding_without_epss_not_counted(self):
         findings = [_make_finding(epss_score=None)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["epss_enriched"] == 0
         assert result["avg_epss_score"] is None
 
     @pytest.mark.parametrize("raw_epss", _NON_NUMERIC_EPSS_VALUES)
     def test_non_numeric_epss_is_dropped(self, raw_epss):
         """The raw-data view must agree with the Stats block, which drops these through the same guard."""
-        result = build_epss_kev_summary([_make_finding(epss_score=raw_epss)])
+        result = build_epss_kev_summary([_make_finding(epss_score=raw_epss)], {})
         assert result["epss_enriched"] == 0
         assert result["max_epss_score"] is None
         assert result["avg_epss_score"] is None
@@ -153,12 +153,12 @@ class TestBuildEpssKevSummaryEpss:
 class TestBuildEpssKevSummaryKev:
     def test_kev_match_counted(self):
         findings = [_make_finding(in_kev=True)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["kev_matches"] == 1
 
     def test_kev_detail_recorded(self):
         findings = [_make_finding(finding_id="CVE-2024-9999", component="openssl", in_kev=True)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert len(result["kev_details"]) == 1
         detail = result["kev_details"][0]
         assert detail["cve"] == "CVE-2024-9999"
@@ -166,18 +166,18 @@ class TestBuildEpssKevSummaryKev:
 
     def test_kev_due_date_propagated(self):
         findings = [_make_finding(in_kev=True, kev_due_date="2024-12-01")]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["kev_details"][0]["due_date"] == "2024-12-01"
 
     def test_kev_ransomware_counted(self):
         findings = [_make_finding(in_kev=True, kev_ransomware_use=True)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["kev_ransomware"] == 1
         assert result["kev_details"][0]["ransomware"] is True
 
     def test_kev_no_ransomware(self):
         findings = [_make_finding(in_kev=True, kev_ransomware_use=False)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["kev_ransomware"] == 0
 
 
@@ -187,7 +187,7 @@ class TestBuildEpssKevSummaryRisk:
             _make_finding(finding_id="CVE-1", risk_score=80.0),
             _make_finding(finding_id="CVE-2", risk_score=60.0),
         ]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["avg_risk_score"] == round((80.0 + 60.0) / 2, 1)
 
     def test_risk_score_max(self):
@@ -195,12 +195,12 @@ class TestBuildEpssKevSummaryRisk:
             _make_finding(finding_id="CVE-1", risk_score=30.0),
             _make_finding(finding_id="CVE-2", risk_score=95.0),
         ]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["max_risk_score"] == 95.0
 
     def test_high_risk_cve_above_threshold(self):
         findings = [_make_finding(risk_score=80.0, component="openssl", version="3.0.0")]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert len(result["high_risk_cves"]) == 1
         cve = result["high_risk_cves"][0]
         assert cve["risk_score"] == 80.0
@@ -209,7 +209,7 @@ class TestBuildEpssKevSummaryRisk:
 
     def test_high_risk_cve_at_threshold_excluded(self):
         findings = [_make_finding(risk_score=70.0)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert len(result["high_risk_cves"]) == 0
 
     def test_high_risk_cves_sorted_descending(self):
@@ -218,28 +218,28 @@ class TestBuildEpssKevSummaryRisk:
             _make_finding(finding_id="CVE-2", risk_score=95.0),
             _make_finding(finding_id="CVE-3", risk_score=85.0),
         ]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         scores = [c["risk_score"] for c in result["high_risk_cves"]]
         assert scores == sorted(scores, reverse=True)
 
     def test_high_risk_cves_limited_to_20(self):
         findings = [_make_finding(finding_id=f"CVE-{i}", risk_score=71.0 + i) for i in range(_HIGH_RISK_POPULATION)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert len(result["high_risk_cves"]) == _HIGH_RISK_SAMPLE_CAP
 
     def test_the_high_risk_total_counts_past_the_sample(self):
         """The card header and its 'showing n of total' line read this, not len(the list)."""
         findings = [_make_finding(finding_id=f"CVE-{i}", risk_score=71.0 + i) for i in range(_HIGH_RISK_POPULATION)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["high_risk_total"] == _HIGH_RISK_POPULATION
 
     def test_the_high_risk_total_is_zero_when_nothing_clears_the_threshold(self):
-        result = build_epss_kev_summary([_make_finding(risk_score=10.0)])
+        result = build_epss_kev_summary([_make_finding(risk_score=10.0)], {})
         assert result["high_risk_total"] == 0
 
     def test_no_risk_scores_gives_none(self):
         findings = [_make_finding(risk_score=None)]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["avg_risk_score"] is None
         assert result["max_risk_score"] is None
 
@@ -247,17 +247,17 @@ class TestBuildEpssKevSummaryRisk:
 class TestBuildEpssKevSummaryExploitMaturity:
     def test_known_maturity_counted(self):
         findings = [_make_finding(exploit_maturity="weaponized")]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["exploit_maturity"]["weaponized"] == 1
 
     def test_unknown_maturity_default(self):
         findings = [{"details": {}, "component": "pkg"}]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         assert result["exploit_maturity"]["unknown"] == 1
 
     def test_unrecognised_maturity_ignored(self):
         findings = [_make_finding(exploit_maturity="invented_level")]
-        result = build_epss_kev_summary(findings)
+        result = build_epss_kev_summary(findings, {})
         total = sum(result["exploit_maturity"].values())
         assert total == 0
 
@@ -298,7 +298,7 @@ class TestKevRowsCarryRealCveIds:
                 }
             ]
         )
-        result = build_epss_kev_summary([finding])
+        result = build_epss_kev_summary([finding], {})
         # The resolved CVE, as canonical_cve names it for the hotspot and impact pages.
         assert [d["cve"] for d in result["kev_details"]] == ["CVE-2026-24880"]
         assert result["kev_details"][0]["due_date"] == "2026-08-07"
@@ -311,15 +311,37 @@ class TestKevRowsCarryRealCveIds:
                 {"id": "CVE-2025-22222"},
             ]
         )
-        result = build_epss_kev_summary([finding])
+        result = build_epss_kev_summary([finding], {})
         assert [d["cve"] for d in result["kev_details"]] == ["CVE-2025-66614", "CVE-2025-11111"]
         assert result["kev_matches"] == 2
         assert result["kev_ransomware"] == 1
 
     def test_ghsa_entry_without_a_cve_keeps_the_advisory_id(self):
         finding = _aggregated_vuln_finding([{"id": "GHSA-9f52-rjqv-25qv", "in_kev": True}])
-        result = build_epss_kev_summary([finding])
+        result = build_epss_kev_summary([finding], {})
         assert result["kev_details"][0]["cve"] == "GHSA-9f52-rjqv-25qv"
+
+    @pytest.mark.parametrize(
+        ("first_due", "second_due"),
+        [(None, "2026-08-07"), ("2026-09-01", "2026-08-07")],
+        ids=["one-member-in-kev", "earliest-deadline-of-two"],
+    )
+    def test_a_bundled_advisory_s_row_names_the_cve_whose_deadline_it_shows(self, first_due, second_due):
+        entry = {"id": "ALAS2-2023-2001", "aliases": ["CVE-2023-0001", "CVE-2023-0002"]}
+        finding = {"component": "openssl-libs", "details": {"vulnerabilities": [entry]}}
+
+        def kev(cve, due):
+            return KEVEntry(cve=cve, date_added="2023-01-01", required_action="patch", due_date=due) if due else None
+
+        enrichments = {
+            cve: _build_enrichment(cve, kev(cve, due), None)
+            for cve, due in (("CVE-2023-0001", first_due), ("CVE-2023-0002", second_due))
+        }
+        apply_enrichments(finding["details"], enrichments)
+
+        result = build_epss_kev_summary([finding], enrichments)
+
+        assert [(d["cve"], d["due_date"]) for d in result["kev_details"]] == [("CVE-2023-0002", "2026-08-07")]
 
     def test_high_risk_row_uses_the_cve_too(self):
         finding = _aggregated_vuln_finding(
@@ -327,7 +349,7 @@ class TestKevRowsCarryRealCveIds:
             in_kev=False,
             risk_score=91.0,
         )
-        result = build_epss_kev_summary([finding])
+        result = build_epss_kev_summary([finding], {})
         assert result["high_risk_cves"][0]["cve"] == "CVE-2025-66614"
 
 
@@ -368,7 +390,7 @@ class TestHighRiskRowsNameTheirOwnCve:
                 "CVE-2021-44228": _build_enrichment("CVE-2021-44228", kev, _epss("CVE-2021-44228", 0.97)),
             },
         )
-        rows = build_epss_kev_summary([finding])["high_risk_cves"]
+        rows = build_epss_kev_summary([finding], {})["high_risk_cves"]
         assert [(r["cve"], r["in_kev"], r["epss_score"], r["exploit_maturity"]) for r in rows] == [
             ("CVE-2021-44228", True, 0.97, "active")
         ]

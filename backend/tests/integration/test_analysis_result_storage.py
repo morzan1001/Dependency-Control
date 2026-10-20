@@ -400,7 +400,12 @@ async def test_a_rescan_copies_each_external_row_once_under_an_id_derived_from_t
             },
             {"_id": "row-kics", "scan_id": "scan-1", "analyzer_name": "kics", "result": kics, "source": None},
             {"_id": "row-outdated", "scan_id": "scan-1", "analyzer_name": "outdated_packages", "result": outdated},
-            {"_id": "row-epss", "scan_id": "scan-1", "analyzer_name": "epss_kev", "result": build_epss_kev_summary([])},
+            {
+                "_id": "row-epss",
+                "scan_id": "scan-1",
+                "analyzer_name": "epss_kev",
+                "result": build_epss_kev_summary([], {}),
+            },
         ]
     )
     rescan = Scan(id="scan-2", project_id="p", branch="main", is_rescan=True, original_scan_id="scan-1")

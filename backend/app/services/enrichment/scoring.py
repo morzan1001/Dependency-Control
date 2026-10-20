@@ -11,12 +11,17 @@ from app.models.finding import Severity
 from app.schemas.enrichment import VulnerabilityEnrichment
 
 
+def kev_member(enrichments: Iterable[VulnerabilityEnrichment]) -> VulnerabilityEnrichment | None:
+    """The in-KEV CVE whose deadline an advisory folding these CVEs carries."""
+    return min((e for e in enrichments if e.in_kev), key=lambda e: (e.kev_due_date or "~", e.cve), default=None)
+
+
 def fold_enrichments(enrichments: Iterable[VulnerabilityEnrichment]) -> VulnerabilityEnrichment | None:
     items = list(enrichments)
     if not items:
         return None
     epss = max((e for e in items if e.epss_score is not None), key=lambda e: (e.epss_score, e.cve), default=None)
-    kev = min((e for e in items if e.in_kev), key=lambda e: (e.kev_due_date or "~", e.cve), default=None)
+    kev = kev_member(items)
     return VulnerabilityEnrichment(
         cve=min(e.cve for e in items),
         epss_score=epss.epss_score if epss else None,

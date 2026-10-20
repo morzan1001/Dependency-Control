@@ -399,7 +399,7 @@ async def _enrich_vulnerabilities(
         else:
             report.skipped[_ENRICHMENT] = _NO_ENRICHABLE_IDS
     refresh_vulnerability_info(records)
-    return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
+    return dict(build_epss_kev_summary(vulnerabilities, threat_intel)), threat_intel
 
 
 def _prepare_posted_callgraph(payload: dict[str, Any]) -> CallgraphMinimal:
