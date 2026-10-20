@@ -4,6 +4,8 @@ from typing import Any
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 
+from app.api.deps import SystemManagerDep
+from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.cache import cache_service
 from app.core.config import settings
 from app.core.worker import worker_manager
@@ -77,7 +79,7 @@ async def readiness() -> dict[str, Any] | JSONResponse:
     )
 
 
-@router.get("/cache", summary="Cache Health & Statistics")
-async def cache_health() -> dict[str, Any]:
+@router.get("/cache", summary="Cache Health & Statistics", responses=RESP_AUTH)
+async def cache_health(_: SystemManagerDep) -> dict[str, Any]:
     """Cache health status and statistics."""
     return await cache_service.health_check()

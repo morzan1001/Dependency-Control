@@ -50,3 +50,20 @@ async def test_a_chat_route_names_the_permission_it_refuses_on(client, monkeypat
 
     assert resp.status_code == 403
     assert resp.json() == _refusal(permission)
+
+
+@pytest.mark.asyncio
+async def test_the_cache_statistics_need_system_management(client, monkeypatch):
+    from app.api import health
+
+    async def _stats():
+        return {"status": "healthy", "total_keys": 7}
+
+    monkeypatch.setattr(health.cache_service, "health_check", _stats)
+
+    anonymous = await client.get("/health/cache")
+    refused = await client.get("/health/cache", headers=bearer_headers(*_NO_PERMISSIONS))
+    granted = await client.get("/health/cache", headers=bearer_headers("operator", [Permissions.SYSTEM_MANAGE]))
+
+    assert (anonymous.status_code, refused.json()) == (401, _refusal(Permissions.SYSTEM_MANAGE))
+    assert (granted.status_code, granted.json()) == (200, {"status": "healthy", "total_keys": 7})
