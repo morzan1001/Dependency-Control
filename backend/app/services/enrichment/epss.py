@@ -18,7 +18,7 @@ class EPSSProvider:
     async def _fetch_batch(self, client: InstrumentedAsyncClient, cves: list[str]) -> dict[str, EPSSData]:
         response = await client.send_with_backoff(
             "GET",
-            f"{EPSS_API_URL}?cve={','.join(cves)}",
+            f"{EPSS_API_URL}?cve={','.join(cves)}&limit={len(cves)}",
             attempts=1 + settings.ENRICHMENT_MAX_RETRIES,
             base_delay=settings.ENRICHMENT_RETRY_DELAY,
         )
