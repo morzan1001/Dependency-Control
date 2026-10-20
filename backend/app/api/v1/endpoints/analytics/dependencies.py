@@ -30,7 +30,7 @@ from app.schemas.analytics import (
     DependencyTreeNode,
     SeverityBreakdown,
 )
-from app.core.purl import get_purl_type, package_identity, package_identity_expr
+from app.core.purl import get_purl_type, package_identity_expr
 from app.services.component_identity import (
     artifact_segment,
     build_component_index,
@@ -387,11 +387,8 @@ async def get_dependency_metadata_endpoint(
         projects_by_version,
         key=lambda v: (len({p.get("id") for p in projects_by_version[v]}), parse_version_key(v or ""), v or ""),
     )
-    dependencies = [
-        dep
-        for dep in await dep_repo.find_many({**dep_query, "version": shown_version}, limit=100)
-        if package_identity(dep.purl, dep.name, dep.type, dep.group)[1] == path
-    ]
+    same_package = {"$eq": [{"$getField": {"field": "path", "input": package_identity_expr()}}, path]}
+    dependencies = await dep_repo.find_many({**dep_query, "version": shown_version, "$expr": same_package}, limit=100)
     if not dependencies:
         return None
 

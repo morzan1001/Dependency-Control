@@ -302,6 +302,16 @@ class TestPackageIdentity:
 
         assert (row["identity"]["type"], row["identity"]["path"]) == expected
 
+    def test_the_expression_decodes_only_the_npm_scope_escape(self):
+        purl = "pkg:deb/debian/libstdc%2B%2B6@12.2.0-14"
+        collection = FakeCollection()
+        collection._docs = {"d": {"_id": "d", "purl": purl, "name": "libstdc++6", "type": "deb", "group": None}}
+
+        [row] = asyncio.run(collection.aggregate([{"$project": {"identity": package_identity_expr()}}]).to_list())
+
+        assert package_identity(purl, "libstdc++6", "deb", None) == ("deb", "debian/libstdc++6")
+        assert (row["identity"]["type"], row["identity"]["path"]) == ("deb", "debian/libstdc%2b%2b6")
+
 
 class TestGetPurlType:
     @pytest.mark.parametrize(

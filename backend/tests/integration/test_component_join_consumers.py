@@ -700,3 +700,18 @@ async def test_the_tree_marks_every_version_with_a_finding_that_names_none(clien
 
     counts = {node["version"]: node["findings_count"] for node in tree["nodes"] if node["name"] == "minimist"}
     assert counts == {"1.2.5": 1, "1.2.8": 1}
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_dependency_metadata_describes_a_package_whose_purl_escapes_its_name(client, db, seeded):
+    purl = "pkg:deb/debian/libstdc%2B%2B6@12.2.0-14?arch=amd64"
+    await db.dependencies.insert_one(
+        {**_dependency("d-libstdc", name="libstdc++6"), "group": None, "type": "deb", "version": "12.2.0-14"}
+        | {"purl": purl}
+    )
+
+    metadata = await _analytics(client, "dependency-metadata", seeded, component="libstdc++6")
+
+    assert metadata is not None
+    assert (metadata["name"], metadata["purl"], metadata["project_count"]) == ("libstdc++6", purl, 1)
