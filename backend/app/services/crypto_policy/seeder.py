@@ -49,16 +49,15 @@ async def write_policy(
 ) -> CryptoPolicy | None:
     """The one write path of a crypto policy; rules=None deletes the project override."""
     repo = CryptoPolicyRepository(db)
-    if scope == "system":
+    if rules is None:
+        current = await repo.delete_project_policy(project_id) if project_id else None
+        if current is None:
+            return None
+    elif scope == "system":
         current = await repo.get_system_policy()
     else:
         assert project_id is not None
-        if rules is None:
-            current = await repo.delete_project_policy(project_id)
-            if current is None:
-                return None
-        else:
-            current = await repo.get_project_policy(project_id)
+        current = await repo.get_project_policy(project_id)
     if (
         current is not None
         and rules is not None
