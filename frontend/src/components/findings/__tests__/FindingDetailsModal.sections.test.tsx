@@ -436,7 +436,7 @@ describe("FindingDetailsModal details by type", () => {
     renderModal(
       finding({
         type: "eol",
-        details: { cycle: "3.2", vulnerability_info: { has_vulnerabilities: true, vuln_count: 32, critical_count: 5, high_count: 14 } },
+        details: { cycle: "3.2", vulnerability_info: { has_vulnerabilities: true, vuln_count: 32, critical_count: 5, high_count: 14 } } as Finding["details"],
       }),
     );
 
@@ -446,7 +446,7 @@ describe("FindingDetailsModal details by type", () => {
   });
 
   it("labels an end-of-life finding's LTS flag and EOL date in capitals, like the EOL badge above them", () => {
-    renderModal(finding({ type: "eol", details: { cycle: "3.2", lts: true, eol_date: "2024-04-01" } }));
+    renderModal(finding({ type: "eol", details: { cycle: "3.2", lts: true, eol_date: "2024-04-01" } as Finding["details"] }));
 
     expect(screen.getByText("LTS")).toBeInTheDocument();
     expect(screen.getByText("EOL Date")).toBeInTheDocument();
@@ -461,7 +461,7 @@ describe("FindingDetailsModal details by type", () => {
           bom_ref: "sha-79c0",
           rule_id: "nist-131a-rsa-min-2048",
           matched_rules: [rule("nist-131a-rsa-min-2048", "nist-sp-800-131a"), rule("bsi-02102-rsa-min-3000", "bsi-tr-02102")],
-        },
+        } as Finding["details"],
       }),
     );
 
