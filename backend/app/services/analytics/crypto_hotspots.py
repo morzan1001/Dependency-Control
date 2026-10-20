@@ -26,14 +26,25 @@ _LOCATION_SAMPLE_ASSETS = 20
 _HEATMAP_COLUMNS = 30
 
 
-def _distinct_locations(sampled: list[Any]) -> list[str]:
-    flat: list[str] = []
-    for entry in sampled:
-        if isinstance(entry, list):
-            flat.extend(str(item) for item in entry)
-        elif isinstance(entry, str):
-            flat.append(entry)
-    return list(dict.fromkeys(flat))
+def _distinct_locations(sampled: list[list[str]]) -> list[str]:
+    return list(dict.fromkeys(location for locations in sampled for location in locations))
+
+
+def _crypto_findings_match(project_ids: list[str] | None, scan_ids: list[str]) -> dict[str, Any]:
+    # Waived findings are a risk decision, not posture; excluding them keeps hotspots in line with crypto_trends.
+    match: dict[str, Any] = {
+        "type": {"$in": sorted(CRYPTO_FINDING_TYPES)},
+        "waived": {"$ne": True},
+        "scan_id": {"$in": scan_ids},
+    }
+    if project_ids is not None:
+        match["project_id"] = {"$in": project_ids}
+    return match
+
+
+def _fold_severity(mix: dict[str, int], severity: str | None, count: int) -> None:
+    key = severity or "UNKNOWN"
+    mix[key] = mix.get(key, 0) + count
 
 
 class CryptoHotspotService:
@@ -150,10 +161,9 @@ class CryptoHotspotService:
             self.db.crypto_assets.aggregate(count_pipeline).to_list(None),
         )
 
-        now = datetime.now(timezone.utc)
         out: list[HotspotEntry] = []
         for row in rows:
-            distinct = _distinct_locations(row.get("locations", []))
+            distinct = _distinct_locations(row["locations"])
             sampled_every_asset = row["asset_count"] <= _LOCATION_SAMPLE_ASSETS
             out.append(
                 HotspotEntry(
@@ -166,12 +176,12 @@ class CryptoHotspotService:
                     locations_complete=sampled_every_asset and len(distinct) <= _HEATMAP_COLUMNS,
                     project_ids=row["project_ids"],
                     project_count=len(row["project_ids"]),
-                    first_seen=row.get("first_seen") or now,
-                    last_seen=row.get("last_seen") or now,
+                    first_seen=row["first_seen"],
+                    last_seen=row["last_seen"],
                 )
             )
 
-        await self._enrich_with_findings(out, project_ids, scan_ids, join_field, key)
+        await self._enrich_with_findings(out, project_ids, scan_ids, join_field)
         return out, counted[0]["groups"] if counted else 0
 
     async def _aggregate_by_finding_dimension(
@@ -183,16 +193,7 @@ class CryptoHotspotService:
         limit: int,
         key: str | None,
     ) -> tuple[list[HotspotEntry], int]:
-        # Waived findings are a risk decision, not posture; excluding them keeps hotspots in line with crypto_trends.
-        match: dict[str, Any] = {
-            "type": {"$in": sorted(CRYPTO_FINDING_TYPES)},
-            "waived": {"$ne": True},
-            "scan_id": {"$in": scan_ids},
-        }
-        if project_ids is not None:
-            match["project_id"] = {"$in": project_ids}
-
-        pre_stages: list[dict[str, Any]] = [{"$match": match}]
+        pre_stages: list[dict[str, Any]] = [{"$match": _crypto_findings_match(project_ids, scan_ids)}]
         if group_by == "weakness_tag":
             pre_stages.extend(
                 [
@@ -234,7 +235,6 @@ class CryptoHotspotService:
             group = row["_id"].get("key")
             if not group:
                 continue
-            sev = row["_id"].get("severity") or "UNKNOWN"
             entry = accum.setdefault(
                 group,
                 {
@@ -247,7 +247,7 @@ class CryptoHotspotService:
             )
             entry["finding_count"] += row["finding_count"]
             entry["project_ids"].update(row["project_ids"])
-            entry["severity_mix"][sev] = entry["severity_mix"].get(sev, 0) + row["finding_count"]
+            _fold_severity(entry["severity_mix"], row["_id"].get("severity"), row["finding_count"])
             for field, pick in (("first_seen", min), ("last_seen", max)):
                 if (value := row.get(field)) is not None:
                     entry[field] = value if entry[field] is None else pick(entry[field], value)
@@ -280,43 +280,16 @@ class CryptoHotspotService:
         project_ids: list[str] | None,
         scan_ids: list[str],
         join_field: str,
-        key: str | None,
     ) -> None:
         if not items:
             return
-        match: dict[str, Any] = {
-            "scan_id": {"$in": scan_ids},
-            "type": {"$in": sorted(CRYPTO_FINDING_TYPES)},
-            # Exclude waived findings to match crypto_trends posture semantics.
-            "waived": {"$ne": True},
-        }
-        if project_ids is not None:
-            match["project_id"] = {"$in": project_ids}
-        if key is not None:
-            match[join_field.removeprefix("$")] = key
+        by_key = {item.key: item for item in items}
+        match = {**_crypto_findings_match(project_ids, scan_ids), join_field.removeprefix("$"): {"$in": list(by_key)}}
         pipeline = [
             {"$match": match},
-            {
-                "$group": {
-                    "_id": {
-                        "key": join_field,
-                        "severity": "$severity",
-                    },
-                    "count": {"$sum": 1},
-                }
-            },
+            {"$group": {"_id": {"key": join_field, "severity": "$severity"}, "count": {"$sum": 1}}},
         ]
-        mix: dict[str, dict[str, int]] = {}
-        total: dict[str, int] = {}
         async for row in self.db.findings.aggregate(pipeline):
-            group = row["_id"].get("key") or ""
-            if not group:
-                continue
-            sev = row["_id"].get("severity") or "UNKNOWN"
-            mix.setdefault(group, {})[sev] = mix.setdefault(group, {}).get(sev, 0) + row["count"]
-            total[group] = total.get(group, 0) + row["count"]
-
-        for item in items:
-            if item.key in total:
-                item.finding_count = total[item.key]
-                item.severity_mix = mix[item.key]
+            item = by_key[row["_id"]["key"]]
+            item.finding_count += row["count"]
+            _fold_severity(item.severity_mix, row["_id"].get("severity"), row["count"])

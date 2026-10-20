@@ -562,3 +562,31 @@ async def test_a_named_scan_cached_for_its_owner_is_not_served_to_an_outsider(db
 
     assert [entry.key for entry in seen_by_owner.items] == ["MD5"]
     assert seen_by_outsider.items == []
+
+
+@pytest.mark.asyncio
+async def test_the_findings_join_reads_only_the_findings_of_the_listed_keys(db, monkeypatch):
+    names = ["MD5", "MD5", "AES"]
+    await store_assets(
+        db, "pj", "sj", [_asset(f"j{i}", name, project_id="pj", scan_id="sj") for i, name in enumerate(names)]
+    )
+    for f in [
+        _crypto_finding("f1", asset_name="MD5", project_id="pj", scan_id="sj"),
+        _crypto_finding("f2", asset_name="AES", project_id="pj", scan_id="sj"),
+    ]:
+        await db.findings.insert_one(f)
+    matches = []
+    aggregate = db.findings.aggregate
+
+    def recording(pipeline, *args, **kwargs):
+        matches.append(pipeline[0]["$match"])
+        return aggregate(pipeline, *args, **kwargs)
+
+    monkeypatch.setattr(db.findings, "aggregate", recording)
+    resolved = ResolvedScope(scope="project", scope_id="pj", project_ids=["pj"])
+
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", scan_id="sj", limit=1)
+
+    assert [(e.key, e.finding_count) for e in result.items] == [("MD5", 1)]
+    (match,) = matches
+    assert [f["_id"] for f in await db.findings.find(match).to_list(None)] == ["f1"]
