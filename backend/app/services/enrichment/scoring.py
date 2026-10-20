@@ -71,19 +71,14 @@ def calculate_adjusted_risk_score(
     return min(base_risk_score * reachability_risk_modifier(is_reachable, analysis_level), 100.0)
 
 
-def calculate_secret_risk_score(
-    verified: bool | None,
-    in_current_tree: bool | None,
-) -> tuple[float, float]:
-    base = SEVERITY_CALCULATED_RISK_SCORES["CRITICAL"]
+def calculate_secret_risk_score(verified: bool | None, in_current_tree: bool | None) -> float:
     if is_actionable_secret(verified):
         modifier = 1.1
     elif in_current_tree is False:
         modifier = 0.4
     else:
         modifier = 1.0
-    adjusted = min(base * modifier, 100.0)
-    return base, adjusted
+    return round(SEVERITY_CALCULATED_RISK_SCORES["CRITICAL"] * modifier, 1)
 
 
 def calculate_secret_severity(verified: bool | None, in_current_tree: bool | None) -> Severity:

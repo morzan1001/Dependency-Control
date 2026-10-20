@@ -107,34 +107,18 @@ class TestCalculateAdjustedRiskScore:
 
 class TestCalculateSecretRiskScore:
     @pytest.mark.parametrize(
-        "in_current_tree",
+        ("verified", "in_current_tree", "expected"),
         [
-            pytest.param(False, id="historical_only"),
-            pytest.param(True, id="in_current_tree"),
-        ],
-    )
-    def test_verified_secret_gets_boosted_regardless_of_tree(self, in_current_tree):
-        risk, adjusted = calculate_secret_risk_score(verified=True, in_current_tree=in_current_tree)
-        assert risk == 40.0
-        assert abs(adjusted - 44.0) < 0.01
-
-    @pytest.mark.parametrize(
-        ("verified", "in_current_tree", "expected_adjusted"),
-        [
+            pytest.param(True, False, 44.0, id="verified_historical_only_is_boosted"),
+            pytest.param(True, True, 44.0, id="verified_in_current_tree_is_boosted"),
             pytest.param(False, True, 40.0, id="unverified_in_current_tree_is_baseline"),
             pytest.param(False, False, 16.0, id="unverified_historical_only_is_deprioritized"),
             pytest.param(None, None, 40.0, id="unknown_verified_and_unknown_tree_is_baseline"),
             pytest.param(None, False, 16.0, id="unknown_verified_historical_only_is_deprioritized"),
         ],
     )
-    def test_unboosted_secret_adjusted_score(self, verified, in_current_tree, expected_adjusted):
-        risk, adjusted = calculate_secret_risk_score(verified=verified, in_current_tree=in_current_tree)
-        assert risk == 40.0
-        assert adjusted == expected_adjusted
-
-    def test_adjusted_score_capped_at_100(self):
-        _, adjusted = calculate_secret_risk_score(verified=True, in_current_tree=True)
-        assert adjusted <= 100.0
+    def test_the_score_follows_verification_and_tree_state(self, verified, in_current_tree, expected):
+        assert calculate_secret_risk_score(verified=verified, in_current_tree=in_current_tree) == expected
 
 
 class TestCalculateSecretSeverity:
