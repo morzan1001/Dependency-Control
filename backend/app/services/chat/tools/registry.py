@@ -13,7 +13,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, ValidationError
 
 from app.api.v1.helpers.projects import authorize_waiver_read, build_user_project_query, load_project_with_members
-from app.api.v1.helpers.sorting import CASE_INSENSITIVE
+from app.api.v1.helpers.sorting import CASE_INSENSITIVE, case_insensitive_sort
 from app.api.v1.helpers.teams import (
     check_team_access,
     enrich_teams_with_usernames,
@@ -776,8 +776,10 @@ class ChatToolRegistry:
             {"scan_id": head_scan_id, **({"direct": True} if ctx.args.get("direct_only") else {})},
             subject="dependencies",
             limit=ctx.args["limit"],
-            projection=_DEPENDENCY_ROW_PROJECTION,
-            sort=[("direct", -1), ("name", 1)],
+            stages=[
+                *case_insensitive_sort([("direct", -1), ("name", 1), ("_id", 1)], {"name"}),
+                {"$project": _DEPENDENCY_ROW_PROJECTION},
+            ],
         )
         for dep in deps:
             parents = dep.pop("parent_components", None) or []

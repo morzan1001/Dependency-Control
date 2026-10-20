@@ -237,3 +237,18 @@ async def test_every_version_of_a_package_is_compared(db, before, after, totals,
 
     assert (resp.totals.added, resp.totals.removed, resp.totals.changed, resp.totals.unchanged) == totals
     assert [(i.change, i.version) for i in resp.items] == items
+
+
+@pytest.mark.asyncio
+async def test_added_components_list_whatever_their_case(db):
+    names = ["Zlib", "élan", "axios", "Express"]
+    await db["dependencies"].insert_many(
+        [
+            {"_id": f"r{n}", "project_id": "p1", "scan_id": "sb", "name": name, "version": "1.0"}
+            for n, name in enumerate(names)
+        ]
+    )
+
+    resp = await compare_components(db, project_id="p1", from_scan="sa", to_scan="sb")
+
+    assert [item.name for item in resp.items] == ["axios", "élan", "Express", "Zlib"]

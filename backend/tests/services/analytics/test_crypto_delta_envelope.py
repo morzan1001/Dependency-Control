@@ -62,3 +62,15 @@ async def test_assets_sharing_an_algorithm_are_one_item_counting_all_of_them(db)
 
     [item] = resp.items
     assert (item.name, item.asset_count, item.locations) == ("MD5", 3, ["a.py:1", "b.py:2", "c.py:3"])
+
+
+@pytest.mark.asyncio
+async def test_added_assets_list_whatever_their_case(db):
+    names = ["RSA", "ecdsa", "AES", "élan"]
+    await CryptoAssetRepository(db).bulk_upsert(
+        "p1", "s2", [_asset(f"b{n}", name, scan_id="s2") for n, name in enumerate(names)]
+    )
+
+    resp = await compare_crypto(db, project_id="p1", from_scan="s1", to_scan="s2")
+
+    assert [item.name for item in resp.items] == ["AES", "ecdsa", "élan", "RSA"]

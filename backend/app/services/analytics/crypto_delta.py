@@ -1,5 +1,6 @@
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api.v1.helpers.sorting import case_insensitive_key
 from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
 from app.schemas.scan_delta import (
     CryptoDeltaItem,
@@ -44,7 +45,7 @@ async def compare_crypto(
     items = [_group_to_envelope_item(group, "added") for group in added]
     items += (_group_to_envelope_item(group, "removed") for group in removed)
     # Sort with variant/primitive tiebreakers so pagination does not depend on fetch order.
-    items.sort(key=lambda i: (i.change, i.name, i.variant or "", i.primitive or ""))
+    items.sort(key=lambda i: (i.change, case_insensitive_key(i.name), i.variant or "", i.primitive or ""))
 
     return ScanDeltaResponse(
         from_scan_id=from_scan,

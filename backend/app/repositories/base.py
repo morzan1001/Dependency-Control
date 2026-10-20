@@ -18,12 +18,22 @@ DUPLICATE_KEY_ERROR = 11000
 
 
 async def find_window(
-    collection: AsyncIOMotorCollection, query: dict[str, Any], limit: int, **find_kwargs: Any
+    collection: AsyncIOMotorCollection,
+    query: dict[str, Any],
+    limit: int,
+    *,
+    stages: list[dict[str, Any]] | None = None,
+    **find_kwargs: Any,
 ) -> tuple[list[dict[str, Any]], int]:
     """Counts only once the read saturates, the one case where the total can exceed what was read."""
     if limit <= 0:
         return [], await collection.count_documents(query)
-    rows: list[dict[str, Any]] = await collection.find(query, limit=limit, **find_kwargs).to_list(length=limit)
+    cursor = (
+        collection.aggregate([{"$match": query}, *stages, {"$limit": limit}])
+        if stages
+        else collection.find(query, limit=limit, **find_kwargs)
+    )
+    rows: list[dict[str, Any]] = await cursor.to_list(length=limit)
     if len(rows) < limit:
         return rows, len(rows)
     return rows, await collection.count_documents(query)
