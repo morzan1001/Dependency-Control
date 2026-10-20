@@ -14,7 +14,7 @@ from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import is_usable_build
 from app.repositories.update_frequency import ScanOutdatedSetRepository, ScanUpdateDeltaRepository
-from app.services.update_frequency import load_outdated_entries, load_scan_deps, version_changes
+from app.services.update_frequency import load_outdated_entries, load_scan_deps, resolved_outdated, version_changes
 
 logger = logging.getLogger(__name__)
 
@@ -207,10 +207,8 @@ def _diff_scans(
         # The fold sums these; dropping them would keep packages outdated across the gap out of the denominator.
         diff.outdated_added = sorted(curr_outdated)
         return diff
-    curr_names = {info["name"] for info in curr_deps.values()} - curr_failed
     diff.outdated_added = sorted(curr_outdated - prev_outdated)
-    # A package that vanished, or whose lookup failed, was not brought up to date.
-    diff.outdated_resolved = sorted((prev_outdated & curr_names) - curr_outdated)
+    diff.outdated_resolved = sorted(resolved_outdated(prev_outdated, curr_outdated, curr_deps, curr_failed))
     return diff
 
 

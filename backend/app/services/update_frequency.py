@@ -211,6 +211,13 @@ def version_changes(
             yield identity, prev, curr, kind
 
 
+def resolved_outdated(
+    prev_outdated: set[str], curr_outdated: set[str], curr_deps: dict[str, dict[str, str]], curr_failed: set[str]
+) -> set[str]:
+    """A package that vanished, or whose lookup failed, was not brought up to date."""
+    return (prev_outdated & ({info["name"] for info in curr_deps.values()} - curr_failed)) - curr_outdated
+
+
 def _compare_scan_pair(
     prev_deps: dict[str, dict[str, str]],
     prev_scan_date: datetime,
@@ -608,10 +615,7 @@ class _AccumulatorState:
         """Both scans need an outdated analysis: a missing one would report the predecessor's whole backlog resolved."""
         if prev_outdated is None or curr_outdated is None:
             return
-        curr_names = {info["name"] for info in curr_deps.values()} - curr_failed
-        for pkg in prev_outdated:
-            if pkg in curr_names and pkg not in curr_outdated:
-                self.ever_resolved.add(pkg)
+        self.ever_resolved |= resolved_outdated(prev_outdated, curr_outdated, curr_deps, curr_failed)
 
     def absorb_events(self, events: list[tuple[DependencyUpdateEvent, str]], curr_scan_date: datetime) -> None:
         for e, identity in events:
