@@ -174,8 +174,7 @@ def _build_dependency_graph(
         )
         node.child_ids = [node_by_key[ck].id for ck in child_keys]
 
-    def _closure(start: str) -> set:
-        seen: set = set()
+    def _closure(start: str, seen: set[str]) -> set[str]:
         stack = [start]
         while stack:
             key = stack.pop()
@@ -188,16 +187,16 @@ def _build_dependency_graph(
     def _has_resolvable_parent(key: str) -> bool:
         return any(p in node_by_key for p in edges.parents_by_key[key])
 
-    reachable: set = set()
+    reachable: set[str] = set()
     root_keys = [key for key in node_by_key if key in edges.direct_keys or not _has_resolvable_parent(key)]
     for key in root_keys:
-        reachable |= _closure(key)
+        _closure(key, reachable)
 
     # What is still unreachable is a disconnected cycle: one entry per cycle, dropping roots its subtree covers.
     extra_roots: list[str] = []
     for key in node_by_key:
         if key not in reachable:
-            component = _closure(key)
+            component = _closure(key, set())
             extra_roots = [r for r in extra_roots if r not in component]
             extra_roots.append(key)
             reachable |= component
