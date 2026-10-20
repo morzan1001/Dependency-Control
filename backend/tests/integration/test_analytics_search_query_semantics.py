@@ -817,3 +817,30 @@ async def test_the_page_read_keeps_every_field_a_result_row_shows(client, db, sc
             waiver_reason="accepted upstream",
         ),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("param", "value", "fixed_version"),
+    [("has_fix", "true", "1.0.1"), ("has_fix", "false", None), ("in_kev", "false", None)],
+)
+async def test_the_kev_and_fix_filters_list_only_vulnerability_findings(
+    client, db, scanned, param, value, fixed_version
+):
+    vulnerability = _vulnerability("frob-vuln")
+    vulnerability["details"]["fixed_version"] = fixed_version
+    outdated = {
+        **_vulnerability("frob-old"),
+        "type": "outdated",
+        "severity": "INFO",
+        "description": "frob-old 1.0.0 is outdated",
+        "details": {"fixed_version": "2.0.0"},
+    }
+    await db.findings.insert_many([vulnerability, outdated, _low_license()])
+
+    resp = await client.get(_VULN_SEARCH_PATH, params={"q": "frob", param: value}, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert ([row["component"] for row in body["items"]], body["total"]) == (["frob-vuln"], 1)
