@@ -432,6 +432,19 @@ describe("FindingDetailsModal details by type", () => {
     expect(screen.getByText("support ended")).toBeInTheDocument();
   });
 
+  it("counts an end-of-life finding's vulnerabilities in their banner only, not again as raw JSON under Additional Details", () => {
+    renderModal(
+      finding({
+        type: "eol",
+        details: { cycle: "3.2", vulnerability_info: { has_vulnerabilities: true, vuln_count: 32, critical_count: 5, high_count: 14 } },
+      }),
+    );
+
+    expect(screen.getByText("Has Vulnerabilities")).toBeInTheDocument();
+    expect(screen.getByText("3.2")).toBeInTheDocument();
+    expect(screen.queryByText("Vulnerability Info")).not.toBeInTheDocument();
+  });
+
   it.each(["vulnerability", "secret", "sast", "iac", "license", "quality", "outdated", "system_warning"])(
     "keeps the generic details list off a %s finding",
     (type) => {
