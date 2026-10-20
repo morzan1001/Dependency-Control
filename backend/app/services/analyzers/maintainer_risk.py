@@ -34,7 +34,11 @@ _UNADDRESSED_ISSUES_MIN = 100
 # PyPI project_urls labels that name the source repository, most specific first.
 _REPOSITORY_LABELS = ("source", "source code", "repository", "github", "homepage")
 # GitHub's owner and repo charsets, so registry metadata cannot steer the token-bearing request off /repos/.
-_GITHUB_REPO = re.compile(r"(?:github\.com[/:]|^github:)([\w-]+)/(\.?[\w-][\w.-]*?)(?:\.git)?(?:[/#?]|$)")
+# A bare owner/repo is npm's GitHub shorthand.
+_GITHUB_REPO = re.compile(
+    r"(?:github\.com[/:]|^github:|^(?=[\w-]+/[\w.-]+$))([\w-]+)/(\.?[\w-][\w.-]*?)(?:\.git)?(?:[/#?]|$)",
+    re.IGNORECASE,
+)
 
 
 def correlate_maintainer_risks(risks: list[dict[str, Any]], github_active: bool | None) -> list[dict[str, Any]]:

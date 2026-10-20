@@ -199,8 +199,10 @@ class TestAnalyze:
         [
             ("next", {"type": "git", "url": "git+https://github.com/vercel/next.js.git"}, "vercel/next.js"),
             ("socket.io", "github:socketio/socket.io", "socketio/socket.io"),
+            ("left-pad", "stevemao/left-pad", "stevemao/left-pad"),
+            ("ms", "https://GitHub.com/Vercel/MS.git", "Vercel/MS"),
         ],
-        ids=["object", "shorthand-string"],
+        ids=["object", "shorthand-string", "bare-shorthand", "mixed-case-host"],
     )
     @pytest.mark.asyncio
     async def test_an_npm_package_finds_its_repository_through_the_registry(
@@ -228,8 +230,8 @@ class TestAnalyze:
 
     @pytest.mark.parametrize(
         "repository",
-        ["github:../repositories", "github:acme/..", "https://github.com/acme?per_page=100/lib"],
-        ids=["dot-owner", "dot-repo", "query-in-owner"],
+        ["github:../repositories", "github:acme/..", "https://github.com/acme?per_page=100/lib", "acme/..", "../acme"],
+        ids=["dot-owner", "dot-repo", "query-in-owner", "bare-dot-repo", "bare-dot-owner"],
     )
     @pytest.mark.asyncio
     async def test_a_registry_repository_outside_githubs_name_charset_is_not_requested(
