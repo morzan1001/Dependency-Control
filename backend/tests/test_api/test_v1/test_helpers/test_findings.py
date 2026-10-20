@@ -15,9 +15,9 @@ class TestGetCategoryTypeFilter:
     def test_secret(self):
         assert get_category_type_filter("secret") == {"$in": ["secret"]}
 
-    def test_sast(self):
+    def test_sast_holds_opengreps_crypto_misuse_findings_too(self):
         result = get_category_type_filter("sast")
-        assert result == {"$in": ["sast", "iac"]}
+        assert result == {"$in": ["sast", "iac", "crypto_key_management"]}
 
     def test_compliance(self):
         result = get_category_type_filter("compliance")
@@ -27,8 +27,8 @@ class TestGetCategoryTypeFilter:
         result = get_category_type_filter("quality")
         assert result == {"$in": ["outdated", "quality"]}
 
-    def test_crypto_selects_every_crypto_type(self):
-        assert get_category_type_filter("crypto") == {"$in": sorted(CRYPTO_FINDING_TYPES)}
+    def test_crypto_selects_every_crypto_asset_type(self):
+        assert get_category_type_filter("crypto") == {"$in": sorted(CRYPTO_FINDING_TYPES - {"crypto_key_management"})}
 
     def test_other_selects_the_leftover_types(self):
         assert get_category_type_filter("other") == {"$in": ["system_warning", "other"]}
@@ -69,8 +69,8 @@ class TestGetCategoryForType:
     def test_quality(self):
         assert get_category_for_type("quality") == "quality"
 
-    def test_a_sast_rule_s_crypto_finding_is_crypto(self):
-        assert get_category_for_type("crypto_key_management") == "crypto"
+    def test_a_sast_rule_s_crypto_finding_is_sast(self):
+        assert get_category_for_type("crypto_key_management") == "sast"
 
     def test_unknown_returns_other(self):
         assert get_category_for_type("unknown_type") == "other"

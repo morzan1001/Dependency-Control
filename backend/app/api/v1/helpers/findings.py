@@ -1,4 +1,4 @@
-from app.models.finding import CRYPTO_FINDING_TYPES
+from app.models.finding import CRYPTO_FINDING_TYPES, FindingType
 
 TYPE_CATEGORY_MAP: dict[str, str] = {
     "vulnerability": "security",
@@ -6,12 +6,13 @@ TYPE_CATEGORY_MAP: dict[str, str] = {
     "secret": "secret",
     "sast": "sast",
     "iac": "sast",
+    # OpenGrep's crypto-misuse rules raise it, so it lists beside that scanner's other findings.
+    FindingType.CRYPTO_KEY_MANAGEMENT.value: "sast",
     "license": "compliance",
     "eol": "compliance",
     "outdated": "quality",
     "quality": "quality",
-    # crypto_key_management comes from SAST rules but belongs with the other crypto findings.
-    **dict.fromkeys(sorted(CRYPTO_FINDING_TYPES), "crypto"),
+    **dict.fromkeys(sorted(CRYPTO_FINDING_TYPES - {FindingType.CRYPTO_KEY_MANAGEMENT.value}), "crypto"),
     "system_warning": "other",
     "other": "other",
 }
