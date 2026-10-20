@@ -76,17 +76,23 @@ describe("SastDetailsView location", () => {
     );
   });
 
-  it("tells an IaC hit on the same line apart by its search key", () => {
-    const iac = finding("iac", {
-      rule_id: "kics-1",
-      ...SPAN,
-      additional_locations: [{ start: { line: 12 }, end: { line: 12 }, search_key: "spec.containers.name={{b}}" }],
-    });
+  it("tells an IaC hit on the same line apart by its search key, beside the first hit's own", () => {
+    const iac = {
+      ...finding("iac", {
+        rule_id: "kics-1",
+        ...SPAN,
+        search_key: "spec.containers.name={{a}}",
+        additional_locations: [{ start: { line: 12 }, end: { line: 12 }, search_key: "spec.containers.name={{b}}" }],
+      }),
+      scanners: ["kics"],
+    };
 
     render(<SastDetailsView finding={iac} />);
 
     expect(screen.getByText("Line 12")).toBeInTheDocument();
     expect(screen.getByText("spec.containers.name={{b}}")).toBeInTheDocument();
+    expect(screen.getByText("Search Key")).toBeInTheDocument();
+    expect(screen.getByText("spec.containers.name={{a}}")).toBeInTheDocument();
   });
 
   it("adds no section for a finding with a single hit", () => {

@@ -299,6 +299,13 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                             <p className="text-sm font-mono text-red-600">{details.actual_value}</p>
                         </DetailSection>
                     )}
+                    {details.search_key && (
+                        <div className="col-span-2">
+                            <DetailSection label="Search Key" compact>
+                                <p className="text-sm font-mono break-all">{details.search_key}</p>
+                            </DetailSection>
+                        </div>
+                    )}
                 </div>
             )}
          </div>
