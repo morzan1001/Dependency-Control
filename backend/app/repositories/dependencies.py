@@ -5,16 +5,12 @@ from pymongo.errors import BulkWriteError
 
 from app.core.purl import package_identity_expr
 from app.models.dependency import Dependency
-from app.repositories.base import DUPLICATE_KEY_ERROR, BaseRepository, find_window
+from app.repositories.base import DUPLICATE_KEY_ERROR, BaseRepository
 
 
 class DependencyRepository(BaseRepository[Dependency]):
     collection_name = "dependencies"
     model_class = Dependency
-
-    async def find_by_scan(self, project_id: str, scan_id: str, limit: int) -> tuple[list[Dependency], int]:
-        rows, total = await find_window(self.collection, {"project_id": project_id, "scan_id": scan_id}, limit)
-        return self._to_model_list(rows), total
 
     async def upsert_many(self, dependencies: list[Dependency], fresh: bool = False) -> None:
         if fresh:

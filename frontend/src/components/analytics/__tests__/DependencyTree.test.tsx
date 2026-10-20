@@ -168,3 +168,28 @@ describe("DependencyTree on a narrow screen", () => {
     expect(count.parentElement?.parentElement).toHaveClass("flex-wrap");
   });
 });
+
+describe("DependencyTree locations", () => {
+  beforeEach(() => getTree.mockReset());
+
+  it("counts the locations past the three the server sends from their total", async () => {
+    const locations = ["/app/a/requirements.txt", "/app/b/requirements.txt", "/app/c/requirements.txt"];
+    renderTree(graph([node("a", { source_type: "image", locations, locations_total: 7 })], ["a"]));
+
+    const row = (await screen.findByText("a")).closest('[role="treeitem"]') as HTMLElement;
+    fireEvent.focus(row.querySelector("svg.text-blue-500")!.parentElement!);
+
+    const tooltip = await screen.findByRole("tooltip");
+    for (const location of locations) expect(tooltip).toHaveTextContent(location);
+    expect(tooltip).toHaveTextContent("+4 more");
+  });
+
+  it("adds no remainder when the server sent every location", async () => {
+    renderTree(graph([node("a", { source_type: "image", locations: ["/app/requirements.txt"], locations_total: 1 })], ["a"]));
+
+    const row = (await screen.findByText("a")).closest('[role="treeitem"]') as HTMLElement;
+    fireEvent.focus(row.querySelector("svg.text-blue-500")!.parentElement!);
+
+    expect(await screen.findByRole("tooltip")).not.toHaveTextContent("more");
+  });
+});

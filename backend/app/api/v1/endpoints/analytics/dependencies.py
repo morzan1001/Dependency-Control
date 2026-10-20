@@ -20,6 +20,7 @@ from app.core.constants import FINDINGS_SCAN_COMPONENT_INDEX, SCAN_DEPENDENCY_RE
 from app.core.permissions import Permissions
 from app.models.dependency import Dependency
 from app.models.finding_record import FindingRecord
+from app.repositories.base import find_window
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.repositories.findings import FindingRepository
@@ -50,6 +51,31 @@ router = CustomAPIRouter()
 TreeFindings = dict[str, dict[str, list[Any]]]
 
 _COMPONENT_FINDINGS_SHOWN = 100
+_LOCATIONS_SHOWN = 3
+
+_ALL_LOCATIONS = {"$ifNull": ["$locations", []]}
+# What build_dependency_edges and _build_tree_node read of a row, the location sample beside its count.
+_TREE_ROW = {
+    "$project": {
+        **dict.fromkeys(
+            (
+                "name",
+                "version",
+                "purl",
+                "type",
+                "direct",
+                "direct_inferred",
+                "parent_components",
+                "source_type",
+                "source_target",
+                "layer_digest",
+            ),
+            1,
+        ),
+        "locations": {"$slice": [_ALL_LOCATIONS, _LOCATIONS_SHOWN]},
+        "locations_total": {"$size": _ALL_LOCATIONS},
+    }
+}
 
 
 @dataclass(frozen=True)
@@ -104,35 +130,36 @@ def _tree_findings_map(details_by_package: dict[tuple[Any, ...], list[Any]]) -> 
     return build_component_index(details_by_component)
 
 
-def _build_tree_node(dep: Dependency, findings_map: TreeFindings, *, direct: bool) -> DependencyTreeNode:
+def _build_tree_node(dep: dict[str, Any], findings_map: TreeFindings, *, direct: bool) -> DependencyTreeNode:
     # The bare-artifact alias keys are lowercased, dependency names are not.
-    by_version = lookup_component(findings_map, dep.name) or {}
+    by_version = lookup_component(findings_map, dep["name"]) or {}
     # A finding without a version cannot tell the package's versions apart, so it covers them all.
-    details = by_version.get(normalize_version(dep.version), []) + by_version.get("unknown", [])
+    details = by_version.get(normalize_version(dep["version"]), []) + by_version.get("unknown", [])
     finding_info = severity_counts_from_details(details) if details else {}
     findings_count = sum(finding_info.values())
 
     return DependencyTreeNode(
-        id=dep.id,
-        name=dep.name,
-        version=dep.version,
-        purl=dep.purl or "",
-        type=dep.type,
+        id=str(dep["_id"]),
+        name=dep["name"],
+        version=dep["version"],
+        purl=dep.get("purl") or "",
+        type=dep.get("type", "unknown"),
         direct=direct,
-        direct_inferred=dep.direct_inferred,
+        direct_inferred=dep.get("direct_inferred", False),
         has_findings=findings_count > 0,
         findings_count=findings_count,
         findings_severity=SeverityBreakdown.from_counts(finding_info) if finding_info else None,
-        source_type=dep.source_type,
-        source_target=dep.source_target,
-        layer_digest=dep.layer_digest,
-        locations=dep.locations,
+        source_type=dep.get("source_type"),
+        source_target=dep.get("source_target"),
+        layer_digest=dep.get("layer_digest"),
+        locations=dep["locations"],
+        locations_total=dep["locations_total"],
         child_ids=[],
     )
 
 
 def _build_dependency_graph(
-    dependencies: list[Dependency],
+    dependencies: list[dict[str, Any]],
     findings_map: TreeFindings,
     dependencies_total: int,
 ) -> DependencyGraph:
@@ -203,8 +230,11 @@ async def get_dependency_tree(
     if not scan_id:
         return DependencyGraph()
 
-    dependencies, dependencies_total = await dep_repo.find_by_scan(
-        project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
+    dependencies, dependencies_total = await find_window(
+        dep_repo.collection,
+        {"project_id": project_id, "scan_id": scan_id},
+        SCAN_DEPENDENCY_READ_LIMIT,
+        stages=[_TREE_ROW],
     )
 
     if not dependencies:

@@ -3,7 +3,9 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 
+from app.api.v1.endpoints.analytics import dependencies as tree_module
 from app.repositories.dependencies import DependencyRepository
+from app.services.recommendation.common import get_attr
 from app.services.dependency_store import store_scan_dependencies
 from app.services.sbom_parser import parse_sbom
 
@@ -148,3 +150,63 @@ async def test_a_purl_less_operating_system_component_is_a_tree_node(client, db,
     assert resp.status_code == 200, resp.text
     debian = next(n for n in resp.json()["nodes"] if n["name"] == "debian")
     assert debian["purl"] == ""
+
+
+_TREE_PAYLOAD = ("description", "hashes", "properties", "cpes", "homepage", "license")
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_graph_is_built_without_the_payload_the_tree_does_not_show(client, db, seeded, monkeypatch):
+    payload = {
+        "description": "An own library.",
+        "hashes": {"sha256": "abc"},
+        "properties": {"syft:package:foundBy": "python-installed-package-cataloger"},
+        "cpes": ["cpe:2.3:a:own:own-lib:1.0.0:*:*:*:*:*:*:*"],
+        "homepage": "https://own.example/",
+        "license": "MIT",
+    }
+    await db.dependencies.update_one({"_id": "d-own"}, {"$set": payload})
+    rows: list = []
+    build = tree_module._build_dependency_graph
+    monkeypatch.setattr(
+        tree_module, "_build_dependency_graph", lambda read, *rest: rows.extend(read) or build(read, *rest)
+    )
+
+    resp = await client.get(f"/api/v1/analytics/projects/{_OWN_PROJECT}/dependency-tree", headers=seeded)
+
+    assert resp.status_code == 200, resp.text
+    [row] = rows
+    assert {key: get_attr(row, key) for key in _TREE_PAYLOAD} == dict.fromkeys(_TREE_PAYLOAD)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_node_names_three_locations_beside_how_many_there_are(client, db, seeded):
+    locations = [f"/srv/app-{index}/requirements.txt" for index in range(5)]
+    await db.dependencies.update_one({"_id": "d-own"}, {"$set": {"locations": locations}})
+    await db.dependencies.insert_one(_dependency("d-bare", _OWN_SCAN, _OWN_PROJECT, "bare-lib"))
+
+    resp = await client.get(f"/api/v1/analytics/projects/{_OWN_PROJECT}/dependency-tree", headers=seeded)
+
+    assert resp.status_code == 200, resp.text
+    nodes = {node["name"]: node for node in resp.json()["nodes"]}
+    assert (nodes[_OWN_PACKAGE]["locations"], nodes[_OWN_PACKAGE]["locations_total"]) == (locations[:3], 5)
+    assert (nodes["bare-lib"]["locations"], nodes["bare-lib"]["locations_total"]) == ([], 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("population", "read"), [(4, 2), (2, 2), (1, 1)])
+async def test_the_graph_reports_how_many_rows_it_read_of_what_the_scan_holds(
+    client, db, seeded, monkeypatch, population, read
+):
+    monkeypatch.setattr(tree_module, "SCAN_DEPENDENCY_READ_LIMIT", 2)
+    await db.dependencies.insert_many(
+        [_dependency(f"d-{index}", _OWN_SCAN, _OWN_PROJECT, f"lib-{index}") for index in range(population - 1)]
+    )
+
+    resp = await client.get(f"/api/v1/analytics/projects/{_OWN_PROJECT}/dependency-tree", headers=seeded)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert (len(body["nodes"]), body["dependencies_read"], body["dependencies_total"]) == (read, read, population)

@@ -56,7 +56,9 @@ class DependencyTreeNode(BaseModel):
     source_type: str | None = None
     source_target: str | None = None
     layer_digest: str | None = None
+    # The first few locations; locations_total counts them all.
     locations: list[str] = []
+    locations_total: int = 0
 
 
 class DependencyGraph(BaseModel):

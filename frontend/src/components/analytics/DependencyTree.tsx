@@ -34,6 +34,7 @@ function DependencyNode({ node, nodeById, ancestorIds, level, onSelect, hideChil
   // A cycle-ref node is a leaf: its subtree is already reachable higher up on the same path.
   const hasChildren = !hideChildren && !isCycleRef && node.child_ids.length > 0
   const sourceInfo = getSourceInfo(node.source_type)
+  const unsentLocations = (node.locations_total ?? 0) - (node.locations?.length ?? 0)
 
   const childAncestors = useMemo(() => new Set(ancestorIds).add(node.id), [ancestorIds, node.id])
 
@@ -135,12 +136,10 @@ function DependencyNode({ node, nodeById, ancestorIds, level, onSelect, hideChil
                     {node.locations && node.locations.length > 0 && (
                       <div className="text-xs text-muted-foreground">
                         <p>Locations:</p>
-                        {node.locations.slice(0, 3).map((loc) => (
+                        {node.locations.map((loc) => (
                           <p key={loc} className="pl-2 truncate">{loc}</p>
                         ))}
-                        {node.locations.length > 3 && (
-                          <p className="pl-2">+{node.locations.length - 3} more</p>
-                        )}
+                        {unsentLocations > 0 && <p className="pl-2">+{unsentLocations} more</p>}
                       </div>
                     )}
                   </div>
