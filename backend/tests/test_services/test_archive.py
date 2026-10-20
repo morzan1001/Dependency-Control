@@ -646,6 +646,7 @@ async def test_archive_aborts_when_gridfs_read_fails(archive_env, monkeypatch):
             raise RuntimeError("missing chunk / transient GridFS error")
 
     monkeypatch.setattr(f"{MODULE}.AsyncIOMotorGridFSBucket", _BrokenGridFS)
+    monkeypatch.setattr("app.db.mongodb.asyncio", SimpleNamespace(sleep=AsyncMock()))
 
     with _patch_repos()() as (RepoCls, _):
         result = await archive_scan(db, "scan-1")
@@ -654,6 +655,51 @@ async def test_archive_aborts_when_gridfs_read_fails(archive_env, monkeypatch):
     # No metadata written -> housekeeping will NOT delete the source scan.
     RepoCls.return_value.create.assert_not_awaited()
     assert archive_env.objects == {}
+
+
+@pytest.mark.asyncio
+async def test_archive_retries_a_gridfs_file_that_is_not_readable_yet(archive_env, monkeypatch):
+    scan_doc = _make_scan_doc(
+        sbom_refs=[{"type": "gridfs_reference", "gridfs_id": "507f1f77bcf86cd799439011", "filename": "sbom.json"}]
+    )
+    db = _make_mock_db(scan_doc=scan_doc)
+    opens: list[object] = []
+
+    class _Stream:
+        filename = "sbom.json"
+
+        def __init__(self) -> None:
+            self._chunks = [b'{"components": []}']
+
+        async def readchunk(self) -> bytes:
+            return self._chunks.pop() if self._chunks else b""
+
+        def close(self) -> None:
+            return None
+
+    class _GridFSReadableOnSecondTry:
+        def __init__(self, _db):
+            pass
+
+        async def open_download_stream(self, oid):
+            opens.append(oid)
+            if len(opens) == 1:
+                raise RuntimeError("just-committed file not visible yet")
+            return _Stream()
+
+    monkeypatch.setattr(f"{MODULE}.AsyncIOMotorGridFSBucket", _GridFSReadableOnSecondTry)
+    monkeypatch.setattr("app.db.mongodb.asyncio", SimpleNamespace(sleep=AsyncMock()))
+
+    with _patch_repos()():
+        result = await archive_scan(db, "scan-1")
+
+    from app.services.archive_bundle import read_bundle_frames
+
+    assert result is not None
+    assert len(opens) == 2
+    bundle = zlib.decompress(archive_env.objects[result.s3_key], wbits=31)
+    events = [event async for event in read_bundle_frames(_aiter([bundle]))]
+    assert [e["data"]["data"] for e in events if e.get("collection") == "gridfs_chunks"] == [b'{"components": []}']
 
 
 @pytest.mark.asyncio

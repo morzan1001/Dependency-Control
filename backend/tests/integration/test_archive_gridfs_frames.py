@@ -1,11 +1,13 @@
 import asyncio
 import contextlib
 import json
+import logging
 import tracemalloc
 import zlib
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -164,6 +166,28 @@ def _replay_with(monkeypatch, before_event) -> None:
             yield event
 
     monkeypatch.setattr(archive, "read_bundle_frames", intercepted)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_scan_whose_sbom_file_is_already_gone_archives_and_restores_without_it(
+    db, archive_env, caplog, monkeypatch
+):
+    monkeypatch.setattr("app.db.mongodb.asyncio", SimpleNamespace(sleep=AsyncMock()))
+    scan = await _seed_scan(db, _sbom_fixture())
+    gone = ObjectId(scan.sbom_refs[0]["gridfs_id"])
+    await AsyncIOMotorGridFSBucket(db).delete(gone)
+
+    with caplog.at_level(logging.WARNING, logger="app.services.archive"):
+        metadata = await archive_scan(db, _SCAN_ID)
+
+    assert metadata is not None
+    assert [record.getMessage() for record in caplog.records] == [
+        f"GridFS file {gone} of scan {_SCAN_ID} is already gone, archiving the scan without it"
+    ]
+    await delete_scans_and_related_data(db, [_SCAN_ID])
+    assert await restore_scan(db, _SCAN_ID) is not None
+    assert (await db.scans.find_one({"_id": _SCAN_ID}))["sbom_refs"] == scan.sbom_refs
 
 
 @pytest.mark.asyncio
