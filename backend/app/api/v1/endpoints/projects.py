@@ -92,6 +92,7 @@ from app.repositories.projects import (
 )
 from app.schemas.pagination import Page
 from app.schemas.policy_audit import PolicyAuditAction
+from app.schemas.projections import ScanMinimal
 from app.schemas.project import (
     BranchInfo,
     BranchTip,
@@ -911,7 +912,7 @@ async def read_scan(
     db: DatabaseDep,
 ) -> ScanWithReleases:
     """A scan with the environments it runs in; SBOMs are excluded, fetch them via /scans/{scan_id}/sboms."""
-    scan = await _load_scan_with_access(scan_id, current_user, db)
+    scan, _ = await _load_scan_with_access(scan_id, current_user, db)
     return (await _with_releases(db, [scan.model_dump(by_alias=True)]))[0]
 
 
@@ -944,7 +945,7 @@ async def read_scan_sboms(
     db: DatabaseDep,
 ) -> list[dict[str, Any]]:
     """Index, filename and stored size of each SBOM; size is None when its file is gone."""
-    sbom_refs = (await _load_scan_with_access(scan_id, current_user, db)).sbom_refs
+    sbom_refs = (await _load_scan_with_access(scan_id, current_user, db))[0].sbom_refs
 
     if not sbom_refs:
         raise HTTPException(status_code=404, detail="No SBOM data available for this scan")
@@ -968,11 +969,12 @@ async def download_scan_sbom(
     db: DatabaseDep,
 ) -> StreamingResponse:
     """The stored SBOM at ``index`` (0-based), streamed as uploaded."""
-    sbom_refs = (await _load_scan_with_access(scan_id, current_user, db)).sbom_refs
-    if not 0 <= index < len(sbom_refs):
+    scan, project = await _load_scan_with_access(scan_id, current_user, db)
+    if not 0 <= index < len(scan.sbom_refs):
         raise HTTPException(status_code=404, detail="SBOM not found")
     return _stream_json(
-        await _open_gridfs(db, gridfs_ref_id(sbom_refs[index]), "SBOM"), f"scan_{scan_id}_sbom_{index + 1}.json"
+        await _open_gridfs(db, gridfs_ref_id(scan.sbom_refs[index]), "SBOM"),
+        export_filename(project.name, "sbom", str(index + 1), scan.branch, extension="json"),
     )
 
 
@@ -988,12 +990,11 @@ async def download_analysis_result(
     db: DatabaseDep,
 ) -> Response:
     """The stored result of one row of the scan, as the analyzer produced it."""
-    await _require_scan_access(scan_id, current_user, db)
+    scan, project = await _require_scan_access(scan_id, current_user, db)
     row = await AnalysisResultRepository(db).find_one_raw({"_id": result_id, "scan_id": scan_id}, RESULT_PROJECTION)
     if not row:
         raise HTTPException(status_code=404, detail="Analysis result not found")
-    name = "_".join(filter(None, ("scan", scan_id, row["analyzer_name"], row.get("source"))))
-    filename = re.sub(r"[^\w.-]+", "_", name) + ".json"
+    filename = export_filename(project.name, row["analyzer_name"], row.get("source"), scan.branch, extension="json")
     if file_id := row.get("result_gridfs_id"):
         return _stream_json(await _open_gridfs(db, file_id, "Analysis result"), filename)
     # Legacy rows in live data carry the result inline.
@@ -1164,19 +1165,18 @@ def _unpack_scan_findings_facet(result: list[dict[str, Any]]) -> tuple:
     return data, total
 
 
-async def _require_scan_access(scan_id: str, current_user: User, db: Any) -> None:
+async def _require_scan_access(scan_id: str, current_user: User, db: Any) -> tuple[ScanMinimal, Project]:
     scan = await ScanRepository(db).get_minimal_by_id(scan_id)
     if not scan or not scan.project_id:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
-    await check_project_access(scan.project_id, current_user, db)
+    return scan, await check_project_access(scan.project_id, current_user, db)
 
 
-async def _load_scan_with_access(scan_id: str, current_user: User, db: Any) -> Scan:
+async def _load_scan_with_access(scan_id: str, current_user: User, db: Any) -> tuple[Scan, Project]:
     scan = await ScanRepository(db).get_by_id(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
-    await check_project_access(scan.project_id, current_user, db)
-    return scan
+    return scan, await check_project_access(scan.project_id, current_user, db)
 
 
 @router.get(
