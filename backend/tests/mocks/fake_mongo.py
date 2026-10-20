@@ -1114,8 +1114,10 @@ def _drop_projected_path(node: Any, parts: list[str]) -> None:
 
 def _apply_projection(doc: dict | None, projection: dict | None) -> dict | None:
     """Trim a document the way the server does, so a too-narrow projection is visible in tests."""
-    if doc is None or not projection:
-        return doc
+    if doc is None:
+        return None
+    if not projection:
+        return _copy.deepcopy(doc)
     fields = {path: spec for path, spec in projection.items() if path != "_id"}
     # {"_id": 1} alone is an inclusion projection too, and keeps nothing but the key.
     if any(spec in (1, True) for spec in fields.values()) or (not fields and projection.get("_id") in (1, True)):
