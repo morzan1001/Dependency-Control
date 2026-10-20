@@ -26,6 +26,7 @@ from app.models.user import User
 from app.models.waiver import Waiver
 from app.repositories.base import and_filters
 from app.repositories.findings import FindingRepository
+from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository, non_expired_waiver_filter
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
@@ -116,6 +117,13 @@ router = CustomAPIRouter()
 
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 _MSG_WAIVER_NOT_FOUND = "Waiver not found"
+
+
+async def _restamp_head(db: AsyncIOMotorDatabase, project_id: str, waiver_repo: WaiverRepository) -> None:
+    """A queued change waits behind a running global recalc, so the build the project shows is restamped now."""
+    project = await ProjectRepository(db).get_by_id(project_id)
+    if project and (head := await ScanRepository(db).get_latest_active_scan_id(project)):
+        await restamp_single_scan(db, project_id, head, waiver_repo)
 
 
 async def _with_creator_names(db: AsyncIOMotorDatabase, waivers: list[Waiver]) -> list[dict[str, Any]]:
@@ -279,6 +287,8 @@ async def update_waiver(
         raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
 
     await request_waiver_recalc(db, updated)
+    if updated.project_id:
+        await _restamp_head(db, updated.project_id, waiver_repo)
     background_tasks.add_task(run_waiver_recalc, db)
 
     return (await _with_creator_names(db, [updated]))[0]
@@ -307,4 +317,6 @@ async def delete_waiver(
     await waiver_repo.delete(waiver_id)
 
     await request_waiver_recalc(db, waiver)
+    if waiver.project_id:
+        await _restamp_head(db, waiver.project_id, waiver_repo)
     background_tasks.add_task(run_waiver_recalc, db)

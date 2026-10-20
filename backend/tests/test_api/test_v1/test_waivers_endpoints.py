@@ -532,7 +532,7 @@ class TestUpdateWaiverRecalc:
                             waiver_in=WaiverUpdate(**update_kwargs),
                             background_tasks=bg_tasks,
                             current_user=admin_user,
-                            db=MagicMock(),
+                            db=FakeDatabase(),
                         )
                     )
         queued = [call.args[1] for call in mock_request.await_args_list]
@@ -549,6 +549,90 @@ class TestUpdateWaiverRecalc:
     def test_reason_only_change_triggers_recalc(self, admin_user):
         """Findings carry the reason of the waiver that covers them, so a new reason is restamped."""
         assert self._run_update(admin_user, {"reason": "Updated reason"}) == (["waiver-1"], [run_waiver_recalc])
+
+
+class TestWaiverEditsRestampTheHeadAtOnce:
+    """A queued change waits behind a running global recalc, so the head the project shows is restamped now."""
+
+    _LICENSE_ID = "LIC-GPL-3.0"
+
+    def _seed(self, *, waived: bool) -> tuple[FakeDatabase, Waiver]:
+        db = FakeDatabase()
+        waiver = Waiver(
+            project_id=_PROJECT,
+            finding_type="license",
+            finding_id=self._LICENSE_ID,
+            package_name="lib",
+            reason="approved by legal",
+            created_by="admin",
+        )
+
+        async def seed() -> None:
+            await db.projects.insert_one(
+                {"_id": _PROJECT, "name": "p", "default_branch": _BRANCH, "deleted_branches": []}
+            )
+            await db.scans.insert_one(
+                {
+                    "_id": _HEAD_SCAN,
+                    "project_id": _PROJECT,
+                    "branch": _BRANCH,
+                    "status": SCAN_STATUS_COMPLETED,
+                    "created_at": datetime.now(timezone.utc),
+                }
+            )
+            await db.findings.insert_one(
+                {
+                    "_id": "gpl",
+                    "scan_id": _HEAD_SCAN,
+                    "project_id": _PROJECT,
+                    "type": "license",
+                    "finding_id": self._LICENSE_ID,
+                    "component": "lib",
+                    "severity": "HIGH",
+                    "waived": waived,
+                    "waiver_reason": waiver.reason if waived else None,
+                }
+            )
+            await db.waivers.insert_one(waiver.model_dump(by_alias=True))
+
+        asyncio.run(seed())
+        return db, waiver
+
+    def test_deleting_a_project_waiver_lifts_its_flags_on_the_head_before_the_response(self, admin_user):
+        from app.api.v1.endpoints.waivers import delete_waiver
+
+        db, waiver = self._seed(waived=True)
+        background = BackgroundTasks()
+
+        asyncio.run(delete_waiver(waiver_id=waiver.id, background_tasks=background, current_user=admin_user, db=db))
+
+        finding = asyncio.run(db.findings.find_one({"_id": "gpl"}))
+        assert (finding["waived"], finding["waiver_reason"]) == (False, None)
+        assert [task.func for task in background.tasks] == [run_waiver_recalc]
+
+    def test_editing_a_project_waiver_restamps_the_head_and_records_its_outcome_there(self, admin_user):
+        from app.api.v1.endpoints.waivers import update_waiver
+        from app.schemas.waiver import WaiverUpdate
+
+        db, waiver = self._seed(waived=False)
+        background = BackgroundTasks()
+
+        with patch(f"{MODULE}.check_project_access", _project_access(db)):
+            asyncio.run(
+                update_waiver(
+                    waiver_id=waiver.id,
+                    waiver_in=WaiverUpdate(reason="re-approved by legal"),
+                    background_tasks=background,
+                    current_user=admin_user,
+                    db=db,
+                )
+            )
+
+        finding = asyncio.run(db.findings.find_one({"_id": "gpl"}))
+        assert (finding["waived"], finding["waiver_reason"]) == (True, "re-approved by legal")
+        stored = asyncio.run(db.waivers.find_one({"_id": waiver.id}))
+        assert (stored.get("last_eval_scan_id"), stored.get("last_match_count")) == (_HEAD_SCAN, 1)
+        assert [task.func for task in background.tasks] == [run_waiver_recalc]
 
 
 class TestListWaivers:
@@ -804,7 +888,7 @@ class TestDeleteWaiverPermissions:
                             waiver_id="waiver-1",
                             background_tasks=bg_tasks,
                             current_user=admin_user,
-                            db=MagicMock(),
+                            db=FakeDatabase(),
                         )
                     )
 
