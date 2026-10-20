@@ -125,6 +125,7 @@ describe('UserDetailsDialog - project membership', () => {
     expect(screen.getByText('Payments')).toBeInTheDocument()
     expect(screen.getByText('Platform')).toBeInTheDocument()
     expect(screen.getByText('Project 150').closest('a')).not.toHaveTextContent('Unassigned')
+    expect(screen.getByText('Platform').closest('.max-w-\\[50\\%\\]')?.parentElement).toHaveClass('flex-1')
   })
 })
 

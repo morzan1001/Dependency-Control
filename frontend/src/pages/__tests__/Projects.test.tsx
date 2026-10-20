@@ -100,6 +100,15 @@ describe('ProjectsPage namesakes', () => {
     expect(screen.getByText('platform/shared-lib')).toBeInTheDocument()
     expect(screen.queryByText('Retail')).not.toBeInTheDocument()
   })
+
+  it('spans the card title up to the icon, so an owner tag wider than the name keeps its text up to half the row', () => {
+    renderProjects(1, [
+      { id: 'p1', name: 'api', teams: [{ id: 't1', name: 'Platform Engineering' }] },
+      { id: 'p2', name: 'api', teams: [{ id: 't2', name: 'Payments' }] },
+    ])
+
+    expect(screen.getByText('Platform Engineering').closest('.max-w-\\[50\\%\\]')?.parentElement).toHaveClass('flex-1')
+  })
 })
 
 describe('ProjectsPage analyzer pills', () => {

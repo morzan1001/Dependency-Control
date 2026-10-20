@@ -128,7 +128,7 @@ export default function ProjectsPage() {
           <Link key={project.id} to={`/projects/${project.id}`} className="block min-w-0">
             <Card className="hover:bg-muted/50 transition-colors cursor-pointer h-full">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <div className="flex min-w-0 items-center gap-2 pr-4">
+                <div className="flex min-w-0 flex-1 items-center gap-2 pr-4">
                   <CardTitle className="text-sm font-medium truncate">
                     {project.name}
                   </CardTitle>

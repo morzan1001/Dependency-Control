@@ -381,7 +381,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
               <ActionSection icon={TrendingUp} title="Priority Projects">
                 {recommendation.action.priority_projects.map((proj) => (
                   <div key={proj.id} className="flex items-center justify-between border-b last:border-0 pb-2 last:pb-0">
-                    <span className="flex min-w-0 items-center gap-2">
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
                       <span className="truncate font-medium">{proj.name}</span>
                       {namesakes.has(proj.name) && <ProjectOwnerById projectId={proj.id} namesakes={namesakes.get(proj.name)} />}
                     </span>

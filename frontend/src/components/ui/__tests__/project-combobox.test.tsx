@@ -145,6 +145,7 @@ describe('ProjectCombobox namesakes', () => {
 
     expect(screen.getByRole('combobox')).toHaveTextContent('Platform')
     expect(screen.queryByText('Payments')).not.toBeInTheDocument()
+    expect(screen.getByText('Platform').closest('.max-w-\\[50\\%\\]')?.parentElement).toHaveClass('flex-1')
   })
 })
 

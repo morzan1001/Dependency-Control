@@ -106,7 +106,7 @@ export function ProjectCombobox({
             }}
             className="w-full justify-between font-normal"
           >
-            <div className="flex items-center gap-2 truncate">
+            <div className="flex min-w-0 flex-1 items-center gap-2 truncate">
               {selectedProject ? (
                 <>
                   <Folder className="h-4 w-4 text-muted-foreground shrink-0" />

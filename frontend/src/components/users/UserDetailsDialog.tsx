@@ -306,7 +306,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
                             to={`/projects/${project.id}`}
                             className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 transition-colors"
                           >
-                            <span className="flex min-w-0 items-center gap-2">
+                            <span className="flex min-w-0 flex-1 items-center gap-2">
                               <span className="truncate">{project.name}</span>
                               {namesakes.has(project.name) && <ProjectOwner project={project} namesakes={namesakes.get(project.name)!} />}
                             </span>

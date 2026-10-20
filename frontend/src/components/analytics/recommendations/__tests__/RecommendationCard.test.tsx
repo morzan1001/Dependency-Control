@@ -394,5 +394,6 @@ describe('RecommendationCard priority projects', () => {
     expect(screen.getByText('Payments')).toBeInTheDocument()
     expect(screen.getByText('Platform')).toBeInTheDocument()
     expect(useProjectDetailsMock).not.toHaveBeenCalledWith(expect.arrayContaining(['p3']))
+    expect(screen.getByText('Platform').closest('.max-w-\\[50\\%\\]')?.parentElement).toHaveClass('flex-1')
   })
 })

@@ -128,6 +128,17 @@ describe('Dashboard recent activity namesakes', () => {
     expect(screen.getByText('Payments').closest('.font-medium')).toBeNull()
   })
 
+  it('spans the name column up to the date, so an owner tag wider than the name keeps its text up to half the row', () => {
+    useProjectDetailsMock.mockImplementation((ids) => ids.map((id) => owners[id]))
+    useRecentScansMock.mockReturnValue({
+      data: [scan('s1', 'p1', 'shared-lib'), scan('s2', 'p2', 'shared-lib')],
+      isLoading: false,
+    })
+    renderDashboard([])
+
+    expect(screen.getByText('Payments').closest('.space-y-1')).toHaveClass('flex-1')
+  })
+
   it('looks no owner up for two runs of the same project', () => {
     useRecentScansMock.mockReturnValue({
       data: [scan('s1', 'p1', 'shared-lib'), scan('s2', 'p1', 'shared-lib')],
