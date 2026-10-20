@@ -1,6 +1,10 @@
 from datetime import datetime, timezone
 
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive, ParsedCryptoAsset
+import pytest
+from pydantic import ValidationError
+
+from app.schemas.cbom import CBOMIngest, CryptoAssetType, CryptoPrimitive, ParsedCryptoAsset
+from app.schemas.opengrep import OpenGrepIngest
 
 
 def test_parsed_crypto_asset_minimal():
@@ -35,3 +39,11 @@ def test_parsed_crypto_asset_certificate():
         not_valid_after=datetime(2025, 6, 1, tzinfo=timezone.utc),
     )
     assert asset.subject_name == "CN=example.com"
+
+
+def test_a_cbom_upload_needs_no_pipeline_data_while_a_scanner_upload_does():
+    manual = CBOMIngest.model_validate({"cbom": {}})
+    assert (manual.pipeline_id, manual.commit_hash, manual.branch) == (None, None, None)
+    with pytest.raises(ValidationError) as exc:
+        OpenGrepIngest.model_validate({"findings": []})
+    assert {error["loc"][0] for error in exc.value.errors()} == {"pipeline_id", "commit_hash", "branch"}

@@ -1,7 +1,10 @@
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.schemas.ingest import IngestEnvelope
 
 
 class CryptoAssetType(str, Enum):
@@ -70,3 +73,7 @@ class ParsedCryptoAsset(BaseModel):
     confidence: float | None = None
 
     properties: dict[str, str] = Field(default_factory=dict)
+
+
+class CBOMIngest(IngestEnvelope):
+    cbom: dict[str, Any] = Field(..., description="CycloneDX 1.6 CBOM payload")

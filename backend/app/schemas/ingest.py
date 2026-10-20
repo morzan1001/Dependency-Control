@@ -7,12 +7,16 @@ from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, validate_release_env
 from app.models.release import release_identity
 
 _DESC_SCAN_ID = "Unique identifier of the scan"
+_DESC_PIPELINE_ID = "Unique ID of the pipeline run"
+_DESC_COMMIT_HASH = "Git commit hash"
+_DESC_BRANCH = "Git branch name"
 
 
-class BaseIngest(BaseModel):
-    pipeline_id: int = Field(..., description="Unique ID of the pipeline run")
-    commit_hash: str = Field(..., description="Git commit hash")
-    branch: str = Field(..., description="Git branch name")
+class IngestEnvelope(BaseModel):
+    # Optional, so a manual upload without pipeline data can still ingest.
+    pipeline_id: int | None = Field(None, description=_DESC_PIPELINE_ID)
+    commit_hash: str | None = Field(None, description=_DESC_COMMIT_HASH)
+    branch: str | None = Field(None, description=_DESC_BRANCH)
 
     pipeline_iid: int | None = Field(None, description="Project-level pipeline ID")
     project_url: str | None = Field(None, description="URL to the project")
@@ -43,7 +47,13 @@ class BaseIngest(BaseModel):
         return {"environment": environment, "version": version, "released_at": released_at}
 
 
-class SBOMIngest(BaseIngest):
+class PipelineIngest(IngestEnvelope):
+    pipeline_id: int = Field(..., description=_DESC_PIPELINE_ID)
+    commit_hash: str = Field(..., description=_DESC_COMMIT_HASH)
+    branch: str = Field(..., description=_DESC_BRANCH)
+
+
+class SBOMIngest(PipelineIngest):
     sboms: list[dict[str, Any]] = Field(default_factory=list, description="List of SBOM JSON contents")
 
 

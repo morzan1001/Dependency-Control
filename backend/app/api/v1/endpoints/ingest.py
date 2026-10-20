@@ -22,8 +22,8 @@ from app.models.system import SystemSettings
 from app.repositories.scans import ScanRepository
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
-    BaseIngest,
     FindingsIngestResponse,
+    PipelineIngest,
     ProjectConfigResponse,
     SBOMIngest,
     SBOMIngestResponse,
@@ -69,7 +69,7 @@ async def ingest_trufflehog(
     )
 
 
-def _route_findings_ingest(analyzer: str, label: str, model: type[BaseIngest], description: str) -> None:
+def _route_findings_ingest(analyzer: str, label: str, model: type[PipelineIngest], description: str) -> None:
     async def ingest(request: Request, project: ProjectIngestDep, db: DatabaseDep) -> FindingsIngestResponse:
         return await process_findings_ingest(ScanManager(db, project), analyzer, await read_json_body(request, model))
 

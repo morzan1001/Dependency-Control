@@ -2,7 +2,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.schemas.ingest import BaseIngest
+from app.schemas.ingest import PipelineIngest
 
 
 class BearerSourceLocation(BaseModel):
@@ -33,7 +33,7 @@ class BearerFinding(BaseModel):
     code_extract: str | None = Field(None, description="Code snippet showing the finding")
 
 
-class BearerIngest(BaseIngest):
+class BearerIngest(PipelineIngest):
     findings: dict[str, Any] | None = Field(
         default_factory=dict,
         description="Bearer JSON output. Findings are grouped by severity (critical, high, medium, low, warning).",

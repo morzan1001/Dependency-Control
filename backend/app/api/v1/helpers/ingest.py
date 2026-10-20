@@ -1,6 +1,6 @@
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.scans import ScanRepository
-from app.schemas.ingest import BaseIngest, FindingsIngestResponse, ScanStatsResponse
+from app.schemas.ingest import FindingsIngestResponse, IngestEnvelope, PipelineIngest, ScanStatsResponse
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.stats import StatsAccumulator, compute_stats
 from app.services.scan_manager import ScanManager
@@ -8,10 +8,12 @@ from app.services.scan_manager import ScanManager
 _STATS_FIELDS = {path.split(".", 1)[0] for path in StatsAccumulator.REQUIRED_PATHS}
 
 
-async def process_findings_ingest(manager: ScanManager, analyzer_name: str, data: BaseIngest) -> FindingsIngestResponse:
+async def process_findings_ingest(
+    manager: ScanManager, analyzer_name: str, data: PipelineIngest
+) -> FindingsIngestResponse:
     """Triggers no analysis, so a fast scanner cannot complete the scan before slower ones such as the SBOM finish."""
     scan_id = manager.run_scan_id(data)
-    result_dict = data.model_dump(exclude=set(BaseIngest.model_fields))
+    result_dict = data.model_dump(exclude=set(IngestEnvelope.model_fields))
     await ScanRepository(manager.db).touch(scan_id)
     await AnalysisResultRepository(manager.db).save_result(scan_id, analyzer_name, result_dict)
     await manager.find_or_create_scan(data, scan_id)

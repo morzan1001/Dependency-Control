@@ -17,7 +17,7 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
-from app.schemas.ingest import BaseIngest
+from app.schemas.ingest import IngestEnvelope
 from app.services.waivers.matching import record_matches, route_waiver, waiver_criteria, waiver_strong_match
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class ScanManager:
         # Memoized for this request-scoped instance; no cross-request cache/TTL.
         self._waivers: list[Waiver] | None = None
 
-    def build_pipeline_url(self, data: BaseIngest) -> str | None:
+    def build_pipeline_url(self, data: IngestEnvelope) -> str | None:
         if data.pipeline_url:
             return data.pipeline_url
         if data.project_url and data.pipeline_id:
@@ -48,7 +48,7 @@ class ScanManager:
         return None
 
     async def record_release_and_build_scan_upsert(
-        self, data: BaseIngest, scan_id: str, now: datetime
+        self, data: IngestEnvelope, scan_id: str, now: datetime
     ) -> dict[str, Any]:
         update: dict[str, Any] = {
             "$set": {
@@ -82,11 +82,11 @@ class ScanManager:
             update["$set"]["is_release"] = True
         return update
 
-    def run_scan_id(self, data: BaseIngest) -> str:
+    def run_scan_id(self, data: IngestEnvelope) -> str:
         # pipeline_id 0 derives nothing and still needs a scan of its own.
         return deterministic_scan_id(str(self.project.id), data.pipeline_id, data.commit_hash) or str(uuid.uuid4())
 
-    async def find_or_create_scan(self, data: BaseIngest, scan_id: str, scan_type: str | None = None) -> None:
+    async def find_or_create_scan(self, data: IngestEnvelope, scan_id: str, scan_type: str | None = None) -> None:
         """scan_type is only set, never cleared, since the run's other scanners pass none."""
         update = await self.record_release_and_build_scan_upsert(data, scan_id, datetime.now(timezone.utc))
         update["$setOnInsert"]["sbom_refs"] = []
