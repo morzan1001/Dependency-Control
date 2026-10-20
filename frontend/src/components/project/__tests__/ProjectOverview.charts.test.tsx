@@ -48,6 +48,7 @@ vi.mock('@/hooks/queries/use-waivers', () => ({ useWaiverList: () => ({ data: un
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }))
 
 beforeEach(() => {
+  SCAN.stats = { critical: 1, high: 2, medium: 3, low: 4 }
   branchTips.current = [{ branch: 'main', scan_count: 1, tip: SCAN }]
 })
 
@@ -67,6 +68,22 @@ describe('ProjectOverview severity legends', () => {
 
     expect(await legendOf('Severity Distribution')).toEqual(['Critical', 'High', 'Medium', 'Low'])
     expect(await legendOf('Severity Distribution by Branch')).toEqual(['Critical', 'High', 'Medium', 'Low'])
+  })
+})
+
+describe('ProjectOverview low-signal severities', () => {
+  it('chart negligible, info and unknown findings in both severity charts, as the scan page does', async () => {
+    SCAN.stats = { critical: 0, high: 0, medium: 0, low: 0, negligible: 1, info: 5, unknown: 1 }
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ProjectOverview projectId="p1" selectedBranches={['main']} />
+      </QueryClientProvider>,
+    )
+
+    expect(await legendOf('Severity Distribution')).toEqual(['Negligible', 'Info', 'Unknown'])
+    expect(await legendOf('Severity Distribution by Branch')).toEqual([
+      'Critical', 'High', 'Medium', 'Low', 'Negligible', 'Info', 'Unknown',
+    ])
   })
 })
 

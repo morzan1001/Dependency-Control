@@ -28,8 +28,7 @@ import { MarkReleaseButton } from '@/components/scans/MarkReleaseButton'
 import { ScanReleaseControl } from '@/components/scans/ScanReleaseControl'
 import { downloadServerFile } from '@/lib/download'
 import { cn, formatBytes, formatDateTime, shortCommitHash } from '@/lib/utils'
-import { SEVERITY_CHART_COLORS, SEVERITY_ORDER, bySeriesOrder } from '@/lib/finding-utils'
-import type { Severity } from '@/types/common'
+import { bySeriesOrder, severitySlices } from '@/lib/finding-utils'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -295,13 +294,7 @@ export default function ScanDetails() {
 
   const findingTabs = findingTabsFor(project.active_analyzers || [])
 
-  const stats = scan.stats || { critical: 0, high: 0, medium: 0, low: 0, negligible: 0, info: 0, unknown: 0 };
-  
-  const severityData = SEVERITY_ORDER.map((severity) => ({
-      name: severity.charAt(0) + severity.slice(1).toLowerCase(),
-      value: stats[severity.toLowerCase() as Lowercase<Severity>] || 0,
-      color: SEVERITY_CHART_COLORS[severity],
-  }));
+  const severityData = severitySlices(scan.stats ?? {});
 
   const categoryData = categoryStats ? [
       { name: 'Security', value: categoryStats.security ?? 0, color: '#ef4444' },

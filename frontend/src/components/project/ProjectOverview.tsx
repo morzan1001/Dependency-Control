@@ -19,7 +19,7 @@ import { PostProcessorResultCard } from '@/components/PostProcessorResults'
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
 import { formatDate, truncateLabel } from '@/lib/utils'
-import { SEVERITY_CHART_COLORS, bySeriesOrder, bySeverityOrder } from '@/lib/finding-utils'
+import { bySeriesOrder, bySeverityOrder, severitySlices } from '@/lib/finding-utils'
 
 interface ProjectOverviewProps {
   projectId: string
@@ -29,6 +29,7 @@ interface ProjectOverviewProps {
 const RELEASE_NOT_ANALYSED = 'Nothing in its rescan chain has finished analysing'
 const RELEASE_CHAIN_BOUNDED = 'Rescan chain longer than the walk follows — a newer analysis may exist'
 const TREND_WINDOW_BOUNDED = `newest ${MAX_SCANS_FOR_CHARTS} scans — older ones are outside the plot`
+const LOW_SIGNAL_SEVERITIES: ReadonlySet<string> = new Set(['negligible', 'info', 'unknown'])
 
 function releaseHeadline(environment: string | null, branch: string): string {
   return environment ? `Release in ${environment} on ${branch}` : `Release on ${branch}`
@@ -64,12 +65,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
 
       const branchStatsData = Object.values(latestScansByBranch).map(scan => ({
           name: scan.branch,
-          critical: scan.stats?.critical || 0,
-          high: scan.stats?.high || 0,
-          medium: scan.stats?.medium || 0,
-          low: scan.stats?.low || 0,
-          info: scan.stats?.info || 0,
-          unknown: scan.stats?.unknown || 0
+          ...Object.fromEntries(severitySlices(scan.stats ?? {}).map((slice) => [slice.key, slice.value])),
       }));
 
       return { branchStats: branchStatsData, latestScansByBranch };
@@ -156,12 +152,11 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
   const trendData = Array.from(trendMap.values())
   const COLORS = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#9333ea', '#0891b2', '#ea580c', '#4f46e5'];
 
-  const pieData = [
-      { name: 'Critical', value: stats.critical || 0, color: SEVERITY_CHART_COLORS.CRITICAL },
-      { name: 'High', value: stats.high || 0, color: SEVERITY_CHART_COLORS.HIGH },
-      { name: 'Medium', value: stats.medium || 0, color: SEVERITY_CHART_COLORS.MEDIUM },
-      { name: 'Low', value: stats.low || 0, color: SEVERITY_CHART_COLORS.LOW },
-  ].filter(d => d.value > 0);
+  const pieData = severitySlices(stats).filter(d => d.value > 0);
+  // Low-signal buckets get a bar only where a branch has them, as in the analytics severity bar.
+  const branchSeries = severitySlices({}).filter(
+      (slice) => !LOW_SIGNAL_SEVERITIES.has(slice.key) || Object.values(latestScansByBranch).some((scan) => (scan.stats?.[slice.key] ?? 0) > 0),
+  );
 
   return (
     <div className="space-y-6">
@@ -385,10 +380,9 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
                                     itemStyle={{ color: 'hsl(var(--foreground))' }}
                                 />
                                 <Legend itemSorter={bySeverityOrder} />
-                                <Bar dataKey="critical" name="Critical" stackId="a" fill={SEVERITY_CHART_COLORS.CRITICAL} />
-                                <Bar dataKey="high" name="High" stackId="a" fill={SEVERITY_CHART_COLORS.HIGH} />
-                                <Bar dataKey="medium" name="Medium" stackId="a" fill={SEVERITY_CHART_COLORS.MEDIUM} />
-                                <Bar dataKey="low" name="Low" stackId="a" fill={SEVERITY_CHART_COLORS.LOW} />
+                                {branchSeries.map((slice) => (
+                                    <Bar key={slice.key} dataKey={slice.key} name={slice.name} stackId="a" fill={slice.color} />
+                                ))}
                             </BarChart>
                         </ResponsiveContainer>
                     </div>
