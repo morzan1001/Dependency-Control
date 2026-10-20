@@ -185,15 +185,16 @@ class VulnerabilityEnrichmentService:
         self, findings: list[dict[str, Any]], github_token: str | None = None
     ) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
         """Mutates the findings in place."""
+        ghsa_complete = True
         if ghsa_ids := _ghsa_ids(findings):
             logger.info(f"Resolving {len(ghsa_ids)} GHSA IDs to CVEs")
-            resolutions = await self._ghsa_provider.resolve_ghsa_to_cve(ghsa_ids, github_token)
+            resolutions, ghsa_complete = await self._ghsa_provider.resolve_ghsa_to_cve(ghsa_ids, github_token)
             _dedupe_finding_vulnerabilities(_apply_ghsa_resolutions(findings, resolutions))
 
         enrichments, unavailable = await self._enrich_cves(_cves(findings))
         for finding in findings:
             apply_enrichments(finding.setdefault("details", {}), enrichments)
-        return enrichments, unavailable
+        return enrichments, unavailable if ghsa_complete else [*unavailable, "GHSA"]
 
 
 vulnerability_enrichment_service = VulnerabilityEnrichmentService()

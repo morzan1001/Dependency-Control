@@ -139,7 +139,7 @@ async def test_ghsa_resolution_collapses_cve_and_ghsa_entries(monkeypatch):
     }
 
     async def fake_resolve(ghsa_ids, token):
-        return {"GHSA-3pjw-73gf-8qr5": GHSAData(ghsa_id="GHSA-3pjw-73gf-8qr5", cve_id="CVE-2026-59888")}
+        return {"GHSA-3pjw-73gf-8qr5": GHSAData(ghsa_id="GHSA-3pjw-73gf-8qr5", cve_id="CVE-2026-59888")}, True
 
     async def fake_enrich_cves(cves):
         return {}, []

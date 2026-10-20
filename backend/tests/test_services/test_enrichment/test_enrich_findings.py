@@ -1,6 +1,8 @@
 import itertools
+import time
 from collections import Counter
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
@@ -38,7 +40,7 @@ def _service(monkeypatch, kev=(), epss=(), ghsa=()) -> VulnerabilityEnrichmentSe
         return {c: epss_scores[c] for c in cves if c in epss_scores}, True
 
     async def resolve(ghsa_ids, _token):
-        return {g: resolutions[g] for g in ghsa_ids if g in resolutions}
+        return {g: resolutions[g] for g in ghsa_ids if g in resolutions}, True
 
     monkeypatch.setattr(service._kev_provider, "load_kev_catalog", load_kev)
     monkeypatch.setattr(service._epss_provider, "load_epss_scores", load_epss)
@@ -295,10 +297,49 @@ async def test_every_source_retries_as_often_as_the_setting_says(fake_cache, mon
 
     _, unavailable = await vulnerability_enrichment_service.enrich_findings([finding])
 
-    assert unavailable == ["KEV", "EPSS"]
+    assert unavailable == ["KEV", "EPSS", "GHSA"]
     assert Counter(request.url.host for request in seen) == {
         host: 1 + retries for host in (GITHUB_HOST, FIRST_HOST, CISA_HOST)
     }
+
+
+_LOG4SHELL_GHSA = "GHSA-jfh8-c2jp-5v3q"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("upstream", "reported"),
+    [
+        pytest.param(Upstreams(down=frozenset({GITHUB_HOST})), ["GHSA"], id="lookup_failed"),
+        pytest.param(Upstreams(), [], id="advisory_unknown_to_github"),
+        pytest.param(Upstreams(advisories={_LOG4SHELL_GHSA: None}), [], id="advisory_without_cve"),
+    ],
+)
+async def test_a_failed_ghsa_lookup_is_reported_and_an_answered_one_is_not(fake_cache, monkeypatch, upstream, reported):
+    serve_enrichment(monkeypatch, fake_cache, upstream)
+    finding = _vuln_finding("log4j-core", {"id": _LOG4SHELL_GHSA})
+
+    _, unavailable = await vulnerability_enrichment_service.enrich_findings([finding])
+
+    assert unavailable == reported
+
+
+@pytest.mark.asyncio
+async def test_ghsa_lookups_held_back_by_a_spent_quota_are_reported(fake_cache, monkeypatch):
+    reset = str(int(time.time()) + 3600)
+    seen = serve_enrichment(
+        monkeypatch,
+        fake_cache,
+        lambda r: httpx.Response(403, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset}),
+    )
+    await vulnerability_enrichment_service.enrich_findings([_vuln_finding("log4j-core", {"id": _LOG4SHELL_GHSA})])
+
+    _, unavailable = await vulnerability_enrichment_service.enrich_findings(
+        [_vuln_finding("spring-beans", {"id": "GHSA-36p3-wjmg-h94x"})]
+    )
+
+    assert unavailable == ["GHSA"]
+    assert len(seen) == 1
 
 
 def test_a_negative_retry_count_is_refused_at_startup():

@@ -26,7 +26,8 @@ def _finding(*ghsa_ids: str) -> dict:
 
 
 async def _resolve(*ghsa_ids: str, token: str | None = None) -> dict[str, GHSAData]:
-    return await vulnerability_enrichment_service._ghsa_provider.resolve_ghsa_to_cve(list(ghsa_ids), token)
+    resolved, _ = await vulnerability_enrichment_service._ghsa_provider.resolve_ghsa_to_cve(list(ghsa_ids), token)
+    return resolved
 
 
 async def _exhausted(request: httpx.Request) -> httpx.Response:

@@ -73,7 +73,8 @@ class GHSAProvider:
         )
         return GHSAData(**cached) if cached else None
 
-    async def resolve_ghsa_to_cve(self, ghsa_ids: list[str], token: str | None) -> dict[str, GHSAData]:
+    async def resolve_ghsa_to_cve(self, ghsa_ids: list[str], token: str | None) -> tuple[dict[str, GHSAData], bool]:
+        """True when GitHub answered every lookup; an advisory it does not know counts as answered."""
         cached_data = await cache_service.mget([CacheKeys.ghsa(ghsa_id) for ghsa_id in ghsa_ids])
         results: dict[str, GHSAData] = {}
         missing: list[str] = []
@@ -84,7 +85,7 @@ class GHSAProvider:
             else:
                 missing.append(ghsa_id)
         if not missing:
-            return results
+            return results, True
 
         concurrency = GHSA_CONCURRENT_REQUESTS_AUTHENTICATED if token else GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED
         timeout = ANALYZER_TIMEOUTS["ghsa"]
@@ -100,4 +101,4 @@ class GHSAProvider:
         logger.info(
             f"Resolved {len(results)} GHSA IDs ({len(results) - len(missing)} from cache, concurrency: {concurrency})"
         )
-        return results
+        return results, all(isinstance(outcome, GHSAData) for outcome in outcomes)
