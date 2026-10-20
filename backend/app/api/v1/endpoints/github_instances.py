@@ -249,7 +249,7 @@ async def _probe_team_access(
     probes = list(zip(org_names, counts, strict=True))
     unreadable = [name for name, count in probes if count is None]
     if unreadable:
-        # Exhaustion during the probes makes some organisations look unreadable, so naming any could accuse one.
+        # Exhaustion during the probes fails readable organisations too, so none of the failed ones is named.
         return await _refused_probe(github_service, instance, "team access could not be checked") or _failed_test(
             instance,
             "OIDC endpoint reachable, but the token cannot read teams in "
