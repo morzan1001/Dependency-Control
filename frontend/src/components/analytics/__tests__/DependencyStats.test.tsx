@@ -147,3 +147,14 @@ describe("DependencyStats vulnerability count", () => {
     expect((await screen.findByText("7")).parentElement).toHaveClass("text-severity-critical");
   });
 });
+
+describe("DependencyStats accessible names", () => {
+  it("names its type and top-N dropdowns, which have no visible label", () => {
+    (analyticsApi.getDependencyTypes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (analyticsApi.getTopDependencies as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    renderStats();
+
+    expect(screen.getByRole("combobox", { name: "Package type" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Dependencies shown" })).toBeInTheDocument();
+  });
+});

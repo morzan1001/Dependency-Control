@@ -211,3 +211,24 @@ describe("CrossProjectSearch on a narrow screen", () => {
     expect(table?.parentElement).toHaveClass("overflow-auto");
   });
 });
+
+describe("CrossProjectSearch accessible names", () => {
+  it("names its search field and links every filter's label to its field", () => {
+    vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <CrossProjectSearch />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Filters/ }));
+
+    expect(screen.getByRole("textbox", { name: "Search packages" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Version" })).toBeInTheDocument();
+    for (const name of ["Package Type", "Source", "Vulnerability Status", "Project"]) {
+      expect(screen.getByRole("combobox", { name })).toBeInTheDocument();
+    }
+  });
+});

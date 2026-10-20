@@ -29,7 +29,7 @@ export function WindowSelect({
       value={value === undefined ? 'scans' : String(value)}
       onValueChange={(v) => onChange(v === 'scans' ? undefined : Number(v))}
     >
-      <SelectTrigger className="w-[180px]">
+      <SelectTrigger className="w-[180px]" aria-label="Time window">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

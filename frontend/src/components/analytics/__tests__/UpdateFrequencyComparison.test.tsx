@@ -395,3 +395,18 @@ describe("UpdateFrequencyComparison", () => {
     expect(await screen.findByText(`Newest ${WINDOW_SCAN_CAP} scans`)).toBeInTheDocument();
   });
 });
+
+describe("UpdateFrequencyComparison accessible names", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedComparison.mockResolvedValue(makeComparison(3));
+  });
+
+  it("names its team and metric dropdowns, which have no visible label", async () => {
+    renderComparison();
+
+    expect(screen.getByRole("combobox", { name: "Team" })).toBeInTheDocument();
+    clickLoad();
+    expect(await screen.findByRole("combobox", { name: "Comparison metric" })).toBeInTheDocument();
+  });
+});

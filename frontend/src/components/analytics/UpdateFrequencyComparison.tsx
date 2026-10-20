@@ -317,7 +317,7 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
           </CardDescription>
         </div>
         <Select value={metric} onValueChange={(v) => setMetric(v as Metric)}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-[180px]" aria-label="Comparison metric">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -518,7 +518,7 @@ export function UpdateFrequencyComparison() {
               value={selectedTeamId || 'all'}
               onValueChange={(v) => setSelectedTeamId(v === 'all' ? undefined : v)}
             >
-              <SelectTrigger className="w-[250px]">
+              <SelectTrigger className="w-[250px]" aria-label="Team">
                 <SelectValue placeholder="All teams" />
               </SelectTrigger>
               <SelectContent>

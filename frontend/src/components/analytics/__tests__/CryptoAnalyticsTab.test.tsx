@@ -139,3 +139,15 @@ describe("CryptoAnalyticsTab hotspots on a phone", () => {
     expect(switcher?.parentElement?.parentElement).toHaveClass("flex-wrap");
   });
 });
+
+describe("CryptoAnalyticsTab accessible names", () => {
+  it("names the hotspots' group-by dropdown and the trends' metric dropdown", () => {
+    renderTab();
+
+    expect(screen.getByRole("combobox", { name: "Group by" })).toBeInTheDocument();
+    const trendsTab = screen.getByRole("tab", { name: /trends/i });
+    fireEvent.mouseDown(trendsTab);
+    fireEvent.click(trendsTab);
+    expect(screen.getByRole("combobox", { name: "Trend metric" })).toBeInTheDocument();
+  });
+});

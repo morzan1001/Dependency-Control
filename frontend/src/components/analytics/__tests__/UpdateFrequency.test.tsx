@@ -205,3 +205,12 @@ describe("UpdateFrequency on a phone", () => {
     expect(grid).not.toHaveClass("md:grid-cols-4");
   });
 });
+
+describe("UpdateFrequency accessible names", () => {
+  it("names its time window dropdown, which has no visible label", () => {
+    mockedFrequency.mockResolvedValue(metrics);
+    renderFrequency();
+
+    expect(screen.getByRole("combobox", { name: "Time window" })).toBeInTheDocument();
+  });
+});
