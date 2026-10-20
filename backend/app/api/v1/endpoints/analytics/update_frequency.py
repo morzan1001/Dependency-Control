@@ -15,7 +15,7 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
-from app.api.v1.helpers.teams import resolve_team_names, team_refs
+from app.api.v1.helpers.teams import team_refs
 from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.config import settings
 from app.core.permissions import Permissions
@@ -23,6 +23,7 @@ from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
+from app.repositories.teams import TeamRepository
 from app.repositories.update_frequency import (
     WINDOW_HARD_LIMIT,
     BranchWindowActivity,
@@ -196,7 +197,7 @@ async def _scoped_projects(
         limit=len(user_project_ids),
     )
 
-    team_names = await resolve_team_names(db, {tid for p in projects_raw for tid in p.get("team_ids") or []})
+    team_names = await TeamRepository(db).names_by_ids(tid for p in projects_raw for tid in p.get("team_ids") or [])
     for p in projects_raw:
         p["teams"] = team_refs(p.get("team_ids") or [], team_names)
     return projects_raw

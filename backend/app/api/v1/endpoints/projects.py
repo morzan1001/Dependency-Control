@@ -34,7 +34,6 @@ from app.api.v1.helpers import (
     last_admin_guard,
     may_read_projects,
     parse_sort_direction,
-    resolve_team_names,
     team_refs,
 )
 from app.api.v1.helpers.auth import send_project_member_added_email
@@ -361,7 +360,7 @@ async def read_projects(
     )
     projects = [ProjectWithTeam(**doc) for doc in docs]
 
-    team_name_map = await resolve_team_names(db, {team_id for p in projects for team_id in p.team_ids})
+    team_name_map = await team_repo.names_by_ids(team_id for p in projects for team_id in p.team_ids)
     for project in projects:
         project.teams = team_refs(project.team_ids, team_name_map)
 

@@ -1,4 +1,5 @@
 import re
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
@@ -220,6 +221,14 @@ class TeamRepository:
 
     async def find_ids(self, query: dict[str, Any]) -> list[str]:
         return [str(doc["_id"]) async for doc in self.collection.find(query, {"_id": 1})]
+
+    async def names_by_ids(self, team_ids: Iterable[str]) -> dict[str, str]:
+        """Only teams that exist; an unnamed one maps to "", which team_refs tells apart from a gone one."""
+        wanted = list(set(team_ids))
+        if not wanted:
+            return {}
+        cursor = self.collection.find({"_id": {"$in": wanted}}, {"name": 1})
+        return {str(doc["_id"]): doc.get("name", "") async for doc in cursor}
 
     async def members_by_team(self, team_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         if not team_ids:

@@ -19,15 +19,6 @@ from app.schemas.team import TeamRef, TeamResponse
 _MSG_TEAM_NOT_FOUND = "Team not found"
 
 
-async def resolve_team_names(db: AsyncIOMotorDatabase, team_ids: Iterable[str]) -> dict[str, str]:
-    """Name every team in ``team_ids`` in one read, so a page of co-owned projects is still one query."""
-    wanted = sorted(set(team_ids))
-    if not wanted:
-        return {}
-    cursor = db.teams.find({"_id": {"$in": wanted}}, {"_id": 1, "name": 1})
-    return {str(team["_id"]): team.get("name", "") async for team in cursor}
-
-
 def team_refs(team_ids: Iterable[str], names: Mapping[str, str]) -> list[TeamRef]:
     """Name order, since the stored order shifts with every $setUnion; an unnamed id lost its team and is dropped."""
     refs = [TeamRef(id=team_id, name=name) for team_id in team_ids if (name := names.get(team_id)) is not None]

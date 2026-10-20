@@ -38,11 +38,9 @@ async def read_scope_projects(db: AsyncIOMotorDatabase, query: dict[str, Any]) -
 
 async def resolve_scope_names(db: AsyncIOMotorDatabase, rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     """One read per scope kind; a row whose project or team is gone keeps only its id."""
-    from app.api.v1.helpers.teams import resolve_team_names
-
     names = {
         "project": await ProjectRepository(db).names_by_ids(r["scope_id"] for r in rows if r["scope"] == "project"),
-        "team": await resolve_team_names(db, (r["scope_id"] for r in rows if r["scope"] == "team")),
+        "team": await TeamRepository(db).names_by_ids(r["scope_id"] for r in rows if r["scope"] == "team"),
     }
     return [
         {**row, "scope_name": name} if (name := names.get(row["scope"], {}).get(row["scope_id"])) else row

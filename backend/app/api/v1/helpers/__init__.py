@@ -17,7 +17,6 @@ from app.api.v1.helpers.teams import (
     check_team_access,
     fetch_and_enrich_team,
     get_team_with_access,
-    resolve_team_names,
     team_refs,
     visible_teams_filter,
 )
@@ -52,7 +51,6 @@ __all__ = [
     "last_admin_guard",
     "may_read_projects",
     "parse_sort_direction",
-    "resolve_team_names",
     "team_refs",
     "visible_teams_filter",
 ]
