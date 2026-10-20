@@ -456,6 +456,25 @@ class TestMalformedDependencyGraph:
 
         assert directness == {**_SYFT_MONOREPO, "odd": (True, True)}
 
+    def test_a_syft_source_with_a_list_id_keeps_the_artifacts(self):
+        sbom = _fixture("mono.syft.json")
+        sbom["source"]["id"] = [sbom["source"]["id"]]
+
+        result = parse_sbom(sbom)
+
+        assert _directness(result) == _SYFT_MONOREPO
+
+    def test_a_described_spdx_package_with_a_non_string_purl_keeps_its_siblings(self):
+        sbom = _fixture("mono.syft.spdx.json")
+        root = next(pkg for pkg in sbom["packages"] if pkg["SPDXID"].startswith("SPDXRef-DocumentRoot"))
+        root["externalRefs"] = [{"referenceType": "purl", "referenceLocator": {"type": "oci"}}]
+
+        result = parse_sbom(sbom)
+
+        assert [dep.name for dep in result.dependencies] == [
+            dep.name for dep in parse_sbom(_fixture("mono.syft.spdx.json")).dependencies
+        ]
+
     def test_an_spdx_package_with_a_list_id_is_kept_off_the_graph(self):
         odd = {
             "SPDXID": ["SPDXRef-odd"],

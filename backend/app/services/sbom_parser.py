@@ -881,7 +881,7 @@ class SBOMParser:
 
     def _parse_syft(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         source = sbom.get("source", {})
-        source_id = source.get("id", "")
+        source_id = _graph_id(source.get("id"))
         source_type, source_target = self._resolve_syft_source(source)
         if source_type is not None:
             result.source_type = source_type
@@ -892,12 +892,12 @@ class SBOMParser:
         self._count_skipped(result, "malformed", len(raw_artifacts) - len(artifacts))
         self._count_skipped(result, _SKIP_FILE, len(sbom.get("files") or []))
 
-        node_ids = {_graph_id(source_id), *(_graph_id(artifact.get("id")) for artifact in artifacts)} - {None}
+        node_ids = {source_id, *(_graph_id(artifact.get("id")) for artifact in artifacts)} - {None}
         forward, contains = self._build_syft_dependency_graph(sbom.get("artifactRelationships") or [], node_ids)
         project = {
             _graph_id(artifact.get("id")) for artifact in artifacts if _has_local_origin(artifact.get("metadata"))
         }
-        directness, subjects = _resolve_directness(forward, {source_id}, set(), project)
+        directness, subjects = _resolve_directness(forward, {source_id} - {None}, set(), project)
 
         parsed_by_id: dict[Any, ParsedDependency] = {}
         for artifact in artifacts:
@@ -1149,7 +1149,7 @@ class SBOMParser:
                 continue
             ref_type = ref.get("referenceType", "")
             locator = ref.get("referenceLocator", "")
-            if ref_type == "purl" and not purl:
+            if ref_type == "purl" and not purl and isinstance(locator, str):
                 purl = locator
             elif ref_type in ("cpe22Type", "cpe23Type"):
                 cpes.append(locator)
