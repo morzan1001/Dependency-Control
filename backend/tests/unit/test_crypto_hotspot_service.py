@@ -107,6 +107,23 @@ async def test_a_truncated_ranking_keeps_the_keys_carrying_the_most_assets(db):
 
 
 @pytest.mark.asyncio
+async def test_keys_on_as_many_assets_rank_by_name_whatever_its_case(db):
+    names = ["md5", "Ed25519", "bcrypt", "AES", "SHA-1", "SHA-1"]
+    await CryptoAssetRepository(db).bulk_upsert(
+        "pt", "st", [_asset(f"t{i}", name, project_id="pt", scan_id="st") for i, name in enumerate(names)]
+    )
+    await db.projects.insert_one({"_id": "pt", "name": "pt", "latest_scan_id": "st"})
+    await db.scans.insert_one(
+        {"_id": "st", "project_id": "pt", "status": "completed", "created_at": datetime.now(timezone.utc)}
+    )
+
+    resolved = ResolvedScope(scope="project", scope_id="pt", project_ids=["pt"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", limit=4)
+
+    assert [e.key for e in result.items] == ["SHA-1", "AES", "bcrypt", "Ed25519"]
+
+
+@pytest.mark.asyncio
 async def test_hotspots_group_by_primitive(db):
     await CryptoAssetRepository(db).bulk_upsert(
         "p3",

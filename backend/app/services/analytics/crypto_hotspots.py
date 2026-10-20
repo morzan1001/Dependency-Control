@@ -3,6 +3,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.core.cache import scope_digest
 from app.models.finding import CRYPTO_FINDING_TYPES
 from app.schemas.analytics import GroupBy, HotspotEntry, HotspotResponse
@@ -113,7 +114,7 @@ class CryptoHotspotService:
                     "last_seen": {"$max": "$created_at"},
                 }
             },
-            {"$sort": {"asset_count": -1}},
+            *case_insensitive_sort([("asset_count", -1), ("_id", 1)], {"_id"}),
             {"$limit": limit},
         ]
 
