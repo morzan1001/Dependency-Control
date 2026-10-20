@@ -13,5 +13,6 @@ async def _stream(n: int):
     ("n", "expected"),
     [(0, []), (2, [[0, 1]]), (3, [[0, 1, 2]]), (7, [[0, 1, 2], [3, 4, 5], [6]])],
 )
-async def test_batches_are_full_except_the_last(n, expected):
-    assert [batch async for batch in abatched(_stream(n), 3)] == expected
+@pytest.mark.parametrize("source", [_stream, range], ids=["async", "list"])
+async def test_batches_are_full_except_the_last(n, expected, source):
+    assert [batch async for batch in abatched(source(n), 3)] == expected

@@ -1,5 +1,6 @@
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from datetime import datetime, timezone
+from itertools import batched
 from typing import overload
 
 # Sorts last on a recency tie-break.
@@ -27,7 +28,11 @@ def parse_iso_utc(value: object) -> datetime | None:
         return None
 
 
-async def abatched[T](items: AsyncIterable[T], size: int) -> AsyncIterator[list[T]]:
+async def abatched[T](items: AsyncIterable[T] | Iterable[T], size: int) -> AsyncIterator[list[T]]:
+    if not isinstance(items, AsyncIterable):
+        for chunk in batched(items, size, strict=False):
+            yield list(chunk)
+        return
     batch: list[T] = []
     async for item in items:
         batch.append(item)

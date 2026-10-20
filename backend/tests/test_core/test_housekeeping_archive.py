@@ -195,13 +195,8 @@ class TestRunRetention:
         mock_repo = MagicMock()
         mock_repo.get = AsyncMock(return_value=mock_settings)
 
-        mock_scan_doc = {"_id": "scan-1"}
         mock_cursor = MagicMock()
-
-        async def async_iter():
-            yield mock_scan_doc
-
-        mock_cursor.__aiter__ = lambda self: async_iter()
+        mock_cursor.to_list = AsyncMock(return_value=[{"_id": "scan-1"}])
         mock_db = _mock_db()
         mock_db.scans.find = MagicMock(return_value=mock_cursor)
 
@@ -246,13 +241,8 @@ class TestRunRetention:
         mock_repo = MagicMock()
         mock_repo.get = AsyncMock(return_value=mock_settings)
 
-        mock_scan_doc = {"_id": "scan-1"}
         mock_cursor = MagicMock()
-
-        async def async_iter():
-            yield mock_scan_doc
-
-        mock_cursor.__aiter__ = lambda self: async_iter()
+        mock_cursor.to_list = AsyncMock(return_value=[{"_id": "scan-1"}])
         mock_db = _mock_db()
         mock_db.scans.find = MagicMock(return_value=mock_cursor)
 

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections import Counter
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from itertools import batched
@@ -383,9 +383,13 @@ async def _unreferenced(db: Any, scans: list[dict[str, Any]]) -> list[str]:
 
 
 async def _process_scans_in_batches(
-    db: Any, cursor: Any, action: str, label: str, batch_size: int = ARCHIVE_BATCH_SIZE
+    db: Any,
+    scans: AsyncIterable[dict[str, Any]] | Iterable[dict[str, Any]],
+    action: str,
+    label: str,
+    batch_size: int = ARCHIVE_BATCH_SIZE,
 ) -> None:
-    async for batch in abatched(cursor, batch_size):
+    async for batch in abatched(scans, batch_size):
         await _handle_retention_action(db, await _unreferenced(db, batch), action, label)
 
 
@@ -422,8 +426,11 @@ async def _expire_group(db: Any, days: int, scope: dict[str, Any], action: str, 
         return
     try:
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
-        cursor = db.scans.find({**scope, "created_at": {"$lt": cutoff_date}, **_EXPIRABLE}, {"_id": 1, "project_id": 1})
-        await _process_scans_in_batches(db, cursor, action, label)
+        # Read up front: a cursor would sit idle past the server's cursor timeout while the batches archive.
+        expired = db.scans.find(
+            {**scope, "created_at": {"$lt": cutoff_date}, **_EXPIRABLE}, {"_id": 1, "project_id": 1}
+        )
+        await _process_scans_in_batches(db, await expired.to_list(None), action, label)
         await _process_scans_in_batches(db, _superseded_rescans(db, scope), action, f"{label} rescan history")
     except Exception:
         logger.exception("Housekeeping: %s failed", label)

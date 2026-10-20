@@ -257,6 +257,16 @@ async def test_every_housekeeping_pass_bids_for_retention(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
+async def test_an_expiry_whose_candidate_cursor_would_have_died_still_expires_every_old_scan(db, monkeypatch):
+    await db.scans.insert_many(_scan(f"old-{n}", 100 + n) for n in range(3 * ARCHIVE_BATCH_SIZE))
+    _interleave(monkeypatch, housekeeping, "_handle_retention_action", partial(_kill_idle_scan_cursors, db))
+    await _expire_group(db, 90, {}, "delete", "retention")
+
+    assert await db.scans.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_rescan_history_cap_whose_build_cursor_died_still_caps_every_build(db, monkeypatch):
     builds = 2 * ARCHIVE_BATCH_SIZE + 2
     await db.scans.insert_many(
