@@ -276,6 +276,20 @@ async def test_a_failed_archive_logs_its_scan_and_the_error(archive_env, caplog)
 
 
 @pytest.mark.asyncio
+async def test_a_failed_cleanup_of_a_dropped_upload_logs_its_key(monkeypatch, caplog):
+    from app.services.archive import _drop_upload
+
+    monkeypatch.setattr(f"{MODULE}.delete_object", AsyncMock(side_effect=RuntimeError("S3 down")))
+
+    with caplog.at_level(logging.ERROR, logger=MODULE):
+        await _drop_upload("proj-1/scan-1-1700000000.bundle", "lock_held")
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "Cleanup delete of the dropped S3 upload proj-1/scan-1-1700000000.bundle failed"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_a_restore_without_metadata_logs_its_scan(archive_env, caplog):
     with _patch_repos()(), caplog.at_level(logging.ERROR, logger=MODULE):
         await restore_scan(_make_mock_db(), "scan-1")

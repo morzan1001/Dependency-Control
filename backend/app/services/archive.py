@@ -203,7 +203,7 @@ async def _drop_upload(s3_key: str, reason: str) -> None:
     try:
         await delete_object(s3_key)
     except Exception:
-        logger.exception("Cleanup delete failed for orphan S3 upload")
+        logger.exception("Cleanup delete of the dropped S3 upload %s failed", sanitize_for_log(s3_key))
     count_archive_failure("archive", reason)
 
 
