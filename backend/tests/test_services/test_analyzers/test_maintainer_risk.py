@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -427,6 +428,18 @@ class TestAnalyze:
         [issue] = result["maintainer_issues"]
         assert _risk_types(result) == ["stale_package", "inactive_repo"]
         assert issue["maintainer_info"]["github"]["days_since_push"] == 800
+
+    @pytest.mark.parametrize(("status", "level"), [(401, logging.WARNING), (403, logging.DEBUG)])
+    @pytest.mark.asyncio
+    async def test_a_rejected_github_token_is_logged_as_a_warning(self, fake_cache, monkeypatch, caplog, status, level):
+        _serve(monkeypatch, fake_cache, {f"{GITHUB_API_URL}/repos/acme/oldlib": status})
+        caplog.set_level(logging.DEBUG, logger=maintainer_mod.__name__)
+
+        await analyze_cyclonedx(
+            MaintainerRiskAnalyzer(), [_component("pypi", "oldlib", "https://github.com/acme/oldlib")]
+        )
+
+        assert [record.levelno for record in caplog.records if "acme/oldlib" in record.getMessage()] == [level]
 
     @pytest.mark.asyncio
     async def test_a_pypi_upload_time_without_a_zone_is_read_as_utc(self, fake_cache, monkeypatch):

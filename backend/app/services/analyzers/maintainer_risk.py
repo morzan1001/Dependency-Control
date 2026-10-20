@@ -144,7 +144,9 @@ class MaintainerRiskAnalyzer(Analyzer):
                     reraise_fetch_errors=True,
                 )
             except (httpx.HTTPError, ValueError) as e:
-                logger.debug(f"GitHub check failed for {repo}: {e}")
+                # A rejected token fails every repository until an operator replaces it.
+                unauthorized = isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 401
+                logger.log(logging.WARNING if unauthorized else logging.DEBUG, f"GitHub check failed for {repo}: {e}")
 
         risks = self._assess_risks(maintainer_info)
         if github_info:
