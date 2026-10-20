@@ -1,6 +1,6 @@
 import math
 
-from cvss import CVSS4
+from cvss import CVSS2, CVSS4
 from cvss.exceptions import CVSSError
 
 _ATTACK_VECTOR = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}
@@ -10,6 +10,7 @@ _PRIVILEGES_REQUIRED_CHANGED = {"N": 0.85, "L": 0.68, "H": 0.5}
 _USER_INTERACTION = {"N": 0.85, "R": 0.62}
 _IMPACT = {"H": 0.56, "L": 0.22, "N": 0.0}
 
+_V2_PREFIX = "CVSS:2.0/"
 _V3_PREFIXES = ("CVSS:3.0", "CVSS:3.1")
 _V4_PREFIX = "CVSS:4.0"
 
@@ -71,18 +72,25 @@ def cvss3_base_score(vector: str) -> float | None:
     return _roundup(min(combined, 10.0))
 
 
+def _library_base_score(vector_class: type[CVSS2 | CVSS4], text: str) -> float | None:
+    try:
+        return float(vector_class(text).base_score)
+    except (CVSSError, ValueError, TypeError, KeyError):
+        return None
+
+
 def cvss4_base_score(vector: str) -> float | None:
     text = vector.strip()
     if not text.startswith(_V4_PREFIX):
         return None
-    try:
-        return float(CVSS4(text).base_score)
-    except (CVSSError, ValueError, TypeError, KeyError):
-        return None
+    return _library_base_score(CVSS4, text)
 
 
 def cvss_base_score(vector: str) -> float | None:
     text = vector.strip()
     if text.startswith(_V4_PREFIX):
         return cvss4_base_score(text)
+    # A v2 vector carries no version prefix in OSV or NVD.
+    if text.startswith(("AV:", _V2_PREFIX)):
+        return _library_base_score(CVSS2, text.removeprefix(_V2_PREFIX))
     return cvss3_base_score(text)

@@ -547,7 +547,7 @@ class OSVAnalyzer(Analyzer):
             raw = str(rating["score"])
             score = self._parse_cvss_score(raw)
             if score is not None:
-                return score, raw if raw.startswith("CVSS:") else None, rating["type"]
+                return score, raw if raw.startswith(("CVSS:", "AV:")) else None, rating["type"]
         return None
 
     def _severity_from_cvss_array(self, severity_array: list[dict[str, Any]]) -> str | None:
