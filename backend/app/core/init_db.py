@@ -220,11 +220,13 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
     await database["scans"].create_index(SCANS_TIP_INDEX_KEY)
+    # _id serves the update-frequency walk's newest-first read, ordered like the delta ledger's chains.
     await database["scans"].create_index(
         [
             ("project_id", pymongo.ASCENDING),
             ("branch", pymongo.ASCENDING),
             ("created_at", pymongo.DESCENDING),
+            ("_id", pymongo.DESCENDING),
         ]
     )
     # A branch's tip build is found in one seek, however many rescans of it pile up in front.

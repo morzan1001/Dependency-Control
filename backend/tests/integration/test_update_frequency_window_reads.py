@@ -23,6 +23,7 @@ from app.repositories.update_frequency import (
     window_scan_ids_by_branch,
     window_scans_by_branch,
 )
+from app.services.update_frequency import _load_completed_scans
 from app.services.update_frequency_reconcile import ReconcileReport, run_update_frequency_reconcile
 
 pytestmark = [pytest.mark.live_mongo, pytest.mark.asyncio]
@@ -262,6 +263,23 @@ async def test_the_scan_count_view_elects_from_a_bounded_read_off_the_tip_index(
 
     (plan,) = plans
     assert plan["executionStats"]["totalDocsExamined"] == 5
+
+
+@pytest.mark.parametrize(("since", "examined"), [(None, 5), (_at(10), 21)])
+async def test_the_walk_reads_its_newest_scans_off_the_branch_index_without_a_blocking_sort(db, since, examined):
+    await create_indexes(db)
+    for index in range(30):
+        await _scan(db, f"s{index:02d}", "p-a", "main", _at(index), commit_hash=f"c{index}")
+    await _scan(db, "s-twin", "p-a", "main", _at(29), commit_hash="c29")
+    repo = ScanRepository(db)
+
+    plans = await _explained(repo.collection, lambda: _load_completed_scans(repo, "p-a", "main", 1, since))
+
+    (plan,) = plans
+    assert "SORT" not in str(plan["queryPlanner"]["winningPlan"])
+    assert plan["executionStats"]["totalDocsExamined"] == examined
+    scans, _truncated = await _load_completed_scans(repo, "p-a", "main", 1, since)
+    assert [scan["_id"] for scan in scans][-2:] == ["s-twin", "s29"]
 
 
 async def test_the_cache_token_reads_only_the_stretch_the_walk_reads(db, monkeypatch):
