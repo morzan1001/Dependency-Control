@@ -11,6 +11,7 @@ import { useCurrentUser } from "@/hooks/queries/use-users";
 import { useDialogState } from "@/hooks/use-dialog-state";
 import { downloadServerFile } from "@/lib/download";
 import { Permissions } from "@/lib/permissions";
+import { REPORT_FRAMEWORK_LABELS } from "@/lib/constants";
 import { formatDateTime } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import { ReportScope } from "./ReportScope";
@@ -86,7 +87,7 @@ export function ReportDetailDrawer({ report, namesake = false, onClose }: Readon
           {report && (
             <>
               <DialogHeader>
-                <DialogTitle className="font-mono">{report.framework}</DialogTitle>
+                <DialogTitle>{REPORT_FRAMEWORK_LABELS[report.framework] ?? report.framework}</DialogTitle>
               </DialogHeader>
               <div className="space-y-2 text-sm">
                 <div>

@@ -53,7 +53,7 @@ describe('ComplianceReportsPanel', () => {
       .mockResolvedValue({ reports: [report('completed')] })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: /nist-sp-800-131a/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /NIST SP 800-131A/ }))
     expect(within(screen.getByRole('dialog')).getByText('Generating…')).toBeInTheDocument()
     await act(() => vi.advanceTimersByTimeAsync(3_000))
 
@@ -101,7 +101,7 @@ describe('ComplianceReportsPanel', () => {
     })
     renderPanel()
 
-    const rows = await screen.findAllByRole('button', { name: /nist-sp-800-131a/ })
+    const rows = await screen.findAllByRole('button', { name: /NIST SP 800-131A/ })
     expect(rows.map((row) => row.lastElementChild?.textContent)).toEqual(['team: Core', 'project: p-gone', 'user'])
   })
 
@@ -143,6 +143,18 @@ describe('ComplianceReportsPanel', () => {
     expect(within(screen.getByRole('dialog')).getByText('Platform')).toBeInTheDocument()
   })
 
+  it('names the framework as the create dialog does, in the list and the report dialog title', async () => {
+    vi.mocked(listReports).mockResolvedValue({ reports: [{ ...report('completed'), framework: 'cve-remediation-sla' }] })
+    renderPanel()
+
+    const row = await screen.findByRole('button', { name: /CVE Remediation SLA/ })
+    expect(screen.queryByText('cve-remediation-sla')).not.toBeInTheDocument()
+    expect(row.firstElementChild).not.toHaveClass('font-mono')
+    fireEvent.click(row)
+
+    expect(within(screen.getByRole('dialog')).getByRole('heading', { name: 'CVE Remediation SLA' })).not.toHaveClass('font-mono')
+  })
+
   it('opens an empty form again after a cancelled draft', async () => {
     vi.mocked(listReports).mockResolvedValue({ reports: [] })
     renderPanel()
@@ -162,7 +174,7 @@ describe('ComplianceReportsPanel on a narrow screen', () => {
     vi.mocked(listReports).mockResolvedValue({ reports: [report('completed')] })
     renderPanel()
 
-    const table = (await screen.findByRole('button', { name: /nist-sp-800-131a/ })).closest('table')
+    const table = (await screen.findByRole('button', { name: /NIST SP 800-131A/ })).closest('table')
     expect(table).toHaveClass('min-w-[680px]')
     expect(table?.parentElement).toHaveClass('overflow-x-auto')
   })

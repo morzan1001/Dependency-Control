@@ -1,4 +1,5 @@
 import type { MigrationItemStatus } from '@/types/pqcMigration';
+import type { ReportFramework } from '@/types/compliance';
 
 export const AVAILABLE_ANALYZERS = [
   { id: 'trivy', label: 'Trivy (Container/FS)', description: 'Scans container images and filesystems for vulnerabilities (CVEs) and misconfigurations.', category: 'vulnerability' },
@@ -35,6 +36,17 @@ export const TEAM_ROLES = [
   { value: 'member', label: 'Member' },
   { value: 'admin', label: 'Admin' },
 ] as const;
+
+export const REPORT_FRAMEWORK_LABELS: Record<ReportFramework, string> = {
+  'nist-sp-800-131a': 'NIST SP 800-131A',
+  'bsi-tr-02102': 'BSI TR-02102',
+  'cnsa-2.0': 'CNSA 2.0',
+  'fips-140-3': 'FIPS 140-3 (algorithm-level)',
+  'iso-19790': 'ISO/IEC 19790 (algorithm-level)',
+  'pqc-migration-plan': 'PQC Migration Plan',
+  'license-audit': 'License Audit (project policy)',
+  'cve-remediation-sla': 'CVE Remediation SLA',
+};
 
 export const FINDING_TYPE_LABELS: Record<string, string> = {
   vulnerability: 'Vulnerability',

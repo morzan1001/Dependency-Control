@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { listReports } from "@/api/compliance";
 import { useDialogState } from "@/hooks/use-dialog-state";
+import { REPORT_FRAMEWORK_LABELS } from "@/lib/constants";
 import { formatDateTime, sharedNames } from "@/lib/utils";
 import type { ComplianceReportMeta, ReportFramework } from "@/types/compliance";
 import { ReportStatusBadge } from "./ReportStatusBadge";
@@ -69,7 +70,7 @@ export function ComplianceReportsPanel({ defaultFramework }: Readonly<{ defaultF
                   }
                 }}
               >
-                <td className="p-2 font-mono">{r.framework}</td>
+                <td className="p-2">{REPORT_FRAMEWORK_LABELS[r.framework] ?? r.framework}</td>
                 <td className="p-2">{r.format.toUpperCase()}</td>
                 <td className="p-2"><ReportStatusBadge status={r.status} /></td>
                 <td className="p-2 text-xs">{formatDateTime(r.requested_at)}</td>
