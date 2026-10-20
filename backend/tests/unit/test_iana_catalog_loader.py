@@ -1,3 +1,4 @@
+import inspect
 from functools import partial
 from unittest.mock import AsyncMock
 
@@ -5,6 +6,7 @@ import httpx
 import pytest
 import yaml
 
+from app.core.cache import CacheService
 from app.core.http_utils import InstrumentedAsyncClient
 from app.services.analyzers.crypto.catalogs import loader
 from app.services.analyzers.crypto.catalogs.loader import (
@@ -143,6 +145,24 @@ async def test_a_registry_error_status_counts_as_a_failed_fetch(monkeypatch):
     _serve_registry(monkeypatch, 503, "")
 
     assert await _fetch_from_iana() is None
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_connect_fails_while_peers_still_wait_on_the_fetch_lock(monkeypatch):
+    timeouts = []
+
+    def recording(service_name, timeout, **kwargs):
+        timeouts.append(timeout)
+        transport = httpx.MockTransport(lambda request: httpx.Response(503))
+        return InstrumentedAsyncClient(service_name, timeout=timeout, transport=transport)
+
+    monkeypatch.setattr(loader, "InstrumentedAsyncClient", recording)
+
+    await _fetch_from_iana()
+
+    lock_wait = inspect.signature(CacheService.get_or_fetch_with_lock).parameters["max_wait_seconds"].default
+    (timeout,) = timeouts
+    assert httpx.Timeout(timeout).connect < lock_wait
 
 
 def test_the_csv_parse_keeps_only_the_registry_columns_of_suite_rows():

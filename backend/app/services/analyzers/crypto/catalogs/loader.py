@@ -8,6 +8,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yaml
 
 from app.core.cache import cache_service
@@ -21,7 +22,8 @@ IANA_WEAKNESS_RULES_VERSION = 2
 
 _CATALOG_FALLBACK_PATH = Path(__file__).parent / "iana_tls_cipher_suites.yaml"
 _IANA_CSV_URL = "https://www.iana.org/assignments/tls-parameters/tls-parameters-4.csv"
-_IANA_CSV_TIMEOUT = 15.0
+# Connect fails before the shared cache's 5 s lock wait ends, so blocked egress costs peers no fetch of their own.
+_IANA_CSV_TIMEOUT = httpx.Timeout(15.0, connect=3.0)
 _IANA_CACHE_KEY = "iana:tls_cipher_suites"
 _IANA_CACHE_TTL_SECONDS = 7 * 24 * 3600
 # The registry lists ~350 suites; a 200 with far fewer is a proxy page or a changed format.
