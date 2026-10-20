@@ -26,7 +26,6 @@ from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
     _COMPARISON_CONCURRENCY,
     DAYS_PER_MONTH,
-    READY_COVERAGE_RATIO,
     _build_slowest_packages,
     classify_version_change,
     compute_trend,
@@ -39,7 +38,6 @@ from app.services.update_frequency import (
     retention_horizon,
     select_primary_branch,
     summarise_window,
-    window_coverage_status,
     window_cutoff,
 )
 from app.services.update_frequency_rollup import record_scan_update_delta
@@ -402,28 +400,6 @@ class TestSelectPrimaryBranch:
         activity = _activity({"alpha": (2, 5), "beta": (2, 5)})
         reversed_activity = dict(reversed(list(activity.items())))
         assert select_primary_branch(activity, None, []) == select_primary_branch(reversed_activity, None, []) == "beta"
-
-
-class TestWindowCoverageStatus:
-    def test_full_coverage_is_ready(self):
-        assert window_coverage_status(10, 10) == "ready"
-
-    def test_the_drop_the_fold_makes_on_purpose_still_reads_as_ready(self):
-        # Same-commit retries and SBOM-less scans are dropped by design.
-        assert window_coverage_status(9, 10) == "ready"
-
-    def test_a_window_the_backfill_barely_reached_is_partial(self):
-        # The measured post-deploy state: deltas for only the two newest of ten scans.
-        assert window_coverage_status(2, 10) == "partial"
-
-    def test_the_threshold_is_the_documented_ratio(self):
-        assert window_coverage_status(80, 100) == "ready"
-        assert window_coverage_status(79, 100) == "partial"
-        assert READY_COVERAGE_RATIO == 0.8
-
-    def test_more_analyzed_scans_than_the_window_counted_is_ready(self):
-        # A scan can land between the two reads; that is not a coverage gap.
-        assert window_coverage_status(3, 2) == "ready"
 
 
 class TestBranchScopedScanSelection:

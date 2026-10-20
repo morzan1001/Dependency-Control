@@ -10,6 +10,8 @@ from app.services.release_history import UpstreamCadenceMetrics
 from app.services.update_frequency import DAYS_PER_MONTH, compute_trend, dominant_ecosystem
 from app.services.update_frequency import FoldedWindow, measured_summary
 from app.services.update_frequency_fold import (
+    READY_COVERAGE_RATIO,
+    CommitCoverage,
     commit_coverage,
     fold_window,
     select_window,
@@ -349,6 +351,28 @@ class TestUnusableScans:
         with_empties = _chain([_delta("s0", 0), _delta("s1", 10, patch=4), _delta("s2", 20, dep_count=0)])
         assert _fold(usable).updates_per_scan == 4.0
         assert _fold(with_empties).updates_per_scan == 4.0
+
+
+class TestCoverageVerdict:
+    def test_full_coverage_is_ready(self) -> None:
+        assert CommitCoverage(10, 10).status == "ready"
+
+    def test_the_drop_the_fold_makes_on_purpose_still_reads_as_ready(self) -> None:
+        # Same-commit retries and SBOM-less scans are dropped by design.
+        assert CommitCoverage(9, 10).status == "ready"
+
+    def test_a_window_the_backfill_barely_reached_is_partial(self) -> None:
+        # The measured post-deploy state: deltas for only the two newest of ten scans.
+        assert CommitCoverage(2, 10).status == "partial"
+
+    def test_the_threshold_is_the_documented_ratio(self) -> None:
+        assert CommitCoverage(80, 100).status == "ready"
+        assert CommitCoverage(79, 100).status == "partial"
+        assert READY_COVERAGE_RATIO == 0.8
+
+    def test_more_analyzed_scans_than_the_window_counted_is_ready(self) -> None:
+        # A scan can land between the two reads; that is not a coverage gap.
+        assert CommitCoverage(3, 2).status == "ready"
 
 
 class TestCommitCoverage:

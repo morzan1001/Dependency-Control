@@ -670,15 +670,6 @@ async def elect_primary_branch(
     return select_primary_branch(activity.get(project_id, {}), default_branch, deleted_branches)
 
 
-# Slack for scans the ledger reached between the two reads; a real gap loses far more than a fifth.
-READY_COVERAGE_RATIO = 0.8
-
-
-def window_coverage_status(accounted_commits: int, window_commits: int) -> Literal["ready", "partial"]:
-    """Partial rows stay out of averages, best/worst and ranking; both arguments count commits of one stretch."""
-    return "ready" if accounted_commits >= window_commits * READY_COVERAGE_RATIO else "partial"
-
-
 def same_commit_runs[T](items: Sequence[T], *, commit_of: Callable[[T], str | None]) -> list[list[T]]:
     """A run merges scans into one bar but drops no pair, so sum(bar.updates_count) == total_updates."""
     runs: list[list[T]] = []
@@ -913,7 +904,7 @@ def measured_summary(
     window_days: int,
     data_status: Literal["ready", "partial"] = "ready",
 ) -> ProjectUpdateSummary:
-    """data_status comes from window_coverage_status: the fold knows what it summed, not what the window held."""
+    """data_status comes from CommitCoverage: the fold knows what it summed, not what the window held."""
     return ProjectUpdateSummary(
         project_id=metrics.project_id,
         project_name=metrics.project_name,

@@ -16,7 +16,6 @@ from app.services.update_frequency import (
     same_commit_runs,
     short_window,
     summarise_window,
-    window_coverage_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,14 +36,20 @@ def _commit_token(delta: dict[str, Any]) -> str:
     return token
 
 
+# Slack for scans the ledger reached between the two reads; a real gap loses far more than a fifth.
+READY_COVERAGE_RATIO = 0.8
+
+
 @dataclass(frozen=True)
 class CommitCoverage:
+    """Partial rows stay out of averages, best/worst and ranking; both counts are commits of one stretch."""
+
     accounted: int
     coverable: int
 
     @property
     def status(self) -> Literal["ready", "partial"]:
-        return window_coverage_status(self.accounted, self.coverable)
+        return "ready" if self.accounted >= self.coverable * READY_COVERAGE_RATIO else "partial"
 
 
 def commit_coverage(
