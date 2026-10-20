@@ -358,7 +358,9 @@ export interface RecommendationsResponse {
   project_id: string;
   project_name: string;
   scan_id: string;
+  // Findings the engine reasoned over (total_findings) against what the scan holds (findings_total).
   total_findings: number;
+  findings_total: number;
   total_vulnerabilities: number;
   recommendations: Recommendation[];
   summary: RecommendationsSummary;

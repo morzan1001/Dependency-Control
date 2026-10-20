@@ -57,6 +57,12 @@ export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {data.total_findings < data.findings_total && (
+          <div className="rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            Reasoned over {data.total_findings.toLocaleString()} of {data.findings_total.toLocaleString()} findings
+            in this scan. Every count and card here covers those findings and under-reports the rest.
+          </div>
+        )}
         {data.dependencies_read < data.dependencies_total && (
           <div className="rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
             Reasoned over {data.dependencies_read.toLocaleString()} of {data.dependencies_total.toLocaleString()}{" "}

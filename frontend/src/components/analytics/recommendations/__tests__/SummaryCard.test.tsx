@@ -28,6 +28,7 @@ function makeResponse(overrides: Partial<RecommendationsResponse>): Recommendati
     project_name: "demo",
     scan_id: "s1",
     total_findings: 0,
+    findings_total: overrides.total_findings ?? 0,
     total_vulnerabilities: 0,
     recommendations: [],
     summary: EMPTY_SUMMARY,
@@ -49,6 +50,32 @@ describe("SummaryCard dependency coverage", () => {
     render(<SummaryCard data={makeResponse({})} />);
 
     expect(screen.queryByText(TRUNCATION_NOTE)).not.toBeInTheDocument();
+  });
+});
+
+describe("SummaryCard findings coverage", () => {
+  const FINDINGS_NOTE = /findings in this scan/;
+
+  it("says what the advice was reasoned over when the findings read was capped", () => {
+    render(<SummaryCard data={makeResponse({ total_findings: 100000, findings_total: 123456 })} />);
+
+    expect(screen.getByText(FINDINGS_NOTE)).toHaveTextContent(
+      `Reasoned over ${(100000).toLocaleString()} of ${(123456).toLocaleString()} findings in this scan.`,
+    );
+  });
+
+  it("looks like the dependency notice beside it", () => {
+    render(
+      <SummaryCard data={makeResponse({ total_findings: 100000, findings_total: 123456, dependencies_read: READ })} />,
+    );
+
+    expect(screen.getByText(FINDINGS_NOTE).className).toBe(screen.getByText(/dependency rows in this scan/).className);
+  });
+
+  it("stays quiet when every finding was read", () => {
+    render(<SummaryCard data={makeResponse({ total_findings: 12 })} />);
+
+    expect(screen.queryByText(FINDINGS_NOTE)).not.toBeInTheDocument();
   });
 });
 
