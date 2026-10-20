@@ -48,10 +48,19 @@ _ONE_GROUP = [{"id": 1, "full_path": "mo", "name": "MO"}]
 _SIGNING_KEYS = {"keys": [{"kid": "k1"}, {"kid": "k2"}]}
 
 
-def _make_gitlab_service_mock(response, groups=_ONE_GROUP, jwks=_SIGNING_KEYS):
+def _group_page(groups: list[dict] | None, *, total: int | None = None, withheld: bool = False) -> httpx.Response:
+    """GitLab's answer to GET /groups?per_page=1; it withholds x-total past 10,000 rows."""
+    if groups is None:
+        return httpx.Response(403, json={"message": "403 Forbidden"})
+    headers = {} if withheld else {"x-total": str(len(groups) if total is None else total)}
+    return httpx.Response(200, json=groups[:1], headers=headers)
+
+
+def _make_gitlab_service_mock(response, groups=_ONE_GROUP, jwks=_SIGNING_KEYS, group_page=None):
     mock_svc = MagicMock()
     mock_svc.get_version = AsyncMock(return_value=response)
     mock_svc.get_groups = AsyncMock(return_value=groups)
+    mock_svc._api_get = AsyncMock(return_value=group_page or _group_page(groups))
     mock_svc.get_jwks = AsyncMock(return_value=jwks)
     mock_svc.refresh_jwks = AsyncMock(return_value=jwks)
     return mock_svc
@@ -597,7 +606,7 @@ class TestTestConnection:
         assert result.success is False
         assert result.message == "JWKS endpoint unreachable or returned no signing keys"
         service.get_version.assert_not_called()
-        service.get_groups.assert_not_called()
+        service._api_get.assert_not_called()
 
     def test_success_returns_version(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import test_connection
@@ -623,13 +632,13 @@ class TestTestConnection:
         assert "1 group(s)" in result.message
 
     @staticmethod
-    def _probe(admin_user, *, sync_teams=True, groups=_ONE_GROUP):
+    def _probe(admin_user, *, sync_teams=True, groups=_ONE_GROUP, group_page=None):
         from app.api.v1.endpoints.gitlab_instances import test_connection
 
         instance = make_gitlab_instance(id="inst-1", access_token="glpat-tok", sync_teams=sync_teams)
         response = MagicMock(status_code=200)
         response.json.return_value = {"version": "16.5.0"}
-        service = _make_gitlab_service_mock(response, groups=groups)
+        service = _make_gitlab_service_mock(response, groups=groups, group_page=group_page)
 
         with (
             patch(f"{MODULE}.GitLabInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)),
@@ -637,6 +646,21 @@ class TestTestConnection:
         ):
             result = asyncio.run(test_connection(instance_id="inst-1", db=MagicMock(), current_user=admin_user))
         return result, service
+
+    def test_the_group_probe_reads_one_group_and_counts_by_the_total(self, admin_user):
+        """Walking ten pages of groups to tell none from some also capped the reported count at 1000."""
+        result, service = self._probe(admin_user, group_page=_group_page(_ONE_GROUP, total=2345))
+
+        assert result.success is True
+        assert "Token reads 2345 group(s)." in result.message
+        service._api_get.assert_awaited_once_with("/groups", params={"per_page": 1})
+        service.get_groups.assert_not_called()
+
+    def test_a_total_gitlab_withholds_is_reported_as_at_least_one_group(self, admin_user):
+        result, _ = self._probe(admin_user, group_page=_group_page(_ONE_GROUP, withheld=True))
+
+        assert result.success is True
+        assert "Token reads at least one group." in result.message
 
     def test_a_token_that_cannot_list_groups_fails_a_team_syncing_instance(self, admin_user):
         """Team sync resolves a project's group through this listing, so a green test would hide that nothing syncs."""
@@ -657,7 +681,7 @@ class TestTestConnection:
         result, service = self._probe(admin_user, sync_teams=False, groups=None)
 
         assert result.success is True
-        service.get_groups.assert_not_called()
+        service._api_get.assert_not_called()
 
     def test_http_error_returns_failure(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import test_connection

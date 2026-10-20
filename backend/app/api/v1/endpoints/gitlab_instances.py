@@ -171,8 +171,8 @@ async def _probe_group_access(
     gitlab_service: GitLabService, instance: GitLabInstance, version: str | None
 ) -> GitLabInstanceTestConnectionResponse | str:
     """The token's visible groups are all team sync can resolve, so one that reads none must fail the test."""
-    groups = await gitlab_service.get_groups()
-    if groups is None:
+    response = await gitlab_service._api_get("/groups", params={"per_page": 1})
+    if response is None or response.status_code != 200:
         return _test_result(
             instance,
             success=False,
@@ -183,7 +183,7 @@ async def _probe_group_access(
                 "scope. Until then no repository on this instance gets a team."
             ),
         )
-    if not groups:
+    if not response.json():
         return _test_result(
             instance,
             success=False,
@@ -194,7 +194,9 @@ async def _probe_group_access(
                 "member of the groups DependencyControl covers, or an administrator token."
             ),
         )
-    return f" Token reads {len(groups)} group(s)."
+    # GitLab withholds the total past 10,000 rows.
+    total = response.headers.get("x-total")
+    return f" Token reads {total} group(s)." if total else " Token reads at least one group."
 
 
 @router.post("/{instance_id}/test-connection", responses=RESP_AUTH_404)
