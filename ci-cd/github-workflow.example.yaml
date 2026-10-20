@@ -18,7 +18,7 @@ concurrency:
 
 env:
   DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
-  SCANNER_VERSION: "1.3.2"
+  SCANNER_VERSION: "1.3.3"
   # Required: Get hash from $DEP_CONTROL_URL/api/v1/scripts/scanner.sh/hash?v=$SCANNER_VERSION
   SCANNER_SHA256: ${{ vars.SCANNER_SHA256 }}
   # Optional: Override the OIDC audience (default: "dependency-control")
@@ -29,6 +29,8 @@ env:
   #   DEP_CONTROL_RELEASE_VERSION: ${{ github.ref_name }}   # default: the commit tag
   #   DEP_CONTROL_RELEASE_ENVIRONMENT: "production"         # slug ^[a-z0-9][a-z0-9_-]{0,31}$
   # Requires SCANNER_VERSION 1.2.0 or newer; older scanners ignore all three.
+  # Matrix jobs of one scanner share one job id, so give each its own name on that job, or the last one replaces the others:
+  #   DEP_CONTROL_JOB_NAME: "sast (${{ matrix.target }})"   # requires SCANNER_VERSION 1.3.3 or newer
 
 jobs:
   sbom-scan:

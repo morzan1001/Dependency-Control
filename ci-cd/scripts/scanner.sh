@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Configuration & Constants
-SCRIPT_VERSION="1.3.2"
+SCRIPT_VERSION="1.3.3"
 TEMP_DIR="${TMPDIR:-/tmp}/dep-control-$$"
 AUTH_HEADER=""
 INGEST_CONFIG=""
@@ -111,6 +111,8 @@ detect_ci_environment() {
         fi
     fi
 
+    JOB_NAME="${DEP_CONTROL_JOB_NAME:-${CI_JOB_NAME:-}}"
+
     IS_RELEASE="${DEP_CONTROL_IS_RELEASE:-false}"
     if [[ "$IS_RELEASE" != "true" ]]; then
         IS_RELEASE="false"
@@ -205,6 +207,7 @@ build_base_payload() {
         --arg project_url "$PROJECT_URL"
         --arg pipeline_url "$PIPELINE_URL"
         --arg job_id "$JOB_ID"
+        --arg job_name "${JOB_NAME:-}"
         --arg job_started_at "$JOB_STARTED_AT"
         --arg commit_message "$COMMIT_MESSAGE"
         --arg commit_tag "$COMMIT_TAG"
@@ -222,6 +225,7 @@ build_base_payload() {
         project_url: $project_url,
         pipeline_url: $pipeline_url,
         job_id: ($job_id | tonumber),
+        job_name: (if $job_name == "" then null else $job_name end),
         job_started_at: $job_started_at,
         commit_message: $commit_message,
         commit_tag: $commit_tag,
@@ -438,6 +442,7 @@ scan_iac() {
         --arg project_url "$PROJECT_URL" \
         --arg pipeline_url "$PIPELINE_URL" \
         --arg job_id "$JOB_ID" \
+        --arg job_name "${JOB_NAME:-}" \
         --arg job_started_at "$JOB_STARTED_AT" \
         --arg commit_message "$COMMIT_MESSAGE" \
         --arg commit_tag "$COMMIT_TAG" \
@@ -454,6 +459,7 @@ scan_iac() {
             project_url: $project_url,
             pipeline_url: $pipeline_url,
             job_id: ($job_id | tonumber),
+            job_name: (if $job_name == "" then null else $job_name end),
             job_started_at: $job_started_at,
             commit_message: $commit_message,
             commit_tag: $commit_tag,
@@ -795,6 +801,8 @@ Environment Variables:
   DEP_CONTROL_OIDC_AUDIENCE        OIDC audience claim (default: "dependency-control")
   CBOM_FILE                        Path to a pre-built CBOM JSON (used by 'cbom' / 'all')
   DC_PY_PUBLISH_COVERAGE           "true" publishes the installed Python distributions as covered (default: false)
+  DEP_CONTROL_JOB_NAME             Name that keeps parallel jobs of one scanner apart (default: CI_JOB_NAME);
+                                   give each GitHub Actions matrix job its own, as they share one job id
 
 Release marking (set these in the job that deploys, not in every scan job):
   DEP_CONTROL_IS_RELEASE           "true" marks this scan as the deployed artefact (default: false)

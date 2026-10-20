@@ -25,7 +25,7 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 case "$url" in
-    */ingest/config) printf '{"active_analyzers": ["reachability"], "project_id": "p1"}\\n200' ;;
+    */ingest/config) printf '{"active_analyzers": ["reachability", "trufflehog", "kics"], "project_id": "p1"}\\n200' ;;
     */api/v1/projects/*) printf '{"status": "queued"}\\n202' ;;
     */api/v1/ingest*) printf '{"status": "queued"}\\n202' ;;
     *) printf '{"detail": "Not Found"}\\n404' ;;
@@ -54,6 +54,18 @@ _JSX_GRAPH = {
     "src/main.jsx": ["node_modules/react-dom/client.js", "node_modules/react/index.js", "src/App.jsx"],
     "vite.config.js": ["node_modules/vite/dist/node/index.js"],
 }
+
+# KICS 2 writes its report to <-o dir>/<--output-name>.
+_KICS_STUB = r"""#!/usr/bin/env bash
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o) out="$2"; shift ;;
+        --output-name) name="$2"; shift ;;
+    esac
+    shift
+done
+echo '{"queries": [], "files": []}' > "$out/$name"
+"""
 
 _GO_STUB = r"""#!/usr/bin/env python3
 import json, os, sys
@@ -114,6 +126,8 @@ def _run(
     _stub(stubs, "syft", f"#!/bin/sh\ncat '{_FIXTURES / 'sbom' / 'mono.syft.json'}'\n")
     _stub(stubs, "madge", _MADGE_STUB)
     _stub(stubs, "go", _GO_STUB)
+    _stub(stubs, "kics", _KICS_STUB)
+    _stub(stubs, "trufflehog", "#!/bin/sh\n")
     capture = tmp_path / "body.json"
     env = {
         "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
@@ -151,7 +165,22 @@ def test_the_uploaded_body_matches_the_frozen_1_2_0_release(command, tmp_path):
     frozen = _uploaded_body(_SCRIPTS / "versions" / "scanner-1.2.0.sh", command, tmp_path / "frozen")
     live = _uploaded_body(_SCRIPTS / "scanner.sh", command, tmp_path / "live")
 
-    assert live == frozen
+    assert live == {**frozen, "job_name": None}
+
+
+@pytest.mark.parametrize("command", ["secrets", "iac"])
+@pytest.mark.parametrize(
+    ("job_env", "job_name"),
+    [
+        pytest.param({}, None, id="no-job-name"),
+        pytest.param({"CI_JOB_NAME": "scan: [api]"}, "scan: [api]", id="ci-job-name"),
+        pytest.param({"CI_JOB_NAME": "scan", "DEP_CONTROL_JOB_NAME": "scan (api)"}, "scan (api)", id="override"),
+    ],
+)
+def test_a_findings_upload_names_the_job_that_posts_it(command, job_env, job_name, tmp_path):
+    body = _uploaded_body(_SCRIPTS / "scanner.sh", command, tmp_path, **job_env)
+
+    assert body["job_name"] == job_name
 
 
 def test_an_environment_the_ingest_would_reject_drops_the_whole_release_mark(tmp_path):
