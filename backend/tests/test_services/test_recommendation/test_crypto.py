@@ -45,23 +45,56 @@ def test_the_weak_algorithm_card_reads_its_table_row():
     assert rec.action["suggested_replacement"] == "SHA-256 or SHA-3"
 
 
-@pytest.mark.parametrize(("name", "title"), [("AES", "AES-ECB"), ("AES-128-ECB", "AES-128-ECB")])
-def test_an_ecb_card_names_the_mode_once_and_not_the_bare_cipher(name, title):
-    aes = CryptoAsset(
+def _block_cipher_findings(name, mode, bits):
+    cipher = CryptoAsset(
         project_id="p",
         scan_id="s",
-        bom_ref="crypto/algorithm/aes",
+        bom_ref=f"crypto/algorithm/{name}",
         name=name,
         asset_type=CryptoAssetType.ALGORITHM,
         primitive=CryptoPrimitive.BLOCK_CIPHER,
-        mode="ecb",
-        key_size_bits=256,
+        mode=mode,
+        key_size_bits=bits,
     )
-    findings = crypto_findings_for_assets([aes], load_seed_rules(), scanner="crypto_weak_algorithm")
+    return crypto_findings_for_assets([cipher], load_seed_rules(), scanner="crypto_weak_algorithm")
 
-    (rec,) = process_crypto(findings)
+
+@pytest.mark.parametrize(("name", "title"), [("AES", "AES-ECB"), ("AES-128-ECB", "AES-128-ECB")])
+def test_an_ecb_card_names_the_mode_once_and_not_the_bare_cipher(name, title):
+    (rec,) = process_crypto(_block_cipher_findings(name, "ecb", 256))
 
     assert rec.title == f"Replace weak algorithm: {title}"
+
+
+@pytest.mark.parametrize(("name", "bits"), [("DES", 56), ("3DES", 168)])
+def test_a_weak_cipher_card_keeps_its_replacement_whatever_the_mode(name, bits):
+    [rec] = [
+        rec
+        for rec in process_crypto(_block_cipher_findings(name, "cbc", bits))
+        if rec.type == RecommendationType.REPLACE_WEAK_ALGORITHM
+    ]
+
+    assert rec.action["suggested_replacement"] == "AES-256-GCM"
+
+
+def test_only_the_weak_algorithm_card_names_the_mode():
+    recs = process_crypto(_block_cipher_findings("AES", "ecb", 128))
+
+    assert sorted(rec.title for rec in recs) == ["Increase key size for AES", "Replace weak algorithm: AES-ECB"]
+
+
+@pytest.mark.parametrize("mode", ["unknown", "other", "UNKNOWN"])
+def test_an_unnamed_mode_leaves_the_card_named_by_its_algorithm(mode):
+    finding = {
+        "type": FindingType.CRYPTO_WEAK_ALGORITHM.value,
+        "severity": "HIGH",
+        "component": "AES",
+        "details": {"bom_ref": "a1", "asset_name": "AES", "mode": mode},
+    }
+
+    [rec] = process_crypto([finding])
+
+    assert rec.title == "Replace weak algorithm: AES"
 
 
 def test_the_action_names_every_rule_that_matched_the_asset_not_only_the_lead():

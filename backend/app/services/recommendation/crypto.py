@@ -120,10 +120,15 @@ def process_crypto(findings: list[ModelOrDict]) -> list[Recommendation]:
         # Asset names and legacy component labels often carry the version already.
         base = details.get("protocol_type") or details.get("asset_name")
         version = details.get("protocol_version")
-        mode = details.get("mode")
+        mode = str(details.get("mode") or "").lower()
         if base and version:
             label = f"{base} {version}"
-        elif mode and mode.lower() not in label.lower():
+        # Only an algorithm rule flags a mode (ECB); key-size and quantum cards stay grouped by algorithm.
+        elif (
+            finding_type == FindingType.CRYPTO_WEAK_ALGORITHM
+            and mode not in ("", "unknown", "other")
+            and mode not in label.lower()
+        ):
             label = f"{label}-{mode.upper()}"
         grouped[(_CRYPTO_CARDS[finding_type], label)].append(f)
     return [_build_recommendation(card, label, group) for (card, label), group in grouped.items()]
@@ -165,7 +170,8 @@ def _build_recommendation(card: _CryptoCard, label: str, findings: list[ModelOrD
 
 def _suggested_replacement(finding_type: str, asset_name: str, findings: list[ModelOrDict]) -> str | None:
     if finding_type == "crypto_weak_algorithm":
-        return _ALGORITHM_REPLACEMENTS.get(asset_name.upper())
+        algorithm = get_attr(findings[0], "details", {}).get("asset_name") or asset_name
+        return _ALGORITHM_REPLACEMENTS.get(str(algorithm).upper())
     if finding_type == "crypto_weak_key":
         # RSA/DSA below policy get bumped to the next NIST tier (3072); others defer to policy.
         for f in findings:
