@@ -160,21 +160,22 @@ class VulnerabilityEnrichmentService:
         self._kev_provider = KEVProvider()
         self._ghsa_provider = GHSAProvider()
 
-    async def _enrich_cves(self, cves: list[str]) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
+    async def _enrich_cves(self, cves: list[str]) -> tuple[dict[str, VulnerabilityEnrichment], str | None]:
         unique_cves = list({cve for cve in cves if cve and cve.startswith("CVE-")})
         if not unique_cves:
-            return {}, []
+            return {}, None
 
         kev_catalog, (epss_data, epss_complete) = await asyncio.gather(
             self._kev_provider.load_kev_catalog(), self._epss_provider.load_epss_scores(unique_cves)
         )
-        unavailable = [name for name, missing in (("KEV", kev_catalog is None), ("EPSS", not epss_complete)) if missing]
+        missing = [name for name, gone in (("KEV", kev_catalog is None), ("EPSS", not epss_complete)) if gone]
+        unavailable = f"{' and '.join(missing)} unavailable" if missing else None
         kev_catalog = kev_catalog or {}
         results = {cve: _build_enrichment(cve, kev_catalog.get(cve), epss_data.get(cve)) for cve in unique_cves}
 
         kev_count = sum(1 for e in results.values() if e.is_kev)
         logger.info(
-            f"Enriched {len(results)} CVEs (KEV: {kev_count}, EPSS: {len(epss_data)}, unavailable: {unavailable})"
+            f"Enriched {len(results)} CVEs (KEV: {kev_count}, EPSS: {len(epss_data)}, {unavailable or 'complete'})"
         )
         return results, unavailable
 
@@ -183,7 +184,7 @@ class VulnerabilityEnrichmentService:
 
     async def enrich_findings(
         self, findings: list[dict[str, Any]], github_token: str | None = None
-    ) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
+    ) -> tuple[dict[str, VulnerabilityEnrichment], str | None]:
         """Mutates the findings in place."""
         if ghsa_ids := _ghsa_ids(findings):
             logger.info(f"Resolving {len(ghsa_ids)} GHSA IDs to CVEs")

@@ -48,7 +48,7 @@ _SBOM = {
 
 
 def _serve(monkeypatch, **mock) -> AsyncMock:
-    enrich = AsyncMock(**{"return_value": ({}, []), **mock})
+    enrich = AsyncMock(**{"return_value": ({}, None), **mock})
     monkeypatch.setattr(vulnerability_enrichment_service, "enrich_findings", enrich)
     return enrich
 
@@ -88,7 +88,7 @@ async def test_enrichment_failure_is_reported(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_an_unreadable_source_reports_the_stage_as_errored(monkeypatch):
-    _serve(monkeypatch, return_value=({}, ["KEV"]))
+    _serve(monkeypatch, return_value=({}, "KEV unavailable"))
 
     response = await run_adhoc_analysis(_vulnerable_request(monkeypatch), FakeDatabase())
 
@@ -172,7 +172,7 @@ async def test_the_kev_card_names_the_bundled_cve_the_enrichment_marks(monkeypat
     async def enrich_findings(findings, github_token=None):
         for finding in findings:
             apply_enrichments(finding["details"], live)
-        return live, []
+        return live, None
 
     advisory = {"id": "ALAS2-2023-2001", "aliases": [first, second], "severity": "HIGH", "summary": "s"}
     serve_analyzer(monkeypatch, "osv", _vulnerable_osv(advisory))

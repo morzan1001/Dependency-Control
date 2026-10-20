@@ -389,7 +389,7 @@ async def _enrich_vulnerabilities(
         _record_errored(report, _ENRICHMENT, str(exc))
     else:
         if unavailable:
-            _record_errored(report, _ENRICHMENT, f"{' and '.join(unavailable)} unavailable")
+            _record_errored(report, _ENRICHMENT, unavailable)
         elif sends:
             _record_ran(report, _ENRICHMENT)
         else:

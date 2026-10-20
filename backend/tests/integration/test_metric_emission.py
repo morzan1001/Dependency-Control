@@ -239,7 +239,9 @@ def test_findings_are_counted_by_type_and_by_scanner():
 
 @pytest.mark.asyncio
 async def test_epss_kev_enrichment_counts_the_enriched_findings_their_scores_and_kev_hits(monkeypatch):
-    monkeypatch.setattr(engine.vulnerability_enrichment_service, "enrich_findings", AsyncMock(return_value=(None, [])))
+    monkeypatch.setattr(
+        engine.vulnerability_enrichment_service, "enrich_findings", AsyncMock(return_value=(None, None))
+    )
     monkeypatch.setattr(engine, "AnalysisResultRepository", lambda _db: MagicMock(save_result=AsyncMock()))
     moved = _deltas(
         [

@@ -5,7 +5,7 @@ import pytest
 from app.schemas.enrichment import EPSSData, GHSAData, KEVEntry
 from app.schemas.finding_details import VulnerabilityDetails, VulnerabilityEntryDetails
 from app.services.enrichment.service import VulnerabilityEnrichmentService, vulnerability_enrichment_service
-from tests.helpers.enrichment import CISA_HOST, Upstreams, serve_enrichment
+from tests.helpers.enrichment import CISA_HOST, FIRST_HOST, Upstreams, serve_enrichment
 
 
 def _kev(cve: str, due: str, *, ransomware: bool = False) -> KEVEntry:
@@ -268,7 +268,7 @@ async def test_the_per_cve_enrichment_of_a_bundled_advisory_is_handed_back(monke
     threat_intel, unavailable = await service.enrich_findings([finding])
 
     assert {cve: e.is_kev for cve, e in threat_intel.items()} == {"CVE-2023-0001": False, "CVE-2023-0002": True}
-    assert unavailable == []
+    assert unavailable is None
 
 
 @pytest.mark.asyncio
@@ -278,6 +278,17 @@ async def test_an_unreadable_source_is_reported_and_the_other_still_applies(fake
 
     _, unavailable = await vulnerability_enrichment_service.enrich_findings([finding])
 
-    assert unavailable == ["KEV"]
+    assert unavailable == "KEV unavailable"
     assert finding["details"]["epss_score"] == 0.94
     assert "in_kev" not in finding["details"]
+
+
+@pytest.mark.asyncio
+async def test_both_unreadable_sources_are_named_in_one_reason(fake_cache, monkeypatch):
+    serve_enrichment(monkeypatch, fake_cache, Upstreams(down=frozenset({CISA_HOST, FIRST_HOST})))
+
+    _, unavailable = await vulnerability_enrichment_service.enrich_findings(
+        [_vuln_finding("log4j-core", {"id": "CVE-2021-44228"})]
+    )
+
+    assert unavailable == "KEV and EPSS unavailable"

@@ -99,7 +99,7 @@ async def _mixed_run(db, monkeypatch) -> str:
     serve_analyzer(monkeypatch, "osv", _Scripted({}, _OSV_PARTIAL))
     serve_analyzer(monkeypatch, "trivy", _Scripted(_TRIVY_TIMEOUT, _TRIVY_TIMEOUT))
     monkeypatch.setattr(
-        engine.vulnerability_enrichment_service, "enrich_findings", AsyncMock(return_value=({}, ["KEV"]))
+        engine.vulnerability_enrichment_service, "enrich_findings", AsyncMock(return_value=({}, "KEV unavailable"))
     )
     external = {"trufflehog": {"error": "scanner container OOM-killed"}, "kics": {"queries": []}}
     return await _run(db, [*_SBOM_ANALYZERS, "epss_kev"], external=external)

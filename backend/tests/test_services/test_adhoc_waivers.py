@@ -427,7 +427,7 @@ async def test_a_globally_waived_cve_counts_in_neither_the_kev_nor_the_reachabil
     async def enrich_findings(findings, github_token=None):
         for finding in findings:
             apply_enrichments(finding["details"], in_kev)
-        return in_kev, []
+        return in_kev, None
 
     monkeypatch.setattr(vulnerability_enrichment_service, "enrich_findings", enrich_findings)
     db = FakeDatabase()

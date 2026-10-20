@@ -900,7 +900,7 @@ class _Rendezvous:
 
 @pytest.mark.asyncio
 async def test_the_requested_analyzers_run_side_by_side_on_each_input(monkeypatch):
-    monkeypatch.setattr(vulnerability_enrichment_service, "enrich_findings", AsyncMock(return_value=({}, [])))
+    monkeypatch.setattr(vulnerability_enrichment_service, "enrich_findings", AsyncMock(return_value=({}, None)))
     barrier = asyncio.Barrier(2)
     license_analyzer = analyzer_factories["license_compliance"]()
     serve_analyzer(monkeypatch, _OSV_NAME, _Rendezvous(FakeOsv({"id": _PARTIAL_CVE, "severity": "HIGH"}), barrier))

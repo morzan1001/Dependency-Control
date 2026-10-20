@@ -504,8 +504,9 @@ async def _run_epss_kev_enrichment(
         epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
         await AnalysisResultRepository(ctx.db).save_result(ctx.scan_id, "epss_kev", epss_kev_summary)
         status = OutcomeStatus.PARTIAL if unavailable else OutcomeStatus.SUCCESS
-        reason = f"{' and '.join(unavailable)} unavailable" if unavailable else ""
-        outcomes.append(AnalyzerOutcome("epss_kev", status, reason, f"{len(vulnerability_findings)} enriched"))
+        outcomes.append(
+            AnalyzerOutcome("epss_kev", status, unavailable or "", f"{len(vulnerability_findings)} enriched")
+        )
         logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
 
         analysis_enrichment_total.labels(type="epss_kev").inc(len(vulnerability_findings))
