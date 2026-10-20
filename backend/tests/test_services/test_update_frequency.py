@@ -1234,6 +1234,23 @@ class TestStreamingOrchestrator:
         assert m.adoption_latency_days_median is None
 
     @pytest.mark.asyncio
+    async def test_a_deps_dev_slower_than_the_budget_leaves_only_the_cadence_card_empty(self, monkeypatch):
+        monkeypatch.setattr(update_frequency_module, "_UPSTREAM_BUDGET_SECONDS", 0.05)
+
+        async def _never_answers(_packages: Sequence[tuple[str, str]]) -> ReleaseHistory:
+            await asyncio.sleep(60)
+            return {}
+
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {"s1": [_make_dep("s1", "pkg-a", "1.0.0")], "s2": [_make_dep("s2", "pkg-a", "1.0.1")]}
+
+        m = await asyncio.wait_for(
+            _compute(scans, deps, release_fetcher=SimpleNamespace(fetch=_never_answers)), timeout=5
+        )
+
+        assert (m.total_updates, m.adoption_latency_days_median, m.upstream_releases_last_12m_median) == (1, None, None)
+
+    @pytest.mark.asyncio
     async def test_a_rollback_to_an_old_version_is_no_adoption(self):
         """Returning to a years-old release must not add years to the adoption latency."""
         scans = [_scan_days_ago("s1", 60), _scan_days_ago("s2", 30), _scan_days_ago("s3", 0)]

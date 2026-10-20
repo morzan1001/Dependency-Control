@@ -142,23 +142,23 @@ class DepsDevReleaseHistoryFetcher:
         missing = [package for package in keys if package not in history]
         if missing:
             async with InstrumentedAsyncClient("deps.dev API", timeout=_FETCH_TIMEOUT_SECONDS) as client:
-                payloads = await gather_bounded(
-                    missing,
-                    lambda package: fetch_deps_dev_json(client, _build_deps_dev_url(*package)),
-                    _FETCH_CONCURRENCY,
+                fetched = await gather_bounded(
+                    missing, lambda package: _fetch_and_cache(client, package, keys[package]), _FETCH_CONCURRENCY
                 )
             # A failed lookup stays uncached; a package deps.dev does not know is remembered as empty.
-            fetched = {
-                package: parse_deps_dev_response(payload or {})
-                for package, payload in zip(missing, payloads, strict=True)
-                if not isinstance(payload, BaseException)
-            }
-            await cache_service.mset(
-                {keys[package]: _release_list_to_cache(releases) for package, releases in fetched.items()},
-                ttl_seconds=CacheTTL.RELEASE_HISTORY,
+            history.update(
+                (package, releases)
+                for package, releases in zip(missing, fetched, strict=True)
+                if not isinstance(releases, BaseException)
             )
-            history.update(fetched)
         return {package: releases for package, releases in history.items() if releases}
+
+
+async def _fetch_and_cache(client: InstrumentedAsyncClient, package: tuple[str, str], key: str) -> list[ReleaseInfo]:
+    """Cached as each lookup lands, so a request cut off by its budget still warms the next one."""
+    releases = parse_deps_dev_response(await fetch_deps_dev_json(client, _build_deps_dev_url(*package)) or {})
+    await cache_service.set(key, _release_list_to_cache(releases), ttl_seconds=CacheTTL.RELEASE_HISTORY)
+    return releases
 
 
 def _build_deps_dev_url(system: str, name: str) -> str:

@@ -110,7 +110,7 @@ async def test_release_lookups_share_one_client_and_one_read_and_remember_a_404(
     assert first.status_code == 200, first.text
     assert first.json()["adoption_latency_days_median"] is not None
     assert len(opened) == 1
-    assert cache.round_trips == ["mget", "mset"]
+    assert cache.round_trips == ["mget", "set", "set", "set"]
 
     requested.clear()
     cache.round_trips.clear()

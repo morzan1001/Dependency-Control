@@ -867,6 +867,10 @@ async def compute_update_frequency(
     )
 
 
+# Half the browser's 30 s request timeout, so a slow deps.dev never costs the walk its own answer.
+_UPSTREAM_BUDGET_SECONDS = 15.0
+
+
 async def _maybe_fetch_upstream_cadence(
     release_fetcher: ReleaseHistoryFetcher | None,
     package_specs: dict[str, tuple[str, str]],
@@ -877,7 +881,8 @@ async def _maybe_fetch_upstream_cadence(
         return None
 
     try:
-        history = await release_fetcher.fetch(list(dict.fromkeys(package_specs.values())))
+        async with asyncio.timeout(_UPSTREAM_BUDGET_SECONDS):
+            history = await release_fetcher.fetch(list(dict.fromkeys(package_specs.values())))
     except Exception:
         logger.warning("release-history fetcher failed; skipping upstream cadence", exc_info=True)
         return None
