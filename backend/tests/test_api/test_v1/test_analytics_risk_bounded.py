@@ -13,7 +13,12 @@ from app.api.v1.helpers.analytics import (
     select_impact_candidates,
     severity_counts_from_details,
 )
-from app.core.constants import BLAST_RADIUS_THRESHOLD, DAYS_KNOWN_OVERDUE_THRESHOLD, IMPACT_MAX_SCORE_BOOST
+from app.core.constants import (
+    BLAST_RADIUS_THRESHOLD,
+    DAYS_KNOWN_OVERDUE_THRESHOLD,
+    EXPLOIT_MATURITY_BOOST,
+    IMPACT_MAX_SCORE_BOOST,
+)
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
 from app.schemas.analytics import SeverityBreakdown
@@ -703,6 +708,34 @@ class TestImpactPreScoreIsScoreBase:
             assert impact_pre_score(counts, ap) == calculate_impact_score(
                 counts, ap, CVEEnrichmentResult(), has_fix=False, days_known=None
             ), f"pre-score must equal the un-boosted impact score (ap={ap})"
+
+    def test_the_boost_ceiling_is_the_highest_boost_any_enrichment_reaches(self):
+        counts = {"critical": 1}
+        due_soon = (datetime.now(timezone.utc) + timedelta(days=5)).date().isoformat()
+        kev_states = [
+            {},
+            {"has_kev": True},
+            {"has_kev": True, "days_until_due": 5, "kev_due_date": due_soon},
+            {"has_kev": True, "days_until_due": -1},
+            {"has_kev": True, "kev_ransomware_use": True},
+        ]
+        ratios = [
+            calculate_impact_score(
+                counts,
+                1,
+                CVEEnrichmentResult(**kev, max_epss=epss, exploit_maturity=maturity),
+                has_fix=has_fix,
+                days_known=days_known,
+            )
+            / impact_pre_score(counts, 1)
+            for kev in kev_states
+            for epss in (None, 0.005, 0.05, 0.2, 0.6)
+            for maturity in EXPLOIT_MATURITY_BOOST
+            for has_fix in (False, True)
+            for days_known in (None, DAYS_KNOWN_OVERDUE_THRESHOLD + 1)
+        ]
+
+        assert max(ratios) == pytest.approx(IMPACT_MAX_SCORE_BOOST)
 
     def test_reach_is_capped_like_the_score(self):
         counts = {"critical": 1, "high": 0, "medium": 0, "low": 0}
