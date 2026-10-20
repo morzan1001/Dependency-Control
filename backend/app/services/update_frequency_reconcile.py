@@ -10,6 +10,7 @@ from itertools import pairwise
 from typing import Any
 
 from app.core.config import settings
+from app.core.constants import UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS
 from app.core.metrics import update_frequency_reconcile_drift_total
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION
 from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
@@ -28,9 +29,6 @@ logger = logging.getLogger(__name__)
 _LOCK_NAME = "update_frequency_reconcile"
 # Held to expiry, never released: it outlasts the quiet hour in which every pod checks once.
 _LOCK_TTL_SECONDS = 2 * 3600
-
-# The comparison endpoint's default window; the sweep repairs nothing older, even if a caller asks wider.
-_RECONCILE_WINDOW_DAYS = 90
 
 # A repair re-reads two dependency sets (~1.6 MB); the cap keeps this from becoming a backfill (~70 s).
 _MAX_REPAIRS = 500
@@ -87,7 +85,8 @@ async def run_update_frequency_reconcile(db: Any) -> ReconcileReport | None:
 
 
 async def _reconcile(db: Any) -> ReconcileReport:
-    since = datetime.now(tz=timezone.utc) - timedelta(days=_RECONCILE_WINDOW_DAYS)
+    # The sweep repairs nothing older, even if a request asks for a wider window.
+    since = datetime.now(tz=timezone.utc) - timedelta(days=UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS)
     project_ids = sorted(str(project_id) for project_id in await db.projects.distinct("_id"))
     # Ledger first: a scan finishing between the reads then looks missing (idempotent), not like an orphan to delete.
     ledger = await ScanUpdateDeltaRepository(db).window_ledger_by_branch(project_ids, since)

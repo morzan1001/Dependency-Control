@@ -18,7 +18,7 @@ from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.api.v1.helpers.teams import resolve_team_names, team_refs
 from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.config import settings
-from app.core.constants import SCANS_TIP_SORT
+from app.core.constants import SCANS_TIP_SORT, UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS
 from app.core.permissions import Permissions
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
@@ -65,9 +65,6 @@ from app.services.update_frequency_fold import (
 router = CustomAPIRouter()
 
 _DISCONNECT_POLL_SECONDS = 1.0
-
-# A ranking needs one shared window to compare like spans; a quarter covers the slowest realistic scan cadence.
-_DEFAULT_COMPARISON_WINDOW_DAYS = 90
 
 # Worst-case recompute times over the largest tenant: the live path walks every scan, the rollup a few queries.
 _LIVE_COMPARISON_BUDGET_SECONDS = 240.0
@@ -362,7 +359,7 @@ async def get_update_frequency_comparison(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     team_id: str | None = None,
-    window_days: Annotated[int, Query(ge=1, le=3650)] = _DEFAULT_COMPARISON_WINDOW_DAYS,
+    window_days: Annotated[int, Query(ge=1, le=3650)] = UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS,
 ) -> UpdateFrequencyComparison:
     """Cross-project ranking over one calendar window, never a scan count, so scan cadences stay comparable."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)

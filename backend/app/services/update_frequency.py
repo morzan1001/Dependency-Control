@@ -21,6 +21,7 @@ from app.core.constants import (
     RETENTION_ACTION_DELETE,
     SETTINGS_MODE_GLOBAL,
     SLOWEST_PACKAGES_LIMIT,
+    UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS,
     UPDATE_SAMPLE_RANK,
     UpdateKind,
 )
@@ -968,7 +969,7 @@ async def compute_update_frequency_comparison(
     scan_repo: ScanRepository,
     dep_repo: DependencyRepository,
     analysis_repo: AnalysisResultRepository,
-    window_days: int = 90,
+    window_days: int = UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS,
 ) -> UpdateFrequencyComparison:
     """One calendar window for every project: different spans would rank scan cadence, not update activity."""
     # Per call: a Semaphore binds to the loop of first use, so a module-level one would pin to the first loop.

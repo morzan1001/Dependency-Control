@@ -12,7 +12,6 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.deps import get_current_active_user, get_database
 from app.api.v1.endpoints.analytics.update_frequency import (
-    _DEFAULT_COMPARISON_WINDOW_DAYS,
     _LIVE_COMPARISON_BUDGET_SECONDS,
     _ROLLUP_COMPARISON_BUDGET_SECONDS,
     _comparison_cache_key,
@@ -24,6 +23,7 @@ from app.api.v1.endpoints.analytics.update_frequency import (
 )
 from app.core.cache import CacheTTL
 from app.core.config import settings
+from app.core.constants import UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.project import Project
 from app.models.user import User
@@ -348,7 +348,7 @@ class TestReadPathSelection:
 
         assert compute.await_count == 0
         assert result.pending_projects == 3
-        assert rollup.await_args.kwargs["window_days"] == _DEFAULT_COMPARISON_WINDOW_DAYS
+        assert rollup.await_args.kwargs["window_days"] == UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS
 
     def test_the_two_paths_do_not_share_a_cache_entry(self):
         cache = FakeCache()
@@ -615,7 +615,7 @@ def _summary(project_id: str, name: str, team_id: str, rate: float) -> ProjectUp
         teams=[{"id": team_id, "name": team_id}],
         data_status="ready",
         branch="main",
-        window_days=_DEFAULT_COMPARISON_WINDOW_DAYS,
+        window_days=UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS,
         scan_count=5,
         updates_per_month=rate,
         update_coverage_pct=rate * 10,

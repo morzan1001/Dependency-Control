@@ -763,6 +763,9 @@ UPDATE_SAMPLE_RANK: dict[str, int] = {kind: rank for rank, kind in enumerate(get
 # Ties at the cap break on the package name, or tied packages swap places between requests.
 SLOWEST_PACKAGES_LIMIT: int = 15
 
+# A ranking needs one shared window to compare like spans; a quarter covers the slowest realistic scan cadence.
+UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS: int = 90
+
 # Bounds a rescan-lineage walk so a cyclic pointer cannot hang it; reading the starting scan costs no hop.
 MAX_RESCAN_HOPS: int = 10
 
