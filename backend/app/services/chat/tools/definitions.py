@@ -206,8 +206,8 @@ _tool(
 )
 _tool(
     "get_hotspots",
-    "The riskiest projects the user can access, worst first by their head build's critical "
-    "then high count, each with its head_scan_id and severity stats. For the riskiest "
+    "The riskiest projects the user can access, worst first by their head build's risk_score "
+    "as the dashboard ranks them, each with its head_scan_id and severity stats. For the riskiest "
     "libraries use search_findings or find_component_usage.",
     limit=_bounded(10, MAX_SUMMARY_ROWS, "Max hotspots"),
 )
@@ -409,7 +409,7 @@ _tool(
 _tool(
     "get_team_risk_overview",
     "Aggregate security posture for a single team: severity totals over its projects' head "
-    "builds plus the three riskiest projects (critical, then high). Use when the user asks "
+    "builds plus the three riskiest projects by risk_score. Use when the user asks "
     "'how is team X doing?' or 'team-level summary'.",
     required=["team_id"],
     permissions=_TEAM_READ,

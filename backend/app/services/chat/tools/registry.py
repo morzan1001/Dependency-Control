@@ -279,8 +279,8 @@ def _archive_row(archive: dict[str, Any], read_all: bool) -> dict[str, Any]:
 
 
 def _rank_risky_projects(stats: dict[str, Stats], limit: int) -> list[str]:
-    """The id breaks ties so the order is stable."""
-    return sorted(stats, key=lambda pid: (-stats[pid].critical, -stats[pid].high, pid))[:limit]
+    """Ranked by risk_score as the dashboard ranks; the id breaks ties so the order is stable."""
+    return sorted(stats, key=lambda pid: (-stats[pid].risk_score, -stats[pid].critical, -stats[pid].high, pid))[:limit]
 
 
 def _top_risky(stats: dict[str, Stats], names: dict[str, str]) -> list[dict[str, Any]]:
@@ -290,6 +290,7 @@ def _top_risky(stats: dict[str, Stats], names: dict[str, str]) -> list[dict[str,
             "project_name": names.get(pid, ""),
             "critical": stats[pid].critical,
             "high": stats[pid].high,
+            "risk_score": stats[pid].risk_score,
         }
         for pid in _rank_risky_projects(stats, _TOP_RISKY)
     ]

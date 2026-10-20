@@ -75,3 +75,36 @@ async def test_project_rows_carry_their_head_builds_counts(tool, args):
     rows = (await _call(tool, args))["projects"]
 
     assert {row["id"]: (row["stats"]["critical"], row["stats"]["high"]) for row in rows} == _HEAD_COUNTS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "args", "key"),
+    [
+        ("get_analytics_summary", {}, "top_risky_projects"),
+        ("get_team_risk_overview", {"team_id": _TEAM}, "top_risky_projects"),
+        ("get_hotspots", {"limit": 3}, "hotspots"),
+    ],
+    ids=["summary", "team-overview", "hotspots"],
+)
+async def test_the_riskiest_projects_are_ranked_by_risk_score_as_on_the_dashboard(tool, args, key):
+    db = _seeded()
+    # Hundreds of medium findings outweigh one critical in the risk score the dashboard ranks by.
+    db.scans._docs["scan-p-c"]["stats"] = {"critical": 0, "high": 0, "medium": 300, "low": 0, "risk_score": 54.5}
+    db.scans._docs["scan-p-a"]["stats"] = {"critical": 1, "high": 0, "medium": 0, "low": 0, "risk_score": 7.4}
+    admin = User(id="u-admin", username="admin", email="admin@test.com", permissions=PRESET_ADMIN)
+
+    rows = (await ChatToolRegistry().execute_tool(tool, args, admin, db))[key]
+
+    assert [row["project_id"] for row in rows] == ["p-c", "p-a", "p-b"]
+
+
+@pytest.mark.asyncio
+async def test_a_top_risky_row_names_the_risk_score_it_was_ranked_by():
+    db = _seeded()
+    db.scans._docs["scan-p-c"]["stats"]["risk_score"] = 12.6
+    admin = User(id="u-admin", username="admin", email="admin@test.com", permissions=PRESET_ADMIN)
+
+    rows = (await ChatToolRegistry().execute_tool("get_analytics_summary", {}, admin, db))["top_risky_projects"]
+
+    assert (rows[0]["project_id"], rows[0]["risk_score"]) == ("p-c", 12.6)
