@@ -5,10 +5,15 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.services.aggregation.versions import parse_version_key
 
+# Dependency types a row of the ecosystem is stored under besides its purl type: syft's, or a pkg:go purl's.
+ECOSYSTEM_STORED_TYPES = {
+    "pypi": {"python"},
+    "golang": {"go", "go-module"},
+    "maven": {"java-archive"},
+    "nuget": {"dotnet"},
+}
 # Names the UI and syft use for an ecosystem, mapped to its purl type.
-_ECOSYSTEM_ALIASES = {"pip": "pypi", "python": "pypi", "go": "golang", "go-module": "golang", "dotnet": "nuget"}
-# Dependency types a purl-less row of the ecosystem is stored under, besides the purl type itself.
-ECOSYSTEM_STORED_TYPES = {"pypi": {"python"}, "golang": {"go-module"}, "maven": {"java-archive"}, "nuget": {"dotnet"}}
+_ECOSYSTEM_ALIASES = {"pip": "pypi"} | {t: eco for eco, types in ECOSYSTEM_STORED_TYPES.items() for t in types}
 # The types the purl spec registers; a rule typed otherwise could never match a dependency.
 _PURL_TYPES = frozenset(
     {

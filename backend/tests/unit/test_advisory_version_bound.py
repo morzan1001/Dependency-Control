@@ -40,12 +40,22 @@ def test_a_bound_that_names_no_version_is_rejected(bound):
         AdvisoryPackage(name="pkg", version=bound)
 
 
-@pytest.mark.parametrize(("given", "stored"), [("pip", "pypi"), ("Go", "golang"), ("", None), ("maven", "maven")])
+@pytest.mark.parametrize(
+    ("given", "stored"),
+    [
+        ("pip", "pypi"),
+        ("Go", "golang"),
+        ("go-module", "golang"),
+        ("java-archive", "maven"),
+        ("", None),
+        ("maven", "maven"),
+    ],
+)
 def test_the_ecosystem_is_named_by_its_purl_type(given, stored):
     assert AdvisoryPackage(name="pkg", type=given).type == stored
 
 
-@pytest.mark.parametrize("given", ["bogus", "java-archive", "Python Package"])
+@pytest.mark.parametrize("given", ["bogus", "mvn", "Python Package"])
 def test_a_type_that_is_no_purl_type_is_rejected(given):
     with pytest.raises(ValidationError):
         AdvisoryPackage(name="pkg", type=given)
