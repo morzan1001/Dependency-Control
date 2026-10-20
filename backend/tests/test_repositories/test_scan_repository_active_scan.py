@@ -4,8 +4,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.constants import SCAN_STATUS_FAILED
+from app.models.project import Project
 from app.models.stats import Stats
 from app.repositories.scans import HAS_SBOM_MATCH, USABLE_BUILD_MATCH, ScanRepository
+from app.services.analytics.scopes import read_scope_projects
 from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
@@ -445,6 +447,38 @@ class TestHeadIsTheDefaultBranch:
         assert result == {"p1": "v2"}
 
 
+_TAG_BUILDS = [
+    _scan("v1", "p1", "v1.0.0", 30, commit_tag="v1.0.0"),
+    _scan("v2", "p1", "v2.0.0", 6, commit_tag="v2.0.0"),
+]
+
+
+class TestTagBuildHead:
+    def test_a_pointer_the_sync_flagged_as_a_tag_build_head_is_trusted(self):
+        result, reads = asyncio.run(
+            _resolve(_TAG_BUILDS, [_project("p1", default_branch="main", latest_scan_id="v2", latest_scan_from_tag=True)])
+        )
+
+        assert result == {"p1": "v2"}
+        assert (reads.finds, reads.seeks, reads.aggregates) == (_POINTER_READS, _NO_READS, _NO_READS)
+
+    @pytest.mark.parametrize("load", ["scope", "model"])
+    @pytest.mark.asyncio
+    async def test_the_project_shapes_the_head_is_read_from_carry_the_tag_flag(self, load):
+        db = await _seeded(_TAG_BUILDS)
+        await db.projects.insert_one(_project("p1", name="p", latest_scan_id="v2", latest_scan_from_tag=True))
+        if load == "scope":
+            projects = await read_scope_projects(db, {})
+        else:
+            projects = [Project(**await db.projects.find_one({"_id": "p1"}))]
+        counting = _CountingScans(db.scans)
+        repo = ScanRepository(db)
+        repo.collection = counting
+
+        assert await repo.get_latest_active_scan_ids(projects) == {"p1": "v2"}
+        assert counting.seeks == _NO_READS
+
+
 class TestTipTiers:
     def test_the_rescan_scheduler_tries_each_distinct_query_once(self):
         """Its match folds the six tiers into two queries, and repeating one only walks the same scans again."""
@@ -782,6 +816,22 @@ class TestSyncProjectHead:
 
         assert await ScanRepository(db).sync_project_head("p1") == "b2"
         assert (await db.projects.find_one({"_id": "p1"}))["latest_scan_id"] == "b2"
+
+    @pytest.mark.asyncio
+    async def test_flags_a_head_that_only_a_tag_build_could_give(self):
+        db = await _seeded(_TAG_BUILDS)
+
+        written, project = await self._synced(db, _project("p1", default_branch="main"))
+
+        assert (written, project["latest_scan_from_tag"]) == ("v2", True)
+
+    @pytest.mark.asyncio
+    async def test_a_branch_build_head_clears_the_tag_flag(self):
+        db = await _seeded([*_TAG_BUILDS, _scan("main-tip", "p1", "main", 40)])
+
+        written, project = await self._synced(db, _project("p1", latest_scan_id="v2", latest_scan_from_tag=True))
+
+        assert (written, project["latest_scan_from_tag"]) == ("main-tip", False)
 
     @pytest.mark.asyncio
     async def test_a_project_that_is_gone_is_left_alone(self):

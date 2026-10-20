@@ -35,6 +35,8 @@ class Project(MongoDocument, CreatedAtModel):
     # The last scanner post from any branch; the rescan clock is Scan.last_rescanned_at.
     last_scan_at: datetime | None = None
     latest_scan_id: str | None = None
+    # Written beside latest_scan_id by sync_project_head: the head is a tag build, as no live branch build could head.
+    latest_scan_from_tag: bool = Field(False, exclude=True)
     retention_days: int = DEFAULT_RETENTION_DAYS
     retention_action: str = RETENTION_ACTION_DELETE
     default_branch: str | None = None

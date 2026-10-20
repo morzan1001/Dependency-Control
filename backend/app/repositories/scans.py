@@ -48,7 +48,10 @@ _TIP_TIERS: tuple[dict[str, Any], ...] = tuple(
 _TIP_LOOKUP_CONCURRENCY = 16
 _CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}
 _TIP_PROJECTION = {**_CHAIN_PROJECTION, "branch": 1, "commit_tag": 1}
-_HEAD_SCOPE_PROJECTION = {"default_branch": 1, "deleted_branches": 1, "latest_scan_id": 1}
+# Every project field the head is resolved from; a projection that leaves the tag flag out only costs a re-derivation.
+HEAD_SCOPE_FIELDS: tuple[str, ...] = ("default_branch", "deleted_branches", "latest_scan_id", "latest_scan_from_tag")
+_HEAD_SCOPE_PROJECTION = dict.fromkeys(HEAD_SCOPE_FIELDS, 1)
+_HEAD_STATS_PROJECTION = {"stats": 1, "branch": 1, "commit_tag": 1}
 _HEAD_SYNC_ATTEMPTS = 3
 
 
@@ -106,6 +109,7 @@ class _HeadScope(NamedTuple):
     default_branch: str | None
     deleted: list[str]
     pointer: str | None
+    pointer_is_tag_head: bool
 
 
 def _head_scope(project: Any) -> tuple[str | None, _HeadScope]:
@@ -113,6 +117,7 @@ def _head_scope(project: Any) -> tuple[str | None, _HeadScope]:
         default_branch=_project_field(project, "default_branch"),
         deleted=list(_project_field(project, "deleted_branches") or []),
         pointer=_project_field(project, "latest_scan_id"),
+        pointer_is_tag_head=bool(_project_field(project, "latest_scan_from_tag")),
     )
 
 
@@ -120,11 +125,18 @@ def _live_default(scope: _HeadScope) -> str | None:
     return scope.default_branch if scope.default_branch and scope.default_branch not in scope.deleted else None
 
 
+def _is_tag_build(doc: dict[str, Any]) -> bool:
+    return doc.get("branch") == doc.get("commit_tag")
+
+
 def _may_head(doc: dict[str, Any], scope: _HeadScope) -> bool:
+    # A tag head is picked only when no live branch build could head, and every scope change re-syncs the pointer.
+    if scope.pointer_is_tag_head:
+        return True
     default = _live_default(scope)
     if default:
         return doc.get("branch") == default
-    return doc.get("branch") not in scope.deleted and doc.get("branch") != doc.get("commit_tag")
+    return doc.get("branch") not in scope.deleted and not _is_tag_build(doc)
 
 
 class ScanRepository:
@@ -380,12 +392,18 @@ class ScanRepository:
                 return None
             _, scope = _head_scope(project)
             scan_id = (await self._head_scan_ids({project_id: scope._replace(pointer=None)})).get(project_id)
-            doc = await self.collection.find_one({"_id": scan_id}, {"stats": 1}) if scan_id else None
+            doc = await self.collection.find_one({"_id": scan_id}, _HEAD_STATS_PROJECTION) if scan_id else None
             head = doc["_id"] if doc else None
             # A pointer moved in between belongs to a writer that saw newer scans, so the head is derived again.
             written = await self.db.projects.update_one(
                 {"_id": project_id, "latest_scan_id": scope.pointer},
-                {"$set": {"latest_scan_id": head, "stats": doc.get("stats") if doc else None}},
+                {
+                    "$set": {
+                        "latest_scan_id": head,
+                        "stats": doc.get("stats") if doc else None,
+                        "latest_scan_from_tag": doc is not None and _is_tag_build(doc),
+                    }
+                },
             )
             if written.matched_count:
                 return head

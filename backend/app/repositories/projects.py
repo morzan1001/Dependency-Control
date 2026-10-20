@@ -6,6 +6,7 @@ from pymongo import ReturnDocument
 from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_SOURCE_MANUAL
 from app.models.project import Project
 from app.repositories.base import BaseRepository, UpdateOps
+from app.repositories.scans import HEAD_SCOPE_FIELDS
 from app.schemas.projections import ProjectWithScanId
 
 _MEMBERS_USER_ID = "members.user_id"
@@ -130,15 +131,7 @@ class ProjectRepository(BaseRepository[Project]):
         if limit <= 0:
             return []
         cursor = self.collection.find(
-            query,
-            {
-                "_id": 1,
-                "name": 1,
-                "latest_scan_id": 1,
-                "deleted_branches": 1,
-                "default_branch": 1,
-                "active_analyzers": 1,
-            },
+            query, {"_id": 1, "name": 1, "active_analyzers": 1, **dict.fromkeys(HEAD_SCOPE_FIELDS, 1)}
         ).limit(limit)
         docs = await cursor.to_list(limit)
         return [ProjectWithScanId(**doc) for doc in docs]

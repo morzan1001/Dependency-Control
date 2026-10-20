@@ -45,7 +45,7 @@ from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
 from app.models.project import Project
 from app.repositories.distributed_locks import DistributedLocksRepository, LockLost, new_lock_holder, run_holding_lock
-from app.repositories.scans import HAS_SBOM_MATCH, USABLE_BUILD_MATCH, ScanRepository
+from app.repositories.scans import HAS_SBOM_MATCH, HEAD_SCOPE_FIELDS, USABLE_BUILD_MATCH, ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.analysis.notifications import notify_analysis_failed
 from app.services.audit.retention import prune_old_audit_entries
@@ -362,7 +362,7 @@ async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, la
 
 async def _project_heads(db: Any, project_ids: set[str]) -> set[str]:
     projects = await db.projects.find(
-        {"_id": {"$in": sorted(project_ids)}}, {"latest_scan_id": 1, "default_branch": 1, "deleted_branches": 1}
+        {"_id": {"$in": sorted(project_ids)}}, dict.fromkeys(HEAD_SCOPE_FIELDS, 1)
     ).to_list(None)
     return set((await ScanRepository(db).get_latest_active_scan_ids(projects)).values())
 
