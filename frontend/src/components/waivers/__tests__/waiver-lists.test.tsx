@@ -96,6 +96,14 @@ describe('the project waiver list', () => {
     await waitFor(() => expect(lastQuery()).toMatchObject({ sort_by: column, sort_order: 'asc' }))
   })
 
+  it("writes a Go module's version once, as the findings table does, not as vv0.3.0", async () => {
+    vi.mocked(waiverApi.getAll).mockResolvedValue(page([{ ...WAIVER, package_name: 'golang.org/x/text', package_version: 'v0.3.0' } as Waiver]))
+    renderList(<ProjectWaivers projectId="p1" />)
+
+    expect(await screen.findByText('v0.3.0')).toBeInTheDocument()
+    expect(screen.queryByText('vv0.3.0')).toBeNull()
+  })
+
   it('narrows to orphaned waivers', async () => {
     renderList(<ProjectWaivers projectId="p1" />)
     await screen.findByText('minimist')

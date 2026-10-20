@@ -120,7 +120,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                     <h4 className="font-medium truncate" title={r.component}>
                       {r.component}
                     </h4>
-                    <p className="text-sm text-muted-foreground">v{r.version}</p>
+                    <p className="text-sm text-muted-foreground">{r.version}</p>
                     <div className="flex items-center gap-2 mt-2 text-sm">
                       <span>{r.affected_projects} projects</span>
                       <span>•</span>

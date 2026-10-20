@@ -144,7 +144,7 @@ export function WaiverList({ projectId, canEdit = true, canDelete = true }: Read
                                     <TableCell>
                                         <div className="max-w-[240px] truncate" title={waiver.package_name || 'Any'}>
                                             {waiver.package_name || 'Any'}
-                                            {waiver.package_version && <span className="text-muted-foreground ml-1">v{waiver.package_version}</span>}
+                                            {waiver.package_version && <span className="text-muted-foreground ml-1">{waiver.package_version}</span>}
                                         </div>
                                     </TableCell>
                                     <TableCell>

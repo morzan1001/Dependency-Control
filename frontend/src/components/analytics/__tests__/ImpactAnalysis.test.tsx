@@ -67,6 +67,14 @@ describe("ImpactAnalysis fix versions", () => {
     expect(await screen.findByText("1 Critical")).toHaveClass("text-xs", "bg-severity-critical", "text-severity-critical-foreground");
     expect(screen.getByText("2 High")).toHaveClass("text-xs", "bg-severity-high", "text-severity-high-foreground");
   });
+
+  it("writes a Go module's version once, as the findings table does, not as vv0.3.0", async () => {
+    vi.mocked(analyticsApi.getImpactAnalysis).mockResolvedValue([{ ...result, component: "golang.org/x/text", version: "v0.3.0" }]);
+    renderImpact();
+
+    expect((await screen.findAllByText("v0.3.0")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("vv0.3.0")).not.toBeInTheDocument();
+  });
 });
 
 describe("ImpactAnalysis load error", () => {
