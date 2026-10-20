@@ -63,6 +63,7 @@ class TestParseVersionKey:
             pytest.param("1.0.0-SNAPSHOT", "1.0.0", id="maven-snapshot-below-release"),
             pytest.param("1.0.0-M1", "1.0.0", id="maven-milestone-below-release"),
             pytest.param("5.0.0.CR1", "5.0.0", id="maven-candidate-release-below-release"),
+            pytest.param("2.0.0-nightly-20240101", "2.0.0", id="nightly-below-release"),
             pytest.param("1.0.dev1", "1.0a1", id="pep440-dev-below-alpha"),
             pytest.param("1.0", "1.0.post1", id="pep440-post-release-above-release"),
             pytest.param("1.0.post1", "1.0.1", id="post-release-below-next-number"),

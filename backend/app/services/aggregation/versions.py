@@ -15,6 +15,9 @@ _PRERELEASE, _END, _SUFFIX, _NUMBER = 0, 1, 2, 3
 # Ranked to agree with both PEP 440 (dev < a < b < rc) and Maven (alpha < beta < milestone < rc < snapshot).
 _PRERELEASE_RANK = {
     "dev": 0,
+    "nightly": 0,
+    "canary": 0,
+    "experimental": 0,
     "alpha": 1,
     "a": 1,
     "beta": 2,
@@ -23,6 +26,7 @@ _PRERELEASE_RANK = {
     "m": 3,
     "pre": 4,
     "preview": 4,
+    "next": 4,
     "rc": 5,
     "cr": 5,
     "c": 5,
@@ -66,11 +70,6 @@ def _is_prerelease(key: VersionKey) -> bool:
     return any(flag == _PRERELEASE for flag, _ in key)
 
 
-# Matched by token, not by any "-" suffix, because Maven qualifiers like Guava's 33.0.0-jre are releases.
-_PRERELEASE_TAG = re.compile(
-    r"[-.](alpha|beta|rc|cr|pre|preview|dev|canary|next|nightly|experimental|snapshot|m\d+)(?![a-z])", re.IGNORECASE
-)
-
 # Strict-semver ecosystems mark every prerelease (Go pseudo-versions, npm "4.0.0-0") with "-" before any "+build".
 _SEMVER_SYSTEMS = frozenset({"npm", "go", "cargo", "nuget"})
 
@@ -81,7 +80,8 @@ def is_stable_release(version: str, system: str) -> bool:
     try:
         return not Version(version).is_prerelease
     except InvalidVersion:
-        return _PRERELEASE_TAG.search(version) is None
+        # Matched by token, not by any "-" suffix, because Maven qualifiers like Guava's 33.0.0-jre are releases.
+        return not _is_prerelease(parse_version_key(version))
 
 
 def newest_first(versions: Iterable[Any]) -> list[str]:

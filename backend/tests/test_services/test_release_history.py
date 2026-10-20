@@ -227,6 +227,11 @@ class TestAggregateUpstreamMetrics:
             ("maven", "5.0.0-M1"),
             ("maven", "5.0.0.M1"),
             ("maven", "1.0.0-SNAPSHOT"),
+            ("maven", "8.0-milestone-1"),
+            ("maven", "2.0.0-nightly-20240101"),
+            ("maven", "3.0.0-canary-1"),
+            ("maven", "1.0.0-next-2"),
+            ("maven", "0.9.0-experimental-1"),
         ],
     )
     def test_prerelease_versions_are_not_releases(self, system, version):

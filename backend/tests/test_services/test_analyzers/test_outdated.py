@@ -204,8 +204,9 @@ class TestPrereleaseDefault:
             [_v("7.1.5.Final"), _v("7.2.0.CR1"), _v("8.0.0.Beta3", default=True)],
             [_v("7.1.5"), _v("7.2.0-M1"), _v("7.2.0-RC1"), _v("7.2.0-SNAPSHOT"), _v("8.0.0.Alpha2", default=True)],
             [_v("7.1.5"), _v("7.1.6", deprecated=True), _v("8.0.0-alpha1", default=True)],
+            [_v("7.1.5"), _v("8.0-milestone-1", default=True)],
         ],
-        ids=["final-and-cr", "milestone-rc-snapshot", "deprecated"],
+        ids=["final-and-cr", "milestone-rc-snapshot", "deprecated", "spelled-out-milestone"],
     )
     async def test_maven_qualifiers_and_deprecations_never_name_the_latest(
         self, fake_cache, monkeypatch, versions
