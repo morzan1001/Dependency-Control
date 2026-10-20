@@ -1,6 +1,7 @@
 import asyncio
 from typing import Any
 
+from app.models.finding import Finding
 from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.repositories.analysis_results import AnalysisResultRepository
@@ -11,7 +12,7 @@ from app.services.aggregation import ResultAggregator
 from app.services.analysis.stats import StatsAccumulator, compute_stats
 from app.services.scan_manager import ScanManager, apply_waivers
 
-_STATS_FIELDS = {path.split(".", 1)[0] for path in StatsAccumulator.REQUIRED_PATHS}
+_STATS_FIELDS = {path.split(".", 1)[0] for path in StatsAccumulator.REQUIRED_PATHS} & Finding.model_fields.keys()
 
 
 async def process_findings_ingest(
@@ -42,4 +43,5 @@ def _summarize(analyzer_name: str, result: dict[str, Any], waivers: list[Waiver]
     aggregator = ResultAggregator()
     aggregator.aggregate(analyzer_name, result)
     kept, waived_count = apply_waivers(aggregator.get_findings(), waivers)
-    return len(kept), waived_count, compute_stats((f.model_dump(include=_STATS_FIELDS) for f in kept), {})
+    records = ({field: getattr(f, field) for field in _STATS_FIELDS} for f in kept)
+    return len(kept), waived_count, compute_stats(records, {})
