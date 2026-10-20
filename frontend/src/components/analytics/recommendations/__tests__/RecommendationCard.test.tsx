@@ -201,12 +201,28 @@ describe('RecommendationCard CVE rendering', () => {
     render(
       <MemoryRouter>
         <RecommendationCard
-          recommendation={makeRecommendation({ type: 'replace_algorithm' }, { type: 'replace_weak_algorithm' })}
+          recommendation={makeRecommendation({ type: 'review' }, { type: 'review_new_signal' })}
         />
       </MemoryRouter>,
     )
-    expect(screen.getByText('Replace Weak Algorithm')).toBeInTheDocument()
+    expect(screen.getByText('Review New Signal')).toBeInTheDocument()
     expect(screen.queryByText('Dependency Update')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['replace_weak_algorithm', 'Replace Weak Algorithm'],
+    ['increase_key_size', 'Increase Key Size'],
+    ['upgrade_protocol', 'Upgrade Protocol'],
+    ['pqc_migration', 'PQC Migration'],
+    ['rotate_certificate', 'Rotate Certificate'],
+  ])('badges a %s card as %s in the teal of a crypto finding, like every other card type in its own colour', (type, label) => {
+    const { container } = render(
+      <MemoryRouter>
+        <RecommendationCard recommendation={makeRecommendation({ type: 'crypto' }, { type })} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText(label)).toBeInTheDocument()
+    expect(container.querySelector('.bg-teal-500\\/10 svg')).toHaveClass('text-teal-500')
   })
 
   it('links each related advisory with a public page and names the others', () => {

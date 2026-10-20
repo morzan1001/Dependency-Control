@@ -8,6 +8,7 @@ import {
   GitBranch,
   Globe,
   Key,
+  KeyRound,
   Layers,
   Lightbulb,
   Package,
@@ -222,6 +223,36 @@ export const typeConfig: Record<string, { icon: typeof Container; label: string;
     label: 'Critical Risk',
     color: 'text-destructive',
     bgColor: 'bg-destructive/10',
+  },
+  replace_weak_algorithm: {
+    icon: KeyRound,
+    label: 'Replace Weak Algorithm',
+    color: 'text-teal-500',
+    bgColor: 'bg-teal-500/10',
+  },
+  increase_key_size: {
+    icon: KeyRound,
+    label: 'Increase Key Size',
+    color: 'text-teal-500',
+    bgColor: 'bg-teal-500/10',
+  },
+  upgrade_protocol: {
+    icon: KeyRound,
+    label: 'Upgrade Protocol',
+    color: 'text-teal-500',
+    bgColor: 'bg-teal-500/10',
+  },
+  pqc_migration: {
+    icon: KeyRound,
+    label: 'PQC Migration',
+    color: 'text-teal-500',
+    bgColor: 'bg-teal-500/10',
+  },
+  rotate_certificate: {
+    icon: KeyRound,
+    label: 'Rotate Certificate',
+    color: 'text-teal-500',
+    bgColor: 'bg-teal-500/10',
   },
 }
 
