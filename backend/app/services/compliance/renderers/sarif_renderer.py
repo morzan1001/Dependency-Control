@@ -1,5 +1,6 @@
 import json
 
+from app.core.metrics import APP_VERSION
 from app.models.compliance_report import ComplianceReport
 from app.models.finding import Severity
 from app.schemas.compliance import (
@@ -76,7 +77,7 @@ class SarifRenderer:
                     "tool": {
                         "driver": {
                             "name": "DependencyControl Compliance",
-                            "semanticVersion": "1.0.0",
+                            "semanticVersion": APP_VERSION,
                             "informationUri": "https://github.com/morzan1001/Dependency-Control",
                             "rules": rules,
                             "properties": {

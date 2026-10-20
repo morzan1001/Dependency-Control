@@ -1,5 +1,6 @@
 import json
 
+from app.core.metrics import APP_VERSION
 from app.schemas.compliance import EvaluationCoverage
 from app.services.compliance.renderers.sarif_renderer import SarifRenderer
 from tests.unit.test_renderer_json import _evaluation, _report
@@ -86,3 +87,9 @@ def test_sarif_passed_control_emits_pass_result():
     data = json.loads(out)
     results = data["runs"][0]["results"]
     assert results[0]["kind"] == "pass"
+
+
+def test_the_sarif_driver_reports_the_version_of_the_running_release():
+    driver = json.loads(SarifRenderer().render(_evaluation(), _report()))["runs"][0]["tool"]["driver"]
+
+    assert driver["semanticVersion"] == APP_VERSION

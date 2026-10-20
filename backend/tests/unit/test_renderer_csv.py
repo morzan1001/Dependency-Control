@@ -1,4 +1,5 @@
 import csv
+import io
 
 from app.schemas.compliance import ControlStatus, ReportFormat
 from app.services.compliance.renderers.csv_renderer import CsvRenderer
@@ -94,3 +95,30 @@ def test_a_cell_a_spreadsheet_would_run_as_a_formula_is_escaped():
     [row] = list(csv.DictReader(_table(CsvRenderer().render(evaluation, _report()))))
 
     assert row["title"] == '\'=HYPERLINK("http://x")'
+
+
+def _notes(out: bytes) -> list[list[str]]:
+    return [row for row in csv.reader(io.StringIO(_text(out))) if row and row[0].startswith("#")]
+
+
+def test_a_framework_without_a_disclaimer_still_names_what_the_export_covers():
+    notes = _notes(CsvRenderer().render(_evaluation(), _report(), disclaimer=None))
+
+    assert [note[0].split(":")[0] for note in notes] == [
+        "# Framework",
+        "# Generated",
+        "# Scope",
+        "# Fingerprint",
+        "# Coverage",
+    ]
+    assert ["# Scope: project 'x'"] in notes
+    assert ["# Fingerprint: sha256:abc"] in notes
+
+
+def test_a_comma_in_a_scope_name_cannot_split_its_note_into_a_formula_cell():
+    evaluation = _evaluation()
+    evaluation.scope_description = "project 'a,=1+1'"
+
+    notes = _notes(CsvRenderer().render(evaluation, _report()))
+
+    assert ["# Scope: project 'a,=1+1'"] in notes

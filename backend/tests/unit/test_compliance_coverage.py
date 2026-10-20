@@ -1,5 +1,7 @@
 """Absence-of-match verdicts are withheld when a gap leaves scope unread; failures stand, as gaps cannot invent one."""
 
+import csv
+import io
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -361,7 +363,8 @@ async def test_csv_and_json_carry_the_reason_beside_the_withheld_status():
     csv_body = CsvRenderer().render(evaluation, _report())
     json_body = JsonRenderer().render(evaluation, _report())
 
-    assert "status_reason" in csv_body.decode().splitlines()[1]
+    rows = list(csv.reader(io.StringIO(csv_body.decode("utf-8-sig"))))
+    assert "status_reason" in next(row for row in rows if not row[0].startswith("#"))
     assert _GAP in csv_body.decode()
     controls = json.loads(json_body)["controls"]
     assert all(c["status"] == ControlStatus.NOT_EVALUATED.value for c in controls)

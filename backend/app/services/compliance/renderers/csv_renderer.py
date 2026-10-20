@@ -31,13 +31,17 @@ class CsvRenderer:
         disclaimer: str | None = None,
     ) -> bytes:
         buf = io.StringIO()
-        # Prepend disclaimers as '#' comment lines so a bare CSV export cannot be mistaken for a full pass.
-        if disclaimer:
-            buf.write(f"# Disclaimer: {disclaimer}\n")
-            buf.write(f"# Framework: {evaluation.framework_name} ({evaluation.framework_version})\n")
-            buf.write(f"# Generated: {evaluation.generated_at.isoformat()}\n")
-        buf.write(f"# Coverage: {coverage_statement(evaluation.coverage)}\n")
         writer = csv.writer(buf)
+        notes = [f"Disclaimer: {disclaimer}"] if disclaimer else []
+        notes += [
+            f"Framework: {evaluation.framework_name} ({evaluation.framework_version})",
+            f"Generated: {evaluation.generated_at.isoformat()}",
+            f"Scope: {evaluation.scope_description}",
+            f"Fingerprint: {evaluation.inputs_fingerprint}",
+            f"Coverage: {coverage_statement(evaluation.coverage)}",
+        ]
+        # One quoted cell per note, so a comma in a project or team name cannot start a formula cell.
+        writer.writerows([f"# {note}"] for note in notes)
         writer.writerow(self.FIELDS)
         for c in evaluation.controls:
             cells = (
