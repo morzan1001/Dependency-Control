@@ -411,6 +411,28 @@ def test_a_lapsed_waiver_next_to_its_rewaived_finding_does_not_take_a_neighbour(
     assert app.dormant == {"W1": "shadowed"}
 
 
+def test_a_lapsing_waiver_marks_the_nearest_finding_no_other_waiver_holds():
+    findings = [mf("F", anchor="fpF", ch="cF", line=10), mf("G", anchor="fpG", ch="cG", line=30)]
+    holder = _W("W1", "false_positive", sig(anchor="fpF", ch="cF", line=10))
+    lapsing = _W("W2", "accepted_risk", sig(anchor="gone", ch="cOld", line=10))
+
+    app = apply_waivers_to_findings(findings, [holder, lapsing])
+
+    assert app.waived == {"F": "W1"}
+    assert app.lapsed == {"G": "W2"}
+
+
+def test_a_lapsing_waiver_whose_every_nearby_finding_another_waiver_holds_is_shadowed():
+    findings = [mf("F", anchor="fpF", ch="cF", line=10), mf("far", anchor="fpX", ch="cX", line=400)]
+    holder = _W("W1", "false_positive", sig(anchor="fpF", ch="cF", line=10))
+    lapsing = _W("W2", "accepted_risk", sig(anchor="gone", ch="cOld", line=10))
+
+    app = apply_waivers_to_findings(findings, [holder, lapsing])
+
+    assert (app.waived, app.lapsed) == ({"F": "W1"}, {})
+    assert app.dormant == {"W2": "shadowed"}
+
+
 def test_a_same_content_match_wins_over_another_waivers_proximity_in_either_order():
     fb = mf("Fb", anchor="cB", kind="content_hash", ch="cB", line=20)
     w1 = _W("W1", "false_positive", sig(anchor="gone", ch="cA", line=18))

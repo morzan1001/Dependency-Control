@@ -232,7 +232,7 @@ def _refresh(app: WaiverApplication, w: Waiver, wsig: MatchSignature, finding: M
 
 
 def _pass2_reanchor(app: WaiverApplication, unmatched: list[_Signed], findings: Sequence[MatchFinding]) -> None:
-    """A taken best candidate shadows the waiver; it never falls back to the next one."""
+    """A taken best candidate shadows the waiver, which never binds the next one; a lapse marks the nearest free one."""
     by_file: dict[str, list[MatchFinding]] = {}
     for f in findings:
         by_file.setdefault(f.sig.file_key, []).append(f)
@@ -296,4 +296,9 @@ def _mark_lapsed(app: WaiverApplication, candidates: list[MatchFinding], last_li
     if not in_window:
         app.dormant[waiver_id] = "no_candidate_in_window"
         return
-    app.lapsed[min(in_window, key=lambda f: _line_distance(f, last_line)).id] = waiver_id
+    # A finding another waiver holds is not this waiver's, and waived wins over lapsed anyway.
+    free = [f for f in in_window if f.id not in app.waived]
+    if not free:
+        app.dormant[waiver_id] = "shadowed"
+        return
+    app.lapsed[min(free, key=lambda f: _line_distance(f, last_line)).id] = waiver_id
