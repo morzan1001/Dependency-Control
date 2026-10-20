@@ -38,9 +38,9 @@ from app.core.log_utils import sanitize_for_log
 from app.core.metrics import (
     ArchiveFailureReason,
     archive_bundle_compressed_bytes,
-    archive_housekeeping_scans_processed_total,
     archive_operation_duration_seconds,
     archive_operations_total,
+    archive_orphan_objects_reaped_total,
     count_archive_failure,
 )
 from app.core.s3 import (
@@ -368,6 +368,7 @@ async def archive_scan(
         archived_at = datetime.now(timezone.utc)
         existing, scan_doc = await _load_scan_for_archive(db, repo, scan_id)
         if existing is not None:
+            archive_operations_total.labels(operation="archive", status="skipped").inc()
             return existing
         if scan_doc is None:
             return None
@@ -425,6 +426,9 @@ async def archive_scan(
             stats.dependencies,
         )
         return metadata
+    except Exception:
+        count_archive_failure("archive", ArchiveFailureReason.UNKNOWN)
+        raise
     finally:
         await lock_repo.release_lock(lock_name, holder)
 
@@ -860,7 +864,7 @@ async def _reap_orphan_page(db: Any, page: list[dict[str, Any]], bundle_key: re.
         try:
             await delete_object(key)
             deleted += 1
-            archive_housekeeping_scans_processed_total.labels(status="orphan_reaped").inc()
+            archive_orphan_objects_reaped_total.inc()
             logger.info("Reaped orphan S3 object: %s", key)
         except Exception as e:
             logger.warning("Failed to delete orphan %s: %s", key, e)

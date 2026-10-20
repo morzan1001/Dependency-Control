@@ -246,6 +246,47 @@ async def test_archive_scan_returns_existing_metadata_if_already_archived(archiv
     RepoCls.return_value.create.assert_not_awaited()
 
 
+def _archive_outcomes() -> dict[str, float]:
+    from prometheus_client import REGISTRY
+
+    return {
+        status: REGISTRY.get_sample_value("archive_operations_total", {"operation": "archive", "status": status}) or 0.0
+        for status in ("success", "skipped", "failure")
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_archive_that_already_exists_is_counted_as_skipped(archive_env):
+    db = _make_mock_db(scan_doc=_make_scan_doc())
+    before = _archive_outcomes()
+
+    with _patch_repos(existing_metadata=_make_archive_metadata())():
+        await archive_scan(db, "scan-1")
+
+    after = _archive_outcomes()
+    assert {status: after[status] - before[status] for status in after} == {
+        "success": 0.0,
+        "skipped": 1.0,
+        "failure": 0.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_archive_that_raises_is_counted_as_an_unknown_failure(archive_env):
+    from prometheus_client import REGISTRY
+
+    unknown = {"operation": "archive", "reason": "unknown"}
+    db = _make_mock_db(scan_doc=_make_scan_doc())
+    db.scans.find_one = AsyncMock(side_effect=AutoReconnect("primary stepped down"))
+    before = _archive_outcomes()["failure"], REGISTRY.get_sample_value("archive_failures_total", unknown) or 0.0
+
+    with _patch_repos()(), pytest.raises(AutoReconnect):
+        await archive_scan(db, "scan-1")
+
+    after = _archive_outcomes()["failure"], REGISTRY.get_sample_value("archive_failures_total", unknown) or 0.0
+    assert (after[0] - before[0], after[1] - before[1]) == (1.0, 1.0)
+
+
 @pytest.mark.asyncio
 async def test_archive_scan_returns_none_when_scan_not_found(archive_env):
     db = _make_mock_db(scan_doc=None)

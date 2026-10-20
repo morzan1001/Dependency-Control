@@ -298,7 +298,7 @@ update_frequency_reconcile_drift_total = Counter(
 archive_operations_total = Counter(
     "archive_operations_total",
     "Archive operations (archive/restore/download) by status.",
-    ["operation", "status"],
+    ["operation", "status"],  # status in: success|skipped|failure; skipped = archived already
 )
 
 archive_failures_total = Counter(
@@ -336,16 +336,9 @@ archive_stored_bytes_total = Gauge(
     "Total compressed bytes stored across all archives in S3",
 )
 
-archive_housekeeping_batch_total = Counter(
-    "archive_housekeeping_batch_total",
-    "Housekeeping archive batches by outcome.",
-    ["status"],  # success|partial_failure
-)
-
-archive_housekeeping_scans_processed_total = Counter(
-    "archive_housekeeping_scans_processed_total",
-    "Scans processed by housekeeping by outcome.",
-    ["status"],  # archived|failed|orphan_reaped
+archive_orphan_objects_reaped_total = Counter(
+    "archive_orphan_objects_reaped_total",
+    "Archive bundles in S3 that no archive metadata names, deleted by the orphan reaper.",
 )
 
 external_api_requests_total = Counter(
