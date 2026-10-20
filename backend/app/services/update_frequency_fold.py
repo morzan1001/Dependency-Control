@@ -8,6 +8,7 @@ from itertools import dropwhile
 from typing import Any, Literal, get_args
 
 from app.core.constants import COUNTED_UPDATE_KINDS, UpdateKind
+from app.repositories.update_frequency import is_comparable_delta
 from app.schemas.analytics import ScanTimelineEntry
 from app.services.update_frequency import (
     FoldedWindow,
@@ -23,8 +24,7 @@ logger = logging.getLogger(__name__)
 
 def select_window(deltas: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     """Input must be one project's one branch, oldest first; the anchor window[0] contributes no update counts."""
-    usable = [d for d in deltas if int(d.get("dep_count", 0)) > 0 and not d.get("error")]
-    return _contiguous_tail(usable)
+    return _contiguous_tail([d for d in deltas if is_comparable_delta(d)])
 
 
 def window_bars(window: Sequence[dict[str, Any]]) -> list[list[dict[str, Any]]]:

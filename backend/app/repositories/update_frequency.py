@@ -53,13 +53,17 @@ def _chain_order(doc: dict[str, Any]) -> tuple[datetime, str]:
     return (doc["scan_created_at"], doc["_id"])
 
 
+def is_comparable_delta(delta: dict[str, Any]) -> bool:
+    """Carries dependencies and no writer failure, so a later scan can be diffed against it."""
+    return int(delta.get("dep_count") or 0) > 0 and not delta.get("error")
+
+
 @dataclass(frozen=True)
 class LedgerEntry:
     schema_version: int | None
     prev_scan_id: str | None
     prev_created_at: datetime | None
     scan_created_at: datetime
-    # Carries dependencies and no writer failure, so a later scan can be diffed against it.
     comparable: bool
 
 
@@ -70,7 +74,7 @@ def _ledger_entry(delta: dict[str, Any]) -> LedgerEntry:
         delta.get("prev_scan_id"),
         prev_at if isinstance(prev_at, datetime) else None,
         delta["scan_created_at"],
-        int(delta.get("dep_count") or 0) > 0 and not delta.get("error"),
+        is_comparable_delta(delta),
     )
 
 
@@ -182,6 +186,7 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
                 "project_id": project_id,
                 "branch": branch,
                 "dep_count": {"$gt": 0},
+                "error": None,
                 "$or": _outside(before, before_id, "$lt"),
             },
             direction=-1,

@@ -515,6 +515,22 @@ class TestPredecessorSelection:
         assert doc["prev_scan_id"] == "s1"
         assert doc["updates"]["minor"] == 1
 
+    @pytest.mark.asyncio
+    async def test_an_error_document_that_counts_dependencies_is_not_a_predecessor(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _at(0), [_dep("s1", "requests", "2.0.0")])
+        await _seed_scan(db, "s2", _at(1), [_dep("s2", "requests", "2.1.0")])
+        await _seed_scan(db, "s3", _at(2), [_dep("s3", "requests", "2.2.0")])
+        await record_scan_update_delta(db, "s1")
+        await record_scan_update_delta(db, "s2")
+        await db.scan_update_deltas.update_one({"_id": "s2"}, {"$set": {"error": "OperationFailure: boom"}})
+
+        await record_scan_update_delta(db, "s3")
+
+        doc = await _delta(db, "s3")
+        assert doc is not None
+        assert doc["prev_scan_id"] == "s1"
+
 
 class TestOutOfOrderArrival:
     @pytest.mark.asyncio
