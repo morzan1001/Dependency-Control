@@ -715,3 +715,12 @@ async def test_dependency_metadata_describes_a_package_whose_purl_escapes_its_na
 
     assert metadata is not None
     assert (metadata["name"], metadata["purl"], metadata["project_count"]) == ("libstdc++6", purl, 1)
+
+
+@pytest.mark.asyncio
+async def test_dependency_metadata_names_each_affected_project_and_whether_it_is_direct(client, db, seeded):
+    metadata = await _analytics(client, "dependency-metadata", seeded, component=QUALIFIED)
+
+    assert [sorted(project.items()) for project in metadata["affected_projects"]] == [
+        [("direct", True), ("id", "p"), ("name", "project-p")]
+    ]

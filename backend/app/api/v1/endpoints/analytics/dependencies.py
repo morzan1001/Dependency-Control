@@ -25,6 +25,7 @@ from app.repositories.dependencies import DependencyRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.repositories.findings import FindingRepository
 from app.schemas.analytics import (
+    AffectedProjectRef,
     DependencyGraph,
     DependencyMetadata,
     DependencyTreeNode,
@@ -331,17 +332,17 @@ async def _package_projects_by_version(
 
 def _affected_projects(
     projects_by_version: dict[str, list[dict[str, Any]]], project_name_map: dict[str, str]
-) -> dict[str, dict[str, Any]]:
-    affected: dict[str, dict[str, Any]] = {}
+) -> dict[str, AffectedProjectRef]:
+    affected: dict[str, AffectedProjectRef] = {}
     for projects in projects_by_version.values():
         for project in projects:
-            if not project.get("id"):
+            if not (project_id := project.get("id")):
                 continue
-            entry = affected.setdefault(
-                project["id"],
-                {"id": project["id"], "name": project_name_map.get(project["id"], "Unknown"), "direct": False},
-            )
-            entry["direct"] = entry["direct"] or bool(project.get("direct"))
+            if project_id not in affected:
+                affected[project_id] = AffectedProjectRef(
+                    id=project_id, name=project_name_map.get(project_id, "Unknown"), direct=False
+                )
+            affected[project_id].direct = affected[project_id].direct or bool(project.get("direct"))
     return affected
 
 

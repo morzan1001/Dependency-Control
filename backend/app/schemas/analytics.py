@@ -138,6 +138,12 @@ class AnalyticsScope(BaseModel):
     oldest_analysis_at: datetime | None = None
 
 
+class AffectedProjectRef(BaseModel):
+    id: str
+    name: str
+    direct: bool
+
+
 class DependencyMetadata(BaseModel):
     name: str
     version: str = Field(..., description="The version the metadata describes")
@@ -162,7 +168,7 @@ class DependencyMetadata(BaseModel):
     deps_dev: dict[str, Any] | None = None
 
     project_count: int = 0
-    affected_projects: list[dict[str, Any]] = []  # [{id, name, direct}]
+    affected_projects: list[AffectedProjectRef] = []
     total_vulnerability_count: int = 0
 
     enrichment_sources: list[str] = []

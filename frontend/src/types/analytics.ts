@@ -248,7 +248,7 @@ export interface DependencyMetadata {
     links?: Record<string, string>;
   };
   project_count: number;
-  affected_projects: Array<{ id: string; name: string; direct: boolean; direct_inferred?: boolean }>;
+  affected_projects: Array<{ id: string; name: string; direct: boolean }>;
   total_vulnerability_count: number;
   enrichment_sources?: string[];
 }
