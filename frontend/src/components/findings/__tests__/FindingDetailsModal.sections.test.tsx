@@ -55,9 +55,9 @@ describe("FindingDetailsModal header", () => {
   });
 
   it("names the other types only as header badges, not again as raw chips under Additional Details", () => {
-    renderModal(finding({ type: "crypto_weak_algorithm", details: { algorithm: "MD5", additional_finding_types: [{ type: "outdated", severity: "INFO" }] } }));
+    renderModal(finding({ type: "crypto_weak_algorithm", details: { technology: ["openssl"], additional_finding_types: [{ type: "outdated", severity: "INFO" }] } }));
 
-    expect(screen.getByText("MD5")).toBeInTheDocument();
+    expect(screen.getByText("openssl")).toBeInTheDocument();
     expect(screen.queryByText("Additional Finding Types")).not.toBeInTheDocument();
     expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
   });
