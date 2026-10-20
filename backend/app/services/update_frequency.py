@@ -360,9 +360,11 @@ def window_cutoff(window_days: int | None) -> datetime | None:
     return datetime.now(tz=timezone.utc) - timedelta(days=window_days)
 
 
-def retained_window(window_days: int, horizon: int | None) -> int | None:
-    """The horizon when it is shorter than the window: no scan older than it is left to count, so the rate stops there."""
-    return horizon if horizon is not None and horizon < window_days else None
+def retained_window(window_days: int, horizon: int | None, first_bar_at: datetime) -> int | None:
+    """The horizon when shorter than the window, unless a pinned or released scan dates the first bar before it."""
+    if horizon is None or horizon >= window_days:
+        return None
+    return None if first_bar_at < datetime.now(tz=timezone.utc) - timedelta(days=horizon) else horizon
 
 
 def updates_per_month(total_updates: int, window_days: int | None) -> float | None:
@@ -824,12 +826,11 @@ async def compute_update_frequency(
         latest_outdated,
         _final_versions_by_name(prev_deps),
     )
-    retained = None if truncated or window_days is None else retained_window(window_days, retention_days)
+    first_bar_at = datetime.fromisoformat(bars[0].date)
+    retained = None if truncated or window_days is None else retained_window(window_days, retention_days, first_bar_at)
     # Past the cap the rate divides by the stretch the walk folded, not by a window it only partly saw.
     rate_days = (
-        spanned_days(datetime.fromisoformat(bars[0].date), datetime.fromisoformat(bars[-1].date))
-        if truncated
-        else retained or window_days
+        spanned_days(first_bar_at, datetime.fromisoformat(bars[-1].date)) if truncated else retained or window_days
     )
     folded = summarise_window(
         bars,

@@ -335,7 +335,9 @@ def _rollup_summary(
         return placeholder_summary(project, resolved.status, window_days, resolved.branch)
 
     anchor_id = resolved.window[0]["_id"]
-    retained = None if resolved.measured_days else retained_window(window_days, project.get("retention_horizon"))
+    first_bar_at = window_bars(resolved.window)[0][-1]["scan_created_at"]
+    horizon = project.get("retention_horizon")
+    retained = None if resolved.measured_days else retained_window(window_days, horizon, first_bar_at)
     rate_days = resolved.measured_days or retained or window_days
     folded = fold_window(resolved.window, baselines.get(anchor_id), rate_days)
     metrics = folded.to_metrics(

@@ -1807,6 +1807,20 @@ class TestRetentionCappedRate:
         assert (m.updates_per_month, m.retention_days) == (round(1 / (90 / DAYS_PER_MONTH), 2), None)
 
     @pytest.mark.asyncio
+    async def test_a_kept_scan_older_than_retention_divides_by_the_whole_window(self):
+        # A pinned or released scan outlives retention, so its interval reaches past the horizon.
+        scans = [_scan_days_ago("pinned", 200), _scan_days_ago("s2", 60), _scan_days_ago("s3", 30)]
+        deps = {
+            "pinned": [_make_dep("pinned", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
+            "s3": [_make_dep("s3", "pkg-a", "1.0.2")],
+        }
+
+        m = await _compute(scans, deps, window_days=365, retention_days=90)
+
+        assert (m.updates_per_month, m.retention_days) == (round(2 / (365 / DAYS_PER_MONTH), 2), None)
+
+    @pytest.mark.asyncio
     async def test_the_scan_count_view_has_no_rate_to_cap(self):
         scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
         deps = {"s1": [_make_dep("s1", "pkg-a", "1.0.0")], "s2": [_make_dep("s2", "pkg-a", "1.0.1")]}

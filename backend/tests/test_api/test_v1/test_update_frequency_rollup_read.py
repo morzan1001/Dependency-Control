@@ -870,6 +870,26 @@ class TestRetentionHorizon:
         assert row.updates_per_month == round(2 / (90 / DAYS_PER_MONTH), 2)
 
     @pytest.mark.asyncio
+    async def test_both_read_paths_divide_by_the_whole_window_once_a_kept_scan_predates_retention(self):
+        # A pinned or released scan outlives retention, so its interval reaches past the horizon.
+        db = FakeDatabase()
+        await _seed_scan(db, "pinned", _days_ago(200), {"a": "1.0.0"}, ())
+        await _seed_scan(db, "s2", _days_ago(60), {"a": "1.0.1"}, ())
+        await _seed_scan(db, "s3", _days_ago(50), {"a": "1.0.2"}, ())
+        await _build_ledger(db)
+        await _seed_projects(db, [PROJECT])
+        await db.projects.update_one({"_id": PROJECT}, {"$set": {"retention_days": 90, "retention_action": "delete"}})
+
+        live = UpdateFrequencyComparison(**await _compute_comparison(db, [PROJECT], None, window_days=365))
+        rolled = UpdateFrequencyComparison(
+            **await _compute_comparison_from_rollup(db, [PROJECT], None, window_days=365)
+        )
+
+        assert live.projects[0].model_dump() == rolled.projects[0].model_dump()
+        row = rolled.projects[0]
+        assert (row.retention_days, row.updates_per_month) == (None, round(2 / (365 / DAYS_PER_MONTH), 2))
+
+    @pytest.mark.asyncio
     async def test_a_project_that_keeps_its_scans_divides_by_the_whole_window(self):
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(60), {"a": "1.0.0"}, ())
