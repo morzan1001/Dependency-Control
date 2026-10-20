@@ -170,6 +170,7 @@ _WEBHOOK_FIELDS = _rendered_fields(WebhookResponse, withheld=frozenset({"headers
 _ARCHIVE_FIELDS = _rendered_fields(AdminArchiveListItem)
 
 _BUILD_PROJECTION = {"branch": 1, "commit_hash": 1, "created_at": 1, "status": 1}
+_SCAN_HISTORY_PROJECTION = _BUILD_PROJECTION | {"completed_at": 1, "stats": 1}
 _SCAN_DETAIL_PROJECTION = _BUILD_PROJECTION | dict.fromkeys(
     ("project_id", "completed_at", "error", "failed_analyzers", "enrichment_failures", "findings_count", "stats"), 1
 )
@@ -637,14 +638,13 @@ class ChatToolRegistry:
             subject="scans",
             limit=ctx.args["limit"],
             sort=[("created_at", -1)],
+            projection=_SCAN_HISTORY_PROJECTION,
         )
         head_scan_id = await self._head_scan_id(project, ctx.db)
         return {
             "scans": [
                 {
-                    **_serialize_doc(
-                        s, ["_id", "status", "branch", "commit_hash", "created_at", "completed_at", "stats"]
-                    ),
+                    **_serialize_doc(s),
                     "project_id": project["_id"],
                     "scan_id": s["_id"],
                     "is_head": s["_id"] == head_scan_id,
