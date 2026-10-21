@@ -298,7 +298,7 @@ class DashboardStats(BaseModel):
 
 class ScanFindingItem(BaseModel):
     id: str = Field(..., description=FINDING_ID_DESCRIPTION)
-    finding_id: str = Field(..., description="Finding identifier")
+    finding_id: str = Field(..., description=FINDING_ID_DESCRIPTION)
     type: FindingType = Field(..., description="Type of finding")
     severity: Severity = Field(..., description="Severity level")
     component: str = Field(..., description="Affected component")
