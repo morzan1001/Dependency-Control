@@ -142,3 +142,24 @@ describe("TeamCard member count", () => {
     expect(screen.getByText("2 Members")).toBeInTheDocument();
   });
 });
+
+describe("TeamCard long text", () => {
+  const longName = "T".repeat(300);
+  const longDescription = "D".repeat(300);
+
+  it("cuts a long name to the card like a project card and keeps it whole in the tooltip", () => {
+    renderCard(vi.fn(), { ...TEAM, name: longName });
+
+    const name = screen.getByText(longName);
+    expect(name).toHaveClass("truncate");
+    expect(name).toHaveAttribute("title", longName);
+    // The phone layout's single grid column sizes to its widest card unless the card may shrink.
+    expect(name.closest(".min-w-0")).not.toBeNull();
+  });
+
+  it("wraps a long unbroken description inside the card", () => {
+    renderCard(vi.fn(), { ...TEAM, description: longDescription });
+
+    expect(screen.getByText(longDescription)).toHaveClass("wrap-anywhere");
+  });
+});

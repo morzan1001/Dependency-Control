@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient, type MutationMeta } from '@tanst
 import { userApi } from '@/api/users';
 import type { ApiError } from '@/api/client';
 import { UserUpdate, UserUpdateMe } from '@/types/user';
+import { getErrorMessage } from '@/lib/utils';
 
 // A save that carries a new name is refused with 400 when the name is taken and 422 when it breaks the rule.
 export const refusesUsername = (sent: UserUpdate | UserUpdateMe | undefined, error: unknown) => {
@@ -14,6 +15,9 @@ export const refusesEmail = (error: unknown) => {
   const status = (error as ApiError).response?.status;
   return status === 400 || status === 404 || status === 422 || status === 501;
 };
+
+export const emailRefusalMessage = (mutation: { isError: boolean; error: unknown }) =>
+  mutation.isError && refusesEmail(mutation.error) ? getErrorMessage(mutation.error, { withField: false }) : null;
 
 export const userKeys = {
   all: ['users'] as const,

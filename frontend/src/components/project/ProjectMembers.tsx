@@ -4,7 +4,7 @@ import { projectApi } from '@/api/projects'
 import { projectKeys } from '@/hooks/queries/use-projects'
 import { Project } from '@/types/project'
 import { useAuth } from '@/context/useAuth'
-import { refusesEmail, useCurrentUser } from '@/hooks/queries/use-users'
+import { emailRefusalMessage, refusesEmail, useCurrentUser } from '@/hooks/queries/use-users'
 import { isProjectAdmin } from '@/lib/project-roles'
 import { getErrorMessage } from '@/lib/utils'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -70,11 +70,7 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
       if (!refusesEmail(error)) toast.error("Failed to invite member", { description: getErrorMessage(error) })
     },
   })
-  const emailRefusal =
-    inviteMemberMutation.isError && refusesEmail(inviteMemberMutation.error)
-      ? getErrorMessage(inviteMemberMutation.error, { withField: false })
-      : null
-  const emailError = blankEmail ? 'Enter an email address' : emailRefusal
+  const emailError = blankEmail ? 'Enter an email address' : emailRefusalMessage(inviteMemberMutation)
 
   const updateMemberMutation = useMutation({
     mutationFn: (data: { userId: string, role: string }) => projectApi.updateMember(projectId, data.userId, data.role),

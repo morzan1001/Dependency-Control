@@ -524,7 +524,7 @@ describe("FindingDetailsModal details by type", () => {
     renderModal(finding({ type: "system_warning", description: "trivy timed out", details: { error_details: "exit status 124" } }));
 
     expect(screen.getByText("Scanner Failure")).toBeInTheDocument();
-    expect(screen.getAllByText("trivy timed out")).toHaveLength(2);
+    expect(screen.getAllByText("trivy timed out")).toHaveLength(1);
     expect(screen.getByText("exit status 124")).toBeInTheDocument();
   });
 
@@ -553,11 +553,11 @@ describe("FindingDetailsModal details by type", () => {
     renderModal(finding({ type: "system_warning", description: error.message, details: { error_details: "exit status 124", errors: [error] } }));
 
     expect(screen.getByText("System: trivy")).toBeInTheDocument();
-    expect(screen.getAllByText(error.message)).toHaveLength(2);
+    expect(screen.getAllByText(error.message)).toHaveLength(1);
     expect(screen.getByText("exit status 124")).toBeInTheDocument();
   });
 
-  it.each(["vulnerability", "sast", "iac"])("leaves a %s finding's description to its own view", (type) => {
+  it.each(["vulnerability", "sast", "iac", "system_warning"])("leaves a %s finding's description to its own view", (type) => {
     renderModal(finding({ type: type as Finding["type"], description: "finding-level text" }));
 
     expect(screen.queryByText("Description")).not.toBeInTheDocument();

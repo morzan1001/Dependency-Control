@@ -10,8 +10,7 @@ import {
     CweBadgeList,
     ReferencesList, 
     RiskBadge, 
-    FileLocation,
-    AdditionalLocations
+    FileLocation
 } from "./shared"
 import { SeverityBadge } from '../SeverityBadge'
 import { markdownHeadings, markdownHeadingTag } from '@/lib/markdown'
@@ -307,22 +306,22 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
        )
     }
 
+    const location = (
+        <FileLocation
+            filePath={finding.component || "Unknown"}
+            startLine={startLine}
+            endLine={endLine}
+            startCol={position.start?.column}
+            endCol={position.end?.column}
+            scmContext={scanContext}
+            additionalLocations={position.additional_locations}
+        />
+    )
+
     if (showAggregatedView) {
         return (
              <div className="space-y-6">
-                <FileLocation
-                    filePath={finding.component || "Unknown"}
-                    startLine={startLine}
-                    endLine={endLine}
-                    startCol={position.start?.column}
-                    endCol={position.end?.column}
-                    scmContext={scanContext}
-                />
-                <AdditionalLocations
-                    filePath={finding.component || "Unknown"}
-                    locations={position.additional_locations}
-                    scmContext={scanContext}
-                />
+                {location}
                 
                 <p className="text-sm text-muted-foreground">
                     Aggregated findings from <strong>{finding.scanners?.length || sastFindings.length}</strong> scanners at this location.
@@ -378,19 +377,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
     
     return (
         <div className="space-y-4">
-            <FileLocation
-                filePath={finding.component || "Unknown"}
-                startLine={startLine}
-                endLine={endLine}
-                startCol={position.start?.column}
-                endCol={position.end?.column}
-                scmContext={scanContext}
-            />
-            <AdditionalLocations
-                filePath={finding.component || "Unknown"}
-                locations={position.additional_locations}
-                scmContext={scanContext}
-            />
+            {location}
             
             {renderSingleFindingDetails(singleFindingDetails, singleFindingDescription, singleFindingScanners)}
 

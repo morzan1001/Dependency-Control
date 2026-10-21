@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge"
 import type { Finding } from "@/types/scan"
 import { getSecretRemediationHint, getSecretTreeStatusInfo } from "@/lib/finding-utils"
 import { formatDate, shortCommitHash } from "@/lib/utils"
-import { AdditionalLocations, DetailSection, FileLocation } from "./shared"
+import { DetailSection, FileLocation } from "./shared"
 import type { ScanContext } from "./SastDetailsView"
 
 interface SecretDetailsViewProps {
@@ -20,18 +20,12 @@ export function SecretDetailsView({ finding, scanContext }: SecretDetailsViewPro
     return (
         <div className="space-y-4">
             {finding.component && (
-                <>
-                    <FileLocation
-                        filePath={finding.component}
-                        startLine={details?.line}
-                        scmContext={scanContext}
-                    />
-                    <AdditionalLocations
-                        filePath={finding.component}
-                        locations={details?.additional_locations}
-                        scmContext={scanContext}
-                    />
-                </>
+                <FileLocation
+                    filePath={finding.component}
+                    startLine={details?.line}
+                    scmContext={scanContext}
+                    additionalLocations={details?.additional_locations}
+                />
             )}
             {hint && (
                 <div className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${hint.tone === 'danger'

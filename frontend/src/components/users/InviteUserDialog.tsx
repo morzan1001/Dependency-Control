@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { refusesEmail, useInviteUser } from '@/hooks/queries/use-users';
+import { emailRefusalMessage, refusesEmail, useInviteUser } from '@/hooks/queries/use-users';
 import { useAppConfig } from '@/hooks/queries/use-system';
 import { getErrorMessage } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -28,11 +28,7 @@ export function InviteUserDialog() {
   const { data: appConfig } = useAppConfig({ enabled: isOpen });
 
   const inviteUserMutation = useInviteUser();
-  const emailRefusal =
-    inviteUserMutation.isError && refusesEmail(inviteUserMutation.error)
-      ? getErrorMessage(inviteUserMutation.error, { withField: false })
-      : null;
-  const emailError = blankEmail ? 'Enter an email address' : emailRefusal;
+  const emailError = blankEmail ? 'Enter an email address' : emailRefusalMessage(inviteUserMutation);
 
   const handleInviteUser = (e: React.FormEvent) => {
     e.preventDefault();

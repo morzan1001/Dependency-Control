@@ -83,22 +83,22 @@ function HintHeader({
 // partial is absent: its row carries numbers and renders them with a caveat instead of a placeholder.
 const STATUS_CONFIG: Record<
   Exclude<UpdateDataStatus, 'ready' | 'partial'>,
-  { label: string; hint: string; icon: typeof Clock; className: string }
+  { children: string; hint: string; icon: typeof Clock; className: string }
 > = {
   pending: {
-    label: 'Not computed yet',
+    children: 'Not computed yet',
     hint: 'No update metrics recorded for this project yet.',
     icon: Clock,
     className: 'bg-gray-500/10 text-gray-500 border-gray-500/20',
   },
   insufficient_data: {
-    label: 'Too few commits',
+    children: 'Too few commits',
     hint: 'Fewer than 2 scanned commits in this window.',
     icon: Hourglass,
     className: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20',
   },
   error: {
-    label: 'Measurement failed',
+    children: 'Measurement failed',
     hint: 'Recording the update metrics for this project failed.',
     icon: AlertTriangle,
     className: 'bg-red-500/10 text-red-600 border-red-500/20',
@@ -121,14 +121,18 @@ function metricValue(project: ProjectUpdateSummary, metric: Metric): number {
   return project.update_coverage_pct ?? -1
 }
 
-function StatusBadge({ status }: Readonly<{ status: Exclude<UpdateDataStatus, 'ready' | 'partial'> }>) {
-  const config = STATUS_CONFIG[status]
-  const StatusIcon = config.icon
+const AMBER_HINT = 'bg-amber-500/10 text-amber-600 border-amber-500/20'
 
+function HintBadge({
+  icon: Icon,
+  className,
+  hint,
+  children,
+}: Readonly<{ icon: typeof Info; className: string; hint: string; children: ReactNode }>) {
   return (
-    <Badge variant="outline" className={`gap-1 whitespace-nowrap font-normal ${config.className}`} title={config.hint}>
-      <StatusIcon className="h-3 w-3" />
-      {config.label}
+    <Badge variant="outline" className={`gap-1 whitespace-nowrap font-normal ${className}`} title={hint}>
+      <Icon className="h-3 w-3" />
+      {children}
     </Badge>
   )
 }
@@ -142,19 +146,6 @@ function partialHint(scanCount: number | null): string {
   )
 }
 
-function PartialBadge({ scanCount }: Readonly<{ scanCount: number | null }>) {
-  return (
-    <Badge
-      variant="outline"
-      className="gap-1 whitespace-nowrap font-normal bg-blue-500/10 text-blue-600 border-blue-500/20"
-      title={partialHint(scanCount)}
-    >
-      <Info className="h-3 w-3" />
-      Partial window
-    </Badge>
-  )
-}
-
 function cappedHint(cap: number, windowDays: number): string {
   return (
     `This branch is busier than the analysis follows: the row covers its newest ${cap} scans, ` +
@@ -163,36 +154,10 @@ function cappedHint(cap: number, windowDays: number): string {
   )
 }
 
-function CappedBadge({ cap, windowDays }: Readonly<{ cap: number; windowDays: number }>) {
-  return (
-    <Badge
-      variant="outline"
-      className="gap-1 whitespace-nowrap font-normal bg-amber-500/10 text-amber-600 border-amber-500/20"
-      title={cappedHint(cap, windowDays)}
-    >
-      <Info className="h-3 w-3" />
-      Newest {cap} scans
-    </Badge>
-  )
-}
-
 function retainedHint(retentionDays: number, windowDays: number): string {
   return (
     `Retention deletes this project's scans after ${retentionDays} days, so the row covers only those days ` +
     `of the last ${windowDays}. The monthly rate divides by those ${retentionDays} days, so it stays comparable.`
-  )
-}
-
-function RetainedBadge({ retentionDays, windowDays }: Readonly<{ retentionDays: number; windowDays: number }>) {
-  return (
-    <Badge
-      variant="outline"
-      className="gap-1 whitespace-nowrap font-normal bg-amber-500/10 text-amber-600 border-amber-500/20"
-      title={retainedHint(retentionDays, windowDays)}
-    >
-      <Info className="h-3 w-3" />
-      Retention {retentionDays} days
-    </Badge>
   )
 }
 
@@ -486,12 +451,24 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                       {namesakes.has(project.project_name) && (
                         <ProjectOwnerById projectId={project.project_id} namesakes={namesakes.get(project.project_name)} />
                       )}
-                      {project.data_status === 'partial' && <PartialBadge scanCount={project.scan_count} />}
+                      {project.data_status === 'partial' && (
+                        <HintBadge
+                          icon={Info}
+                          className="bg-blue-500/10 text-blue-600 border-blue-500/20"
+                          hint={partialHint(project.scan_count)}
+                        >
+                          Partial window
+                        </HintBadge>
+                      )}
                       {project.window_scan_cap !== null && (
-                        <CappedBadge cap={project.window_scan_cap} windowDays={project.window_days} />
+                        <HintBadge icon={Info} className={AMBER_HINT} hint={cappedHint(project.window_scan_cap, project.window_days)}>
+                          Newest {project.window_scan_cap} scans
+                        </HintBadge>
                       )}
                       {project.retention_days !== null && (
-                        <RetainedBadge retentionDays={project.retention_days} windowDays={project.window_days} />
+                        <HintBadge icon={Info} className={AMBER_HINT} hint={retainedHint(project.retention_days, project.window_days)}>
+                          Retention {project.retention_days} days
+                        </HintBadge>
                       )}
                     </span>
                   </TableCell>
@@ -511,7 +488,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                   ) : (
                     // One spanning cell keeps unmeasured rows from parking a value under a metric header.
                     <TableCell colSpan={6}>
-                      <StatusBadge status={project.data_status} />
+                      <HintBadge {...STATUS_CONFIG[project.data_status]} />
                     </TableCell>
                   )}
                 </TableRow>

@@ -12,6 +12,7 @@ interface FileLocationProps {
     readonly startCol?: number | null
     readonly endCol?: number | null
     readonly scmContext?: ScanContext | null
+    readonly additionalLocations?: FindingLocation[]
 }
 
 function buildLocationString(
@@ -50,43 +51,47 @@ export function FileLocation({
     endLine,
     startCol,
     endCol,
-    scmContext
+    scmContext,
+    additionalLocations
 }: FileLocationProps) {
     const fileUrl = buildScmFileUrl(filePath, scmContext, startLine, endLine)
 
     const locationStr = buildLocationString(startLine, endLine, startCol, endCol)
 
     return (
-        <div className="p-4 bg-muted/50 rounded-lg border">
-            <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                    <h4 className="text-sm font-medium text-muted-foreground mb-1">File</h4>
-                    <div className="flex items-center gap-2">
-                        <FileCode className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                        {fileUrl ? (
-                            <a
-                                href={fileUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="font-mono text-sm text-primary hover:underline truncate"
-                                title={filePath}
-                            >
-                                {filePath}
-                                <ExternalLink className="h-3 w-3 ml-1 inline" />
-                            </a>
-                        ) : (
-                            <code className="font-mono text-sm truncate" title={filePath}>
-                                {filePath}
-                            </code>
-                        )}
+        <>
+            <div className="p-4 bg-muted/50 rounded-lg border">
+                <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-medium text-muted-foreground mb-1">File</h4>
+                        <div className="flex items-center gap-2">
+                            <FileCode className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                            {fileUrl ? (
+                                <a
+                                    href={fileUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-mono text-sm text-primary hover:underline truncate"
+                                    title={filePath}
+                                >
+                                    {filePath}
+                                    <ExternalLink className="h-3 w-3 ml-1 inline" />
+                                </a>
+                            ) : (
+                                <code className="font-mono text-sm truncate" title={filePath}>
+                                    {filePath}
+                                </code>
+                            )}
+                        </div>
+                    </div>
+                    <div className="flex-shrink-0">
+                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Location</h4>
+                        <p className="text-sm">{locationStr}</p>
                     </div>
                 </div>
-                <div className="flex-shrink-0">
-                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Location</h4>
-                    <p className="text-sm">{locationStr}</p>
-                </div>
             </div>
-        </div>
+            <AdditionalLocations filePath={filePath} locations={additionalLocations} scmContext={scmContext} />
+        </>
     )
 }
 
@@ -96,7 +101,7 @@ interface AdditionalLocationsProps {
     readonly scmContext?: ScanContext | null
 }
 
-export function AdditionalLocations({ filePath, locations, scmContext }: AdditionalLocationsProps) {
+function AdditionalLocations({ filePath, locations, scmContext }: AdditionalLocationsProps) {
     if (!locations?.length) return null
     return (
         <DetailSection label="Additional Locations">

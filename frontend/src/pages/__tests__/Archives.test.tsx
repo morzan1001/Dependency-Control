@@ -174,6 +174,28 @@ describe('ArchivesPage branch filter', () => {
   })
 })
 
+describe('ArchivesPage filter bar', () => {
+  it('offers no filters when the instance has no archive storage to filter', () => {
+    useAppConfigMock.mockReturnValue({ data: { archive_enabled: false }, isPending: false })
+    mockUseAdminArchives.mockReturnValue({ data: undefined, isLoading: false })
+
+    renderPage()
+
+    expect(screen.queryByLabelText('Branch')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('From')).not.toBeInTheDocument()
+  })
+
+  it('keeps the filters and the empty state when the instance configuration fails to load', () => {
+    useAppConfigMock.mockReturnValue({ data: undefined, isPending: false })
+    mockUseAdminArchives.mockReturnValue({ data: undefined, isLoading: false })
+
+    renderPage()
+
+    expect(screen.getByLabelText('Branch')).toBeInTheDocument()
+    expect(screen.getByText('No archived scans found.')).toBeInTheDocument()
+  })
+})
+
 describe('ArchivesPage namesakes', () => {
   it('names the owner of each archived project whose name another listed project shares, as the project list does', () => {
     const owners: Record<string, Project> = {
