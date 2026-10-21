@@ -602,7 +602,7 @@ def test_the_update_card_names_each_cve_of_a_bundle_the_live_threat_intel_marks(
     row = _make_dependency("openssl-libs", "1.0.2k")
     threat_intel = {
         "CVE-2023-0001": VulnerabilityEnrichment(cve="CVE-2023-0001", risk_score=20.0, epss_score=0.4),
-        "CVE-2023-0002": VulnerabilityEnrichment(cve="CVE-2023-0002", risk_score=40.0, is_kev=True, epss_score=0.01),
+        "CVE-2023-0002": VulnerabilityEnrichment(cve="CVE-2023-0002", risk_score=40.0, in_kev=True, epss_score=0.01),
     }
 
     result = generate_recommendations(
