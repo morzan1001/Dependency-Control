@@ -16,6 +16,10 @@ class FindingRecord(Finding, CreatedAtModel):
     project_id: str = Field(..., description="Reference to the project")
     scan_id: str = Field(..., description="Reference to the scan")
 
-    finding_id: str = Field(..., description="Logical ID of the finding (e.g. CVE-2021-44228)")
+    finding_id: str = Field(
+        ...,
+        description="Analyzer-defined finding id (component:version for aggregated vulnerabilities); "
+        "not a CVE and not unique per scan",
+    )
 
     model_config = ConfigDict(populate_by_name=True)

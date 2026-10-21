@@ -297,7 +297,11 @@ class DashboardStats(BaseModel):
 
 
 class ScanFindingItem(BaseModel):
-    id: str = Field(..., description="Logical finding ID (e.g. CVE-2021-44228)")
+    id: str = Field(
+        ...,
+        description="Analyzer-defined finding id (component:version for aggregated vulnerabilities); "
+        "not a CVE and not unique per scan",
+    )
     finding_id: str = Field(..., description="Finding identifier")
     type: FindingType = Field(..., description="Type of finding")
     severity: Severity = Field(..., description="Severity level")

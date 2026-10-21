@@ -281,6 +281,17 @@ async def test_findings_delta_added_and_removed(db):
 
 
 @pytest.mark.asyncio
+async def test_an_item_is_never_named_by_its_per_scan_document_id(db):
+    unnamed = _agg_vuln_doc("fb-per-scan", "sb", "lib", "1", ["CVE-A"])
+    del unnamed["finding_id"]
+    await db["findings"].insert_one(unnamed)
+
+    resp = await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
+
+    assert [i.finding_id for i in resp.items] == [""]
+
+
+@pytest.mark.asyncio
 async def test_an_advisory_is_named_by_its_cve_as_on_the_scan_page(db):
     aliased = _agg_vuln_doc("fb1", "sb", "lodash", "4.17.20", [])
     aliased["details"]["vulnerabilities"] = [{"id": "GHSA-35jh-r3h4-6jhm", "aliases": ["CVE-2021-23337"]}]

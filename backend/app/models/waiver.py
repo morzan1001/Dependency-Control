@@ -18,7 +18,7 @@ def is_waiver_active(expiration_date: datetime | None, now: datetime | None = No
 class Waiver(MongoDocument, CreatedAtModel):
     project_id: str | None = None  # If None, applies globally (admin only)
 
-    finding_id: str | None = None  # e.g. "CVE-2023-1234", "LIC-GPL-3.0", "EOL-python"
+    finding_id: str | None = None  # The analyzer-defined finding id, not a CVE; a CVE goes in vulnerability_id.
     package_name: str | None = None
     package_version: str | None = None
     finding_type: FindingType | None = None

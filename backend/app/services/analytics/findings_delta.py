@@ -192,7 +192,7 @@ def _to_item(doc: dict, change: FindingChange) -> FindingDeltaItem:
     # Unvalidated: the values are our own projected rows, and an uncached comparison builds an item per changed row.
     return FindingDeltaItem.model_construct(
         change=change,
-        finding_id=str(doc.get("finding_id") or doc.get("_id") or ""),
+        finding_id=str(doc.get("finding_id") or ""),
         finding_type=_doc_type(doc),
         severity=_doc_severity(doc),
         title=doc.get("description") or "",
