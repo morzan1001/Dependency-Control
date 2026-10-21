@@ -397,10 +397,15 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     await archive_metadata.create_index("scan_id", unique=True)
     await archive_metadata.create_index([("project_id", pymongo.ASCENDING), ("archived_at", pymongo.DESCENDING)])
+    # find_many_raw breaks ties on _id, so the listings page off these keys without a blocking sort.
     await archive_metadata.create_index(
-        [("project_id", pymongo.ASCENDING), ("branch", pymongo.ASCENDING), ("archived_at", pymongo.DESCENDING)]
+        [
+            ("project_id", pymongo.ASCENDING),
+            ("branch", pymongo.ASCENDING),
+            ("archived_at", pymongo.DESCENDING),
+            ("_id", pymongo.ASCENDING),
+        ]
     )
-    # find_many_raw breaks ties on _id, so the listing pages off this key without a blocking sort.
     await archive_metadata.create_index([("archived_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)])
 
     await chat_conversations.create_index(
