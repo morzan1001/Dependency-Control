@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import pytest
@@ -195,25 +196,26 @@ _ORG_MAINTAINERS = [{"name": "release-bot", "email": "release@vercel.com"}, {"na
 
 class TestAnalyze:
     @pytest.mark.parametrize(
-        ("name", "repository", "repo"),
+        ("name", "registry_name", "repository", "repo"),
         [
-            ("next", {"type": "git", "url": "git+https://github.com/vercel/next.js.git"}, "vercel/next.js"),
-            ("socket.io", "github:socketio/socket.io", "socketio/socket.io"),
-            ("left-pad", "stevemao/left-pad", "stevemao/left-pad"),
-            ("ms", "https://GitHub.com/Vercel/MS.git", "Vercel/MS"),
+            ("next", "next", {"type": "git", "url": "git+https://github.com/vercel/next.js.git"}, "vercel/next.js"),
+            ("socket.io", "socket.io", "github:socketio/socket.io", "socketio/socket.io"),
+            ("left-pad", "left-pad", "stevemao/left-pad", "stevemao/left-pad"),
+            ("ms", "ms", "https://GitHub.com/Vercel/MS.git", "Vercel/MS"),
+            ("@babel/core", "@babel%2Fcore", "github:babel/babel", "babel/babel"),
         ],
-        ids=["object", "shorthand-string", "bare-shorthand", "mixed-case-host"],
+        ids=["object", "shorthand-string", "bare-shorthand", "mixed-case-host", "scoped-name"],
     )
     @pytest.mark.asyncio
     async def test_an_npm_package_finds_its_repository_through_the_registry(
-        self, fake_cache, monkeypatch, name, repository, repo
+        self, fake_cache, monkeypatch, name, registry_name, repository, repo
     ):
         requests = _serve(
             monkeypatch,
             fake_cache,
             {
-                f"{NPM_REGISTRY_URL}/{name}/latest": _npm_latest(repository, _ORG_MAINTAINERS),
-                f"{DEPS_DEV_API_URL}/systems/npm/packages/{name}": _deps_dev_package(800),
+                f"{NPM_REGISTRY_URL}/{registry_name}/latest": _npm_latest(repository, _ORG_MAINTAINERS),
+                f"{DEPS_DEV_API_URL}/systems/npm/packages/{quote(name, safe='')}": _deps_dev_package(800),
                 f"{GITHUB_API_URL}/repos/{repo}": _github_repo(archived=True),
             },
         )
@@ -226,7 +228,7 @@ class TestAnalyze:
         assert [risk["type"] for risk in issue["risks"]] == ["stale_package", "archived_repo"]
         assert issue["severity"] == "CRITICAL"
         assert issue["maintainer_info"]["days_since_release"] == 800
-        assert f"{NPM_REGISTRY_URL}/{name}" not in [str(request.url) for request in requests]
+        assert f"{NPM_REGISTRY_URL}/{registry_name}" not in [str(request.url) for request in requests]
 
     @pytest.mark.parametrize(
         "repository",
