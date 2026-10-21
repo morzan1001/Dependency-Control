@@ -3,6 +3,7 @@ import { Recommendation, RecommendationAction, CrossProjectCve, RecurringCve } f
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { WarningHint } from '@/components/ui/warning-hint'
 import { cn, sharedNames } from '@/lib/utils'
 import { getSeverityBgColor } from '@/lib/finding-utils'
 import { AdvisoryLink } from '@/components/findings/AdvisoryLink'
@@ -417,6 +418,11 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                     {pkg.suggestion && (
                       <div className="text-xs text-success mt-1">
                         Recommended: <span className="font-mono">{pkg.suggestion}</span>
+                      </div>
+                    )}
+                    {pkg.suggestion === null && (
+                      <div className="mt-1">
+                        <WarningHint>No version in use is free of known vulnerabilities</WarningHint>
                       </div>
                     )}
                   </div>

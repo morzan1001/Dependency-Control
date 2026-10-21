@@ -267,7 +267,9 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
                         # $addToSet is unordered; rank first so the sample shows the newest versions.
                         "versions": newest_first(p["versions"])[:ACTION_VERSION_SAMPLE],
                         "version_count": p["version_count"],
-                        "suggestion": newest_first(p["versions"])[0],
+                        "suggestion": next(
+                            (v for v in newest_first(p["versions"]) if v not in p["vulnerable_versions"]), None
+                        ),
                         "project_count": p["project_count"],
                     }
                     for p in inconsistent_packages

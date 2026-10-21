@@ -352,6 +352,7 @@ def _cross_project_cards():
             "versions": ["1.0.0", "2.0.0"],
             "version_count": 2,
             "project_count": 3,
+            "vulnerable_versions": ["2.0.0", "1.0.0"][: i % 3],
         }
         for i in range(_CROWD)
     ]

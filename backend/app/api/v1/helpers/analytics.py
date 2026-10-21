@@ -1,3 +1,4 @@
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -44,8 +45,9 @@ from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
 from app.schemas.analytics import ThreatIntelFields
 from app.schemas.enrichment import VulnerabilityEnrichment
-from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
+from app.services.aggregation.versions import aggregate_fixed_version, normalize_version, split_fixed_versions
 from app.services.analytics.scopes import ScopeResolver, read_scope_project_ids
+from app.services.component_identity import build_component_index, lookup_component
 from app.services.enrichment.scoring import fold_enrichments
 from app.services.enrichment.service import advisory_enrichment
 from app.services.recommendation.common import live_advisories, live_cves
@@ -454,13 +456,30 @@ async def gather_cross_project_data(
     scans = await scan_repo.find_many_with_stats({"_id": {"$in": scan_ids}}, limit=len(scan_ids))
     scan_stats_map = {s.id: s.stats for s in scans if s.stats}
 
-    details_by_scan = await vuln_details_by(finding_repo, {"scan_id": {"$in": scan_ids}}, "scan_id")
-    scan_cves_map = {scan_id: live_cves(details) for (scan_id,), details in details_by_scan.items()}
+    details_by_finding = await vuln_details_by(
+        finding_repo, {"scan_id": {"$in": scan_ids}}, "scan_id", "component", "version"
+    )
+    details_by_scan: dict[str, list[Any]] = defaultdict(list)
+    vulnerable_by_component: dict[str, set[str]] = defaultdict(set)
+    for (scan_id, component, version), details in details_by_finding.items():
+        details_by_scan[scan_id] += details
+        vulnerable_by_component[component].add(normalize_version(version))
+    scan_cves_map = {scan_id: live_cves(details) for scan_id, details in details_by_scan.items()}
 
     if viewed_scan_id := head_scan_ids.get(current_project_id):
-        cross_project_data["shared_packages"] = await dep_repo.aggregate(
+        shared_packages = await dep_repo.aggregate(
             cross_project_package_pipeline(scan_ids, CROSS_PROJECT_MIN_OCCURRENCES, viewed_scan_id)
         )
+        vulnerable_index = build_component_index(vulnerable_by_component)
+        for package in shared_packages:
+            vulnerable = lookup_component(vulnerable_index, package["name"]) or set()
+            # A finding without a version cannot tell the versions apart, so it marks every one of them.
+            package["vulnerable_versions"] = [
+                version
+                for version in package["versions"]
+                if "unknown" in vulnerable or normalize_version(version) in vulnerable
+            ]
+        cross_project_data["shared_packages"] = shared_packages
 
     for project in compared:
         if not (scan_id := head_scan_ids.get(project.id)):

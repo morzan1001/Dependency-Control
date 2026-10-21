@@ -418,3 +418,19 @@ describe('RecommendationCard packages of two ecosystems', () => {
     expect(screen.getByText('pypi')).toBeInTheDocument()
   })
 })
+
+describe('RecommendationCard version standardization', () => {
+  it('says so instead of recommending a version when every version in use is vulnerable', () => {
+    renderExpanded(makeRecommendation({
+      type: 'standardize_versions',
+      packages: [
+        { name: 'lodash', type: 'npm', versions: ['4.17.21', '4.17.15'], suggestion: '4.17.15', project_count: 2 },
+        { name: 'minimist', type: 'npm', versions: ['1.2.5', '0.0.8'], suggestion: null, project_count: 2 },
+      ],
+    }))
+
+    expect(screen.getAllByText(/^Recommended:/)).toHaveLength(1)
+    expect(screen.getByText('4.17.15', { selector: '.font-mono' })).toBeInTheDocument()
+    expect(screen.getByText('No version in use is free of known vulnerabilities')).toBeInTheDocument()
+  })
+})
