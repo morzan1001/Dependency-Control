@@ -173,16 +173,12 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     releases = database[ReleaseRepository.collection_name]
     webhooks = database[WebhookRepository.collection_name]
     webhook_deliveries = database["webhook_deliveries"]
-    distributed_locks = database["distributed_locks"]
-    token_blacklist = database["token_blacklist"]
     gitlab_instances = database[GitLabInstanceRepository.collection_name]
     github_instances = database[GitHubInstanceRepository.collection_name]
     callgraphs = database[CallgraphRepository.collection_name]
     system_invitations = database["system_invitations"]
     dependency_enrichments = database[DependencyEnrichmentRepository.collection_name]
     archive_metadata = database[ArchiveMetadataRepository.collection_name]
-    chat_conversations = database["chat_conversations"]
-    chat_messages = database["chat_messages"]
     api_keys = database["api_keys"]
     crypto_assets = database[CryptoAssetRepository.collection_name]
     crypto_policies = database[CryptoPolicyRepository.collection_name]
@@ -343,10 +339,10 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     # TTL: drops deliveries after 30 days.
     await webhook_deliveries.create_index([("timestamp", pymongo.ASCENDING)], expireAfterSeconds=2592000)
 
-    await distributed_locks.create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
+    await database["distributed_locks"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
 
     # TTL: drops blacklisted JWTs after they would have expired anyway.
-    await token_blacklist.create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
+    await database["token_blacklist"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
 
     await gitlab_instances.create_index("url", unique=True)
     await gitlab_instances.create_index("name", unique=True)
@@ -402,12 +398,12 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )
     await archive_metadata.create_index([("archived_at", pymongo.DESCENDING)])
 
-    await chat_conversations.create_index(
+    await database["chat_conversations"].create_index(
         [("user_id", pymongo.ASCENDING), ("updated_at", pymongo.DESCENDING)],
         name="user_conversations_listing",
     )
 
-    await chat_messages.create_index(
+    await database["chat_messages"].create_index(
         [("conversation_id", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)],
         name="conversation_messages_chronological",
     )
