@@ -14,7 +14,6 @@ def test_the_graph_carries_the_pair_a_reader_needs():
             "version": "1.0.0",
             "purl": f"pkg:pypi/pkg-{i}@1.0.0",
             "locations": [],
-            "locations_total": 0,
         }
         for i in range(_CAP)
     ]

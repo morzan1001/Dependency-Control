@@ -174,7 +174,7 @@ describe("DependencyTree locations", () => {
 
   it("shows the first three locations and counts the rest", async () => {
     const locations = ["a", "b", "c", "d", "e", "f", "g"].map((dir) => `/app/${dir}/requirements.txt`);
-    renderTree(graph([node("a", { source_type: "image", locations, locations_total: 7 })], ["a"]));
+    renderTree(graph([node("a", { source_type: "image", locations })], ["a"]));
 
     const row = (await screen.findByText("a")).closest('[role="treeitem"]') as HTMLElement;
     fireEvent.focus(row.querySelector("svg.text-blue-500")!.parentElement!);
@@ -186,7 +186,7 @@ describe("DependencyTree locations", () => {
   });
 
   it("adds no remainder for three locations or fewer", async () => {
-    renderTree(graph([node("a", { source_type: "image", locations: ["/app/requirements.txt"], locations_total: 1 })], ["a"]));
+    renderTree(graph([node("a", { source_type: "image", locations: ["/app/requirements.txt"] })], ["a"]));
 
     const row = (await screen.findByText("a")).closest('[role="treeitem"]') as HTMLElement;
     fireEvent.focus(row.querySelector("svg.text-blue-500")!.parentElement!);

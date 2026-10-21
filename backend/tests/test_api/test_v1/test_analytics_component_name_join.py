@@ -33,7 +33,6 @@ def _dep(name, version="2.20.2", purl=None):
         "type": "library",
         "direct": True,
         "locations": [],
-        "locations_total": 0,
     }
 
 

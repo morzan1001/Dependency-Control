@@ -53,7 +53,6 @@ TreeFindings = dict[str, dict[str, list[Any]]]
 
 _COMPONENT_FINDINGS_SHOWN = 100
 
-_ALL_LOCATIONS = {"$ifNull": ["$locations", []]}
 # What build_dependency_edges and _build_tree_node read of a row.
 _TREE_ROW = {
     "$project": {
@@ -72,8 +71,7 @@ _TREE_ROW = {
             ),
             1,
         ),
-        "locations": _ALL_LOCATIONS,
-        "locations_total": {"$size": _ALL_LOCATIONS},
+        "locations": {"$ifNull": ["$locations", []]},
     }
 }
 
@@ -153,7 +151,6 @@ def _build_tree_node(dep: dict[str, Any], findings_map: TreeFindings, *, direct:
         source_target=dep.get("source_target"),
         layer_digest=dep.get("layer_digest"),
         locations=dep["locations"],
-        locations_total=dep["locations_total"],
         child_ids=[],
     )
 

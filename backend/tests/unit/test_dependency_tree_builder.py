@@ -8,7 +8,7 @@ def _graph(dependencies, findings_map):
 
 def _row(_id, name, version, **fields):
     """A dependency as the tree reads it."""
-    return {"_id": _id, "name": name, "version": version, "locations": [], "locations_total": 0, **fields}
+    return {"_id": _id, "name": name, "version": version, "locations": [], **fields}
 
 
 def _dep(name, version="1.0.0", direct=False, parents=None, direct_inferred=False):

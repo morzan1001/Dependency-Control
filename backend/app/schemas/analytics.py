@@ -57,7 +57,6 @@ class DependencyTreeNode(BaseModel):
     source_target: str | None = None
     layer_digest: str | None = None
     locations: list[str] = []
-    locations_total: int = 0
 
 
 class DependencyGraph(BaseModel):

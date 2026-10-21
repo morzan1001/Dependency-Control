@@ -42,7 +42,6 @@ export interface DependencyTreeNode {
   source_target?: string;
   layer_digest?: string;
   locations?: string[];
-  locations_total?: number;
   child_ids: string[];
 }
 

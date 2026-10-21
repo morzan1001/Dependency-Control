@@ -2914,7 +2914,7 @@ class TestCycloneDXParentRefs:
 
         now = datetime.now(timezone.utc)
         dependencies = [_parsed_dep_to_dependency(d, "p", "s", now, {}) for d in parse_sbom(sbom).dependencies]
-        rows = [{**d.model_dump(by_alias=True), "locations_total": len(d.locations)} for d in dependencies]
+        rows = [d.model_dump(by_alias=True) for d in dependencies]
         graph = _build_dependency_graph(rows, {}, len(rows))
 
         nodes = {node.name: node for node in graph.nodes}
