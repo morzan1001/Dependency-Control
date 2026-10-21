@@ -581,8 +581,8 @@ async def test_advisory_data_named_by_its_upstream_id_is_cached_through_this_pat
         name = _CACHING_ANALYZER
 
         async def analyze(self, sbom, settings=None, parsed_components=None):
-            await cache_service.set(_CALLER_DERIVED_CACHE_KEY, [_CALLER_ONLY_COMPONENT])
-            await cache_service.set(_UPSTREAM_ID_KEY, {"epss": 0.97})
+            await cache_service.set(_CALLER_DERIVED_CACHE_KEY, [_CALLER_ONLY_COMPONENT], 60)
+            await cache_service.set(_UPSTREAM_ID_KEY, {"epss": 0.97}, 60)
             return {"findings": []}
 
     serve_analyzer(monkeypatch, _CACHING_ANALYZER, _Caching())

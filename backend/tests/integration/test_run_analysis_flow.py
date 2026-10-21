@@ -22,11 +22,12 @@ from app.models.project import Scan
 from app.models.stats import Stats
 from app.services.analysis import engine
 from app.services.crypto_policy.seeder import seed_crypto_policies
+from app.services.gridfs_maintenance import gridfs_ref_id
 from app.services.notifications import notification_service
 from app.services.webhooks import webhook_service
 from tests.helpers.analyzers import analyse_scan, serve_analyzer
 from tests.helpers.enrichment import Upstreams, serve_enrichment
-from tests.helpers.sboms import store_sbom
+from tests.helpers.sboms import store_sbom, unreadable_downloads
 
 _PROJECT_ID = "notify-project"
 _T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -458,7 +459,7 @@ async def test_the_worker_retries_an_unreadable_re_analysis_before_keeping_the_e
 async def test_a_re_analysis_whose_sbom_fails_to_stream_keeps_the_earlier_findings(
     db, notified, stored_sbom, monkeypatch, retry_count, status
 ):
-    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", AsyncMock(side_effect=OSError("gridfs outage")))
+    unreadable_downloads(monkeypatch, {gridfs_ref_id(stored_sbom)})
     scan_id = await _finished_scan_with_an_analysis(db, stored_sbom, retry_count)
 
     assert await analyse_scan(db, scan_id, [stored_sbom], [], worker_id=_WORKER) == status

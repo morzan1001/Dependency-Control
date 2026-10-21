@@ -421,7 +421,7 @@ class TestSuppressCacheWrites:
     @pytest.mark.parametrize("key", _UPSTREAM_ID_KEYS)
     async def test_a_key_named_by_a_public_upstream_id_alone_is_still_written(self, fake_cache, key):
         with suppress_cache_writes():
-            assert await fake_cache.set(key, _UPSTREAM_VALUE) is True
+            assert await fake_cache.set(key, _UPSTREAM_VALUE, _TTL) is True
 
         assert await fake_cache.get(key) == _UPSTREAM_VALUE
 
@@ -430,7 +430,7 @@ class TestSuppressCacheWrites:
         upstream_key = CacheKeys.epss("CVE-2021-44228")
 
         with suppress_cache_writes():
-            await fake_cache.mset({_SUPPRESSED_KEY: _SUPPRESSED_VALUE, upstream_key: _UPSTREAM_VALUE})
+            await fake_cache.mset({_SUPPRESSED_KEY: _SUPPRESSED_VALUE, upstream_key: _UPSTREAM_VALUE}, _TTL)
 
         assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0
         assert await fake_cache.get(upstream_key) == _UPSTREAM_VALUE
@@ -445,7 +445,7 @@ class TestSuppressCacheWrites:
             return _UPSTREAM_VALUE
 
         with suppress_cache_writes():
-            assert await fake_cache.get_or_fetch_with_lock(upstream_key, fetch) == _UPSTREAM_VALUE
+            assert await fake_cache.get_or_fetch_with_lock(upstream_key, fetch, _TTL) == _UPSTREAM_VALUE
 
         assert locks == [fake_cache._make_key(f"lock:{upstream_key}")]
         assert await fake_cache.get(upstream_key) == _UPSTREAM_VALUE
