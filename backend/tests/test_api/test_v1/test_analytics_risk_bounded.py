@@ -812,7 +812,7 @@ class TestPriorityReasons:
             ),
             pytest.param(
                 ThreatIntelFields(has_kev=True, days_until_due=2, max_epss_score=0.9),
-                ["deadline", "overdue", "kev", "epss", "critical", "blast_radius", "fix_available"],
+                ["deadline", "kev", "overdue", "epss", "critical", "blast_radius", "fix_available"],
                 id="kev",
             ),
             pytest.param(
