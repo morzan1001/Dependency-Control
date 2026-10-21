@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { EPSSKEVResults, ReachabilityResults } from "../PostProcessorResults";
 import type { EPSSKEVSummary } from "../PostProcessorResults";
+import { getRiskColorClass } from "@/lib/finding-utils";
 
 const baseData: EPSSKEVSummary = {
   total_vulnerabilities: 100,
@@ -177,6 +178,21 @@ describe("EPSSKEVResults high-risk list", () => {
     );
 
     expect(screen.queryByText(/Showing \d+ of/)).toBeNull();
+  });
+
+  it("colours each score on the risk scale the hotspot table uses", () => {
+    render(
+      <EPSSKEVResults
+        data={{
+          ...baseData,
+          high_risk_cves: [{ ...highRiskCve(0), risk_score: 90 }, { ...highRiskCve(1), risk_score: 59.7 }],
+          high_risk_total: 2,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Risk: 90")).toHaveClass(getRiskColorClass(90));
+    expect(screen.getByText("Risk: 59.7")).toHaveClass(getRiskColorClass(59.7));
   });
 });
 

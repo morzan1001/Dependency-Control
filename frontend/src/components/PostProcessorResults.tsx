@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/collapsible";
 import { SeverityBadge } from "@/components/findings/SeverityBadge";
 import { formatDateTime } from "@/lib/utils";
+import { getRiskColorClass } from "@/lib/finding-utils";
 import { useScanResult } from "@/hooks/queries/use-scans";
 import { ReachabilitySummary } from "@/types/scan";
 import type { ReactNode } from "react";
@@ -311,9 +312,7 @@ export function EPSSKEVResults({ data }: Readonly<{ data: EPSSKEVSummary }>) {
                   <CollapsibleTrigger className="flex items-center justify-between w-full p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors">
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                       <span className="font-mono text-sm">{cve.cve}</span>
-                      <Badge 
-                        variant={cve.risk_score >= 80 ? "destructive" : "default"}
-                      >
+                      <Badge variant="outline" className={`border-current ${getRiskColorClass(cve.risk_score)}`}>
                         Risk: {cve.risk_score}
                       </Badge>
                     </div>
