@@ -1,12 +1,12 @@
 import asyncio
 import itertools
 import re
-import uuid
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import Any
 
+from bson import ObjectId
 from pymongo import UpdateOne
 
 from app.api.v1.helpers.sorting import case_insensitive_sort
@@ -40,7 +40,7 @@ def _documents(
     project_id: str, scan_id: str, assets: Sequence[ParsedCryptoAsset], fields: dict[str, Any]
 ) -> list[dict[str, Any]]:
     return [
-        {**a.model_dump(), "_id": str(uuid.uuid4()), "project_id": project_id, "scan_id": scan_id, **fields}
+        {**a.model_dump(), "_id": str(ObjectId()), "project_id": project_id, "scan_id": scan_id, **fields}
         for a in assets
     ]
 

@@ -7,7 +7,7 @@ from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset, CryptoAssetType
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.services.cbom_parser import parse_cbom
-from tests.helpers.cbom import load_cbom, store_assets
+from tests.helpers.cbom import cbom_of, filler_components, load_cbom, store_assets
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 
@@ -140,3 +140,17 @@ async def test_storing_parsed_assets_keeps_one_per_ref_and_counts_them_by_type(d
     assert summary == {"total": 2, "by_type": {"algorithm": 1, "protocol": 1}}
     assert sorted(doc["bom_ref"] for doc in stored) == sorted([algorithm.bom_ref, protocol.bom_ref])
     assert {(doc["cbom_upload"], doc["created_at"]) for doc in stored} == {(True, written_at)}
+
+
+@pytest.mark.asyncio
+async def test_stored_parsed_assets_get_ids_that_ascend_in_creation_order(db):
+    assets = parse_cbom(cbom_of(filler_components(range(50))))
+
+    await CryptoAssetRepository(db).store_parsed(
+        "p1", "s1", assets, cbom_upload=True, created_at=datetime.now(timezone.utc)
+    )
+
+    id_by_ref = {doc["bom_ref"]: doc["_id"] for doc in await db.crypto_assets.find({"scan_id": "s1"}).to_list(None)}
+    ids = [id_by_ref[ref] for ref in dict.fromkeys(a.bom_ref for a in assets)]
+    assert len(ids) == 50
+    assert ids == sorted(ids)
