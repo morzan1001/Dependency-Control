@@ -3550,6 +3550,31 @@ class TestCycloneDXFieldExtraction:
         [dep] = parse_sbom(_cyclonedx_with([component])).dependencies
         assert dep.hashes == {"sha512": "bf690311ee7b95e7"}
 
+    def test_a_component_hash_beats_a_distribution_hash_of_the_same_algorithm(self):
+        component = {
+            "type": "library",
+            "name": "requests",
+            "version": "2.32.3",
+            "purl": "pkg:pypi/requests@2.32.3",
+            "hashes": [
+                {"alg": "SHA-256", "content": "70761cfe03c773ceb22aa2f671b4757976145175cdfca038c02654d061d6dcc6"}
+            ],
+            "externalReferences": [
+                {
+                    "type": "distribution",
+                    "url": "https://files.pythonhosted.org/packages/source/r/requests/requests-2.32.3.tar.gz",
+                    "hashes": [
+                        {
+                            "alg": "SHA-256",
+                            "content": "55365417734eb18255590a9ff9eb97e9e1da868d4ccd6402399eaf68af20a760",
+                        }
+                    ],
+                }
+            ],
+        }
+        [dep] = parse_sbom(_cyclonedx_with([component])).dependencies
+        assert dep.hashes == {"sha256": "70761cfe03c773ceb22aa2f671b4757976145175cdfca038c02654d061d6dcc6"}
+
     def test_cyclonedx_16_authors_and_supplier(self):
         component = {
             "type": "library",
