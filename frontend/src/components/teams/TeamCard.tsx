@@ -42,7 +42,7 @@ export function TeamCard({
 
   return (
     <Card
-      className="flex flex-col cursor-pointer hover:bg-muted/50 transition-colors"
+      className="flex min-w-0 flex-col cursor-pointer hover:bg-muted/50 transition-colors"
       onClick={() => onManageMembers(team)}
     >
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
