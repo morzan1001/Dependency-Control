@@ -593,7 +593,8 @@ def _prepare_finding_records(
         seen_identities[identity] = occurrence + 1
         if occurrence:
             identity = f"{identity}:{occurrence}"
-        record["_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
+        # Scan-prefixed, so one scan's batch lands contiguously in the _id index.
+        record["_id"] = f"{scan_id}:{uuid.uuid5(uuid.NAMESPACE_URL, identity).hex}"
         record["scan_created_at"] = scan_created_at
         findings_to_insert.append(record)
         if record.get("type") == "vulnerability":

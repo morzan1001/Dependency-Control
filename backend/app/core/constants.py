@@ -193,7 +193,7 @@ TEAM_SOURCE_MANUAL = "manual"
 TEAM_SOURCE_GITLAB = "gitlab"
 TEAM_SOURCE_GITHUB = "github"
 
-# Provider plus instance, so two instances of one provider never retire each other's entries; uuid4 has no colon.
+# Provider plus instance, so two instances of one provider never retire each other's entries; an instance id has no colon.
 TEAM_SOURCE_SEPARATOR = ":"
 
 

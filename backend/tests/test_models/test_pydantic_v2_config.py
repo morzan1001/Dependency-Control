@@ -506,6 +506,13 @@ class TestMongoDocumentIdConsolidation:
         assert cls(**dumped) == instance
         assert cls(id="x", **kwargs).id == "x"
 
+    def test_fresh_ids_ascend_in_creation_order_so_inserts_append_to_the_id_index(self):
+        from app.models.types import MongoDocument
+
+        ids = [MongoDocument().id for _ in range(50)]
+
+        assert ids == sorted(ids)
+
     def test_explicit_id_via_alias_is_honored(self):
         from app.models.user import User
 

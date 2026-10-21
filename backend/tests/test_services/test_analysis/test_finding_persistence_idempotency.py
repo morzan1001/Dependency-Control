@@ -30,6 +30,11 @@ class TestDeterministicIds:
         records_b, _ = _prepare_finding_records([_finding("QUALITY:hamcrest-core:3.0")], "other-scan", "proj-1", None)
         assert records_a[0]["_id"] != records_b[0]["_id"]
 
+    def test_a_scans_ids_share_its_prefix_so_its_batch_lands_contiguously(self):
+        findings = [_finding(f"QUALITY:pkg-{i}:1.0", component=f"pkg-{i}", version="1.0") for i in range(3)]
+        records, _ = _prepare_finding_records(findings, _SCAN_ID, "proj-1", None)
+        assert all(record["_id"].startswith(f"{_SCAN_ID}:") for record in records)
+
     def test_duplicate_identities_within_one_batch_stay_distinct(self):
         findings = [_finding("QUALITY:hamcrest-core:3.0"), _finding("QUALITY:hamcrest-core:3.0")]
         records, _ = _prepare_finding_records(findings, _SCAN_ID, "proj-1", None)
