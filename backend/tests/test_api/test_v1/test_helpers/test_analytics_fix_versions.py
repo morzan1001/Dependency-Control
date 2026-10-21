@@ -28,5 +28,10 @@ def test_the_stored_document_fix_is_not_read():
     assert extract_fix_versions([{"fixed_version": "9.9.9", **_advisories("1.2.4")}], "1.0") == {"1.2.4"}
 
 
+def test_a_waived_advisory_does_not_raise_the_fix():
+    details = {"vulnerabilities": [{"fixed_version": "2.0.1"}, {"fixed_version": "9.9.9", "waived": True}]}
+    assert extract_fix_versions([details], "2.0.0") == {"2.0.1"}
+
+
 def test_ignores_missing_and_empty():
     assert extract_fix_versions([_advisories(None), {"vulnerabilities": []}, {}], "1.0") == set()
