@@ -1,0 +1,268 @@
+{
+ "artifacts": [
+  {
+   "id": "ad20ed2bb5e98521",
+   "name": "is-number",
+   "version": "7.0.0",
+   "type": "npm",
+   "foundBy": "javascript-lock-cataloger",
+   "locations": [
+    {
+     "path": "/package-lock.json",
+     "accessPath": "/package-lock.json",
+     "annotations": {
+      "evidence": "primary"
+     }
+    }
+   ],
+   "licenses": [
+    {
+     "value": "MIT",
+     "spdxExpression": "MIT",
+     "type": "declared",
+     "urls": [],
+     "locations": [
+      {
+       "path": "/package-lock.json",
+       "accessPath": "/package-lock.json",
+       "annotations": {
+        "evidence": "primary"
+       }
+      }
+     ]
+    }
+   ],
+   "language": "javascript",
+   "cpes": [
+    {
+     "cpe": "cpe:2.3:a:is-number:is-number:7.0.0:*:*:*:*:*:*:*",
+     "source": "syft-generated"
+    },
+    {
+     "cpe": "cpe:2.3:a:is-number:is_number:7.0.0:*:*:*:*:*:*:*",
+     "source": "syft-generated"
+    },
+    {
+     "cpe": "cpe:2.3:a:is_number:is-number:7.0.0:*:*:*:*:*:*:*",
+     "source": "syft-generated"
+    },
+    {
+     "cpe": "cpe:2.3:a:is_number:is_number:7.0.0:*:*:*:*:*:*:*",
+     "source": "syft-generated"
+    },
+    {
+     "cpe": "cpe:2.3:a:is:is-number:7.0.0:*:*:*:*:*:*:*",
+     "source": "syft-generated"
+    },
+    {
+     "cpe": "cpe:2.3:a:is:is_number:7.0.0:*:*:*:*:*:*:*",
+     "source": "syft-generated"
+    }
+   ],
+   "purl": "pkg:npm/is-number@7.0.0",
+   "metadataType": "javascript-npm-package-lock-entry",
+   "metadata": {
+    "resolved": "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz",
+    "integrity": "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==",
+    "dependencies": {
+     "left-pad": "^1.3.0"
+    }
+   }
+  },
+  {
+   "id": "271b3c03622cf2da",
+   "name": "left-pad",
+   "version": "1.3.0",
+   "type": "npm",
+   "foundBy": "javascript-lock-cataloger",
+   "locations": [
+    {
+     "path": "/package-lock.json",
+     "accessPath": "/package-lock.json",
+     "annotations": {
+      "evidence": "primary"
+     }
+    }
+   ],
+   "licenses": [
+    {
+     "value": "WTFPL",
+     "spdxExpression": "WTFPL",
+     "type": "declared",
+     "urls": [],
+     "locations": [
+      {
+       "path": "/package-lock.json",
+       "accessPath": "/package-lock.json",
+       "annotations": {
+        "evidence": "primary"
+       }
+      }
+     ]
+    }
+   ],
+   "language": "javascript",
+   "cpes": [
+    {
+     "cpe": "cpe:2.3:a:left-pad:left-pad:1.3.0:*:*:*:*:*:*:*",
+     "source": "syft-generated"
+    },
+    {
+     "cpe": "cpe:2.3:a:left-pad:left_pad:1.3.0:*:*:*:*:*:*:*",
+     "source": "syft-generated"
+    },
+    {
+     "cpe": "cpe:2.3:a:left_pad:left-pad:1.3.0:*:*:*:*:*:*:*",
+     "source": "syft-generated"
+    },
+    {
+     "cpe": "cpe:2.3:a:left_pad:left_pad:1.3.0:*:*:*:*:*:*:*",
+     "source": "syft-generated"
+    },
+    {
+     "cpe": "cpe:2.3:a:left:left-pad:1.3.0:*:*:*:*:*:*:*",
+     "source": "syft-generated"
+    },
+    {
+     "cpe": "cpe:2.3:a:left:left_pad:1.3.0:*:*:*:*:*:*:*",
+     "source": "syft-generated"
+    }
+   ],
+   "purl": "pkg:npm/left-pad@1.3.0",
+   "metadataType": "javascript-npm-package-lock-entry",
+   "metadata": {
+    "resolved": "",
+    "integrity": "",
+    "dependencies": null
+   }
+  },
+  {
+   "id": "323a092319b239b2",
+   "name": "myapp",
+   "version": "1.0.0",
+   "type": "npm",
+   "foundBy": "javascript-lock-cataloger",
+   "locations": [
+    {
+     "path": "/package-lock.json",
+     "accessPath": "/package-lock.json",
+     "annotations": {
+      "evidence": "primary"
+     }
+    }
+   ],
+   "licenses": [],
+   "language": "javascript",
+   "cpes": [
+    {
+     "cpe": "cpe:2.3:a:myapp:myapp:1.0.0:*:*:*:*:*:*:*",
+     "source": "syft-generated"
+    }
+   ],
+   "purl": "pkg:npm/myapp@1.0.0",
+   "metadataType": "javascript-npm-package-lock-entry",
+   "metadata": {
+    "resolved": "",
+    "integrity": "",
+    "dependencies": {
+     "is-number": "^7.0.0"
+    }
+   }
+  }
+ ],
+ "artifactRelationships": [
+  {
+   "parent": "271b3c03622cf2da",
+   "child": "ad20ed2bb5e98521",
+   "type": "dependency-of"
+  },
+  {
+   "parent": "271b3c03622cf2da",
+   "child": "fd71c2238fc07657",
+   "type": "evident-by",
+   "metadata": {
+    "kind": "primary"
+   }
+  },
+  {
+   "parent": "323a092319b239b2",
+   "child": "fd71c2238fc07657",
+   "type": "evident-by",
+   "metadata": {
+    "kind": "primary"
+   }
+  },
+  {
+   "parent": "551cea5fb224d32fdb8ccc9bdc70f5ed8ad28af82b0f60997426aee862d7989c",
+   "child": "271b3c03622cf2da",
+   "type": "contains"
+  },
+  {
+   "parent": "551cea5fb224d32fdb8ccc9bdc70f5ed8ad28af82b0f60997426aee862d7989c",
+   "child": "323a092319b239b2",
+   "type": "contains"
+  },
+  {
+   "parent": "551cea5fb224d32fdb8ccc9bdc70f5ed8ad28af82b0f60997426aee862d7989c",
+   "child": "ad20ed2bb5e98521",
+   "type": "contains"
+  },
+  {
+   "parent": "ad20ed2bb5e98521",
+   "child": "323a092319b239b2",
+   "type": "dependency-of"
+  },
+  {
+   "parent": "ad20ed2bb5e98521",
+   "child": "fd71c2238fc07657",
+   "type": "evident-by",
+   "metadata": {
+    "kind": "primary"
+   }
+  }
+ ],
+ "files": [
+  {
+   "id": "fd71c2238fc07657",
+   "location": {
+    "path": "/package-lock.json"
+   },
+   "metadata": {
+    "mode": 644,
+    "type": "RegularFile",
+    "userID": 501,
+    "groupID": 0,
+    "mimeType": "application/json",
+    "size": 833
+   },
+   "digests": [
+    {
+     "algorithm": "sha1",
+     "value": "954f6507a567e5d1a39c66c6b99f1c0ba3a4e606"
+    },
+    {
+     "algorithm": "sha256",
+     "value": "af7d248d884b47efc3e7c6c1a89cc88b44b4dc262913c08846e323984d50d519"
+    }
+   ]
+  }
+ ],
+ "source": {
+  "id": "551cea5fb224d32fdb8ccc9bdc70f5ed8ad28af82b0f60997426aee862d7989c",
+  "name": "/tmp/dc-final39/npmbundle",
+  "version": "",
+  "type": "directory",
+  "metadata": {
+   "path": "/tmp/dc-final39/npmbundle"
+  }
+ },
+ "distro": {},
+ "descriptor": {
+  "name": "syft",
+  "version": "1.42.1"
+ },
+ "schema": {
+  "version": "16.1.3",
+  "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-16.1.3.json"
+ }
+}

@@ -205,6 +205,32 @@ class TestDirectnessOfRealGraphs:
         ingested = {dep.purl for dep in result.dependencies}
         assert all(set(dep.parent_components) <= ingested for dep in result.dependencies)
 
+    @pytest.mark.parametrize(
+        ("fixture", "expected"),
+        [
+            # syft 1.42.1 output of one crate (myservice) and of an npm project whose dependency bundles left-pad.
+            pytest.param(
+                "cargo.syft.json",
+                {"aho-corasick": (True, True), "itoa": (True, True), "memchr": (False, True)},
+                id="cargo-json",
+            ),
+            pytest.param(
+                "cargo.syft.cdx.json",
+                {"aho-corasick": (True, True), "itoa": (True, True), "memchr": (False, True)},
+                id="cargo-cyclonedx",
+            ),
+            # The bundled entry has no resolved url or integrity, like the project, yet it is a dependency.
+            pytest.param(
+                "npmbundle.syft.json", {"is-number": (True, True), "left-pad": (False, True)}, id="npm-bundle"
+            ),
+        ],
+    )
+    def test_syft_lock_root_is_skipped_and_its_children_are_direct(self, fixture, expected):
+        result = parse_sbom(_fixture(fixture))
+
+        assert _directness(result) == expected
+        assert result.skipped_reasons.get("root-component") == 1
+
     def test_trivy_multi_module_maven_skips_every_own_module_wherever_it_appears(self):
         # trivy 0.76.0 output: a parent pom listing modules core and app, each with a pom.xml node of its own.
         result = parse_sbom(_fixture("mvnmulti.trivy.cdx.json"))
