@@ -94,6 +94,16 @@ async def test_an_id_read_past_the_ceiling_is_refused(db, small_ceiling):
         ("/compliance/reports/{report_id}/download", "get"),
         ("/analytics/crypto/hotspots", "get"),
         ("/analytics/crypto/pqc-migration", "get"),
+        ("/analytics/summary", "get"),
+        ("/analytics/component-findings", "get"),
+        ("/analytics/impact", "get"),
+        ("/analytics/search", "get"),
+        ("/analytics/projects/{project_id}/recommendations", "get"),
+        ("/analytics/update-frequency/comparison", "get"),
+        ("/projects/scans", "get"),
+        ("/waivers/", "get"),
+        ("/notifications/packages/suggest", "get"),
+        ("/notifications/broadcast", "post"),
     ],
 )
 def test_the_scope_resolving_routes_document_the_refusal(route, method):

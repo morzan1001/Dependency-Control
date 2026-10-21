@@ -15,7 +15,7 @@ from app.api.v1.helpers.analytics import (
     vuln_details_by,
 )
 from app.api.v1.helpers.projects import check_project_access
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
+from app.api.v1.helpers.responses import RESP_413, RESP_AUTH, RESP_AUTH_404
 from app.core.constants import FINDINGS_SCAN_COMPONENT_INDEX, SCAN_DEPENDENCY_READ_LIMIT, severity_rank_expr
 from app.core.permissions import Permissions
 from app.core.purl import get_purl_type, package_identity_expr
@@ -47,7 +47,7 @@ from app.services.recommendation.graph import build_dependency_edges
 
 from ._shared import resolve_project_scan_id
 
-router = CustomAPIRouter()
+router = CustomAPIRouter(responses=RESP_413)
 
 TreeFindings = dict[str, dict[str, list[Any]]]
 

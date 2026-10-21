@@ -10,7 +10,7 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import get_user_project_ids
 from app.api.v1.helpers.pagination import build_pagination_response
 from app.api.v1.helpers.projects import authorize_waiver_read, check_project_access
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
+from app.api.v1.helpers.responses import RESP_413, RESP_AUTH, RESP_AUTH_404
 from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, parse_sort_direction
 from app.api.v1.helpers.users import resolve_usernames
 from app.core.constants import PROJECT_ROLE_ADMIN, PROJECT_ROLE_EDITOR, WAIVER_SCOPE_FILE, WAIVER_SCOPE_FINDING
@@ -170,7 +170,7 @@ async def create_waiver(
     return (await _with_creator_names(db, [waiver]))[0]
 
 
-@router.get("/", responses=RESP_AUTH)
+@router.get("/", responses={**RESP_AUTH, **RESP_413})
 async def list_waivers(
     db: DatabaseDep,
     current_user: CurrentUserDep,

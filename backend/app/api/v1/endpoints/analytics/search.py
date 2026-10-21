@@ -15,7 +15,7 @@ from app.api.v1.helpers.analytics import (
     scope_resolution_counts,
 )
 from app.api.v1.helpers.pagination import page_facet, page_meta, unpack_page_facet
-from app.api.v1.helpers.responses import RESP_AUTH
+from app.api.v1.helpers.responses import RESP_413, RESP_AUTH
 from app.api.v1.helpers.sorting import (
     SortOrderQuery,
     case_insensitive_key,
@@ -50,7 +50,7 @@ from app.services.component_identity import build_component_index, lookup_compon
 from app.services.inventory.components import NUMBERED_SORT_FIELDS, TEXT_SORT_FIELDS
 from app.services.recommendation.common import max_advisory_cvss
 
-router = CustomAPIRouter()
+router = CustomAPIRouter(responses=RESP_413)
 
 
 async def _resolve_search_scope(

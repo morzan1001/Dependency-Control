@@ -13,7 +13,7 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
 )
 from app.api.v1.helpers.projects import check_project_access
-from app.api.v1.helpers.responses import RESP_AUTH_404
+from app.api.v1.helpers.responses import RESP_413, RESP_AUTH_404
 from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
@@ -47,7 +47,7 @@ from ._shared import SCAN_NOT_IN_PROJECT, resolve_project_scan_id
 
 logger = logging.getLogger(__name__)
 
-router = CustomAPIRouter()
+router = CustomAPIRouter(responses=RESP_413)
 
 # The viewed scan and its predecessors the recurrence count spans; the recommendation text names this window.
 _RECURRENCE_WINDOW_SCANS = 10

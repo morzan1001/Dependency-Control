@@ -25,7 +25,7 @@ from app.api.v1.helpers.analytics import (
     select_impact_candidates,
     severity_counts_from_details,
 )
-from app.api.v1.helpers.responses import RESP_AUTH
+from app.api.v1.helpers.responses import RESP_413, RESP_AUTH
 from app.api.v1.helpers.sorting import (
     SortOrder,
     SortOrderQuery,
@@ -58,7 +58,7 @@ from app.services.recommendation.common import live_cves
 
 logger = logging.getLogger(__name__)
 
-router = CustomAPIRouter()
+router = CustomAPIRouter(responses=RESP_413)
 
 
 # Each sample ships beside the population it was drawn from, so a reader knows whether a list is all of it.

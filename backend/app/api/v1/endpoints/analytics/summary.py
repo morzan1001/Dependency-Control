@@ -14,7 +14,7 @@ from app.api.v1.helpers.analytics import (
     scope_resolution_counts,
     vuln_details_by,
 )
-from app.api.v1.helpers.responses import RESP_AUTH
+from app.api.v1.helpers.responses import RESP_413, RESP_AUTH
 from app.core.cache import scope_digest
 from app.core.constants import FINDINGS_SCAN_TYPE_INDEX
 from app.core.permissions import Permissions
@@ -40,7 +40,7 @@ from app.services.component_identity import (
 )
 from app.services.recommendation.common import live_cves
 
-router = CustomAPIRouter()
+router = CustomAPIRouter(responses=RESP_413)
 
 _VERSION_SAMPLE = 10
 

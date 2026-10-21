@@ -14,7 +14,7 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
 )
 from app.api.v1.helpers.projects import check_project_access
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
+from app.api.v1.helpers.responses import RESP_413, RESP_AUTH, RESP_AUTH_404
 from app.api.v1.helpers.teams import team_refs
 from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.config import settings
@@ -65,7 +65,7 @@ from app.services.update_frequency_fold import (
     window_bars,
 )
 
-router = CustomAPIRouter()
+router = CustomAPIRouter(responses=RESP_413)
 
 _DISCONNECT_POLL_SECONDS = 1.0
 

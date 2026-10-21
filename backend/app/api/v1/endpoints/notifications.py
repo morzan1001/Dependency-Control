@@ -10,7 +10,7 @@ from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import project_admin_ids
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400
+from app.api.v1.helpers.responses import RESP_413, RESP_AUTH, RESP_AUTH_400
 from app.core.config import settings
 from app.core.constants import (
     DEPENDENCIES_SCAN_PACKAGE_INDEX,
@@ -78,7 +78,7 @@ async def get_broadcast_history(
     ]
 
 
-@router.get("/packages/suggest", responses=RESP_AUTH)
+@router.get("/packages/suggest", responses={**RESP_AUTH, **RESP_413})
 async def suggest_packages(
     db: DatabaseDep,
     current_user: Annotated[
@@ -257,7 +257,7 @@ async def _notify_advisory_admins(
     return len(user_notification_map)
 
 
-@router.post("/broadcast", responses=RESP_AUTH_400)
+@router.post("/broadcast", responses={**RESP_AUTH_400, **RESP_413})
 async def broadcast_message(
     payload: BroadcastRequest,
     background_tasks: BackgroundTasks,

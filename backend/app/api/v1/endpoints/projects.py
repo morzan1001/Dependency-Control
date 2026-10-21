@@ -39,6 +39,7 @@ from app.api.v1.helpers.projects import (
     reject_unknown_analyzers,
 )
 from app.api.v1.helpers.responses import (
+    RESP_413,
     RESP_AUTH,
     RESP_AUTH_400_404,
     RESP_AUTH_400_404_409,
@@ -363,7 +364,7 @@ async def read_projects(
     "/scans",
     response_model=list[RecentScan],
     summary="List scans across all accessible projects",
-    responses=RESP_AUTH,
+    responses={**RESP_AUTH, **RESP_413},
 )
 async def read_all_scans(
     current_user: CurrentUserDep,
