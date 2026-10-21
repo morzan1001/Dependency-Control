@@ -105,6 +105,17 @@ describe("AddMemberDialog refusals", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("shows under the field why the server refused a malformed address, as the invite user dialog does", async () => {
+    const reason = "An email address must have an @-sign.";
+    const malformed = { type: "value_error", loc: ["body", "email"], msg: `value is not a valid email address: ${reason}` };
+    teamApi.addMember.mockRejectedValue({ response: { status: 422, data: { detail: [malformed] } } });
+
+    addMember("lena.example.com");
+
+    expect((await screen.findByRole("alert")).textContent).toBe(reason);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it("names a failure that belongs to no field in a toast", async () => {
     teamApi.addMember.mockRejectedValue({ response: { status: 403, data: { detail: "Not enough permissions" } } });
 

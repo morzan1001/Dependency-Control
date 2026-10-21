@@ -71,7 +71,9 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
     },
   })
   const emailRefusal =
-    inviteMemberMutation.isError && refusesEmail(inviteMemberMutation.error) ? getErrorMessage(inviteMemberMutation.error) : null
+    inviteMemberMutation.isError && refusesEmail(inviteMemberMutation.error)
+      ? getErrorMessage(inviteMemberMutation.error, { withField: false })
+      : null
   const emailError = blankEmail ? 'Enter an email address' : emailRefusal
 
   const updateMemberMutation = useMutation({

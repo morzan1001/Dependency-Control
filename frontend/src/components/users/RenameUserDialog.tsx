@@ -29,7 +29,7 @@ export function RenameUserDialog({ user, onOpenChange, onUserUpdated }: Readonly
   const updateUserMutation = useUpdateUser();
   const usernameRefusal =
     updateUserMutation.isError && refusesUsername(updateUserMutation.variables?.data, updateUserMutation.error)
-      ? getErrorMessage(updateUserMutation.error)
+      ? getErrorMessage(updateUserMutation.error, { withField: false })
       : null;
   const usernameError = blankUsername ? 'Enter a username' : usernameRefusal;
 

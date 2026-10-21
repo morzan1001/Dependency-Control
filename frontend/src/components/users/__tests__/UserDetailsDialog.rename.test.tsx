@@ -144,6 +144,20 @@ describe('UserDetailsDialog - username', () => {
     await waitFor(() => expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument())
   })
 
+  it('says under the field why validation refused the name, without naming the field again', async () => {
+    auth.granted = MANAGER
+    const refusal = { type: 'value_error', loc: ['body', 'username'], msg: `Value error, ${OUTSIDE_RULE}` }
+    update.mockRejectedValue({ response: { status: 422, data: { detail: [refusal] } } })
+    renderDialog()
+    const { dialog, field, save } = openRename()
+
+    fireEvent.change(field, { target: { value: '-otto' } })
+    fireEvent.click(save)
+
+    expect((await within(dialog).findByRole('alert')).textContent).toBe(OUTSIDE_RULE)
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
   it.each([
     { error: { response: { status: 403, data: { detail: NOT_MANAGEABLE } } }, message: NOT_MANAGEABLE },
     { error: new Error('Network Error'), message: 'Network Error' },

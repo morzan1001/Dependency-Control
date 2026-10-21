@@ -176,6 +176,20 @@ describe('ProjectMembers', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('shows under the field why the server refused a malformed address, as the invite user dialog does', async () => {
+    const reason = 'An email address must have an @-sign.'
+    const malformed = { type: 'value_error', loc: ['body', 'email'], msg: `value is not a valid email address: ${reason}` }
+    vi.mocked(projectApi.inviteMember).mockRejectedValue({ response: { status: 422, data: { detail: [malformed] } } })
+    renderMembers('')
+    fireEvent.click(screen.getByRole('button', { name: 'Invite Member' }))
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'bob.example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Invite' }))
+
+    expect((await screen.findByRole('alert')).textContent).toBe(reason)
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
   it('opens again on an empty field without the refusal shown before it was closed', async () => {
     vi.mocked(projectApi.inviteMember).mockRejectedValue({ response: { status: 404, data: { detail: NO_VERIFIED_USER } } })
     renderMembers('')

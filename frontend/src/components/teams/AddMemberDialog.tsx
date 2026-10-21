@@ -36,7 +36,9 @@ export function AddMemberDialog({ teamId, isOpen, onClose }: Readonly<AddMemberD
   const [role, setRole] = useState('member');
   const addMemberMutation = useAddTeamMember();
   const emailRefusal =
-    addMemberMutation.isError && refusesEmail(addMemberMutation.error) ? getErrorMessage(addMemberMutation.error) : null;
+    addMemberMutation.isError && refusesEmail(addMemberMutation.error)
+      ? getErrorMessage(addMemberMutation.error, { withField: false })
+      : null;
   const emailError = blankEmail ? 'Enter an email address' : emailRefusal;
 
   const handleClose = () => {
