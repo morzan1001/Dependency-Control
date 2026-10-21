@@ -22,7 +22,7 @@ from app.core.constants import (
     RetentionAction,
 )
 from app.core.notification_prefs import StrictNotificationPreferences
-from app.models.finding import FindingType, Severity
+from app.models.finding import FINDING_ID_DESCRIPTION, FindingType, Severity
 from app.models.license import DeploymentModel, DistributionModel, LibraryUsage
 from app.models.project import Project, ProjectMember, Scan
 from app.schemas._not_null import reject_null
@@ -297,11 +297,7 @@ class DashboardStats(BaseModel):
 
 
 class ScanFindingItem(BaseModel):
-    id: str = Field(
-        ...,
-        description="Analyzer-defined finding id (component:version for aggregated vulnerabilities); "
-        "not a CVE and not unique per scan",
-    )
+    id: str = Field(..., description=FINDING_ID_DESCRIPTION)
     finding_id: str = Field(..., description="Finding identifier")
     type: FindingType = Field(..., description="Type of finding")
     severity: Severity = Field(..., description="Severity level")

@@ -62,12 +62,13 @@ PACKAGE_FINDING_TYPES = frozenset(
 )
 
 
+FINDING_ID_DESCRIPTION = (
+    "Analyzer-defined finding id (component:version for aggregated vulnerabilities); not a CVE and not unique per scan"
+)
+
+
 class Finding(BaseModel):
-    id: str = Field(
-        ...,
-        description="Analyzer-defined finding id (component:version for aggregated vulnerabilities); "
-        "not a CVE and not unique per scan",
-    )
+    id: str = Field(..., description=FINDING_ID_DESCRIPTION)
     type: FindingType = Field(..., description="Type of finding")
     severity: Severity = Field(..., description="Severity level")
     component: str = Field(..., description="Affected component or file")
