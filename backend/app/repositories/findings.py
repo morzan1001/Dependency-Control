@@ -36,16 +36,13 @@ FIRST_DETECTION_INDEX = [
     ("scan_created_at", ASCENDING),
 ]
 
-# The newest copy per (type, finding_id) is one seek, covered for the fields earliest_detections reads.
+# The newest copy per (type, finding_id) is one seek; a covering tail would quadruple the index for no persist gain.
 # The server skips ahead only for a single grouped field behind equalities, so each type is its own query.
 NEWEST_COPY_INDEX = [
     ("project_id", ASCENDING),
     ("type", ASCENDING),
     ("finding_id", ASCENDING),
     ("created_at", DESCENDING),
-    ("component", ASCENDING),
-    ("version", ASCENDING),
-    ("first_seen_at", ASCENDING),
 ]
 VULNERABILITIES_ONLY = {"type": FindingType.VULNERABILITY.value}
 
