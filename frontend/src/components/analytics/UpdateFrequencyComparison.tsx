@@ -83,22 +83,22 @@ function HintHeader({
 // partial is absent: its row carries numbers and renders them with a caveat instead of a placeholder.
 const STATUS_CONFIG: Record<
   Exclude<UpdateDataStatus, 'ready' | 'partial'>,
-  { label: string; hint: string; icon: typeof Clock; className: string }
+  { children: string; hint: string; icon: typeof Clock; className: string }
 > = {
   pending: {
-    label: 'Not computed yet',
+    children: 'Not computed yet',
     hint: 'No update metrics recorded for this project yet.',
     icon: Clock,
     className: 'bg-gray-500/10 text-gray-500 border-gray-500/20',
   },
   insufficient_data: {
-    label: 'Too few commits',
+    children: 'Too few commits',
     hint: 'Fewer than 2 scanned commits in this window.',
     icon: Hourglass,
     className: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20',
   },
   error: {
-    label: 'Measurement failed',
+    children: 'Measurement failed',
     hint: 'Recording the update metrics for this project failed.',
     icon: AlertTriangle,
     className: 'bg-red-500/10 text-red-600 border-red-500/20',
@@ -488,7 +488,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                   ) : (
                     // One spanning cell keeps unmeasured rows from parking a value under a metric header.
                     <TableCell colSpan={6}>
-                      <HintBadge {...STATUS_CONFIG[project.data_status]}>{STATUS_CONFIG[project.data_status].label}</HintBadge>
+                      <HintBadge {...STATUS_CONFIG[project.data_status]} />
                     </TableCell>
                   )}
                 </TableRow>
