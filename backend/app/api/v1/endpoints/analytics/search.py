@@ -14,7 +14,7 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
     scope_resolution_counts,
 )
-from app.api.v1.helpers.pagination import page_facet, page_meta, unpack_page_facet
+from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.responses import RESP_413, RESP_AUTH
 from app.api.v1.helpers.sorting import (
     SortOrderQuery,
@@ -75,12 +75,11 @@ async def _page_ids(
     hint: dict[str, int],
 ) -> tuple[list[Any], int]:
     """The page carries ids alone: $facet returns one 16 MB document, and one finding can name thousands of advisories."""
-    result = await repo.aggregate(
-        [{"$match": query}, page_facet([*ordered, {"$skip": skip}, {"$limit": limit}, {"$project": {"_id": 1}}])],
-        hint=hint,
+    page = [*ordered, {"$skip": skip}, {"$limit": limit}, {"$project": {"_id": 1}}]
+    [bucket] = await repo.aggregate(
+        [{"$match": query}, {"$facet": {"total": [{"$count": "n"}], "ids": page}}], hint=hint
     )
-    page, total = unpack_page_facet(result)
-    return [row["_id"] for row in page], total
+    return [row["_id"] for row in bucket["ids"]], bucket["total"][0]["n"] if bucket["total"] else 0
 
 
 _PROJECT_RANK = "_project_rank"
