@@ -107,7 +107,7 @@ _SAST_FINDING_TYPES = {"sast"} | (CRYPTO_FINDING_TYPES - CRYPTO_ISSUE_FINDING_TY
 async def _apply_live_threat_intel(
     findings: list[dict[str, Any]],
 ) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
-    """Mark each finding's advisories with KEV/EPSS as of now, not as of the scan, unless a live source is down."""
+    """Mark each finding's advisories with KEV/EPSS as of now; a KEV outage keeps the scan's data, an EPSS one its EPSS."""
     vuln_findings = [f for f in findings if f["type"] == "vulnerability"]
     all_cves = list({c for f in vuln_findings for c in live_cves([f["details"]])})
     if not all_cves:
@@ -117,17 +117,26 @@ async def _apply_live_threat_intel(
     except Exception as e:
         logger.warning("Recommendations: live CVE enrichment failed, using stored data: %s", e)
         return {}, list(THREAT_INTEL_SOURCES)
-    if unavailable:
+    if "KEV" in unavailable:
         # A partial refresh would clear stored KEV marks and the risk points they carry, so the scan's data stands.
         logger.warning("Recommendations: %s unavailable, using stored data", " and ".join(unavailable))
         return {}, unavailable
-
-    # A CVE the live sources returned nothing for keeps the scores stored at scan time.
-    live = {cve: e for cve, e in enrichments.items() if e.epss_score is not None or e.in_kev}
+    if unavailable:
+        logger.warning("Recommendations: EPSS unavailable, applying live KEV marks over the stored EPSS")
+        live = {cve: e for cve, e in enrichments.items() if e.in_kev}
+    else:
+        # A CVE the live sources returned nothing for keeps the scores stored at scan time.
+        live = {cve: e for cve, e in enrichments.items() if e.epss_score is not None or e.in_kev}
     for f in vuln_findings:
-        refreshed = [v for v in f["details"].get("vulnerabilities") or [] if any(c in live for c in entry_cves(v))]
-        apply_enrichments({"vulnerabilities": refreshed}, live)
-    return enrichments, []
+        for advisory in f["details"].get("vulnerabilities") or []:
+            matched = {cve: live[cve] for cve in entry_cves(advisory) if cve in live}
+            if not matched:
+                continue
+            if unavailable:
+                stored_epss = {key: advisory.get(key) for key in ("epss_score", "epss_percentile", "epss_date")}
+                matched = {cve: e.model_copy(update=stored_epss) for cve, e in matched.items()}
+            apply_enrichments({"vulnerabilities": [advisory]}, matched)
+    return (live if unavailable else enrichments), unavailable
 
 
 async def _dependency_window(

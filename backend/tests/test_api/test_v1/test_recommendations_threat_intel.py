@@ -8,6 +8,7 @@ from app.models.finding import Finding, FindingType
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import RecommendationType
 from app.services.analysis.engine import _prepare_finding_records
+from app.services.enrichment.scoring import calculate_risk_score
 from app.services.recommendation.incidents import detect_known_exploits
 from tests.helpers.findings import stored_vulnerability
 
@@ -119,6 +120,27 @@ class TestApplyLiveThreatIntel:
         enrichments, _ = _refresh([f], live, ["KEV"])
 
         assert RecommendationType.RANSOMWARE_RISK in {r.type for r in detect_known_exploits([f], enrichments)}
+
+    def test_an_epss_outage_still_raises_a_cve_newly_in_kev_and_keeps_its_stored_epss(self):
+        stored = {"epss_score": 0.42, "epss_percentile": 97.0, "epss_date": "2026-10-01"}
+        f = _finding([{"id": "CVE-1", "resolved_cve": "CVE-1", "cvss_score": 7.5, **stored}])
+
+        enrichments, unavailable = _refresh([f], {"CVE-1": _live("CVE-1", in_kev=True)}, ["EPSS"])
+
+        assert unavailable == ["EPSS"]
+        [advisory] = f["details"]["vulnerabilities"]
+        assert (advisory["in_kev"], {key: advisory[key] for key in stored}) == (True, stored)
+        assert advisory["risk_score"] == calculate_risk_score(7.5, 0.42, True, False)
+        assert RecommendationType.KNOWN_EXPLOIT in {r.type for r in detect_known_exploits([f], enrichments)}
+
+    def test_an_epss_outage_leaves_an_advisory_outside_kev_as_stored(self):
+        stored = {"epss_score": 0.42, "risk_score": 55.0}
+        f = _finding([{"id": "CVE-1", "resolved_cve": "CVE-1", **stored}])
+
+        _refresh([f], {"CVE-1": _live("CVE-1")}, ["EPSS"])
+
+        [advisory] = f["details"]["vulnerabilities"]
+        assert ("in_kev" in advisory, {key: advisory[key] for key in stored}) == (False, stored)
 
 
 class TestRefreshedCards:
