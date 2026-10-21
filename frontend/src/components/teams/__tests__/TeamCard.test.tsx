@@ -148,23 +148,13 @@ describe("TeamCard long text", () => {
   const longDescription = "D".repeat(300);
 
   it("cuts a long name to the card like a project card and keeps it whole in the tooltip", () => {
-    const { container } = render(
-      <TeamCard
-        team={{ ...TEAM, name: longName }}
-        onEdit={vi.fn()}
-        onManageMembers={vi.fn()}
-        onAddMember={vi.fn()}
-        onDelete={vi.fn()}
-        onManageWebhooks={vi.fn()}
-        onManageBinding={vi.fn()}
-      />,
-    );
+    renderCard(vi.fn(), { ...TEAM, name: longName });
 
     const name = screen.getByText(longName);
     expect(name).toHaveClass("truncate");
     expect(name).toHaveAttribute("title", longName);
     // The phone layout's single grid column sizes to its widest card unless the card may shrink.
-    expect(container.firstChild).toHaveClass("min-w-0");
+    expect(name.closest(".min-w-0")).not.toBeNull();
   });
 
   it("wraps a long unbroken description inside the card", () => {
