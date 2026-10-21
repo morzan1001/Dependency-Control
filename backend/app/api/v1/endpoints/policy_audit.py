@@ -10,19 +10,17 @@ from app.api.deps import SystemManagerDep, CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access, ensure_crypto_overrides_writable
 from app.api.v1.helpers.responses import (
-    RESP_400,
     RESP_400_403,
     RESP_400_403_404,
     RESP_403,
     RESP_403_404,
-    RESP_404,
 )
 from app.api.v1.helpers.users import resolve_usernames
 from app.core import ensure_utc
 from app.core.config import settings
 from app.core.constants import MAX_POLICY_AUDIT_PAGE, PROJECT_ROLE_ADMIN
 from app.models.crypto_policy import CryptoPolicy
-from app.models.policy_audit_entry import PolicyAuditEntry
+from app.models.policy_audit_entry import PolicyAuditEntry, PolicyType
 from app.models.user import User
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.schemas.crypto_policy import CryptoPolicyPutRequest
@@ -46,6 +44,37 @@ async def _with_actor_names(db: AsyncIOMotorDatabase, entries: list[PolicyAuditE
     return await resolve_usernames(db, rows, "actor_display_name", id_field="actor_user_id")
 
 
+async def _list_entries(
+    db: AsyncIOMotorDatabase,
+    *,
+    policy_scope: Literal["system", "project"],
+    project_id: str | None,
+    policy_type: PolicyType,
+    skip: int,
+    limit: int,
+) -> dict[str, Any]:
+    entries = await PolicyAuditRepository(db).list(
+        policy_scope=policy_scope, project_id=project_id, policy_type=policy_type, skip=skip, limit=limit
+    )
+    return {"entries": await _with_actor_names(db, entries)}
+
+
+async def _get_entry(
+    db: AsyncIOMotorDatabase,
+    *,
+    policy_scope: Literal["system", "project"],
+    project_id: str | None,
+    version: int,
+    policy_type: PolicyType,
+) -> PolicyAuditEntry:
+    entry = await PolicyAuditRepository(db).get_by_version(
+        policy_scope=policy_scope, project_id=project_id, version=version, policy_type=policy_type
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Version {version} not found")
+    return entry
+
+
 @router.get("/crypto-policies/system/audit", responses=RESP_403)
 async def list_system_audit(
     current_user: SystemManagerDep,
@@ -53,13 +82,7 @@ async def list_system_audit(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=MAX_POLICY_AUDIT_PAGE),
 ) -> dict[str, Any]:
-    entries = await PolicyAuditRepository(db).list(
-        policy_scope="system",
-        policy_type="crypto",
-        skip=skip,
-        limit=limit,
-    )
-    return {"entries": await _with_actor_names(db, entries)}
+    return await _list_entries(db, policy_scope="system", project_id=None, policy_type="crypto", skip=skip, limit=limit)
 
 
 @router.get("/crypto-policies/system/audit/{version}", responses=RESP_403_404)
@@ -68,14 +91,7 @@ async def get_system_audit_entry(
     current_user: SystemManagerDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
-    entry = await PolicyAuditRepository(db).get_by_version(
-        policy_scope="system",
-        project_id=None,
-        version=version,
-        policy_type="crypto",
-    )
-    if entry is None:
-        raise HTTPException(status_code=404, detail="Audit entry not found")
+    entry = await _get_entry(db, policy_scope="system", project_id=None, version=version, policy_type="crypto")
     return (await _with_actor_names(db, [entry]))[0]
 
 
@@ -112,7 +128,7 @@ async def prune_system_audit(
     return {"deleted": deleted}
 
 
-@router.get("/projects/{project_id}/crypto-policy/audit")
+@router.get("/projects/{project_id}/crypto-policy/audit", responses=RESP_403_404)
 async def list_project_audit(
     project_id: str,
     current_user: CurrentUserDep,
@@ -121,17 +137,12 @@ async def list_project_audit(
     limit: int = Query(50, ge=1, le=MAX_POLICY_AUDIT_PAGE),
 ) -> dict[str, Any]:
     await check_project_access(project_id, current_user, db)
-    entries = await PolicyAuditRepository(db).list(
-        policy_scope="project",
-        project_id=project_id,
-        policy_type="crypto",
-        skip=skip,
-        limit=limit,
+    return await _list_entries(
+        db, policy_scope="project", project_id=project_id, policy_type="crypto", skip=skip, limit=limit
     )
-    return {"entries": await _with_actor_names(db, entries)}
 
 
-@router.get("/projects/{project_id}/crypto-policy/audit/{version}", responses=RESP_404)
+@router.get("/projects/{project_id}/crypto-policy/audit/{version}", responses=RESP_403_404)
 async def get_project_audit_entry(
     project_id: str,
     version: int,
@@ -139,14 +150,7 @@ async def get_project_audit_entry(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     await check_project_access(project_id, current_user, db)
-    entry = await PolicyAuditRepository(db).get_by_version(
-        policy_scope="project",
-        project_id=project_id,
-        version=version,
-        policy_type="crypto",
-    )
-    if entry is None:
-        raise HTTPException(status_code=404, detail="Audit entry not found")
+    entry = await _get_entry(db, policy_scope="project", project_id=project_id, version=version, policy_type="crypto")
     return (await _with_actor_names(db, [entry]))[0]
 
 
@@ -170,7 +174,7 @@ async def revert_project_policy(
     return policy.model_dump(by_alias=True)
 
 
-@router.delete("/projects/{project_id}/crypto-policy/audit", responses=RESP_400)
+@router.delete("/projects/{project_id}/crypto-policy/audit", responses=RESP_400_403_404)
 async def prune_project_audit(
     project_id: str,
     current_user: CurrentUserDep,
@@ -188,7 +192,7 @@ async def prune_project_audit(
     return {"deleted": deleted}
 
 
-@router.get("/projects/{project_id}/license-policy/audit")
+@router.get("/projects/{project_id}/license-policy/audit", responses=RESP_403_404)
 async def list_project_license_audit(
     project_id: str,
     current_user: CurrentUserDep,
@@ -198,17 +202,12 @@ async def list_project_license_audit(
 ) -> dict[str, Any]:
     """List license-policy audit entries for a project (viewer+ role)."""
     await check_project_access(project_id, current_user, db)
-    entries = await PolicyAuditRepository(db).list(
-        policy_scope="project",
-        project_id=project_id,
-        policy_type="license",
-        skip=skip,
-        limit=limit,
+    return await _list_entries(
+        db, policy_scope="project", project_id=project_id, policy_type="license", skip=skip, limit=limit
     )
-    return {"entries": await _with_actor_names(db, entries)}
 
 
-@router.get("/projects/{project_id}/license-policy/audit/{version}", responses=RESP_404)
+@router.get("/projects/{project_id}/license-policy/audit/{version}", responses=RESP_403_404)
 async def get_project_license_audit_entry(
     project_id: str,
     version: int,
@@ -217,14 +216,7 @@ async def get_project_license_audit_entry(
 ) -> dict[str, Any]:
     """Fetch a single license-policy audit entry by version."""
     await check_project_access(project_id, current_user, db)
-    entry = await PolicyAuditRepository(db).get_by_version(
-        policy_scope="project",
-        project_id=project_id,
-        version=version,
-        policy_type="license",
-    )
-    if entry is None:
-        raise HTTPException(status_code=404, detail=f"License-policy version {version} not found")
+    entry = await _get_entry(db, policy_scope="project", project_id=project_id, version=version, policy_type="license")
     return (await _with_actor_names(db, [entry]))[0]
 
 
@@ -251,14 +243,9 @@ async def _revert_policy(
     target_version: int,
     comment: str | None,
 ) -> CryptoPolicy:
-    target_entry = await PolicyAuditRepository(db).get_by_version(
-        policy_scope=policy_scope,
-        project_id=project_id,
-        version=target_version,
-        policy_type="crypto",
+    target_entry = await _get_entry(
+        db, policy_scope=policy_scope, project_id=project_id, version=target_version, policy_type="crypto"
     )
-    if target_entry is None:
-        raise HTTPException(status_code=404, detail=f"Version {target_version} not found")
 
     try:
         rules = CryptoPolicyPutRequest(rules=target_entry.snapshot.get("rules", [])).rules
