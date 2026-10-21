@@ -61,7 +61,6 @@ from app.api.v1.helpers.sorting import (
 )
 from app.api.v1.helpers.teams import team_refs
 from app.core.constants import (
-    ARCHIVE_BATCH_SIZE,
     MAX_PROJECT_TEAMS,
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
@@ -130,7 +129,7 @@ from app.services.gridfs_maintenance import (
 )
 from app.services.inventory.findings_export import FINDINGS_COLUMNS, ExportedScan, iter_findings_rows
 from app.services.rescan import create_rescan
-from app.services.scan_cascade import delete_scans_and_related_data
+from app.services.scan_cascade import delete_scans_matching
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
@@ -1393,15 +1392,8 @@ async def delete_project(
     # First, so ingest stops resolving the project while its data goes and a retry answers 404.
     await ProjectRepository(db).delete(project_id)
 
-    scan_repo = ScanRepository(db)
-    # Re-read until none is left, which also takes the scans of an ingest that resolved the project before.
-    while scan_ids := [
-        scan["_id"]
-        for scan in await scan_repo.find_many_raw(
-            {"project_id": project_id}, limit=ARCHIVE_BATCH_SIZE, projection={"_id": 1}
-        )
-    ]:
-        await delete_scans_and_related_data(db, scan_ids)
+    # Re-reads until none is left, which also takes the scans of an ingest that resolved the project before.
+    await delete_scans_matching(db, {"project_id": project_id})
 
     await WaiverRepository(db).delete_many({"project_id": project_id})
     await ReleaseRepository(db).delete_many({"project_id": project_id})

@@ -1,5 +1,6 @@
 """A project deletion removes the project first, then its scans in bounded batches until none are left."""
 
+from functools import partial
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -7,7 +8,8 @@ import pytest
 from app.api.v1.endpoints import projects as endpoints
 from app.models.project import Project
 from app.models.user import User
-from app.services.scan_cascade import delete_scans_and_related_data
+from app.services import scan_cascade
+from app.services.scan_cascade import delete_scans_and_related_data, delete_scans_matching
 from tests.mocks.fake_mongo import FakeDatabase
 
 _PROJECT = "proj-1"
@@ -24,7 +26,7 @@ async def _seed(db: FakeDatabase, scans: int) -> None:
 async def _delete(db: FakeDatabase, cascade) -> None:
     with (
         patch(f"{endpoints.__name__}.check_project_access", AsyncMock(return_value=Project(id=_PROJECT, name="x"))),
-        patch(f"{endpoints.__name__}.delete_scans_and_related_data", cascade),
+        patch(f"{scan_cascade.__name__}.delete_scans_and_related_data", cascade),
     ):
         await endpoints.delete_project(_PROJECT, _USER, db)
 
@@ -67,7 +69,7 @@ async def test_a_scan_ingested_during_the_cascade_is_removed_too():
 
 @pytest.mark.asyncio
 async def test_the_scans_are_removed_in_bounded_batches(monkeypatch):
-    monkeypatch.setattr(endpoints, "ARCHIVE_BATCH_SIZE", 2)
+    monkeypatch.setattr(endpoints, "delete_scans_matching", partial(delete_scans_matching, batch_size=2))
     db = FakeDatabase()
     await _seed(db, 5)
     batches = []

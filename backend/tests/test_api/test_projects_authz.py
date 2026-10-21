@@ -130,7 +130,6 @@ class TestDeleteProjectRoutesThroughGate:
 
         repos = {
             "ProjectRepository": MagicMock(),
-            "ScanRepository": MagicMock(),
             "WaiverRepository": MagicMock(),
             "ReleaseRepository": MagicMock(),
             "CallgraphRepository": MagicMock(),
@@ -138,7 +137,6 @@ class TestDeleteProjectRoutesThroughGate:
             "CryptoPolicyRepository": MagicMock(),
             "ArchiveMetadataRepository": MagicMock(),
         }
-        repos["ScanRepository"].find_many_raw = AsyncMock(return_value=[])
         repos["WaiverRepository"].delete_many = AsyncMock(return_value=None)
         repos["ReleaseRepository"].delete_many = AsyncMock(return_value=None)
         repos["CallgraphRepository"].delete_by_project = AsyncMock(return_value=None)
@@ -149,7 +147,7 @@ class TestDeleteProjectRoutesThroughGate:
 
         patches = [patch(f"{ENDPOINTS}.{name}", return_value=repo) for name, repo in repos.items()]
         gate = patch(f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project)
-        cascade = patch(f"{ENDPOINTS}.delete_scans_and_related_data", new_callable=AsyncMock, return_value=0)
+        cascade = patch(f"{ENDPOINTS}.delete_scans_matching", new_callable=AsyncMock, return_value=0)
 
         with gate as mock_gate, cascade:
             for p in patches:
