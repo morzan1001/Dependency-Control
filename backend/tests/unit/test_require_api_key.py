@@ -89,16 +89,14 @@ async def _authenticate(surface, db, *, authorization=f"Bearer {_TOKEN}"):
 # RFC 7235 makes the auth scheme case-insensitive, and clients do spell it "bearer".
 @pytest.mark.parametrize("scheme", ["Bearer", "bearer"])
 @pytest.mark.asyncio
-async def test_a_valid_key_for_the_surface_returns_the_owner_and_the_key_document(monkeypatch, scheme):
+async def test_a_valid_key_for_the_surface_returns_its_owner(monkeypatch, scheme):
     db, _ = _db_with_key(_key_doc([API_KEY_SURFACE_MCP]))
     _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
 
-    user, key_doc = await _authenticate(API_KEY_SURFACE_MCP, db, authorization=f"{scheme} {_TOKEN}")
+    user = await _authenticate(API_KEY_SURFACE_MCP, db, authorization=f"{scheme} {_TOKEN}")
 
+    assert isinstance(user, User)
     assert user.id == _OWNER
-    assert key_doc["_id"] == _KEY_ID
-    # The ad-hoc rate limiter keys each caller's window on this field by name, so renaming it would break that.
-    assert key_doc["user_id"] == _OWNER
 
 
 @pytest.mark.asyncio
@@ -219,10 +217,10 @@ async def test_a_key_naming_both_surfaces_satisfies_either_request(monkeypatch, 
     db, _ = _db_with_key(_key_doc(_BOTH_SURFACES))
     _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS, Permissions.ANALYZE_ADHOC]))
 
-    user, key_doc = await _authenticate(surface, db)
+    user = await _authenticate(surface, db)
 
+    assert isinstance(user, User)
     assert user.id == _OWNER
-    assert key_doc["_id"] == _KEY_ID
 
 
 @pytest.mark.parametrize("surface", _BOTH_SURFACES)

@@ -156,9 +156,8 @@ async def _handle_request(item: Any, user: User, db: AsyncIOMotorDatabase[Any]) 
 async def mcp_rpc(
     request: Request,
     db: DatabaseDep,
-    auth: McpKeyDep,
+    user: McpKeyDep,
 ) -> Any:
-    user, _ = auth
 
     try:
         payload = await request.json()

@@ -527,7 +527,7 @@ async def _admit_unified_key(
     token: str,
     surface: str,
     permission: str,
-) -> tuple[User, dict[str, Any]]:
+) -> User:
     key_repo = ApiKeyRepository(db)
     key_doc = await key_repo.get_by_plaintext(token)
     if not key_doc:
@@ -549,16 +549,16 @@ async def _admit_unified_key(
         or (datetime.now(timezone.utc) - last_used_at).total_seconds() >= API_KEY_LAST_USED_RESOLUTION_SECONDS
     ):
         await key_repo.touch_last_used(key_doc["_id"])
-    return user, key_doc
+    return user
 
 
-def require_api_key(surface: str) -> Callable[..., Awaitable[tuple[User, dict[str, Any]]]]:
+def require_api_key(surface: str) -> Callable[..., Awaitable[User]]:
     permission = SURFACE_PERMISSIONS[surface]
 
     async def dependency(
         authorization: str = Header(default=""),
         db: AsyncIOMotorDatabase = Depends(get_database),
-    ) -> tuple[User, dict[str, Any]]:
+    ) -> User:
         return await _admit_unified_key(db, _bearer_token(authorization, surface), surface, permission)
 
     return dependency
@@ -567,13 +567,7 @@ def require_api_key(surface: str) -> Callable[..., Awaitable[tuple[User, dict[st
 DatabaseDep = Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)]
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
 ProjectWriteDep = Annotated[str, Depends(authorize_project_write)]
-AdhocKeyDep = Annotated[
-    tuple[User, dict[str, Any]],
-    Depends(require_api_key(API_KEY_SURFACE_ADHOC)),
-]
-McpKeyDep = Annotated[
-    tuple[User, dict[str, Any]],
-    Depends(require_api_key(API_KEY_SURFACE_MCP)),
-]
+AdhocKeyDep = Annotated[User, Depends(require_api_key(API_KEY_SURFACE_ADHOC))]
+McpKeyDep = Annotated[User, Depends(require_api_key(API_KEY_SURFACE_MCP))]
 ProjectIngestDep = Annotated[Project, Depends(get_project_for_ingest)]
 SystemManagerDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANAGE))]

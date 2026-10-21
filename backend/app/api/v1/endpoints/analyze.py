@@ -58,8 +58,7 @@ _HTML_RESPONSE: dict[int | str, dict[str, Any]] = {200: {"content": {"text/html"
     summary="Queue an ad-hoc analysis",
     description=_DESCRIPTION,
 )
-async def analyze(request: Request, db: DatabaseDep, authenticated: AdhocKeyDep) -> AdhocJob:
-    _owner, key = authenticated
+async def analyze(request: Request, db: DatabaseDep, owner: AdhocKeyDep) -> AdhocJob:
     payload = await read_json_body(request, AdhocAnalyzeRequest)
     data = await asyncio.to_thread(lambda: payload.model_dump_json().encode())
     job_id = str(uuid.uuid4())
@@ -68,7 +67,7 @@ async def analyze(request: Request, db: DatabaseDep, authenticated: AdhocKeyDep)
     await db.adhoc_jobs.insert_one(
         {
             "_id": job_id,
-            "owner_id": key["user_id"],
+            "owner_id": owner.id,
             "status": SCAN_STATUS_PENDING,
             "input_file_id": str(input_file_id),
             "created_at": now,
@@ -88,11 +87,10 @@ async def analyze(request: Request, db: DatabaseDep, authenticated: AdhocKeyDep)
 async def analysis_result(
     job_id: str,
     db: DatabaseDep,
-    authenticated: AdhocKeyDep,
+    owner: AdhocKeyDep,
     format: Literal["json", "html"] = "json",
 ) -> Response:
-    _owner, key = authenticated
-    job = await db.adhoc_jobs.find_one({"_id": job_id, "owner_id": key["user_id"]})
+    job = await db.adhoc_jobs.find_one({"_id": job_id, "owner_id": owner.id})
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_JOB_NOT_FOUND)
     if job["status"] == SCAN_STATUS_FAILED:
