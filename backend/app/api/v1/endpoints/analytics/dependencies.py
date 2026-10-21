@@ -32,7 +32,7 @@ from app.schemas.analytics import (
     DependencyTreeNode,
     SeverityBreakdown,
 )
-from app.services.aggregation.versions import newest_first, normalize_version, parse_version_key
+from app.services.aggregation.versions import newest_first, normalize_version, parse_version_key, version_covered
 from app.services.component_identity import (
     artifact_segment,
     build_component_index,
@@ -131,8 +131,7 @@ def _tree_findings_map(details_by_package: dict[tuple[Any, ...], list[Any]]) -> 
 def _build_tree_node(dep: dict[str, Any], findings_map: TreeFindings, *, direct: bool) -> DependencyTreeNode:
     # The bare-artifact alias keys are lowercased, dependency names are not.
     by_version = lookup_component(findings_map, dep["name"]) or {}
-    # A finding without a version cannot tell the package's versions apart, so it covers them all.
-    details = by_version.get(normalize_version(dep["version"]), []) + by_version.get("unknown", [])
+    details = [d for version, found in by_version.items() if version_covered({version}, dep["version"]) for d in found]
     finding_info = severity_counts_from_details(details) if details else {}
     findings_count = sum(finding_info.values())
 

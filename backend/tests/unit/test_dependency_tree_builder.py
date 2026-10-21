@@ -230,6 +230,15 @@ class TestDependencyGraphBuilder:
         )
         assert node.findings_count == sum(node.findings_severity.model_dump().values()) == 3
 
+    def test_a_versionless_finding_covers_the_node_at_any_version(self):
+        findings_map = _tree_findings_map(
+            {("a", None): [{"vulnerabilities": [{"id": "CVE-2026-0001", "severity": "HIGH"}]}]}
+        )
+
+        node = _by_name(_graph([_dep("a", version="2.0.0", direct=True)], findings_map))["a"]
+
+        assert node.findings_count == 1
+
     def test_findings_absent_yields_no_severity(self):
         node = _by_name(_graph([_dep("a", direct=True)], {}))["a"]
 
