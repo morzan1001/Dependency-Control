@@ -5,10 +5,9 @@ from typing import Any
 import pytest
 
 from app.core.constants import LICENSE_ALIASES, LICENSE_URL_PATTERNS
-from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
-from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
-from app.services.analyzers.license_compliance.constants import LICENSE_INCOMPATIBILITIES
 from app.services.analyzers.license_compliance import normalizer
+from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
+from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE, LICENSE_INCOMPATIBILITIES
 from app.services.analyzers.license_compliance.normalizer import (
     extract_license_from_url,
     normalize_license,

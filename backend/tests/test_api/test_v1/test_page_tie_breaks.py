@@ -9,11 +9,11 @@ from app.api.v1.endpoints.projects import read_all_scans, read_project_scans
 from app.api.v1.endpoints.releases import list_releases
 from app.core.permissions import Permissions
 from app.models.user import User
+from app.repositories.projections import ProjectWithScanId
 from app.repositories.projects import ProjectRepository
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
-from app.repositories.projections import ProjectWithScanId
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
 

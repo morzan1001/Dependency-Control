@@ -2,8 +2,7 @@ from datetime import datetime, time, timedelta, timezone
 
 import pytest
 
-from app.models.crypto_asset import CryptoAsset
-from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.auth import make_admin
 from tests.helpers.cbom import store_assets

@@ -4,10 +4,10 @@ import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.core.init_db import create_indexes
+from app.models.compliance_report import ReportFramework
 from app.models.project import Project, Scan
 from app.repositories.scans import ScanRepository
 from app.schemas.compliance import ControlStatus
-from app.models.compliance_report import ReportFramework
 from app.services.aggregation import ResultAggregator
 from app.services.analytics.scopes import ResolvedScope
 from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer

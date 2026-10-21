@@ -14,8 +14,8 @@ from app.core.permissions import Permissions
 from app.models.release import Release
 from app.models.user import User
 from app.repositories.releases import ReleaseRepository
-from tests.mocks.fake_mongo import FakeDatabase
 from tests.helpers.analytics_scope import projections
+from tests.mocks.fake_mongo import FakeDatabase
 
 _DEPENDENCIES = "app.api.v1.endpoints.analytics.dependencies"
 _RISK = "app.api.v1.endpoints.analytics.risk"

@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_PROCESSING
 from app.schemas.scan_delta import (
     CryptoDeltaItem,
     DeltaCategory,
@@ -11,7 +12,6 @@ from app.schemas.scan_delta import (
     ScanDeltaSide,
     ScanDeltaTotals,
 )
-from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_PROCESSING
 from app.services.analytics import cache as cache_module
 from app.services.analytics.cache import get_delta_cache
 from app.services.analytics.scan_delta import _MAX_PAGE_SIZE, InvalidDeltaQuery, compute_scan_delta_dispatch

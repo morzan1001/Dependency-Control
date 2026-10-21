@@ -3,11 +3,9 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import pytest_asyncio
 
-from app.models.compliance_report import ComplianceReport
-from app.models.policy_audit_entry import PolicyAuditEntry
+from app.models.compliance_report import ComplianceReport, ReportFormat, ReportFramework, ReportStatus
+from app.models.policy_audit_entry import PolicyAuditAction, PolicyAuditEntry
 from app.models.project import Scan
-from app.models.compliance_report import ReportFormat, ReportFramework, ReportStatus
-from app.models.policy_audit_entry import PolicyAuditAction
 from app.schemas.project import LicensePolicySchema
 from app.services.audit.history import record_license_policy_change
 from app.services.chat.tools import ChatToolRegistry

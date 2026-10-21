@@ -6,7 +6,6 @@ from app.core.constants import POLICY_COMMENT_MAX_LENGTH
 from app.models.crypto_policy import CryptoRule
 from app.models.finding import FindingType
 
-
 # The finding types evaluate_rules evaluates; its matchers run for no other type.
 RULE_DRIVEN_FINDING_TYPES: frozenset[FindingType] = frozenset(
     {FindingType.CRYPTO_WEAK_ALGORITHM, FindingType.CRYPTO_WEAK_KEY, FindingType.CRYPTO_QUANTUM_VULNERABLE}

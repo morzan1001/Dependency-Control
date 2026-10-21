@@ -1,8 +1,7 @@
 import pytest
 
-from app.models.crypto_asset import CryptoAsset
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
 from app.repositories.crypto_asset import CryptoAssetRepository
-from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
 from tests.helpers.cbom import store_assets
 
 

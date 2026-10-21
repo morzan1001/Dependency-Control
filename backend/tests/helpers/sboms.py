@@ -7,7 +7,6 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from app.services.analysis import engine
 from app.services.gridfs_maintenance import make_gridfs_ref
 
-
 _FILENAME = "sbom.json"
 
 

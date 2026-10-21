@@ -11,8 +11,8 @@ import pytest
 import app.core.purl as purl_module
 import app.repositories.update_frequency as update_frequency_repository
 import app.services.update_frequency as update_frequency_module
-from app.core.purl import parse_purl
 from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
+from app.core.purl import parse_purl
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository

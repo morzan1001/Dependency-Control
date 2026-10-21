@@ -11,7 +11,6 @@ from app.core.risk_scoring import calculate_exploit_maturity
 from app.repositories.base import find_window
 from app.services.recommendation.common import live_cves, vuln_info
 
-
 MAX_TOOL_RESULT_BYTES = 8_000
 
 # How a bounded answer names the population its list was cut from: "<list key><suffix>".

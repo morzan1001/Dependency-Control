@@ -5,8 +5,8 @@ from markupsafe import escape
 from app.schemas.adhoc import AdhocAnalyzeResponse, AnalyzerReport
 from app.services.analysis.adhoc import _STAGE_NOTES
 from app.services.analysis.adhoc_report import (
-    _DESCRIPTION_CHARS,
     _DERIVED_FIELDS,
+    _DESCRIPTION_CHARS,
     _ENV,
     _FINDING_ROW_CAP,
     _RECOMMENDATION_ROW_CAP,

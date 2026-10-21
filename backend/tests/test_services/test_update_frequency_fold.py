@@ -9,8 +9,13 @@ from app.repositories.update_frequency import BranchWindowActivity
 from app.schemas.analytics import ScanTimelineEntry
 from app.schemas.team import TeamRef
 from app.services.release_history import UpstreamCadenceMetrics
-from app.services.update_frequency import DAYS_PER_MONTH, compute_trend, dominant_ecosystem
-from app.services.update_frequency import FoldedWindow, measured_summary
+from app.services.update_frequency import (
+    DAYS_PER_MONTH,
+    FoldedWindow,
+    compute_trend,
+    dominant_ecosystem,
+    measured_summary,
+)
 from app.services.update_frequency_fold import (
     READY_COVERAGE_RATIO,
     CommitCoverage,

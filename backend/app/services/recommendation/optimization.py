@@ -10,8 +10,8 @@ from app.schemas.recommendation import (
 from app.services.component_identity import build_component_index, lookup_component
 from app.services.recommendation.common import (
     ModelOrDict,
-    VulnStats,
     VulnerabilityInfo,
+    VulnStats,
     get_attr,
     names_fix,
     recommend,

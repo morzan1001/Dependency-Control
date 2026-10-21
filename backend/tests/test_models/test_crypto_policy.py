@@ -1,9 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from app.models.crypto_policy import CryptoPolicy
+from app.models.crypto_policy import CryptoPolicy, CryptoPolicySource, CryptoRule
 from app.models.finding import FindingType, Severity
-from app.models.crypto_policy import CryptoPolicySource, CryptoRule
 
 
 def _quantum_rule(**overrides):

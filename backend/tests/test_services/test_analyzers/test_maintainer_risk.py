@@ -7,8 +7,7 @@ import pytest
 
 from app.core.constants import DEPS_DEV_API_URL, GITHUB_API_URL, NPM_REGISTRY_URL, PYPI_API_URL
 from app.core.http_utils import InstrumentedAsyncClient
-from app.services.analyzers import maintainer_risk as maintainer_mod
-from app.services.analyzers import outdated as outdated_mod
+from app.services.analyzers import maintainer_risk as maintainer_mod, outdated as outdated_mod
 from app.services.analyzers.maintainer_risk import MaintainerRiskAnalyzer, correlate_maintainer_risks
 from tests.helpers.analyzers import analyze_cyclonedx
 

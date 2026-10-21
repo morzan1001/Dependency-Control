@@ -15,10 +15,10 @@ from app.core.constants import (
     TYPOSQUATTING_SIMILARITY_THRESHOLD,
 )
 from app.core.http_utils import InstrumentedAsyncClient
+from app.core.purl import parse_purl, pep503_normalize
 from app.models.finding import Severity
 
 from .base import Analyzer
-from app.core.purl import parse_purl, pep503_normalize
 
 logger = logging.getLogger(__name__)
 

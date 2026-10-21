@@ -32,9 +32,8 @@ from app.models.stats import (
     Stats,
     ThreatIntelligenceStats,
 )
-from app.schemas.enrichment import VulnerabilityEnrichment
 from app.repositories.projections import CallgraphMinimal
-from app.services.component_identity import lookup_component
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.services.analysis.types import (
     CallgraphInfo,
     Database,
@@ -46,13 +45,14 @@ from app.services.analysis.types import (
     ReachabilitySummary,
     VulnerabilityInfo,
 )
-from app.services.recommendation.common import display_vulnerability_id, live_advisories
+from app.services.component_identity import lookup_component
 from app.services.enrichment.scoring import kev_member
 from app.services.reachability_enrichment import (
     ComponentLanguages,
     build_component_language_map,
     is_high_confidence_reachable,
 )
+from app.services.recommendation.common import display_vulnerability_id, live_advisories
 
 
 def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss_scores: list[float]) -> None:

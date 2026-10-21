@@ -1,5 +1,5 @@
-from app.schemas.compliance import ControlStatus
 from app.models.compliance_report import EvaluationCoverage
+from app.schemas.compliance import ControlStatus
 from app.services.compliance.frameworks import base, cve_remediation_sla, license_audit
 
 _COMPLETE = EvaluationCoverage()

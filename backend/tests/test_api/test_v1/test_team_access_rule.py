@@ -10,8 +10,8 @@ from app.models.user import User
 from app.schemas.team import TeamMemberUpdate
 from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
 from app.services.chat.tools import ChatToolRegistry
-from app.services.compliance.visibility import report_visibility_filter
 from app.services.chat.tools.definitions import TOOL_PERMISSIONS
+from app.services.compliance.visibility import report_visibility_filter
 from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 9, 1, tzinfo=timezone.utc)

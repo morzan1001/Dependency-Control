@@ -18,13 +18,13 @@ from app.core.constants import (
     STALE_PACKAGE_WARNING_DAYS,
 )
 from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
+from app.core.purl import parse_purl
 from app.models.finding import Severity
 from app.services.github import github_api_headers
 
 from .base import Analyzer
 from .deps_dev import fetch_deps_dev_json
 from .outdated import fetch_package_info
-from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
 

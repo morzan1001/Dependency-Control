@@ -7,13 +7,11 @@ from functools import partial
 from itertools import batched
 from typing import TYPE_CHECKING, Any
 
-
 from app.core import abatched
 from app.core.cache import update_cache_stats
 from app.core.config import settings
 from app.core.constants import (
     ARCHIVE_BATCH_SIZE,
-    ORPHAN_MIN_AGE_HOURS,
     HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS,
     HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS,
     HOUSEKEEPING_MAX_SCAN_RETRIES,
@@ -21,11 +19,12 @@ from app.core.constants import (
     HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS,
     HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
     HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC,
+    ORPHAN_MIN_AGE_HOURS,
     RESCAN_HISTORY_RUNS,
-    RETENTION_ACTIONS,
     RETENTION_ACTION_ARCHIVE,
     RETENTION_ACTION_DELETE,
     RETENTION_ACTION_NONE,
+    RETENTION_ACTIONS,
     RETENTION_PROTECTED_FLAG_VALUES,
     SCAN_ACTIVE_STATUSES,
     SCAN_STATUS_PENDING,

@@ -15,11 +15,10 @@ from app.core.constants import (
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions
 from app.models.crypto_policy import CryptoPolicy
-from app.models.policy_audit_entry import PolicyAuditEntry, PolicyType
+from app.models.policy_audit_entry import PolicyAuditAction, PolicyAuditEntry, PolicyType
 from app.models.user import User
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.repositories.projects import ProjectRepository
-from app.models.policy_audit_entry import PolicyAuditAction
 from app.schemas.project import LicensePolicySchema, license_policy_from_settings
 from app.services.notifications.service import notification_service
 from app.services.webhooks import webhook_service

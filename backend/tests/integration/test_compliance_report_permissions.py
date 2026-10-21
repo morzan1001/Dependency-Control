@@ -4,9 +4,8 @@ from unittest.mock import patch
 import pytest
 
 from app.core.permissions import Permissions
-from app.models.compliance_report import ComplianceReport
+from app.models.compliance_report import ComplianceReport, ReportFormat, ReportFramework, ReportStatus
 from app.repositories.compliance_report import ComplianceReportRepository
-from app.models.compliance_report import ReportFormat, ReportFramework, ReportStatus
 from app.services.analytics import scopes
 from tests.helpers.auth import bearer_headers
 

@@ -1,9 +1,8 @@
 import pytest
 
-from app.models.crypto_asset import CryptoAsset
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType
 from app.models.crypto_policy import CryptoPolicy
 from app.repositories.crypto_policy import CryptoPolicyRepository
-from app.models.crypto_asset import CryptoAssetType
 from tests.helpers.analyzers import evaluate_crypto
 from tests.helpers.cbom import store_assets
 

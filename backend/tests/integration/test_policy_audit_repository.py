@@ -2,9 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.models.policy_audit_entry import PolicyAuditEntry
+from app.models.policy_audit_entry import PolicyAuditAction, PolicyAuditEntry
 from app.repositories.policy_audit_entry import PolicyAuditRepository
-from app.models.policy_audit_entry import PolicyAuditAction
 
 _OLDER_VERSION = 4
 _NEWER_VERSION = 5

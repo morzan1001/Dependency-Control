@@ -3,8 +3,7 @@
 import bson
 import pytest
 
-from app.models.policy_audit_entry import PolicyAuditEntry
-from app.models.policy_audit_entry import PolicyAuditAction
+from app.models.policy_audit_entry import PolicyAuditAction, PolicyAuditEntry
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.auth import make_admin
 from tests.helpers.profiler import profiled

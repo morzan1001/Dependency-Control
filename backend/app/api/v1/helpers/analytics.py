@@ -17,7 +17,6 @@ from app.core.constants import (
     EPSS_VERY_HIGH_BOOST,
     EPSS_VERY_HIGH_THRESHOLD,
     EXPLOIT_MATURITY_BOOST,
-    ExploitMaturity,
     IMPACT_AGE_BOOST,
     IMPACT_FIX_AVAILABLE_BOOST,
     IMPACT_MAX_SCORE_BOOST,
@@ -31,6 +30,7 @@ from app.core.constants import (
     RELEASE_ENVIRONMENT_PATTERN,
     REMEDIATION_SLA_DAYS,
     SEVERITY_ORDER,
+    ExploitMaturity,
     get_severity_value,
 )
 from app.core.cve import counted_cves
@@ -40,9 +40,9 @@ from app.models.finding import Severity
 from app.models.user import User
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
+from app.repositories.projections import ProjectWithScanId
 from app.repositories.scans import ScanRepository
 from app.schemas.enrichment import VulnerabilityEnrichment
-from app.repositories.projections import ProjectWithScanId
 from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
 from app.services.analytics.scopes import ScopeResolver
 from app.services.enrichment.scoring import fold_enrichments

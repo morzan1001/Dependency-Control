@@ -7,10 +7,10 @@ import httpx
 import jwt
 import pytest
 
+from app.core import security
 from app.core.config import settings
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.permissions import Permissions
-from app.core import security
 from app.core.security import create_access_token
 from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.repositories.system_settings import SystemSettingsRepository

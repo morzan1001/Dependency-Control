@@ -4,8 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.services.chat.tools import ChatToolRegistry
-from app.services.chat.tools import registry as registry_module
+from app.services.chat.tools import ChatToolRegistry, registry as registry_module
 
 _NOW = datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc)
 _PROJECT = "checkout-service"

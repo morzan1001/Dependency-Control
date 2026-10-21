@@ -20,6 +20,7 @@ from app.core.constants import FINDINGS_SCAN_TYPE_INDEX
 from app.core.permissions import Permissions
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
+from app.repositories.projections import ProjectWithScanId
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.analytics import (
@@ -29,7 +30,7 @@ from app.schemas.analytics import (
     DependencyUsage,
     SeverityBreakdown,
 )
-from app.repositories.projections import ProjectWithScanId
+from app.services.aggregation.versions import newest_first
 from app.services.analytics.cache import get_analytics_cache
 from app.services.component_identity import (
     artifact_name_expr,
@@ -37,7 +38,6 @@ from app.services.component_identity import (
     extract_artifact_name,
     lookup_component,
 )
-from app.services.aggregation.versions import newest_first
 from app.services.recommendation.common import live_cves
 
 router = CustomAPIRouter()

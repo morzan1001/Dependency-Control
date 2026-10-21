@@ -10,9 +10,9 @@ from app.core.permissions import Permissions
 from app.models.project import Project
 from app.models.system import SystemSettings
 from app.models.user import User
+from app.repositories.base import and_filters
 from app.repositories.projects import ProjectRepository
 from app.repositories.teams import TeamRepository
-from app.repositories.base import and_filters
 from app.schemas.project import ProjectCreate, ProjectMemberUpdate, ProjectNotificationSettings
 from app.services.notifications.service import notification_service
 from tests.mocks.fake_mongo import FakeDatabase

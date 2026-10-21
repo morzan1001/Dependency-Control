@@ -8,9 +8,9 @@ from app.api.v1.helpers.projects import check_project_access, ensure_crypto_over
 from app.api.v1.helpers.responses import RESP_404
 from app.api.v1.helpers.users import resolve_usernames
 from app.core.constants import PROJECT_ROLE_ADMIN
+from app.models.policy_audit_entry import PolicyAuditAction
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.crypto_policy import CryptoPolicyPutRequest
-from app.models.policy_audit_entry import PolicyAuditAction
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
 from app.services.crypto_policy.seeder import write_policy
 

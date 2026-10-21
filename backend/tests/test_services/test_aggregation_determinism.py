@@ -6,8 +6,7 @@ import json
 import pytest
 
 from app.models.finding import Finding, FindingType, Severity
-from app.services.aggregation import ResultAggregator
-from app.services.aggregation import aggregator as aggregator_module
+from app.services.aggregation import ResultAggregator, aggregator as aggregator_module
 
 TRIVY = {
     "Results": [
@@ -210,8 +209,7 @@ MAINTAINER_RISK = {
 
 
 def _crypto_result(locations: list[str]) -> dict:
-    from app.models.crypto_asset import CryptoAsset
-    from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+    from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
     from app.models.crypto_policy import CryptoRule
     from app.services.analyzers.crypto.base import _build_finding_dedup
 

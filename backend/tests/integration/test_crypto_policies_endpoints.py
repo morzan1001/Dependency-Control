@@ -2,11 +2,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.models.crypto_policy import CryptoPolicy
+from app.models.crypto_policy import CryptoPolicy, CryptoPolicySource, CryptoRule
 from app.models.finding import FindingType, Severity
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.system_settings import SystemSettingsRepository
-from app.models.crypto_policy import CryptoPolicySource, CryptoRule
 from tests.helpers.crypto_policy import rule_dict
 
 
@@ -240,9 +239,8 @@ async def test_put_system_policy_refuses_a_misspelled_rule_key(client, db, admin
 
 @pytest.mark.asyncio
 async def test_a_revert_refuses_a_snapshot_holding_a_rule_a_write_would_refuse(client, db, admin_auth_headers):
-    from app.models.policy_audit_entry import PolicyAuditEntry
+    from app.models.policy_audit_entry import PolicyAuditAction, PolicyAuditEntry
     from app.repositories.policy_audit_entry import PolicyAuditRepository
-    from app.models.policy_audit_entry import PolicyAuditAction
 
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=2, rules=[]))
     unscoped = {**rule_dict("fires-on-everything"), "match_name_patterns": []}
@@ -270,9 +268,8 @@ async def test_a_revert_refuses_a_snapshot_holding_a_rule_a_write_would_refuse(c
 @pytest.mark.asyncio
 async def test_a_revert_refusal_names_the_field_it_refuses(client, db, admin_auth_headers):
     """A snapshot keeps a key the rule model has since dropped."""
-    from app.models.policy_audit_entry import PolicyAuditEntry
+    from app.models.policy_audit_entry import PolicyAuditAction, PolicyAuditEntry
     from app.repositories.policy_audit_entry import PolicyAuditRepository
-    from app.models.policy_audit_entry import PolicyAuditAction
 
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=2, rules=[]))
     dropped_key = {**rule_dict("old-shape"), "match_name_pattern": ["md5"]}

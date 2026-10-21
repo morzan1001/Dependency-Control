@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.cbom import CBOMIngest, ParsedCryptoAsset
 from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.schemas.cbom import CBOMIngest, ParsedCryptoAsset
 from app.schemas.opengrep import OpenGrepIngest
 
 

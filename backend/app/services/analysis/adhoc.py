@@ -22,6 +22,7 @@ from app.core.constants import (
 )
 from app.models.finding import FindingType
 from app.models.waiver import Waiver
+from app.repositories.projections import CallgraphMinimal
 from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.waivers import WaiverRepository
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport, WaiversApplied
@@ -31,7 +32,6 @@ from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.kics import KicsQuery
 from app.schemas.opengrep import OpenGrepFinding
-from app.repositories.projections import CallgraphMinimal
 from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.aggregation import ResultAggregator, is_error_result

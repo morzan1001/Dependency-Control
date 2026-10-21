@@ -2,12 +2,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.models.crypto_asset import CryptoAsset
-from app.models.crypto_policy import CryptoPolicy
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType
+from app.models.crypto_policy import CryptoPolicy, CryptoPolicySource, CryptoRule
 from app.models.finding import FindingType, Severity
 from app.repositories.crypto_policy import CryptoPolicyRepository
-from app.models.crypto_asset import CryptoAssetType
-from app.models.crypto_policy import CryptoPolicySource, CryptoRule
 from tests.helpers.analyzers import evaluate_crypto
 from tests.helpers.cbom import store_assets
 

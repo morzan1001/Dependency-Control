@@ -16,8 +16,8 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.component_identity import extract_artifact_name
 from app.services.analytics._delta_pagination import both_sides, by_side, pair_versions
+from app.services.component_identity import extract_artifact_name
 from app.services.recommendation.common import display_vulnerability_id, live_cves
 
 

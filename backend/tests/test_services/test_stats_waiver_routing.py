@@ -13,7 +13,6 @@ from app.services.stats import recalculate_project_stats
 from app.services.waivers.matching import may_bind_signature, route_waiver
 from tests.mocks.fake_mongo import FakeDatabase
 
-
 _SIG = MatchSignature(rule_key="OPENGREP:r", file_key="a.py", anchor="fp1", anchor_kind="scanner_fp")
 
 

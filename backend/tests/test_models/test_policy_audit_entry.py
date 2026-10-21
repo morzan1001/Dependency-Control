@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 
-from app.models.policy_audit_entry import PolicyAuditEntry
-from app.models.policy_audit_entry import PolicyAuditAction
+from app.models.policy_audit_entry import PolicyAuditAction, PolicyAuditEntry
 
 
 def test_audit_entry_minimal():

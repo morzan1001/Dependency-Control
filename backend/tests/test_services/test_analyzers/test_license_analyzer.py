@@ -31,7 +31,6 @@ from app.services.analyzers.license_compliance.evaluator import (
 from app.services.analyzers.license_compliance.normalizer import governing_members, normalize_license
 from app.services.sbom_parser import parse_sbom
 
-
 _TEST_PKG = {"name": "test-pkg", "version": "1.0.0", "purl": "pkg:pypi/test-pkg@1.0.0"}
 
 

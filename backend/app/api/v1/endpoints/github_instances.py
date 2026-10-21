@@ -7,6 +7,13 @@ from fastapi import Query, status
 from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.responses import (
+    RESP_AUTH,
+    RESP_AUTH_400,
+    RESP_AUTH_400_404_500,
+    RESP_AUTH_404,
+    RESP_AUTH_404_502,
+)
 from app.api.v1.helpers.vcs_instances import (
     TOKEN_CHECK_HINT,
     Refusal,
@@ -20,13 +27,6 @@ from app.api.v1.helpers.vcs_instances import (
     signing_key_check,
     undetermined,
     why_refused,
-)
-from app.api.v1.helpers.responses import (
-    RESP_AUTH,
-    RESP_AUTH_400,
-    RESP_AUTH_400_404_500,
-    RESP_AUTH_404,
-    RESP_AUTH_404_502,
 )
 from app.core.constants import TEAM_SOURCE_GITHUB
 from app.models.github_instance import GitHubInstance

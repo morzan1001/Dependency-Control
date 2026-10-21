@@ -5,8 +5,8 @@ import pytest_asyncio
 
 from app.api.v1.endpoints.analytics import dependencies as tree_module
 from app.repositories.dependencies import DependencyRepository
-from app.services.recommendation.common import get_attr
 from app.services.dependency_store import store_scan_dependencies
+from app.services.recommendation.common import get_attr
 from app.services.sbom_parser import parse_sbom
 
 _OWN_PROJECT = "p"

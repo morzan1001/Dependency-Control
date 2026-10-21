@@ -4,13 +4,13 @@ from typing import Any
 import pytest
 from prometheus_client import REGISTRY
 
+from app.api.v1.endpoints.analytics.update_frequency import _branch_scan_token
 from app.core.constants import (
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
 )
-from app.api.v1.endpoints.analytics.update_frequency import _branch_scan_token
 from app.core.init_db import create_indexes
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION
 from app.repositories import update_frequency as update_frequency_repository

@@ -10,11 +10,11 @@ from typing import Any, Protocol
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.models.compliance_report import EvaluationCoverage, ReportFramework
 from app.models.crypto_asset import CryptoAsset
+from app.models.crypto_policy import CryptoRule
 from app.models.finding import FindingType, Severity
 from app.schemas.compliance import ControlResult, ControlStatus, FrameworkEvaluation, ResidualRisk
-from app.models.compliance_report import EvaluationCoverage, ReportFramework
-from app.models.crypto_policy import CryptoRule
 from app.schemas.finding_details import all_rule_ids
 from app.schemas.project import LicensePolicySchema
 from app.services.analytics.scopes import ResolvedScope

@@ -7,6 +7,13 @@ from fastapi import HTTPException, Query, status
 from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.responses import (
+    RESP_AUTH,
+    RESP_AUTH_400,
+    RESP_AUTH_400_404_500,
+    RESP_AUTH_404,
+    RESP_AUTH_404_502,
+)
 from app.api.v1.helpers.vcs_instances import (
     apply_update,
     assert_unique,
@@ -15,13 +22,6 @@ from app.api.v1.helpers.vcs_instances import (
     list_page,
     require_signing_keys,
     signing_key_check,
-)
-from app.api.v1.helpers.responses import (
-    RESP_AUTH,
-    RESP_AUTH_400,
-    RESP_AUTH_400_404_500,
-    RESP_AUTH_404,
-    RESP_AUTH_404_502,
 )
 from app.core.constants import TEAM_SOURCE_GITLAB
 from app.models.gitlab_instance import GitLabInstance

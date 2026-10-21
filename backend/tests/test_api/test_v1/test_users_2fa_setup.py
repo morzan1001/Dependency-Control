@@ -1,7 +1,7 @@
 import base64
 import threading
-from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 import qrcode

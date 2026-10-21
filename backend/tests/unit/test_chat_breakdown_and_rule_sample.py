@@ -5,12 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from app.models.crypto_asset import CryptoAsset
-from app.models.finding import FindingType, Severity
-from app.models.user import User
-from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
 from app.models.crypto_policy import CryptoRule
+from app.models.finding import FindingType, Severity
 from app.models.policy_audit_entry import PolicyAuditAction
+from app.models.user import User
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools.crypto_tools import _NOISY_RULE_SAMPLE, suggest_crypto_policy_override

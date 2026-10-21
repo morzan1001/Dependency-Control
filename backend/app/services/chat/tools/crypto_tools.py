@@ -6,7 +6,9 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.v1.helpers.users import resolve_usernames
 from app.core.constants import ScopeName
-from app.models.compliance_report import ComplianceReport
+from app.models.compliance_report import ComplianceReport, ReportFramework
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_policy import CryptoRule
 from app.models.finding import CRYPTO_FINDING_TYPES
 from app.models.policy_audit_entry import PolicyType
 from app.models.user import User
@@ -14,9 +16,6 @@ from app.repositories.compliance_report import NEWEST_REPORT_FIRST, ComplianceRe
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.policy_audit_entry import NEWEST_ENTRY_FIRST, PolicyAuditRepository, history_query
 from app.schemas.analytics import GroupBy, Metric
-from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
-from app.models.compliance_report import ReportFramework
-from app.models.crypto_policy import CryptoRule
 from app.schemas.finding_details import all_rule_ids
 from app.services.analytics.crypto_hotspots import CryptoHotspotService
 from app.services.analytics.crypto_trends import CryptoTrendService, auto_bucket

@@ -7,7 +7,6 @@ from app.models.stats import Stats
 from app.schemas.analytics import RecommendationResponse
 from app.schemas.project import LicensePolicySchema
 
-
 WaiversApplied = Literal["global", "none"]
 
 

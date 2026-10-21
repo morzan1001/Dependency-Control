@@ -9,7 +9,7 @@ from app.api.deps import DatabaseDep, ProjectIngestDep, get_system_settings
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.request_body import read_json_body
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_409, RESP_AUTH_400_409_500
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_409_500, RESP_AUTH_409
 from app.core.constants import (
     NOTIFICATION_EVENT_SBOM_INGESTED,
     RETENTION_ACTION_NONE,
@@ -38,7 +38,6 @@ from app.services.notifications.service import safe_notify_project_event
 from app.services.sbom_parser import sbom_parser
 from app.services.scan_manager import ScanManager
 from app.services.webhooks import webhook_service
-
 
 logger = logging.getLogger(__name__)
 

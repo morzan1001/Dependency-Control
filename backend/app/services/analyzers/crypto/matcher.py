@@ -2,8 +2,8 @@ import re
 from fnmatch import fnmatchcase
 
 from app.models.crypto_asset import CryptoAssetFields, CryptoAssetType
-from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES
 from app.models.crypto_policy import CryptoRule
+from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES
 
 
 def rule_matches(asset: CryptoAssetFields, rule: CryptoRule) -> bool:

@@ -2,11 +2,10 @@ import dataclasses
 
 import pytest
 
-from app.models.crypto_asset import CryptoAsset
-from app.models.finding import FindingType, Severity
-from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
-from app.schemas.compliance import ControlStatus
 from app.models.compliance_report import ReportFramework
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
+from app.models.finding import FindingType, Severity
+from app.schemas.compliance import ControlStatus
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.cbom_parser import parse_cbom
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY

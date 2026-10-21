@@ -5,7 +5,6 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
-
 _CONV_COL = "chat_conversations"
 _MSG_COL = "chat_messages"
 

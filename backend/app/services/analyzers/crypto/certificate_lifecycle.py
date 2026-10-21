@@ -5,10 +5,9 @@ from typing import Any
 
 from app.core import ensure_utc
 from app.core.constants import get_severity_value
-from app.models.crypto_asset import CryptoAsset
-from app.models.finding import FindingType, Severity
-from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
 from app.models.crypto_policy import CryptoRule
+from app.models.finding import FindingType, Severity
 from app.schemas.finding_details import CryptoCertificateDetails
 from app.services.analyzers.crypto.base import MAX_FINDING_LOCATIONS, asset_details, matched_rule_entry, strictest_rule
 from app.services.analyzers.crypto.matcher import asset_in_rule_scope, rule_matches

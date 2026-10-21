@@ -9,10 +9,9 @@ from pymongo.errors import AutoReconnect
 from app.api.v1.helpers.ingest import process_findings_ingest
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 from app.core.init_db import create_indexes
-from app.models.crypto_asset import CryptoAsset
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
 from app.models.project import Project, Scan
 from app.repositories.crypto_asset import CryptoAssetRepository
-from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
 from app.schemas.trufflehog import TruffleHogIngest
 from app.services.analysis import engine
 from app.services.analysis.registry import CRYPTO_ANALYZERS

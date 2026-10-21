@@ -6,7 +6,6 @@ from typing import Any
 
 from fastapi import Request, Response
 from fastapi.concurrency import run_in_threadpool
-from pymongo import monitoring
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     REGISTRY,
@@ -16,6 +15,7 @@ from prometheus_client import (
     Info,
     generate_latest,
 )
+from pymongo import monitoring
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)

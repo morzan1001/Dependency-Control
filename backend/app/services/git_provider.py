@@ -17,8 +17,7 @@ from app.models.github_instance import GitHubInstance
 from app.models.gitlab_instance import GitLabInstance
 from app.models.team import TeamMember
 from app.repositories.teams import MemberSubset, TeamRepository
-from app.services.oidc_utils import fetch_jwks
-from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
+from app.services.oidc_utils import fetch_jwks, validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
 

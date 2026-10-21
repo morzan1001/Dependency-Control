@@ -22,7 +22,6 @@ from app.api.v1.helpers.sorting import (
     case_insensitive_sort,
     parse_sort_direction,
 )
-from app.core.cve import canonical_cve
 from app.core.constants import (
     DEPENDENCIES_SCAN_PACKAGE_INDEX,
     DEPENDENCIES_SCAN_VERSION_INDEX,
@@ -32,6 +31,7 @@ from app.core.constants import (
     get_severity_value,
     severity_rank_expr,
 )
+from app.core.cve import canonical_cve
 from app.core.permissions import Permissions
 from app.models.finding import FindingType
 from app.models.finding_record import FindingRecord

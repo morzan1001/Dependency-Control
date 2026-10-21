@@ -1,6 +1,6 @@
+from app.models.compliance_report import EvaluationCoverage, InputCoverage, ReportFramework
 from app.models.finding import Severity
 from app.schemas.compliance import ControlResult, ControlStatus, FrameworkEvaluation
-from app.models.compliance_report import EvaluationCoverage, InputCoverage, ReportFramework
 from app.schemas.pqc_migration import MigrationItem, MigrationItemStatus, MigrationPlanResponse
 from app.services.compliance.frameworks.base import NAMES_SHOWN, EvaluationInput, build_evaluation
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator

@@ -28,15 +28,13 @@ from app.services.analysis.types import Database
 from app.services.notifications import notification_service
 from app.services.notifications.mattermost_formatter import (
     build_analysis_completed_props as mm_analysis_props,
-)
-from app.services.notifications.mattermost_formatter import (
     build_vulnerability_found_props as mm_vulnerability_props,
 )
+from app.services.notifications.service import safe_notify_project_event
 from app.services.notifications.slack_formatter import (
     build_analysis_completed_blocks,
     build_vulnerability_found_blocks,
 )
-from app.services.notifications.service import safe_notify_project_event
 from app.services.notifications.templates import (
     get_analysis_completed_template,
     get_vulnerability_found_template,

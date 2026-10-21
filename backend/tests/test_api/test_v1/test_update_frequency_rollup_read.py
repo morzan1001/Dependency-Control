@@ -7,7 +7,6 @@ from unittest.mock import patch
 import pytest
 
 from app.api.v1.endpoints.analytics import update_frequency as endpoint
-from app.services import update_frequency as walk
 from app.api.v1.endpoints.analytics.update_frequency import (
     _compute_comparison,
     _compute_comparison_from_rollup,
@@ -19,6 +18,7 @@ from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import WINDOW_HARD_LIMIT, BranchWindowActivity
 from app.schemas.analytics import UpdateFrequencyComparison, UpdateFrequencyMetrics
+from app.services import update_frequency as walk
 from app.services.update_frequency import (
     DAYS_PER_MONTH,
     compute_update_frequency,

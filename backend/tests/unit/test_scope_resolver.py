@@ -4,11 +4,11 @@ import pytest
 from pymongo.errors import ServerSelectionTimeoutError
 
 from app.repositories.projects import ProjectRepository
-from tests.helpers.analytics_scope import projections
 from app.services.analytics.scopes import (
     ScopeResolutionError,
     ScopeResolver,
 )
+from tests.helpers.analytics_scope import projections
 
 
 @pytest.mark.asyncio

@@ -2,8 +2,8 @@
 
 import asyncio
 
-from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.core.purl import canonical_purl
+from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from tests.mocks.fake_mongo import FakeDatabase
 
 CANONICAL = "pkg:maven/com.opencsv/opencsv@5.12.0"

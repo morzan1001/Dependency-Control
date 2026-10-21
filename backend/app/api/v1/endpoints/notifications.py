@@ -35,10 +35,10 @@ from app.schemas.notification import (
     BroadcastResult,
     PackageSuggestions,
 )
+from app.services.component_identity import artifact_segment
 from app.services.notifications.mattermost_formatter import build_advisory_props as mm_advisory_props
 from app.services.notifications.service import notification_service
 from app.services.notifications.slack_formatter import build_advisory_blocks
-from app.services.component_identity import artifact_segment
 from app.services.notifications.templates import get_advisory_template, get_announcement_template
 from app.services.releases import resolve_scan_ids
 

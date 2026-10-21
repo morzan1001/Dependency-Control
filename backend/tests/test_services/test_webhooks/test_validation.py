@@ -21,7 +21,6 @@ from app.services.webhooks.validation import (
     build_pinned_transport,
 )
 
-
 _LOOPBACK_URLS = ["http://localhost:8080/hook", "http://127.0.0.1:8080/hook", "http://[::1]:8080/hook"]
 
 

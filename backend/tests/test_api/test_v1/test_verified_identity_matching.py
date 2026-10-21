@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
-
 import pytest
 from fastapi import BackgroundTasks, HTTPException
 

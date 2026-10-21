@@ -10,9 +10,9 @@ from app.core.constants import ANALYTICS_MAX_SCOPE_PROJECTS, ScopeName
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories.base import and_filters
+from app.repositories.projections import ProjectWithScanId
 from app.repositories.projects import ProjectRepository
 from app.repositories.teams import TeamRepository
-from app.repositories.projections import ProjectWithScanId
 
 _SCOPE_TOO_LARGE = (
     "This scope holds more than {limit} projects. Analytics is answered over a materialised "

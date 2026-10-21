@@ -18,6 +18,7 @@ from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.constants import FINDINGS_SCAN_COMPONENT_INDEX, SCAN_DEPENDENCY_READ_LIMIT, severity_rank_expr
 from app.core.permissions import Permissions
+from app.core.purl import get_purl_type, package_identity_expr
 from app.models.dependency import Dependency
 from app.models.finding_record import FindingRecord
 from app.repositories.base import find_window
@@ -31,7 +32,7 @@ from app.schemas.analytics import (
     DependencyTreeNode,
     SeverityBreakdown,
 )
-from app.core.purl import get_purl_type, package_identity_expr
+from app.services.aggregation.versions import newest_first, normalize_version, parse_version_key
 from app.services.component_identity import (
     artifact_segment,
     build_component_index,
@@ -41,7 +42,6 @@ from app.services.component_identity import (
     lookup_component,
     normalize_component,
 )
-from app.services.aggregation.versions import newest_first, normalize_version, parse_version_key
 from app.services.recommendation.common import live_cves
 from app.services.recommendation.graph import build_dependency_edges
 

@@ -9,6 +9,8 @@ from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation
 from app.services.recommendation import (
     common,
+    crypto as crypto_recs,
+    dependencies as dep_analysis,
     graph,
     iac,
     incidents,
@@ -21,12 +23,6 @@ from app.services.recommendation import (
     secrets,
     trends,
     vulnerabilities,
-)
-from app.services.recommendation import (
-    crypto as crypto_recs,
-)
-from app.services.recommendation import (
-    dependencies as dep_analysis,
 )
 from app.services.recommendation.common import ModelOrDict, get_attr
 

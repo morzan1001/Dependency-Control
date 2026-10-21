@@ -5,7 +5,6 @@ from pydantic import ConfigDict, Field
 from app.models.crypto_asset import CryptoAssetFields, CryptoPrimitive
 from app.schemas.ingest import IngestEnvelope
 
-
 QUANTUM_VULNERABLE_PRIMITIVES: frozenset[CryptoPrimitive] = frozenset(
     {CryptoPrimitive.PKE, CryptoPrimitive.SIGNATURE, CryptoPrimitive.KEM, CryptoPrimitive.KEY_AGREE}
 )

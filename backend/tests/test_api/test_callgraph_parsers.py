@@ -3,15 +3,16 @@ import json
 import pytest
 from bson import ObjectId
 from pydantic import ValidationError
+
 from app.api.v1.helpers.callgraph import (
     detect_format,
     parse_generic_format,
     parse_madge_format,
     resolve_callgraph_payload,
 )
-from app.services.component_identity import build_component_index, canonical_module_key, lookup_component
-from app.schemas.callgraph import CallgraphUploadRequest
 from app.repositories.projections import CallgraphMinimal
+from app.schemas.callgraph import CallgraphUploadRequest
+from app.services.component_identity import build_component_index, canonical_module_key, lookup_component
 from app.services.reachability_enrichment import (
     _find_usage,
     _lists_package,

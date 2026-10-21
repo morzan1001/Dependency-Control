@@ -8,17 +8,22 @@ from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from app.core.config import settings
 from app.core.constants import COMPLIANCE_REPORT_SLOTS, REMEDIATION_SLA_DAYS
 from app.core.metrics import compliance_reports_total
-from app.models.compliance_report import ComplianceReport
+from app.models.compliance_report import (
+    ComplianceReport,
+    EvaluationCoverage,
+    ReportFormat,
+    ReportFramework,
+    ReportStatus,
+)
 from app.models.crypto_asset import CryptoAsset
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.repositories.projections import ProjectWithScanId
 from app.repositories.scans import HAS_SBOM_MATCH
-from app.models.compliance_report import EvaluationCoverage, ReportFormat, ReportFramework, ReportStatus
 from app.schemas.compliance import FrameworkEvaluation
 from app.schemas.project import LicensePolicySchema, license_policy_from_settings
-from app.repositories.projections import ProjectWithScanId
 from app.services.analysis.registry import CRYPTO_ANALYZERS, SELECTABLE_ANALYZERS, VULNERABILITY_ANALYZERS
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver, read_scope_projects, resolve_scope_names
 from app.services.analyzers.crypto.catalogs.loader import IANA_WEAKNESS_RULES_VERSION

@@ -221,8 +221,7 @@ async def test_returns_200_components_with_version_change(client, db, owner_auth
 
 @pytest.mark.asyncio
 async def test_returns_200_crypto(client, db, owner_auth_headers_proj):
-    from app.models.crypto_asset import CryptoAsset
-    from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+    from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
 
     await db["scans"].insert_one(_scan_doc("cr_a", "p"))
     await db["scans"].insert_one(_scan_doc("cr_b", "p"))

@@ -7,10 +7,6 @@ import pytest
 from app.core.constants import MAX_CROSS_LINK_GROUP_SIZE
 from app.models.finding import Finding, FindingType, Severity
 from app.services.aggregation import ResultAggregator
-from app.services.component_identity import (
-    extract_artifact_name,
-    normalize_component,
-)
 from app.services.aggregation.merging import (
     dedupe_vulnerability_entries,
     merge_findings_data,
@@ -22,6 +18,10 @@ from app.services.aggregation.versions import (
     parse_version_key,
 )
 from app.services.analyzers.maintainer_risk import MaintainerRiskAnalyzer
+from app.services.component_identity import (
+    extract_artifact_name,
+    normalize_component,
+)
 
 # One file carrying many SAST hits is a single "component" to the cross-linker.
 _CROWDED_FILE = "app/handlers.py"

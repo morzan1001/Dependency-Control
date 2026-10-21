@@ -1,8 +1,7 @@
-from app.models.crypto_asset import CryptoAsset
-from app.models.finding import Severity
-from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
-from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
 from app.models.crypto_policy import CryptoPolicySource, CryptoRule
+from app.models.finding import Severity
+from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
 from app.services.aggregation import aggregator
 from app.services.analysis import engine
 from app.services.analysis.registry import CRYPTO_ANALYZERS, SELECTABLE_ANALYZERS, analyzer_factories, crypto_evaluators

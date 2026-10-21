@@ -17,8 +17,8 @@ from app.core.constants import (
     SPDX_ORGANIZATION_PREFIX,
     UNKNOWN_LICENSE_PATTERNS,
 )
-from app.schemas.sbom import UNKNOWN_VERSION, ParsedDependency, ParsedSBOM, SBOMFormat, has_known_version
 from app.core.purl import dependency_node_key, get_purl_type, is_os_package_type, parse_purl
+from app.schemas.sbom import UNKNOWN_VERSION, ParsedDependency, ParsedSBOM, SBOMFormat, has_known_version
 from app.services.analyzers.hash_verification import normalize_hash_algorithm
 from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
 from app.services.analyzers.license_compliance.normalizer import (

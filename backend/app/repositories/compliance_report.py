@@ -3,10 +3,8 @@ from typing import Any
 
 from pymongo import DESCENDING
 
-from app.models.compliance_report import ComplianceReport
+from app.models.compliance_report import ComplianceReport, EvaluationCoverage, ReportFramework, ReportStatus
 from app.repositories.base import BaseRepository, and_filters
-from app.models.compliance_report import EvaluationCoverage, ReportFramework, ReportStatus
-
 
 NEWEST_REPORT_FIRST = [("requested_at", DESCENDING)]
 

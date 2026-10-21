@@ -10,6 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
+    SLIM_DETAILS_EXPR,
     CVEEnrichmentResult,
     ReleaseEnvironmentQuery,
     build_priority_reasons,
@@ -23,7 +24,6 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
     select_impact_candidates,
     severity_counts_from_details,
-    SLIM_DETAILS_EXPR,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.api.v1.helpers.sorting import (
@@ -39,20 +39,20 @@ from app.core.cve import counted_cves_expr
 from app.core.permissions import Permissions
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
+from app.repositories.projections import ProjectWithScanId
 from app.schemas.analytics import (
     ImpactAnalysisResult,
     SeverityBreakdown,
     VulnerabilityHotspot,
 )
 from app.schemas.enrichment import VulnerabilityEnrichment
-from app.repositories.projections import ProjectWithScanId
+from app.services.aggregation.versions import newest_first, normalize_version
+from app.services.analytics.cache import get_analytics_cache
 from app.services.component_identity import (
     build_component_index,
     component_name_candidates,
     lookup_component,
 )
-from app.services.analytics.cache import get_analytics_cache
-from app.services.aggregation.versions import newest_first, normalize_version
 from app.services.enrichment.service import THREAT_INTEL_SOURCES, vulnerability_enrichment_service
 from app.services.recommendation.common import live_cves
 

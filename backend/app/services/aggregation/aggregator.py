@@ -9,6 +9,7 @@ from app.core.constants import (
     MAX_CROSS_LINK_GROUP_SIZE,
     UNKNOWN_LICENSE_PATTERNS,
 )
+from app.core.purl import CopyKey, dependency_copy_key
 from app.models.finding import LOCATION_FINDING_TYPES, PACKAGE_FINDING_TYPES, Finding, FindingType, Severity
 from app.models.license import CATEGORY_RESTRICTIVENESS
 from app.schemas.enrichment import DependencyEnrichment
@@ -19,11 +20,6 @@ from app.schemas.finding import (
     VulnerabilityEntry,
 )
 from app.schemas.finding_details import FindingLocation, SystemWarningDetails
-from app.services.component_identity import (
-    cluster_by_package_identity,
-    extract_artifact_name,
-    normalize_component,
-)
 from app.services.aggregation.cross_link import cross_link_pair, record_additional_types
 from app.services.aggregation.merging import (
     absorb_header,
@@ -36,11 +32,13 @@ from app.services.aggregation.versions import aggregate_fixed_version, normalize
 from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
 from app.services.analyzers.license_compliance.normalizer import (
     normalize_license as normalize_spdx_id,
-)
-from app.services.analyzers.license_compliance.normalizer import (
     tokenize_license_string,
 )
-from app.core.purl import CopyKey, dependency_copy_key
+from app.services.component_identity import (
+    cluster_by_package_identity,
+    extract_artifact_name,
+    normalize_component,
+)
 from app.services.normalizers.crypto import normalize_crypto
 from app.services.normalizers.iac import normalize_kics
 from app.services.normalizers.license import normalize_license
@@ -51,12 +49,12 @@ from app.services.normalizers.quality import (
     normalize_typosquatting,
 )
 from app.services.normalizers.sast import normalize_bearer, normalize_opengrep
-from app.services.normalizers.utils import FindingIdPrefix
 from app.services.normalizers.secret import normalize_trufflehog
 from app.services.normalizers.security import (
     normalize_hash_verification,
     normalize_malware,
 )
+from app.services.normalizers.utils import FindingIdPrefix
 from app.services.normalizers.vulnerability import (
     normalize_grype,
     normalize_osv,

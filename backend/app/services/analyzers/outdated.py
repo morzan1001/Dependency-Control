@@ -6,13 +6,13 @@ from packaging.version import InvalidVersion, Version
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS
 from app.core.http_utils import InstrumentedAsyncClient
+from app.core.purl import parse_purl
 from app.models.finding import Severity
 from app.services.aggregation.versions import is_stable_release, parse_version_key
 from app.services.release_history import parse_deps_dev_response, release_list_to_cache
 
 from .base import Analyzer
 from .deps_dev import deps_dev_coordinates, deps_dev_package_url, fetch_deps_dev_json
-from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
 

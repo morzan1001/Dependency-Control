@@ -11,9 +11,8 @@ from pymongo import UpdateOne
 
 from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE, SCAN_TYPE_CBOM
-from app.models.crypto_asset import CryptoAsset
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
 from app.repositories.base import BaseRepository
-from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
 from app.schemas.cbom import ParsedCryptoAsset
 
 

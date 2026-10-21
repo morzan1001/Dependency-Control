@@ -13,10 +13,10 @@ from app.core.constants import (
     SCORECARD_FLAG_THRESHOLD,
 )
 from app.core.http_utils import InstrumentedAsyncClient
+from app.core.purl import parse_purl
 from app.schemas.sbom import has_known_version
 
 from .base import Analyzer
-from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
 

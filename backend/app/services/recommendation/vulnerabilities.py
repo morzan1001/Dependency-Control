@@ -20,8 +20,8 @@ from app.schemas.recommendation import (
 )
 from app.services.recommendation.common import (
     ModelOrDict,
-    VulnStats,
     VulnerabilityInfo,
+    VulnStats,
     cve_signals,
     get_attr,
     installed_copy_lookup,

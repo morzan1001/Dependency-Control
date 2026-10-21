@@ -3,8 +3,8 @@ from typing import Any
 
 from app.core.constants import get_severity_value
 from app.models.crypto_asset import CryptoAsset, CryptoAssetFields
-from app.models.finding import FindingType
 from app.models.crypto_policy import CryptoRule
+from app.models.finding import FindingType
 from app.schemas.finding_details import CryptoAssetDetails, CryptoRuleDetails, MatchedRuleEntry
 from app.services.analyzers.crypto.matcher import rule_matches
 from app.services.crypto_policy.resolver import EffectivePolicy

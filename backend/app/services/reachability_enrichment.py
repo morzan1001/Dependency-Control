@@ -25,20 +25,20 @@ from app.core.constants import (
     SCAN_ACTIVE_STATUSES,
 )
 from app.core.metrics import analysis_enrichment_total, analysis_reachable_vulnerabilities_total
+from app.core.purl import get_purl_type
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.repositories.findings import FindingRepository
+from app.repositories.projections import CallgraphMinimal
 from app.repositories.scans import ScanRepository
+from app.schemas.finding_details import ReachabilityInfo
 from app.services.component_identity import (
     JVM_LANGUAGES,
     build_component_index,
     canonical_module_key,
     lookup_component,
 )
-from app.core.purl import get_purl_type
-from app.schemas.finding_details import ReachabilityInfo
-from app.repositories.projections import CallgraphMinimal
 from app.services.enrichment.scoring import calculate_adjusted_risk_score
 from app.services.recommendation.common import name_some
 from app.services.vulnerable_symbols import get_symbols_for_finding

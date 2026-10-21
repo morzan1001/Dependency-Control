@@ -11,8 +11,8 @@ from app.core.config import settings
 from app.core.metrics import update_frequency_reconcile_drift_total
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.update_frequency import ScanUpdateDeltaRepository
-from app.services import update_frequency_reconcile as reconcile_module
-from app.services import update_frequency_rollup as rollup_module
+from app.services import update_frequency_reconcile as reconcile_module, update_frequency_rollup as rollup_module
+from app.services.update_frequency_fold import select_window
 from app.services.update_frequency_reconcile import (
     _LOCK_NAME,
     _LOCK_TTL_SECONDS,
@@ -21,7 +21,6 @@ from app.services.update_frequency_reconcile import (
     ReconcileReport,
     run_update_frequency_reconcile,
 )
-from app.services.update_frequency_fold import select_window
 from app.services.update_frequency_rollup import record_scan_update_delta
 from tests.mocks.fake_mongo import FakeDatabase
 

@@ -1,7 +1,7 @@
 import pytest
 
-from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.core.purl import canonical_purl
+from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from tests.mocks.fake_mongo import FakeDatabase
 
 _QUALIFIED = "pkg:npm/left-pad@1.0.0?download_url=https://example.test/left-pad.tgz"

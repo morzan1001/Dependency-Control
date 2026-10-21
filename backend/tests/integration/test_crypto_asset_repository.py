@@ -4,9 +4,8 @@ from datetime import datetime, timezone
 import pytest
 
 from app.core.init_db import create_indexes
-from app.models.crypto_asset import CryptoAsset
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType
 from app.repositories.crypto_asset import CryptoAssetRepository
-from app.models.crypto_asset import CryptoAssetType
 from app.services.cbom_parser import parse_cbom
 from tests.helpers.cbom import load_cbom, store_assets
 from tests.mocks.mongodb import create_mock_collection, create_mock_db

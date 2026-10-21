@@ -4,8 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED
-from app.models.crypto_asset import CryptoAsset
-from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
 from app.services.analytics.scopes import ResolvedScope
 from app.services.cbom_parser import parse_crypto_components
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator

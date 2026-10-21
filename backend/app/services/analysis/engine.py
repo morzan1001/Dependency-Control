@@ -31,8 +31,8 @@ from app.core.constants import (
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
     SCAN_TYPE_CBOM,
-    ScanStatus,
     SCAN_USABLE_STATUSES,
+    ScanStatus,
 )
 from app.core.cve import advisory_ids
 from app.core.metrics import (
@@ -54,7 +54,7 @@ from app.core.metrics import (
     analysis_waivers_applied_total,
 )
 from app.core.purl import CopyKey, dependency_copy_key
-from app.models.crypto_asset import CryptoAsset
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType
 from app.models.finding import Finding, FindingType
 from app.models.project import Scan
 from app.models.stats import Stats
@@ -65,9 +65,8 @@ from app.repositories.dependency_enrichments import DependencyEnrichmentReposito
 from app.repositories.findings import FindingRepository, finding_identity
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
-from app.repositories.waivers import WaiverRepository
 from app.repositories.system_settings import SystemSettingsRepository
-from app.models.crypto_asset import CryptoAssetType
+from app.repositories.waivers import WaiverRepository
 from app.schemas.sbom import ParsedSBOM, SBOMFormat
 from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info

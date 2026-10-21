@@ -4,9 +4,9 @@ import hashlib
 import time
 from unittest.mock import AsyncMock
 
+import fakeredis
 import pytest
 import redis.asyncio as redis
-import fakeredis
 from prometheus_client import REGISTRY
 
 from app.core import cache as cache_module

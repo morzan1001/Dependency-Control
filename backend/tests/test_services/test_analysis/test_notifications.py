@@ -15,11 +15,11 @@ from app.models.project import Project, ProjectMember
 from app.models.stats import Stats
 from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine, notifications
-from app.services.analysis.runner import AnalyzerOutcome, OutcomeStatus
 from app.services.analysis.notifications import (
     _build_vulnerability_message,
     send_scan_notifications,
 )
+from app.services.analysis.runner import AnalyzerOutcome, OutcomeStatus
 from app.services.notifications import notification_service
 from tests.mocks.fake_mongo import FakeDatabase
 

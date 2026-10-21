@@ -2,11 +2,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.models.crypto_policy import CryptoPolicy
+from app.models.crypto_policy import CryptoPolicy, CryptoPolicySource, CryptoRule
 from app.models.finding import FindingType, Severity
-from app.models.user import User
-from app.models.crypto_policy import CryptoPolicySource, CryptoRule
 from app.models.policy_audit_entry import PolicyAuditAction
+from app.models.user import User
 from app.services.audit.history import record_policy_change
 from app.services.webhooks import webhook_service
 

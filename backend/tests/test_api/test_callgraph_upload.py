@@ -1,9 +1,9 @@
 """Payloads transcribed from dependency-control-pipeline-templates/callgraph.yaml, as each CI job posts them."""
 
 import copy
+import threading
 import uuid
 from datetime import datetime, timezone
-import threading
 from unittest.mock import AsyncMock, patch
 
 import pytest

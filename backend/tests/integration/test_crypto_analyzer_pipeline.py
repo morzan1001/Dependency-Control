@@ -2,13 +2,11 @@ from collections import Counter
 
 import pytest
 
-from app.models.crypto_asset import CryptoAsset
-from app.models.crypto_policy import CryptoPolicy
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
+from app.models.crypto_policy import CryptoPolicy, CryptoPolicySource, CryptoRule
 from app.models.finding import FindingType, Severity
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
-from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
-from app.models.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.cbom_parser import parse_crypto_components
 from tests.helpers.analyzers import evaluate_crypto, ingest_and_analyze_cbom, scan_cbom

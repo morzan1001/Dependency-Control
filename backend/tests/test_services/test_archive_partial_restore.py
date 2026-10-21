@@ -9,8 +9,7 @@ from pymongo.errors import AutoReconnect
 
 from app.core.constants import SCAN_SCOPED_COLLECTIONS
 from app.repositories.archive_metadata import ArchiveMetadataRepository
-from app.repositories.distributed_locks import DistributedLocksRepository
-from app.repositories.distributed_locks import new_lock_holder
+from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.services.archive import RestoreFailed, archive_scan, reap_stale_metadata, restore_scan
 from app.services.archive_bundle import BundleFrames, BundleStats
 from tests.mocks.fake_mongo import FakeDatabase

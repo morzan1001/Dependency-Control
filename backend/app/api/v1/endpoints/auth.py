@@ -67,8 +67,7 @@ from app.schemas.auth import (
     VerificationEmailResponse,
 )
 from app.schemas.token import Token
-from app.schemas.user import UserResponse
-from app.schemas.user import UserPasswordReset, UserSignup
+from app.schemas.user import UserPasswordReset, UserResponse, UserSignup
 
 logger = logging.getLogger(__name__)
 

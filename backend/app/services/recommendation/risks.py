@@ -19,13 +19,12 @@ from app.services.component_identity import (
     lookup_component,
     normalize_component,
 )
-from app.services.recommendation.graph import build_dependency_edges
 from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
     MALWARE_REMEDIATION_STEPS,
     ModelOrDict,
-    VulnStats,
     VulnerabilityInfo,
+    VulnStats,
     dependency_label,
     get_attr,
     live_advisories,
@@ -40,6 +39,7 @@ from app.services.recommendation.common import (
     vuln_info,
     vuln_priority,
 )
+from app.services.recommendation.graph import build_dependency_edges
 
 # These bound the advice feed (one card per package), not a list in a card; each card carries its cut rank.
 CRITICAL_HOTSPOTS_SHOWN = 10

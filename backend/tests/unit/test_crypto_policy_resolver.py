@@ -1,9 +1,8 @@
 import pytest
 
-from app.models.crypto_policy import CryptoPolicy
+from app.models.crypto_policy import CryptoPolicy, CryptoPolicySource, CryptoRule
 from app.models.finding import FindingType, Severity
 from app.repositories.crypto_policy import CryptoPolicyRepository
-from app.models.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 

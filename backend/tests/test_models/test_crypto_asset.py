@@ -1,7 +1,6 @@
 from datetime import datetime
 
-from app.models.crypto_asset import CryptoAsset
-from app.models.crypto_asset import CryptoAssetType
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType
 
 
 def test_crypto_asset_minimal():

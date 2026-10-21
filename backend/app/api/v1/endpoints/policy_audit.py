@@ -6,7 +6,7 @@ from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BeforeValidator, ValidationError
 
-from app.api.deps import SystemManagerDep, CurrentUserDep, DatabaseDep
+from app.api.deps import CurrentUserDep, DatabaseDep, SystemManagerDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access, ensure_crypto_overrides_writable
 from app.api.v1.helpers.responses import (
@@ -20,14 +20,12 @@ from app.core import ensure_utc
 from app.core.config import settings
 from app.core.constants import MAX_POLICY_AUDIT_PAGE, PROJECT_ROLE_ADMIN
 from app.models.crypto_policy import CryptoPolicy
-from app.models.policy_audit_entry import PolicyAuditEntry, PolicyType
+from app.models.policy_audit_entry import PolicyAuditAction, PolicyAuditEntry, PolicyType
 from app.models.user import User
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.schemas.crypto_policy import CryptoPolicyPutRequest
-from app.models.policy_audit_entry import PolicyAuditAction
 from app.schemas.policy_audit import PolicyRevertRequest
 from app.services.crypto_policy.seeder import write_policy
-
 
 router = CustomAPIRouter(tags=["policy-audit"])
 

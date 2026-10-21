@@ -6,8 +6,7 @@ import pytest
 from prometheus_client import REGISTRY
 
 from app.models.user import User
-from app.services.chat.tools import ChatToolRegistry
-from app.services.chat.tools import registry as registry_module
+from app.services.chat.tools import ChatToolRegistry, registry as registry_module
 from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
 from tests.mocks.fake_mongo import FakeDatabase
 

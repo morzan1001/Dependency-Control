@@ -1,10 +1,9 @@
 from typing import Any
 
 from app.core.constants import max_severity
-from app.models.crypto_asset import CryptoAsset
-from app.models.finding import FindingType, Severity
-from app.models.crypto_asset import CryptoAssetType
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType
 from app.models.crypto_policy import CryptoRule
+from app.models.finding import FindingType, Severity
 from app.schemas.finding_details import CryptoProtocolDetails
 from app.services.analyzers.crypto.base import (
     MAX_FINDING_LOCATIONS,

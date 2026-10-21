@@ -2,9 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.models.compliance_report import ComplianceReport
+from app.models.compliance_report import ComplianceReport, ReportFormat, ReportFramework, ReportStatus
 from app.repositories.compliance_report import ComplianceReportRepository
-from app.models.compliance_report import ReportFormat, ReportFramework, ReportStatus
 
 
 @pytest.mark.asyncio

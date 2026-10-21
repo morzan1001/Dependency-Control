@@ -7,11 +7,10 @@ from pymongo.errors import ServerSelectionTimeoutError
 
 from app.api.v1.endpoints import compliance_reports
 from app.core.permissions import Permissions
-from app.models.compliance_report import ComplianceReport
+from app.models.compliance_report import ComplianceReport, ReportFormat, ReportFramework, ReportStatus
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.projects import ProjectRepository
-from app.models.compliance_report import ReportFormat, ReportFramework, ReportStatus
 
 _DB_DOWN = ServerSelectionTimeoutError("no primary")
 

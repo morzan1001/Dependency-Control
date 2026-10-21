@@ -4,8 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from app.core.constants import DEFAULT_PQC_PLAN_ITEMS
-from app.models.crypto_asset import CryptoAsset
-from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
 from app.services.chat.tools.crypto_tools import generate_pqc_migration_plan
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 from tests.helpers.cbom import store_assets

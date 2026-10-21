@@ -84,6 +84,7 @@ from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
+from app.repositories.projections import ScanMinimal
 from app.repositories.projects import (
     ProjectRepository,
     ownership_fields,
@@ -116,7 +117,6 @@ from app.schemas.project import (
     ScanReleaseRef,
     ScanWithReleases,
 )
-from app.repositories.projections import ScanMinimal
 from app.services.analytics.scopes import read_scope_projects
 from app.services.audit.history import record_license_policy_change
 from app.services.branch_sync import sync_project_branches

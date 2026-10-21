@@ -6,8 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from app.schemas import finding as finding_typed_dicts
-from app.schemas import finding_details
+from app.schemas import finding as finding_typed_dicts, finding_details
 
 APP_ROOT = Path(finding_details.__file__).resolve().parents[1]
 

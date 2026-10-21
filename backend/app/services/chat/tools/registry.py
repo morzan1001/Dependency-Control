@@ -24,6 +24,8 @@ from app.api.v1.helpers.users import resolve_usernames
 from app.api.v1.helpers.webhooks import (
     check_webhook_permission,
 )
+from app.core.cache import cache_service
+from app.core.config import settings
 from app.core.constants import (
     ANALYTICS_MAX_SCOPE_PROJECTS,
     DEPENDENCIES_SCAN_PACKAGE_INDEX,
@@ -36,8 +38,6 @@ from app.core.constants import (
     max_severity,
 )
 from app.core.cve import ADVISORY_ID_FIELDS, advisory_id, advisory_ids, advisory_match, canonical_cve
-from app.core.cache import cache_service
-from app.core.config import settings
 from app.core.housekeeping import effective_retention, resolve_rescan_interval
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
@@ -70,11 +70,11 @@ from app.schemas.project import license_policy_from_settings
 from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
 from app.services.aggregation.versions import aggregate_fixed_version, parse_version_key, split_fixed_versions
-from app.services.component_identity import artifact_segment, canonical_callgraph_language
 from app.services.analytics.crypto_trends import auto_bucket
 from app.services.analytics.scan_delta import InvalidDeltaQuery, compute_scan_delta_dispatch
 from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError, read_scope_projects
 from app.services.compliance.visibility import report_visibility_filter
+from app.services.component_identity import artifact_segment, canonical_callgraph_language
 from app.services.recommendation.common import installed_copy_lookup, live_advisories, max_advisory_cvss
 
 from ._arguments import ToolArgumentError, checked_arguments
