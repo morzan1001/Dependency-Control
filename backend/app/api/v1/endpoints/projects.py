@@ -1246,13 +1246,18 @@ async def read_scan_finding(
     finding_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
+    component: str | None = None,
+    version: str | None = None,
 ) -> dict[str, Any]:
-    """The finding as a row of the findings page; several can share an id (a license's), and the most severe is read."""
+    """The finding as a row of the findings page; of rows sharing an id (a license's), the most severe match is read."""
     await _require_scan_access(scan_id, current_user, db)
+    match: dict[str, Any] = {"scan_id": scan_id, "finding_id": finding_id}
+    if component is not None:
+        match["component"] = component
+    if version is not None:
+        match["version"] = version
     rows = await FindingRepository(db).aggregate(
-        _build_scan_findings_pipeline(
-            {"scan_id": scan_id, "finding_id": finding_id}, sort_by="severity", sort_dir=-1, skip=0, limit=1
-        )
+        _build_scan_findings_pipeline(match, sort_by="severity", sort_dir=-1, skip=0, limit=1)
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Finding not found")

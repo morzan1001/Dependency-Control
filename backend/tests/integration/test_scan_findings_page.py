@@ -115,6 +115,30 @@ async def test_of_findings_sharing_an_id_the_most_severe_is_read(client, db, dat
 
 
 @pytest.mark.parametrize("database", DATABASES)
+async def test_a_finding_sharing_its_id_reads_by_its_component_and_version(
+    client, db, database, owner_auth_headers_proj
+):
+    await _seed_scan(db)
+    shared = {"finding_id": "LIC-GPL-3.0", "type": "license"}
+    await db.findings.insert_many(
+        [
+            _finding(1, severity="LOW", component="alpha", version="1.0", **shared),
+            _finding(2, severity="CRITICAL", component="beta", version="1.0", **shared),
+            _finding(3, severity="CRITICAL", component="beta", version="2.0", **shared),
+        ]
+    )
+    url = f"/api/v1/projects/scans/{_SCAN}/findings/LIC-GPL-3.0"
+
+    alpha = await client.get(url, params={"component": "alpha"}, headers=owner_auth_headers_proj)
+    beta = await client.get(url, params={"component": "beta", "version": "2.0"}, headers=owner_auth_headers_proj)
+    missing = await client.get(url, params={"component": "gamma"}, headers=owner_auth_headers_proj)
+
+    assert (alpha.status_code, alpha.json()["component"], alpha.json()["severity"]) == (200, "alpha", "LOW")
+    assert (beta.status_code, beta.json()["component"], beta.json()["version"]) == (200, "beta", "2.0")
+    assert missing.status_code == 404
+
+
+@pytest.mark.parametrize("database", DATABASES)
 async def test_an_unknown_finding_is_not_found(client, db, database, owner_auth_headers_proj):
     await _seed_scan(db)
     await db.findings.insert_one(_finding(1))
