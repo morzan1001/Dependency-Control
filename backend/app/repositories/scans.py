@@ -45,6 +45,8 @@ _TIP_TIERS: tuple[dict[str, Any], ...] = tuple(
         {"status": {"$in": SCAN_USABLE_STATUSES}},
     )
 )
+# A rescan joins a head timeline through the build it re-analysed, so the timeline walks the build tiers only.
+_BUILD_TIERS = tuple(tier for tier in _TIP_TIERS if "is_rescan" in tier)
 _TIP_LOOKUP_CONCURRENCY = 16
 _CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}
 _TIP_PROJECTION = {**_CHAIN_PROJECTION, "branch": 1, "commit_tag": 1}
@@ -475,6 +477,66 @@ class ScanRepository:
             if project_id:
                 scopes[project_id] = scope
         return await self._head_scan_ids(scopes)
+
+    async def head_timelines(
+        self, projects: Sequence[Any], since: datetime, until: datetime
+    ) -> dict[str, list[tuple[datetime, str]]]:
+        """Per project, (from when, scan_id) of each analysis heading it; the last entry up to a moment heads then."""
+        scopes = {project_id: scope for project_id, scope in map(_head_scope, projects) if project_id}
+        histories = await _bounded_gather(
+            self._head_builds_between(project_id, scope, since, until) for project_id, scope in scopes.items()
+        )
+        builds = {project_id: docs for project_id, docs in zip(scopes, histories, strict=True) if docs}
+        rescans: dict[str, list[dict[str, Any]]] = {}
+        if build_ids := [doc["_id"] for docs in builds.values() for doc in docs]:
+            cursor = self.collection.find(
+                {
+                    "original_scan_id": {"$in": build_ids},
+                    "status": {"$in": SCAN_USABLE_STATUSES},
+                    "created_at": {"$lte": until},
+                },
+                {"original_scan_id": 1, "created_at": 1},
+            )
+            async for doc in cursor:
+                rescans.setdefault(doc["original_scan_id"], []).append(doc)
+        timelines: dict[str, list[tuple[datetime, str]]] = {}
+        for project_id, docs in builds.items():
+            events = []
+            for build, successor in zip(docs, [*docs[1:], None], strict=True):
+                # A rescan heads only until a newer build replaces the build it re-analysed.
+                events += [
+                    (doc["created_at"], doc["_id"])
+                    for doc in [build, *rescans.get(build["_id"], [])]
+                    if successor is None or doc["created_at"] < successor["created_at"]
+                ]
+            events.sort(key=lambda event: event[1], reverse=True)
+            timelines[project_id] = sorted(events, key=lambda event: event[0])
+        return timelines
+
+    async def _head_builds_between(
+        self, project_id: str, scope: _HeadScope, since: datetime, until: datetime
+    ) -> list[dict[str, Any]]:
+        default = _live_default(scope)
+        lines: list[dict[str, Any]] = [{"branch": default}] if default else []
+        lines.append({"branch": {"$nin": scope.deleted}} if scope.deleted else {})
+        for line in lines:
+            for tier in _BUILD_TIERS:
+                if builds := await self._builds_between({"project_id": project_id, **line, **tier}, since, until):
+                    return builds
+        return []
+
+    async def _builds_between(self, match: dict[str, Any], since: datetime, until: datetime) -> list[dict[str, Any]]:
+        """From the build current at ``since``, oldest first; a same-millisecond run ends on its lowest _id."""
+        projection = {"created_at": 1}
+        current = await self.collection.find_one(
+            {**match, "created_at": {"$lt": since}}, projection, sort=SCANS_TIP_SORT
+        )
+        later = await self.collection.find({**match, "created_at": {"$gte": since, "$lte": until}}, projection).to_list(
+            None
+        )
+        later.sort(key=lambda doc: doc["_id"], reverse=True)
+        later.sort(key=lambda doc: doc["created_at"])
+        return [current, *later] if current else later
 
     async def _head_scan_ids(self, scopes: dict[str, _HeadScope]) -> dict[str, str]:
         """A cached latest_scan_id that may still head the project stands in for the pick, lineage step included."""

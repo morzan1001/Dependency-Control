@@ -24,6 +24,7 @@ const entry = (key: string): HotspotEntry => ({
   locations: [],
   locations_complete: true,
   project_ids: ["p1"],
+  project_count: 1,
   first_seen: "2026-10-01T00:00:00Z",
   last_seen: "2026-10-14T00:00:00Z",
 });
@@ -35,6 +36,7 @@ vi.mock("@/api/cryptoAnalytics", () => ({
     grouping_dimension: "name",
     items: [entry(LONG_KEY), entry("RSA")],
     total: 2,
+    projects_total: 1,
     generated_at: "2026-10-14T00:00:00Z",
   })),
 }));

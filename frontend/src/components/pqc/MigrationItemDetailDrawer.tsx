@@ -31,7 +31,7 @@ export function MigrationItemDetailDrawer({ item, projectNames, onClose }: Reado
               <dt className="text-muted-foreground">Key size</dt>
               <dd>{item.asset_key_size_bits ? `${item.asset_key_size_bits} bits` : "—"}</dd>
               <dt className="text-muted-foreground">Variant</dt><dd>{item.asset_variant ?? "—"}</dd>
-              <dt className="text-muted-foreground">Asset count</dt><dd>{item.asset_count}</dd>
+              <dt className="text-muted-foreground">Occurrences</dt><dd>{item.asset_count}</dd>
               <dt className="text-muted-foreground">Deadline</dt>
               <dd>
                 {item.recommended_deadline

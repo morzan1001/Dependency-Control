@@ -189,7 +189,9 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Scan, db: Databas
 async def _carry_over_crypto_assets(scan_id: str, scan_doc: Scan, db: Database) -> None:
     """A CBOM posted to /ingest/cbom is not in GridFS, so a rescan cannot re-derive its assets."""
     if scan_doc.is_rescan and scan_doc.original_scan_id:
-        await CryptoAssetRepository(db).carry_over_to_scan(scan_doc.project_id, scan_doc.original_scan_id, scan_id)
+        await CryptoAssetRepository(db).carry_over_to_scan(
+            scan_doc.project_id, scan_doc.original_scan_id, scan_id, scan_doc.created_at
+        )
 
 
 async def _keep_result(
@@ -364,11 +366,10 @@ def _parse_and_track_sbom(
 
 
 async def _persist_embedded_crypto_assets(parsed_sbom: Any, project_id: str, scan_id: str, db: Database) -> None:
-    crypto_assets = [
-        CryptoAsset(project_id=project_id, scan_id=scan_id, **a.model_dump()) for a in parsed_sbom.crypto_assets
-    ]
-    persisted = await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
-    logger.info("engine: persisted %d crypto assets from embedded CBOM (scan=%s)", persisted, scan_id)
+    summary = await CryptoAssetRepository(db).store_parsed(
+        project_id, scan_id, parsed_sbom.crypto_assets, cbom_upload=False, created_at=datetime.now(timezone.utc)
+    )
+    logger.info("engine: persisted %d crypto assets from embedded CBOM (scan=%s)", summary["total"], scan_id)
 
 
 def _resolve_effective_analyzers(

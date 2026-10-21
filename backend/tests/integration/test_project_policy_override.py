@@ -3,11 +3,11 @@ import pytest
 from app.models.crypto_asset import CryptoAsset
 from app.models.crypto_policy import CryptoPolicy
 from app.models.finding import FindingType, Severity
-from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from tests.helpers.analyzers import evaluate_crypto
+from tests.helpers.cbom import store_assets
 
 
 def _rule(rule_id, enabled=True, **extra):
@@ -26,9 +26,9 @@ def _rule(rule_id, enabled=True, **extra):
 @pytest.mark.asyncio
 async def test_override_disables_rule_and_suppresses_findings(db):
     policy_repo = CryptoPolicyRepository(db)
-    asset_repo = CryptoAssetRepository(db)
 
-    await asset_repo.bulk_upsert(
+    await store_assets(
+        db,
         "proj",
         "scan",
         [
@@ -74,9 +74,9 @@ async def test_override_disables_rule_and_suppresses_findings(db):
 @pytest.mark.asyncio
 async def test_override_adds_custom_rule(db):
     policy_repo = CryptoPolicyRepository(db)
-    asset_repo = CryptoAssetRepository(db)
 
-    await asset_repo.bulk_upsert(
+    await store_assets(
+        db,
         "proj2",
         "scan",
         [

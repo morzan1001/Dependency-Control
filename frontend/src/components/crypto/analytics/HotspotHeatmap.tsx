@@ -26,9 +26,11 @@ export function HotspotHeatmap({ scope, scopeId, groupBy }: Readonly<Props>) {
   const everyColumn = Array.from(
     new Set(data.items.flatMap((e) => (scope === "project" ? e.locations : e.project_ids))),
   );
-  // Capped so a tenant with many projects/locations never renders an unbounded grid.
+  // Capped so a project with many locations never renders an unbounded grid; the API caps project columns itself.
   const columns = everyColumn.slice(0, MAX_COLUMNS);
+  const columnTotal = scope === "project" ? everyColumn.length : data.projects_total;
   const sampledRows = scope === "project" ? data.items.filter((e) => !e.locations_complete).length : 0;
+  const rowsCut = data.total > data.items.length;
 
   const projectNameById = new Map((projectsData?.items ?? []).map((p) => [p.id, p.name]));
 
@@ -43,9 +45,10 @@ export function HotspotHeatmap({ scope, scopeId, groupBy }: Readonly<Props>) {
 
   return (
     <div className="overflow-auto">
-      {(columns.length < everyColumn.length || sampledRows > 0) && (
+      {(rowsCut || columns.length < columnTotal || sampledRows > 0) && (
         <p className="pb-2 text-xs text-muted-foreground">
-          {columns.length < everyColumn.length && `Showing ${columns.length} of ${everyColumn.length} ${axis}. `}
+          {rowsCut && `Showing ${data.items.length} of ${data.total} hotspots. `}
+          {columns.length < columnTotal && `Showing ${columns.length} of ${columnTotal} ${axis}. `}
           {sampledRows > 0 &&
             `${sampledRows} row(s) list a sample of their locations — a "?" cell is unknown, not absent.`}
         </p>

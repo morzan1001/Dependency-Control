@@ -1,5 +1,6 @@
 """CBOM-ingested assets have no SBOM in GridFS, so a rescan cannot re-derive them and must carry them over."""
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,7 +20,7 @@ from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.rescan import RESCAN_SOURCE_PROJECTION, build_rescan
 from app.services.scan_manager import ScanManager
 from tests.helpers.analyzers import analyse_scan
-from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, store_cbom
+from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, store_assets, store_cbom
 from tests.helpers.sboms import sbom_ref, store_sbom
 
 _PROJECT_ID = "cbom-rescan-project"
@@ -27,6 +28,7 @@ _WORKER = "pod-a/worker-0"
 _FILE_ID = "69d5332257c8763c8d8c82d7"
 _ASSET_LIMIT = 100
 _NO_ANALYZERS: list[str] = []
+_RESCANNED_AT = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
 _SBOM = {
     "bomFormat": "CycloneDX",
@@ -49,7 +51,8 @@ _INGESTED_ASSETS = [
 
 
 async def _ingest_assets(db, scan_id: str) -> None:
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         _PROJECT_ID,
         scan_id,
         [
@@ -131,6 +134,17 @@ async def test_a_failed_carry_over_fails_the_crypto_analyzers_that_grade_the_res
     assert (await db.scans.find_one({"_id": rescan_id}))["failed_analyzers"] == failed
 
 
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_rescan_dates_the_assets_it_carries_over_by_itself(db):
+    _, rescan_id = await _seed_lineage(db)
+    await db.scans.update_one({"_id": rescan_id}, {"$set": {"created_at": _RESCANNED_AT}})
+
+    await analyse_scan(db, rescan_id, [sbom_ref(_FILE_ID)], _NO_ANALYZERS, worker_id=_WORKER)
+
+    assert {a["created_at"] async for a in db.crypto_assets.find({"scan_id": rescan_id})} == {_RESCANNED_AT}
+
+
 async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], list[str]]:
     announced: list[list[str]] = []
 
@@ -182,15 +196,15 @@ async def test_a_carry_over_past_the_old_asset_cap_copies_every_asset_once(db):
     source_ids = await db.crypto_assets.distinct("_id", {"scan_id": "scan-original"})
     repo = CryptoAssetRepository(db)
 
-    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan")
+    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan", _RESCANNED_AT)
     carried = await db.crypto_assets.find({"scan_id": "scan-rescan"}).sort("_id").to_list(None)
-    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan")
+    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan", _RESCANNED_AT)
 
     assert [a["_id"] for a in carried] == sorted(f"scan-rescan:{i}" for i in source_ids)
     assert await db.crypto_assets.find({"scan_id": "scan-rescan"}).sort("_id").to_list(None) == carried
     first = carried[0]
     embedded = CryptoAsset.model_validate({**first, "_id": "embedded", "name": "SHA-512"})
-    await repo.bulk_upsert(_PROJECT_ID, "scan-rescan", [embedded])
+    await store_assets(db, _PROJECT_ID, "scan-rescan", [embedded])
     assert await db.crypto_assets.count_documents({"scan_id": "scan-rescan"}) == OLD_ASSET_CAP + 1
     assert (await db.crypto_assets.find_one({"_id": first["_id"]}))["name"] == "SHA-512"
 
@@ -204,8 +218,8 @@ async def _carry_over_onto_a_partly_filled_rescan(db, count: int) -> None:
     source = {a["bom_ref"]: a["_id"] async for a in db.crypto_assets.find({"scan_id": "scan-original"})}
     repo = CryptoAssetRepository(db)
 
-    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan")
-    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan")
+    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan", _RESCANNED_AT)
+    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan", _RESCANNED_AT)
 
     carried = {a["bom_ref"]: a["_id"] async for a in db.crypto_assets.find({"scan_id": "scan-rescan"})}
     assert carried == {ref: held.get(ref, f"scan-rescan:{src}") for ref, src in source.items()}

@@ -7,12 +7,12 @@ from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Scan
-from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.cbom import CryptoAssetType
 from app.services.analysis.engine import _prepare_finding_records
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.auth import make_admin
+from tests.helpers.cbom import store_assets
 
 pytestmark = pytest.mark.asyncio
 
@@ -50,7 +50,7 @@ async def _build(db, scan_id: str, created_at: datetime, finding: Finding, algor
     asset = CryptoAsset(
         project_id=project_id, scan_id=scan_id, bom_ref=algorithm, name=algorithm, asset_type=CryptoAssetType.ALGORITHM
     )
-    await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, [asset])
+    await store_assets(db, project_id, scan_id, [asset])
 
 
 @pytest_asyncio.fixture

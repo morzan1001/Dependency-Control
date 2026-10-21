@@ -143,7 +143,7 @@ export const WEBHOOK_EVENTS = [
   {
     id: 'crypto_asset.ingested',
     label: 'Crypto Asset Ingested',
-    description: 'Fires when crypto assets (CBOM) are imported or updated.',
+    description: 'Fires when a CBOM is uploaded for a project.',
   },
   {
     id: 'crypto_policy.changed',
@@ -187,7 +187,7 @@ export const NOTIFICATION_EVENTS = [
   {
     id: 'crypto_asset_ingested',
     label: 'Crypto Asset Ingested',
-    description: 'When new CBOM/crypto asset data is uploaded for the project.',
+    description: 'When a CBOM is uploaded for the project.',
   },
   {
     id: 'crypto_policy_changed',

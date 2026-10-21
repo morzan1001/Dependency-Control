@@ -10,9 +10,9 @@ from app.core.constants import (
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
 from app.models.release import Release
-from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.releases import ReleaseRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from tests.helpers.cbom import store_assets
 
 BASE = "/api/v1/analytics/scan-delta"
 
@@ -118,7 +118,8 @@ async def _seed_one_scan_that_is_head_and_release(db) -> None:
             "type": _SEEDED_PACKAGE_TYPE,
         }
     )
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         _PROJECT,
         _ONLY_SCAN,
         [

@@ -1,6 +1,10 @@
+import asyncio
 import itertools
 import re
-from collections.abc import Iterable
+import uuid
+from collections import Counter
+from collections.abc import Iterable, Sequence
+from datetime import datetime
 from typing import Any
 
 from pymongo import UpdateOne
@@ -9,7 +13,7 @@ from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE, SCAN_TYPE_CBOM
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.base import BaseRepository
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.schemas.cbom import CryptoAssetType, CryptoPrimitive, ParsedCryptoAsset
 
 
 def scan_query(
@@ -32,46 +36,74 @@ def scan_query(
 SCAN_ORDER = case_insensitive_sort([("name", 1), ("bom_ref", 1)], {"name"})
 
 
+def _documents(
+    project_id: str, scan_id: str, assets: Sequence[ParsedCryptoAsset], fields: dict[str, Any]
+) -> list[dict[str, Any]]:
+    return [
+        {**a.model_dump(), "_id": str(uuid.uuid4()), "project_id": project_id, "scan_id": scan_id, **fields}
+        for a in assets
+    ]
+
+
 class CryptoAssetRepository(BaseRepository[CryptoAsset]):
     collection_name = "crypto_assets"
     model_class = CryptoAsset
+
+    async def store_parsed(
+        self,
+        project_id: str,
+        scan_id: str,
+        assets: Iterable[ParsedCryptoAsset],
+        *,
+        cbom_upload: bool,
+        created_at: datetime,
+        cbom_source: str | None = None,
+    ) -> dict[str, Any]:
+        """Stores one asset per bom_ref, the last given; returns how many, in total and per asset type."""
+        unique = list({a.bom_ref: a for a in assets}.values())
+        fields = {"cbom_upload": cbom_upload, "cbom_source": cbom_source, "created_at": created_at}
+        # Built off the event loop, as a CBOM may carry any number of assets.
+        documents = await asyncio.to_thread(_documents, project_id, scan_id, unique, fields)
+        await self.bulk_upsert(project_id, scan_id, documents)
+        return {"total": len(unique), "by_type": dict(Counter(a.asset_type.value for a in unique))}
 
     async def bulk_upsert(
         self,
         project_id: str,
         scan_id: str,
-        assets: Iterable[CryptoAsset],
+        documents: Iterable[dict[str, Any]],
         chunk_size: int = CRYPTO_ASSET_BULK_CHUNK_SIZE,
-    ) -> int:
-        total = 0
-        for chunk in itertools.batched(assets, chunk_size, strict=False):
+    ) -> None:
+        for chunk in itertools.batched(documents, chunk_size, strict=False):
             ops = [
                 UpdateOne(
-                    {
-                        "project_id": project_id,
-                        "scan_id": scan_id,
-                        "bom_ref": a.bom_ref,
-                    },
+                    {"project_id": project_id, "scan_id": scan_id, "bom_ref": doc["bom_ref"]},
                     # $max: an overlapping earlier upload must not age the rows a later one's cleanup keeps.
                     {
-                        "$set": a.model_dump(by_alias=True, exclude={"id", "created_at"}),
-                        "$max": {"created_at": a.created_at},
-                        "$setOnInsert": {"_id": a.id},
+                        "$set": {k: v for k, v in doc.items() if k not in ("_id", "created_at")},
+                        "$max": {"created_at": doc["created_at"]},
+                        "$setOnInsert": {"_id": doc["_id"]},
                     },
                     upsert=True,
                 )
-                for a in chunk
+                for doc in chunk
             ]
             await self.collection.bulk_write(ops, ordered=False)
-            total += len(ops)
-        return total
 
-    async def carry_over_to_scan(self, project_id: str, from_scan_id: str, to_scan_id: str) -> None:
+    async def carry_over_to_scan(
+        self, project_id: str, from_scan_id: str, to_scan_id: str, created_at: datetime
+    ) -> None:
         """Copied, as /ingest/cbom assets have no SBOM to re-derive them from; rows the rescan already holds stay."""
         await self.aggregate(
             [
                 {"$match": {"project_id": project_id, "scan_id": from_scan_id}},
-                {"$set": {"_id": {"$concat": [to_scan_id, ":", {"$toString": "$_id"}]}, "scan_id": to_scan_id}},
+                {
+                    "$set": {
+                        "_id": {"$concat": [to_scan_id, ":", {"$toString": "$_id"}]},
+                        "scan_id": to_scan_id,
+                        "created_at": created_at,
+                    }
+                },
                 {
                     "$merge": {
                         "into": self.collection_name,

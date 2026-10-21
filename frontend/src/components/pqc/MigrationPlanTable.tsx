@@ -29,7 +29,7 @@ export function MigrationPlanTable({ items, onSelect }: Readonly<Props>) {
             <th className="p-2">Variant / Key</th>
             <th className="p-2">→ Recommended PQC</th>
             <th className="p-2">Standard</th>
-            <th className="p-2 w-24">Assets</th>
+            <th className="p-2 w-24">Occurrences</th>
             <th className="p-2 w-24">Projects</th>
             <th className="p-2">Deadline</th>
           </tr>

@@ -1,5 +1,5 @@
 # Sources: NIST FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), FIPS 205 (SLH-DSA) and the CNSA 2.0 suite.
-version: 1
+version: 2
 snapshot_date: "2026-04-20"
 
 mappings:
@@ -65,12 +65,15 @@ mappings:
       ML-DSA-65.
 
 timelines:
+  - name: "FIPS 186-5: DSA no longer approved for signature generation"
+    deadline: "2023-02-03"
+    applies_to: ["DSA"]
   - name: "CNSA 2.0 baseline"
     deadline: "2030-01-01"
-    applies_to: ["RSA", "ECDSA", "EdDSA", "ECDH"]
+    applies_to: ["RSA", "ECDSA", "EdDSA", "ECDH", "DH", "DSA"]
   - name: "NIST SP 800-131A transition target"
     deadline: "2035-01-01"
-    applies_to: ["RSA", "ECDSA", "EdDSA", "DH", "DSA"]
+    applies_to: ["RSA", "ECDSA", "EdDSA", "ECDH", "DH", "DSA"]
 
 family_aliases:
   "Diffie-Hellman": "DH"

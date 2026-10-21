@@ -201,6 +201,11 @@ def _algorithm(name, primitive, **properties):
         (_algorithm("HashSLH-DSA-SHA2-128s-SHA256", "signature"), set()),
         (_algorithm("FN_DSA_512", "signature"), set()),
         (_algorithm("X25519-MLKEM768", "kem"), set()),
+        (_algorithm("X25519-Kyber768", "kem"), set()),
+        (_algorithm("x25519_kyber768", "kem"), set()),
+        (_algorithm("rsa3072_dilithium2", "signature"), set()),
+        (_algorithm("rsa3072_falcon512", "signature"), set()),
+        (_algorithm("rsa3072_sphincssha2128fsimple", "signature"), set()),
         (_algorithm("AES-256-GCM", "ae"), set()),
         (_algorithm("Ed25519", "signature"), {"pqc-quantum-vulnerable-pke"}),
         (_algorithm("EdDSA", "signature"), {"pqc-quantum-vulnerable-pke"}),
@@ -210,6 +215,15 @@ def _algorithm(name, primitive, **properties):
         (_algorithm("AES/ECB/PKCS5Padding", "block-cipher"), {"bsi-02102-ecb-mode"}),
         (_algorithm("AES", "block-cipher", parameterSetIdentifier="128", mode="ecb"), {"bsi-02102-ecb-mode"}),
         (_algorithm("AES", "block-cipher", parameterSetIdentifier="256", mode="gcm"), set()),
+        (_algorithm("DESede", "block-cipher"), {"nist-131a-3des-disallowed"}),
+        (_algorithm("DES-EDE3-CBC", "block-cipher"), {"nist-131a-3des-disallowed"}),
+        (_algorithm("RSASSA-PSS", "signature"), {"pqc-quantum-vulnerable-pke"}),
+        (_algorithm("RSASSA-PKCS1-v1_5", "signature"), {"pqc-quantum-vulnerable-pke"}),
+        (_algorithm("RSAES-OAEP", "pke"), {"pqc-quantum-vulnerable-pke"}),
+        (
+            _algorithm("RSAES-OAEP-1024", "pke", parameterSetIdentifier="1024"),
+            {"nist-131a-rsa-min-2048", "pqc-quantum-vulnerable-pke"},
+        ),
     ],
     ids=lambda value: value["name"] if isinstance(value, dict) else None,
 )
@@ -259,6 +273,20 @@ def test_a_rule_without_name_patterns_keeps_key_material_out_by_its_primitive(ru
 
 def test_a_family_name_token_matches_a_bare_pattern():
     assert _seeded_rule_ids_matching(_algorithm("DES-CBC", "block-cipher")) == {"nist-131a-des"}
+
+
+@pytest.mark.parametrize(
+    ("name", "pattern", "expected"),
+    [
+        ("EC P-256", "EC", True),
+        ("EC-DSA", "ECDSA", True),
+        ("EC-DH", "ECDH", True),
+        ("EC-DSA", "DSA", False),
+        ("EC-DH", "DH", False),
+    ],
+)
+def test_ec_joins_only_the_scheme_it_qualifies(name, pattern, expected):
+    assert rule_matches(_asset(name=name), _rule(match_name_patterns=[pattern])) is expected
 
 
 @pytest.mark.parametrize("name", ["SHA1withRSA", "ECDH-RSA"])

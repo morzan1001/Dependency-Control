@@ -405,6 +405,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await crypto_assets.create_index(
         [("project_id", pymongo.ASCENDING), ("asset_type", pymongo.ASCENDING), ("primitive", pymongo.ASCENDING)]
     )
+    # The scan cascade, archive streaming, restore rollback and global hotspots read a scan's assets by scan_id alone.
+    await crypto_assets.create_index("scan_id")
 
     await crypto_policies.create_index([("scope", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING)], unique=True)
 
@@ -435,9 +437,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await adhoc_jobs.create_index([("status", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)])
     await adhoc_jobs.create_index("input_file_id")
     await adhoc_jobs.create_index("result_file_id", sparse=True)
-
-    # Crypto trends read findings by type and scan date across projects; no other index bounds that read.
-    await findings.create_index([("type", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
 
     logger.info("Database indexes created successfully.")
 

@@ -5,9 +5,9 @@ import pytest
 
 from app.models.crypto_asset import CryptoAsset
 from app.models.release import Release
-from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.releases import ReleaseRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from tests.helpers.cbom import store_assets
 
 _SCOPE_PATH = "/api/v1/analytics/scope"
 _STAGING = "staging"
@@ -16,7 +16,8 @@ _OFF_SHAPE_ENVIRONMENT = "Prod.EU"
 
 @pytest.mark.asyncio
 async def test_hotspots_endpoint_project_scope(client, db, owner_auth_headers_proj):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -89,7 +90,8 @@ async def test_trends_endpoint(client, db, owner_auth_headers_proj):
 
 
 async def _seed_crypto_asset(db, scan_id: str, name: str) -> None:
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         scan_id,
         [
@@ -131,7 +133,7 @@ async def test_hotspots_pins_the_aggregation_to_an_explicit_scan_id(client, db, 
 
 
 @pytest.mark.asyncio
-async def test_hotspots_returns_at_most_the_requested_limit(client, db, owner_auth_headers_proj):
+async def test_hotspots_return_the_requested_limit_of_every_group(client, db, owner_auth_headers_proj):
     for name in ("MD5", "SHA1", "SHA256", "RSA", "AES"):
         await _seed_crypto_asset(db, "s-lim", name)
     await db.scans.insert_one(
@@ -152,8 +154,37 @@ async def test_hotspots_returns_at_most_the_requested_limit(client, db, owner_au
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert len(body["items"]) == 3
-    assert body["total"] == 3
+    assert (len(body["items"]), body["total"]) == (3, 5)
+
+
+@pytest.mark.asyncio
+async def test_hotspot_locations_return_the_named_group(client, db, owner_auth_headers_proj):
+    for name in ("MD5", "SHA1", "AES"):
+        await _seed_crypto_asset(db, "s-loc", name)
+    await db.scans.insert_one(
+        {
+            "_id": "s-loc",
+            "project_id": "p",
+            "branch": "main",
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
+
+    found = await client.get(
+        "/api/v1/analytics/crypto/hotspots/AES/locations",
+        params={"scope": "project", "scope_id": "p", "grouping": "name"},
+        headers=owner_auth_headers_proj,
+    )
+    missing = await client.get(
+        "/api/v1/analytics/crypto/hotspots/RC4/locations",
+        params={"scope": "project", "scope_id": "p", "grouping": "name"},
+        headers=owner_auth_headers_proj,
+    )
+
+    assert found.status_code == 200, found.text
+    assert (found.json()["key"], found.json()["asset_count"]) == ("AES", 1)
+    assert missing.status_code == 404
 
 
 @pytest.mark.asyncio

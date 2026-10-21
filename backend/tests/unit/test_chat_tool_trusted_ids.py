@@ -108,6 +108,8 @@ def _seed_project(db: FakeDatabase, project_id: str, marker: str, member: str) -
         "bom_ref": marker,
         "asset_type": "algorithm",
         "name": marker,
+        "occurrence_locations": [],
+        "created_at": _NOW,
     }
     db.compliance_reports._docs[f"{project_id}-cr"] = {
         "_id": f"{project_id}-cr",

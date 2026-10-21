@@ -8,8 +8,9 @@ from app.schemas.compliance import (
     ReportFramework,
 )
 from app.schemas.pqc_migration import MigrationItem, MigrationItemStatus, MigrationPlanResponse
-from app.services.compliance.frameworks.base import EvaluationInput, build_evaluation
+from app.services.compliance.frameworks.base import NAMES_SHOWN, EvaluationInput, build_evaluation
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
+from app.services.recommendation.common import name_some
 
 # One control per migratable group, so the plan's own ceiling is this report's control ceiling.
 _PLAN_ITEM_LIMIT = 1000
@@ -48,7 +49,7 @@ class PQCMigrationPlanFramework:
         return build_evaluation(
             self,
             data,
-            [_item_to_control(item) for item in plan.items],
+            [_item_to_control(item, plan.project_names) for item in plan.items],
             coverage=_coverage(data, plan),
             extra_inputs=(f"mappings={plan.mappings_version}",),
         )
@@ -67,7 +68,8 @@ def _coverage(data: EvaluationInput, plan: MigrationPlanResponse) -> EvaluationC
     )
 
 
-def _item_to_control(item: MigrationItem) -> ControlResult:
+def _item_to_control(item: MigrationItem, project_names: dict[str, str]) -> ControlResult:
+    projects = name_some([project_names.get(p, p) for p in item.project_ids], NAMES_SHOWN)
     return ControlResult(
         control_id=f"PQC-{item.source_family}-{item.asset_bom_ref}",
         title=f"{item.source_family} -> {item.recommended_pqc}",
@@ -75,6 +77,7 @@ def _item_to_control(item: MigrationItem) -> ControlResult:
             f"{item.source_family} ({item.source_primitive}) asset "
             f"'{item.asset_name}' should migrate to "
             f"{item.recommended_pqc} ({item.recommended_standard}). "
+            f"{item.asset_count} occurrence(s) in {projects}. "
             f"Priority score: {item.priority_score}. {item.notes}"
         ),
         status=_STATUS_MAP[item.status],

@@ -5,10 +5,12 @@ import pytest
 from app.models.crypto_policy import CryptoPolicy
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.crypto_policy import CryptoRule
+from app.schemas.policy_audit import PolicyAuditAction
 from app.services.crypto_policy.seeder import (
     CURRENT_SEED_VERSION,
     load_seed_rules,
     seed_crypto_policies,
+    write_policy,
 )
 
 
@@ -139,7 +141,8 @@ async def test_an_edited_policy_keeps_its_rules_and_editor_through_consecutive_s
 
     got = await repo.get_system_policy()
     assert (got.rules[0].rule_id, got.updated_by) == ("custom-admin-rule", "admin-user")
-    assert (got.version, got.seed_version) == (4, CURRENT_SEED_VERSION + 1)
+    # The second bump finds every seed rule held, so it only stamps the seed version.
+    assert (got.version, got.seed_version) == (3, CURRENT_SEED_VERSION + 1)
 
 
 @pytest.mark.asyncio
@@ -158,3 +161,40 @@ async def test_a_legacy_policy_whose_last_change_was_a_seed_takes_the_new_seed(d
 
     got = await CryptoPolicyRepository(db).get_system_policy()
     assert ([r.rule_id for r in got.rules], got.updated_by) == ([r.rule_id for r in load_seed_rules()], None)
+
+
+@pytest.mark.asyncio
+async def test_a_system_write_without_rules_writes_and_announces_nothing(db):
+    """rules=None deletes a project override; a system policy has none, so there is no change to record."""
+    await seed_crypto_policies(db)
+    before = await CryptoPolicyRepository(db).get_system_policy()
+
+    with patch("app.services.crypto_policy.seeder.record_policy_change", new=AsyncMock()) as record:
+        result = await write_policy(
+            db, scope="system", project_id=None, rules=None, action=PolicyAuditAction.DELETE, actor=None
+        )
+
+    assert result is None
+    record.assert_not_awaited()
+    assert await CryptoPolicyRepository(db).get_system_policy() == before
+
+
+@pytest.mark.asyncio
+async def test_a_seed_bump_that_changes_no_rule_only_stamps_the_seed_version(db):
+    repo = CryptoPolicyRepository(db)
+    await repo.upsert_system_policy(
+        CryptoPolicy(
+            scope="system",
+            rules=[*load_seed_rules(), _custom_rule()],
+            version=4,
+            updated_by="admin-user",
+            seed_version=CURRENT_SEED_VERSION - 1,
+        )
+    )
+
+    with patch("app.services.crypto_policy.seeder.record_policy_change", new=AsyncMock()) as record:
+        await seed_crypto_policies(db)
+
+    got = await repo.get_system_policy()
+    assert (got.version, got.seed_version, got.updated_by) == (4, CURRENT_SEED_VERSION, "admin-user")
+    record.assert_not_awaited()

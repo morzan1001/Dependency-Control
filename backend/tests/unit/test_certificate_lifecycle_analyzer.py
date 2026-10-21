@@ -5,14 +5,13 @@ import pytest
 from app.models.crypto_asset import CryptoAsset
 from app.models.crypto_policy import CryptoPolicy
 from app.models.finding import FindingType, Severity
-from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.cbom_parser import parse_cbom
 from app.services.crypto_policy.seeder import load_seed_rules
 from tests.helpers.analyzers import evaluate_crypto
-from tests.helpers.cbom import content_ref
+from tests.helpers.cbom import content_ref, store_assets
 
 
 def _cert(
@@ -69,7 +68,8 @@ def _expiry_rule():
 @pytest.mark.asyncio
 async def test_expired_cert_emits_critical(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -103,7 +103,8 @@ async def test_expired_cert_emits_critical(db):
 )
 async def test_expiring_cert_severity_ladder(db, days_left, expected_severity):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -135,7 +136,8 @@ async def test_expiring_cert_severity_ladder(db, days_left, expected_severity):
 async def test_a_cert_expiring_on_a_ladder_boundary_takes_that_rung(db, days_left, expected_severity):
     """The minutes of slack keep the floor division on the boundary day itself, which is the rung's own day."""
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -155,7 +157,8 @@ async def test_a_cert_expiring_on_a_ladder_boundary_takes_that_rung(db, days_lef
 @pytest.mark.asyncio
 async def test_not_yet_valid_cert_emits_low(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -174,7 +177,8 @@ async def test_not_yet_valid_cert_emits_low(db):
 @pytest.mark.asyncio
 async def test_self_signed_detected(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -193,7 +197,8 @@ async def test_self_signed_detected(db):
 @pytest.mark.asyncio
 async def test_weak_signature_resolved_via_ref(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -218,7 +223,8 @@ async def test_weak_signature_resolved_via_ref(db):
 @pytest.mark.asyncio
 async def test_weak_key_uses_subject_public_key(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -237,7 +243,8 @@ async def test_weak_key_uses_subject_public_key(db):
 @pytest.mark.asyncio
 async def test_weak_signing_key_does_not_flag_strong_subject_key(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -284,7 +291,8 @@ def _weak_hash_rule(names=("SHA-224",)):
 @pytest.mark.asyncio
 async def test_weak_key_honors_policy_min_size(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -304,7 +312,8 @@ async def test_weak_key_honors_policy_min_size(db):
 async def test_key_exactly_at_the_policy_minimum_is_compliant(db):
     """A minimum is the smallest allowed size, so only a key below it is weak."""
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -325,7 +334,8 @@ async def test_key_exactly_at_the_policy_minimum_is_compliant(db):
 @pytest.mark.asyncio
 async def test_weak_signature_honors_glob_and_rule_severity(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -355,7 +365,8 @@ async def test_weak_signature_honors_glob_and_rule_severity(db):
 @pytest.mark.asyncio
 async def test_weak_signature_honors_policy_hash_ban(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -374,7 +385,8 @@ async def test_weak_signature_honors_policy_hash_ban(db):
 @pytest.mark.asyncio
 async def test_no_subject_key_ref_does_not_assert_weak_key(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -393,7 +405,8 @@ async def test_no_subject_key_ref_does_not_assert_weak_key(db):
 @pytest.mark.asyncio
 async def test_validity_too_long(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -424,7 +437,8 @@ async def test_validity_too_long(db):
 async def test_validity_exactly_at_the_policy_limit_is_allowed(db):
     """398 days is the CA/Browser Forum maximum, so a cert issued at exactly that limit still complies."""
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -466,7 +480,8 @@ async def test_every_check_emits_only_declared_details_keys(db):
     now = datetime.now(timezone.utc)
     weak_hash = _algo("a-sha1", "SHA-1", CryptoPrimitive.HASH)
     weak_key = _algo("a-rsa", "RSA-1024", CryptoPrimitive.PKE, key_size=1024)
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -549,9 +564,7 @@ def _spec_cert_chain(now, signature, key_algorithm, key_size, key_algorithm_prop
 
 async def _analyze_spec_cbom(db, components, rules):
     assets = parse_cbom({"specVersion": "1.6", "components": components})
-    await CryptoAssetRepository(db).bulk_upsert(
-        "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in assets]
-    )
+    await store_assets(db, "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in assets])
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=rules))
     return await evaluate_crypto("crypto_certificate_lifecycle", db)
 
@@ -628,7 +641,7 @@ async def test_a_policy_rule_of_the_check_type_sets_its_severity_or_disables_it(
         not_before=now + timedelta(days=cert_kwargs.get("not_before_days", -1)),
         not_after=now + timedelta(days=cert_kwargs.get("not_after_days", 365)),
     )
-    await CryptoAssetRepository(db).bulk_upsert("p", "s", [cert])
+    await store_assets(db, "p", "s", [cert])
     rule = _type_rule("team-cert-check", finding_type, enabled=enabled)
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=[rule]))
     result = await evaluate_crypto("crypto_certificate_lifecycle", db)
@@ -638,7 +651,7 @@ async def test_a_policy_rule_of_the_check_type_sets_its_severity_or_disables_it(
 @pytest.mark.asyncio
 async def test_overlapping_expiry_rules_emit_one_finding_at_the_strictest_rung(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert("p", "s", [_cert(not_after=now + timedelta(days=20, minutes=5))])
+    await store_assets(db, "p", "s", [_cert(not_after=now + timedelta(days=20, minutes=5))])
     strict = _type_rule(
         "team-expiry-strict",
         FindingType.CRYPTO_CERT_EXPIRING_SOON,
@@ -666,9 +679,7 @@ async def test_overlapping_expiry_rules_emit_one_finding_at_the_strictest_rung(d
 @pytest.mark.asyncio
 async def test_overlapping_validity_rules_emit_one_finding_for_the_strictest_rule(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
-        "p", "s", [_cert(not_before=now - timedelta(days=10), not_after=now + timedelta(days=400))]
-    )
+    await store_assets(db, "p", "s", [_cert(not_before=now - timedelta(days=10), not_after=now + timedelta(days=400))])
     rules = [
         _type_rule("validity-398", FindingType.CRYPTO_CERT_VALIDITY_TOO_LONG, Severity.LOW, validity_too_long_days=398),
         _type_rule(
@@ -687,7 +698,7 @@ async def test_overlapping_validity_rules_emit_one_finding_for_the_strictest_rul
 @pytest.mark.asyncio
 async def test_certificate_finding_ids_are_stable_across_runs(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert("p", "s", [_cert(not_after=now - timedelta(days=10))])
+    await store_assets(db, "p", "s", [_cert(not_after=now - timedelta(days=10))])
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule()])
     )
@@ -700,9 +711,7 @@ async def test_certificate_finding_ids_are_stable_across_runs(db):
 @pytest.mark.asyncio
 async def test_self_signed_details_carry_no_duplicate_subject_and_issuer(db):
     now = datetime.now(timezone.utc)
-    await CryptoAssetRepository(db).bulk_upsert(
-        "p", "s", [_cert(subject="CN=self", issuer="CN=self", not_after=now + timedelta(days=200))]
-    )
+    await store_assets(db, "p", "s", [_cert(subject="CN=self", issuer="CN=self", not_after=now + timedelta(days=200))])
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule()])
     )
@@ -714,7 +723,6 @@ async def test_self_signed_details_carry_no_duplicate_subject_and_issuer(db):
         "asset_type": "certificate",
         "subject_name": "CN=self",
         "issuer_name": "CN=self",
-        "occurrence_count": 0,
     }
 
 

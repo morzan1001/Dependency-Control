@@ -7,8 +7,7 @@ import yaml
 
 from app.core import ensure_utc
 from app.models.crypto_asset import CryptoAsset
-
-CURRENT_MAPPINGS_VERSION = 1
+from app.services.analyzers.crypto.matcher import family_tokens
 
 _MAPPINGS_PATH = Path(__file__).resolve().parent / "mappings.yaml"
 
@@ -25,17 +24,18 @@ class PQCMapping:
 
 @dataclass(frozen=True)
 class Timeline:
-    name: str
     deadline: datetime
     applies_to: list[str]
 
 
 @dataclass(frozen=True)
 class PQCMappings:
+    version: int
     mappings: list[PQCMapping]
     timelines: list[Timeline]
     # Upper-cased family or alias -> canonical source_family; CBOM tools emit names in arbitrary casing.
     families: dict[str, str]
+    canonical: frozenset[str]
 
 
 @lru_cache(maxsize=1)
@@ -55,7 +55,6 @@ def load_mappings() -> PQCMappings:
     ]
     timelines = [
         Timeline(
-            name=t["name"],
             deadline=ensure_utc(datetime.fromisoformat(t["deadline"])),
             applies_to=list(t.get("applies_to", [])),
         )
@@ -63,7 +62,13 @@ def load_mappings() -> PQCMappings:
     ]
     families = {m.source_family.upper(): m.source_family for m in mappings}
     families.update({alias.upper(): family for alias, family in (doc.get("family_aliases") or {}).items()})
-    return PQCMappings(mappings=mappings, timelines=timelines, families=families)
+    return PQCMappings(
+        version=doc["version"],
+        mappings=mappings,
+        timelines=timelines,
+        families=families,
+        canonical=frozenset(m.source_family for m in mappings),
+    )
 
 
 def normalise_family(name: str | None, mappings: PQCMappings) -> str:
@@ -73,8 +78,11 @@ def normalise_family(name: str | None, mappings: PQCMappings) -> str:
 
 
 def resolve_family(asset: CryptoAsset, mappings: PQCMappings) -> str:
-    canonical = {m.source_family for m in mappings.mappings}
-    for candidate in (asset.name, asset.variant):
-        if (family := normalise_family(candidate, mappings)) in canonical:
+    candidates = [c for c in (asset.name, asset.variant) if c]
+    for candidate in candidates:
+        if (family := normalise_family(candidate, mappings)) in mappings.canonical:
             return family
-    return ""
+    # RSA-1024 and SHA1withRSA hold the family as one part; of several, the one mapped for the asset's primitive wins.
+    parts = {normalise_family(part, mappings) for c in candidates for part in family_tokens(c.lower())}
+    by_primitive = sorted(mappings.mappings, key=lambda m: m.source_primitive != asset.primitive)
+    return next((m.source_family for m in by_primitive if m.source_family in parts), "")

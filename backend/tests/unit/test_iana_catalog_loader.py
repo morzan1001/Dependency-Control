@@ -1,3 +1,4 @@
+import inspect
 from functools import partial
 from unittest.mock import AsyncMock
 
@@ -5,6 +6,7 @@ import httpx
 import pytest
 import yaml
 
+from app.core.cache import CacheService
 from app.core.http_utils import InstrumentedAsyncClient
 from app.services.analyzers.crypto.catalogs import loader
 from app.services.analyzers.crypto.catalogs.loader import (
@@ -63,6 +65,20 @@ async def test_the_bundled_snapshot_serves_a_failed_fetch():
     assert isinstance(cat["TLS_RSA_WITH_RC4_128_SHA"], CipherSuiteEntry)
     assert "weak-cipher-rc4" in cat["TLS_RSA_WITH_RC4_128_SHA"].weaknesses
     assert cat.get("TLS_DEFINITELY_NOT_A_REAL_SUITE") is None
+
+
+@pytest.mark.asyncio
+async def test_the_bundled_snapshot_is_read_from_disk_once_per_process(monkeypatch):
+    loader._load_fallback_yaml.cache_clear()
+    reads = []
+    safe_load = yaml.safe_load
+    monkeypatch.setattr(loader.yaml, "safe_load", lambda stream: reads.append(stream) or safe_load(stream))
+
+    first = await load_iana_catalog()
+    second = await load_iana_catalog()
+
+    assert len(reads) == 1
+    assert first == second
 
 
 @pytest.mark.asyncio
@@ -143,6 +159,24 @@ async def test_a_registry_error_status_counts_as_a_failed_fetch(monkeypatch):
     _serve_registry(monkeypatch, 503, "")
 
     assert await _fetch_from_iana() is None
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_connect_fails_while_peers_still_wait_on_the_fetch_lock(monkeypatch):
+    timeouts = []
+
+    def recording(service_name, timeout, **kwargs):
+        timeouts.append(timeout)
+        transport = httpx.MockTransport(lambda request: httpx.Response(503))
+        return InstrumentedAsyncClient(service_name, timeout=timeout, transport=transport)
+
+    monkeypatch.setattr(loader, "InstrumentedAsyncClient", recording)
+
+    await _fetch_from_iana()
+
+    lock_wait = inspect.signature(CacheService.get_or_fetch_with_lock).parameters["max_wait_seconds"].default
+    (timeout,) = timeouts
+    assert httpx.Timeout(timeout).connect < lock_wait
 
 
 def test_the_csv_parse_keeps_only_the_registry_columns_of_suite_rows():

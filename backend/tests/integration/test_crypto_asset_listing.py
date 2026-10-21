@@ -3,11 +3,13 @@ import pytest
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from tests.helpers.cbom import store_assets
 
 
 @pytest.mark.asyncio
 async def test_list_crypto_assets_pagination(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "proj",
         "scan",
         [
@@ -32,7 +34,8 @@ async def test_list_crypto_assets_pagination(db):
 
 @pytest.mark.asyncio
 async def test_list_filters_by_asset_type(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "proj2",
         "sc",
         [
@@ -54,7 +57,8 @@ async def test_list_filters_by_asset_type(db):
 
 @pytest.mark.asyncio
 async def test_list_filters_by_primitive(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "proj3",
         "sc",
         [
@@ -86,7 +90,8 @@ async def test_list_filters_by_primitive(db):
 
 @pytest.mark.asyncio
 async def test_list_filters_by_name_search(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "proj4",
         "sc",
         [
@@ -116,7 +121,8 @@ async def test_get_nonexistent_asset_returns_none(db):
 
 @pytest.mark.asyncio
 async def test_summary_counts_assets_by_type(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "proj6",
         "sc",
         [

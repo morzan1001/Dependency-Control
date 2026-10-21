@@ -18,7 +18,6 @@ from app.models.finding import Severity
 from app.models.project import Project, Scan
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
-from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.findings import FindingRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.compliance import ControlStatus, ReportFormat, ReportFramework, ReportStatus
@@ -36,6 +35,7 @@ from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.gridfs_maintenance import make_gridfs_ref
 from app.services.normalizers.license import normalize_license
 from tests.helpers.analyzers import analyze_cyclonedx
+from tests.helpers.cbom import store_assets
 from tests.helpers.compliance import evaluation_input
 from tests.helpers.findings import aggregated_vulnerability
 from tests.unit.test_renderer_json import _evaluation
@@ -287,7 +287,7 @@ async def _gather(db, resolved, key):
 async def test_engine_gather_inputs_builds_evaluation_input(db):
     await seed_crypto_policies(db)
     scan_id = await _store_project(db, "p1")
-    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, [_rsa("p1", scan_id, 4096)])
+    await store_assets(db, "p1", scan_id, [_rsa("p1", scan_id, 4096)])
 
     result = await _gather(db, await _user_scope(db), ReportFramework.NIST_SP_800_131A)
 
@@ -341,7 +341,7 @@ async def test_an_unscanned_project_withholds_a_cve_pass(db):
 async def test_a_failed_analyzer_is_a_gap_only_for_the_framework_it_feeds(db, failed, gap_in, no_gap_in):
     await seed_crypto_policies(db)
     scan_id = await _store_project(db, "p1", failed_analyzers=[failed, "end_of_life"])
-    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, [_rsa("p1", scan_id, 4096)])
+    await store_assets(db, "p1", scan_id, [_rsa("p1", scan_id, 4096)])
 
     affected = await _gather(db, _project_scope(), gap_in)
     unaffected = await _gather(db, _project_scope(), no_gap_in)
@@ -455,7 +455,7 @@ _AES = CryptoAsset(
 async def test_the_pqc_plan_names_a_scan_without_crypto_inventory_as_a_gap(db, assets, gaps):
     await seed_crypto_policies(db)
     scan_id = await _store_project(db, "p1")
-    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, assets)
+    await store_assets(db, "p1", scan_id, assets)
 
     _, evaluation = await ComplianceReportEngine().evaluate(
         db, _project_scope(), FRAMEWORK_REGISTRY[ReportFramework.PQC_MIGRATION_PLAN]
@@ -510,7 +510,7 @@ async def test_a_scan_without_an_sbom_withholds_every_verdict_its_absence_would_
     """A CBOM-only head scan: no vulnerability or license analyzer ever read a dependency of it."""
     await seed_crypto_policies(db)
     scan_id = await _store_project(db, "p1", sbom=False)
-    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, [_rsa("p1", scan_id, 4096)])
+    await store_assets(db, "p1", scan_id, [_rsa("p1", scan_id, 4096)])
 
     inputs, evaluation = await ComplianceReportEngine().evaluate(db, _project_scope(), FRAMEWORK_REGISTRY[key])
 
@@ -565,7 +565,7 @@ async def test_the_inventory_comes_from_one_unsorted_read_across_the_scope(db):
     await seed_crypto_policies(db)
     for pid in ("p1", "p2"):
         scan_id = await _store_project(db, pid)
-        await CryptoAssetRepository(db).bulk_upsert(pid, scan_id, [_rsa(pid, scan_id, 4096)])
+        await store_assets(db, pid, scan_id, [_rsa(pid, scan_id, 4096)])
     asset_reads = _reads(db.crypto_assets)
 
     inputs = await _gather(db, await _user_scope(db), ReportFramework.NIST_SP_800_131A)
@@ -581,7 +581,7 @@ async def test_the_inventory_comes_from_one_unsorted_read_across_the_scope(db):
 async def test_a_stored_rsa_key_size_reaches_the_key_size_control(db):
     await seed_crypto_policies(db)
     scan_id = await _store_project(db, "p1")
-    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, [_rsa("p1", scan_id, 4096)])
+    await store_assets(db, "p1", scan_id, [_rsa("p1", scan_id, 4096)])
 
     _, evaluation = await ComplianceReportEngine().evaluate(
         db, _project_scope(), FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A]

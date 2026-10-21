@@ -1,7 +1,6 @@
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -12,7 +11,7 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.scans import ScanRepository
 from app.services.analysis.registry import CRYPTO_ANALYZERS
 from tests.helpers.analyzers import ingest_and_analyze_cbom
-from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, content_ref, filler_components, fixture_component
+from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, content_ref, filler_components, fixture_component, store_assets
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "cbom"
 
@@ -262,7 +261,8 @@ async def test_a_retried_cbom_upload_replaces_its_own_assets_and_keeps_the_embed
     )
     scan_id = first.json()["scan_id"]
     [embedded] = parse_cbom(_load("cyclonedx_1_6_with_crypto_assets.json"))
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "test-project-id",
         scan_id,
         [CryptoAsset(project_id="test-project-id", scan_id=scan_id, **embedded.model_dump())],
@@ -278,13 +278,40 @@ async def test_a_retried_cbom_upload_replaces_its_own_assets_and_keeps_the_embed
         content_ref(fixture_component("modern_crypto.json", ref)) for ref in ("algo-aes", "algo-rsa4096", "proto-tls13")
     ]
     assert sorted(a["bom_ref"] for a in stored) == sorted([*retried, embedded.bom_ref])
-    assert retry.json()["assets_stored"] == 4
+    assert retry.json()["assets_stored"] == len(retried)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    "source",
+    [lambda name: {"serialNumber": f"urn:uuid:{name}"}, lambda name: {"metadata": {"component": {"name": name}}}],
+    ids=["serial-number", "metadata-component-name"],
+)
+async def test_cboms_of_one_pipeline_run_add_up_and_a_retry_replaces_only_its_own_assets(
+    client, db, api_key_headers, source
+):
+    pipeline = {"pipeline_id": 18, "commit_hash": "abc123", "branch": "main"}
+    service = {**_load("legacy_crypto_mixed.json"), **source("service")}
+    library = {**_load("modern_crypto.json"), **source("library")}
+    for cbom in (service, library):
+        await client.post("/api/v1/ingest/cbom", json={**pipeline, "cbom": cbom}, headers=api_key_headers)
+
+    retry = await client.post(
+        "/api/v1/ingest/cbom",
+        json={**pipeline, "cbom": {**service, "components": service["components"][:1]}},
+        headers=api_key_headers,
+    )
+
+    assert retry.status_code == 202, retry.text
+    stored = await db.crypto_assets.find({"scan_id": retry.json()["scan_id"]}).to_list(None)
+    kept = [content_ref(c) for c in (service["components"][0], *library["components"])]
+    assert sorted(a["bom_ref"] for a in stored) == sorted(kept)
 
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_an_earlier_upload_finishing_last_keeps_the_later_uploads_assets(db):
-    from app.models.crypto_asset import CryptoAsset
     from app.services.cbom_parser import parse_cbom
 
     repo = CryptoAssetRepository(db)
@@ -292,15 +319,8 @@ async def test_an_earlier_upload_finishing_last_keeps_the_later_uploads_assets(d
     earlier = datetime.now(timezone.utc)
     later = earlier + timedelta(seconds=1)
 
-    async def upsert(written_at: datetime) -> None:
-        rows = [
-            CryptoAsset(project_id="p", scan_id="s", cbom_upload=True, created_at=written_at, **a.model_dump())
-            for a in assets
-        ]
-        await repo.bulk_upsert("p", "s", rows)
-
-    await upsert(later)
-    await upsert(earlier)
+    for written_at in (later, earlier):
+        await repo.store_parsed("p", "s", assets, cbom_upload=True, created_at=written_at)
     await repo.delete_older_writes({"project_id": "p", "scan_id": "s", "cbom_upload": True}, later)
 
     assert await repo.count_by_scan("p", "s") == 3

@@ -62,24 +62,41 @@ def name_matches(asset: AnyCryptoAsset, patterns: list[str]) -> bool:
     lowered = [pat.lower() for pat in patterns]
     for candidate in candidates:
         c_lower = candidate.lower()
-        tokens = _family_tokens(c_lower)
+        tokens = family_tokens(c_lower)
         # Tokens hold no glob characters, so only a glob-free pattern can equal one.
         if any(pat == c_lower or pat in tokens or fnmatchcase(c_lower, pat) for pat in lowered):
             return True
     return False
 
 
-# A qualifier names one family with the next part: EC-DSA is ECDSA and ML_DSA is ML-DSA, not DSA.
-_QUALIFIER = re.compile(r"\b(ec|ml|slh|fn|hashml|hashslh) +")
-# A post-quantum or hybrid name (X25519-MLKEM768) holds no classic family on its own.
-_POST_QUANTUM_FAMILIES = ("mlkem", "mldsa", "slhdsa", "fndsa", "hashmldsa", "hashslhdsa")
+# A qualifier names one family with the next part: EC-DSA is ECDSA and ML_DSA is ML-DSA, not DSA; EC P-256 stays EC.
+_QUALIFIER = re.compile(r"\b(ec(?= +(?:dh|dhe|dsa|mqv)\b)|ml|slh|fn|hashml|hashslh) +")
+# A post-quantum or hybrid name (X25519-MLKEM768, pre-standard X25519-Kyber768) holds no classic family on its own.
+_POST_QUANTUM_FAMILIES = (
+    "mlkem",
+    "mldsa",
+    "slhdsa",
+    "fndsa",
+    "hashmldsa",
+    "hashslhdsa",
+    "kyber",
+    "dilithium",
+    "falcon",
+    "sphincs",
+)
+# The JCA (DESede) and OpenSSL (DES-EDE3) names of three-key 3DES, which is not single DES.
+_TRIPLE_DES_TOKENS = {"desede", "ede3"}
+# A family name runs up to a digit (RSA2048), and CycloneDX names RSA's schemes RSASSA-PSS, RSAES-OAEP, RSA-KEM.
+_FAMILY_PREFIX = re.compile(r"(rsa)(?:ssa|es|kem)|([a-z]+)\d")
 
 
-def _family_tokens(name: str) -> set[str]:
+def family_tokens(name: str) -> set[str]:
     tokens = set(_QUALIFIER.sub(r"\1", " ".join(re.split(r"[^a-z0-9]+|with", name))).split())
     if any(token.startswith(_POST_QUANTUM_FAMILIES) for token in tokens):
         return set()
-    return tokens | {m.group(1) for token in tokens if (m := re.match(r"([a-z]+)\d", token))}
+    if tokens & _TRIPLE_DES_TOKENS:
+        tokens = tokens - {"des"} | {"3des"}
+    return tokens | {m.group(1) or m.group(2) for token in tokens if (m := _FAMILY_PREFIX.match(token))}
 
 
 def _protocol_version_matches(asset: AnyCryptoAsset, match_list: list[str]) -> bool:

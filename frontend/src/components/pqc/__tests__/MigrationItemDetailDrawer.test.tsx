@@ -29,4 +29,10 @@ describe("MigrationItemDetailDrawer", () => {
     expect(screen.getByText("Migrate soon")).toBeInTheDocument();
     expect(screen.queryByText("migrate_soon")).not.toBeInTheDocument();
   });
+
+  it("labels the count the way the plan table heads it", () => {
+    render(<MigrationItemDetailDrawer item={{ ...item, asset_count: 7 }} projectNames={{}} onClose={vi.fn()} />);
+
+    expect(screen.getByText("Occurrences").nextElementSibling).toHaveTextContent("7");
+  });
 });

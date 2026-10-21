@@ -1,9 +1,10 @@
 import math
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
 
+from app.models.crypto_asset import CryptoAsset
+from app.schemas.cbom import CryptoAssetType
 from app.schemas.pqc_migration import MigrationItemStatus
-from app.services.pqc_migration.mappings_loader import Timeline
 
 EXPOSURE_WEIGHT = 0.35
 KEY_WEAKNESS_WEIGHT = 0.30
@@ -39,18 +40,18 @@ _MIGRATION_BUCKETS: tuple[tuple[int, MigrationItemStatus], ...] = (
 
 def priority_score(
     *,
-    asset: Any,
+    asset: CryptoAsset,
     source_family: str,
-    timelines: list[Timeline],
+    deadline: datetime | None,
     now: datetime,
     asset_count: int = 1,
+    referenced: float | None = None,
 ) -> int:
-    exposure = _score_exposure(asset)
-    weakness = _score_key_weakness(asset, source_family)
-    deadline = _score_deadline(source_family, timelines, now)
-    count = _score_count(asset_count)
     raw = (
-        exposure * EXPOSURE_WEIGHT + weakness * KEY_WEAKNESS_WEIGHT + deadline * DEADLINE_WEIGHT + count * COUNT_WEIGHT
+        _score_exposure(asset, referenced) * EXPOSURE_WEIGHT
+        + _score_key_weakness(asset, source_family) * KEY_WEAKNESS_WEIGHT
+        + _score_deadline(deadline, now) * DEADLINE_WEIGHT
+        + _score_count(asset_count) * COUNT_WEIGHT
     )
     return max(0, min(100, round(raw)))
 
@@ -59,14 +60,30 @@ def status_from_score(score: int) -> MigrationItemStatus:
     return next(status for threshold, status in _MIGRATION_BUCKETS if score >= threshold)
 
 
-def _score_exposure(asset: Any) -> float:
-    asset_type = asset.asset_type or ""
-    cert_format = asset.certificate_format or ""
+def referenced_exposure(linked: Sequence[CryptoAsset]) -> dict[str, float]:
+    """The exposure certificates and key material lend the algorithms they name, by bom_ref."""
+    key_algorithms = {a.bom_ref: a.algorithm_ref for a in linked if a.algorithm_ref}
+    exposure: dict[str, float] = {}
+
+    def lend(ref: str | None, tier: float) -> None:
+        if ref:
+            exposure[ref] = max(exposure.get(ref, tier), tier)
+
+    for a in linked:
+        if a.asset_type == CryptoAssetType.RELATED_CRYPTO_MATERIAL:
+            lend(a.algorithm_ref, EXPOSURE_RELATED_MATERIAL)
+        elif a.asset_type == CryptoAssetType.CERTIFICATE and a.certificate_format:
+            # A certificate usually names its key, and only the key names the algorithm.
+            for ref in filter(None, (a.signature_algorithm_ref, a.subject_public_key_ref)):
+                lend(ref, EXPOSURE_CERTIFICATE)
+                lend(key_algorithms.get(ref), EXPOSURE_CERTIFICATE)
+    return exposure
+
+
+def _score_exposure(asset: CryptoAsset, referenced: float | None) -> float:
+    if referenced is not None:
+        return referenced
     detection_context = (asset.detection_context or "").lower()
-    if asset_type == "certificate" and cert_format:
-        return EXPOSURE_CERTIFICATE
-    if asset_type == "related-crypto-material":
-        return EXPOSURE_RELATED_MATERIAL
     if detection_context == "binary":
         return EXPOSURE_BINARY
     if detection_context == "source":
@@ -74,7 +91,7 @@ def _score_exposure(asset: Any) -> float:
     return EXPOSURE_DEFAULT
 
 
-def _score_key_weakness(asset: Any, source_family: str) -> float:
+def _score_key_weakness(asset: CryptoAsset, source_family: str) -> float:
     key_size = asset.key_size_bits
     minimum = _MIN_KEY_SIZE.get(source_family)
     if key_size is None or minimum is None:
@@ -89,11 +106,10 @@ def _score_key_weakness(asset: Any, source_family: str) -> float:
     return 50.0
 
 
-def _score_deadline(source_family: str, timelines: list[Timeline], now: datetime) -> float:
-    applicable = [t for t in timelines if source_family in t.applies_to]
-    if not applicable:
+def _score_deadline(deadline: datetime | None, now: datetime) -> float:
+    if deadline is None:
         return 40.0
-    nearest_days = min((t.deadline - now).days for t in applicable)
+    nearest_days = (deadline - now).days
     if nearest_days < 365:
         return 100.0
     if nearest_days < 365 * 3:

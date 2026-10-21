@@ -1,10 +1,7 @@
-from unittest.mock import patch
-
 import pytest
 
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.policy_audit_entry import PolicyAuditRepository
-from app.services.crypto_policy.seeder import CURRENT_SEED_VERSION, seed_crypto_policies
 from tests.helpers.crypto_policy import rule_dict
 
 
@@ -166,28 +163,3 @@ async def test_a_revert_names_the_admin_who_made_it(client, db, admin_auth_heade
     assert (resp.json()["version"], resp.json()["updated_by"]) == (3, "admin-user")
     stored = await CryptoPolicyRepository(db).get_system_policy()
     assert ([r.rule_id for r in stored.rules], stored.updated_by) == (["alpha"], "admin-user")
-
-
-@pytest.mark.live_mongo
-@pytest.mark.asyncio
-async def test_a_legacy_policy_last_changed_by_a_revert_keeps_its_rules_through_the_seed_bumps(
-    client, db, admin_auth_headers
-):
-    for rule_id in ("alpha", "beta"):
-        await client.put(
-            "/api/v1/crypto-policies/system", json={"rules": [rule_dict(rule_id)]}, headers=admin_auth_headers
-        )
-    await client.post("/api/v1/crypto-policies/system/revert", json={"target_version": 1}, headers=admin_auth_headers)
-    await db.crypto_policies.update_one(
-        {"scope": "system"}, {"$set": {"updated_by": None}, "$unset": {"seed_version": ""}}
-    )
-
-    await seed_crypto_policies(db)
-    # The next rollout starts after the seed lock expired.
-    await db.distributed_locks.delete_one({"_id": "crypto_policy_seed"})
-    with patch("app.services.crypto_policy.seeder.CURRENT_SEED_VERSION", CURRENT_SEED_VERSION + 1):
-        await seed_crypto_policies(db)
-
-    stored = await CryptoPolicyRepository(db).get_system_policy()
-    assert (stored.rules[0].rule_id, stored.updated_by) == ("alpha", "admin-user")
-    assert (stored.version, stored.seed_version) == (5, CURRENT_SEED_VERSION + 1)

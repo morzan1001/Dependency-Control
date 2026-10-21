@@ -3,14 +3,13 @@ import pytest
 from app.models.crypto_asset import CryptoAsset
 from app.models.crypto_policy import CryptoPolicy
 from app.models.finding import FindingType, Severity
-from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.cbom_parser import parse_cbom
 from app.services.crypto_policy.seeder import load_seed_rules
 from tests.helpers.analyzers import evaluate_crypto
-from tests.helpers.cbom import content_ref
+from tests.helpers.cbom import content_ref, store_assets
 
 
 def _protocol(suite_list, bom_ref="p1", project_id="p", scan_id="s"):
@@ -28,7 +27,8 @@ def _protocol(suite_list, bom_ref="p1", project_id="p", scan_id="s"):
 
 @pytest.mark.asyncio
 async def test_rc4_suite_emits_high_finding(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -47,7 +47,8 @@ async def test_rc4_suite_emits_high_finding(db):
 
 @pytest.mark.asyncio
 async def test_strong_suite_emits_no_finding(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p2",
         "s2",
         [
@@ -62,7 +63,8 @@ async def test_strong_suite_emits_no_finding(db):
 
 @pytest.mark.asyncio
 async def test_unknown_suite_skipped(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p3",
         "s3",
         [
@@ -77,7 +79,8 @@ async def test_unknown_suite_skipped(db):
 
 @pytest.mark.asyncio
 async def test_rule_amplifies_with_weakness_match(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p4",
         "s4",
         [
@@ -116,9 +119,7 @@ def _spec_protocol(cipher_suites, evidence=None):
 
 async def _analyze_spec_protocol(db, cipher_suites, pfs_enabled=False, evidence=None, extra_rules=()):
     assets = parse_cbom({"specVersion": "1.6", "components": [_spec_protocol(cipher_suites, evidence)]})
-    await CryptoAssetRepository(db).bulk_upsert(
-        "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in assets]
-    )
+    await store_assets(db, "p", "s", [CryptoAsset(project_id="p", scan_id="s", **a.model_dump()) for a in assets])
     rules = [
         r.model_copy(update={"enabled": pfs_enabled}) if r.rule_id == "cnsa20-require-pfs" else r
         for r in load_seed_rules()

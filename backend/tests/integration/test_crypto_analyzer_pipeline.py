@@ -12,7 +12,7 @@ from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.cbom_parser import parse_crypto_components
 from tests.helpers.analyzers import evaluate_crypto, ingest_and_analyze_cbom, scan_cbom
-from tests.helpers.cbom import load_cbom
+from tests.helpers.cbom import load_cbom, store_assets
 
 _SHARED_PROJECT = "p4"
 _SHARED_SCAN = "s4"
@@ -36,8 +36,8 @@ def _rule(rule_id, ft, **extra):
 
 @pytest.mark.asyncio
 async def test_analyzer_emits_findings_for_matching_assets(db):
-    repo = CryptoAssetRepository(db)
-    await repo.bulk_upsert(
+    await store_assets(
+        db,
         "p",
         "s",
         [
@@ -77,8 +77,8 @@ async def test_analyzer_emits_findings_for_matching_assets(db):
 
 @pytest.mark.asyncio
 async def test_analyzer_only_emits_for_its_finding_types(db):
-    repo = CryptoAssetRepository(db)
-    await repo.bulk_upsert(
+    await store_assets(
+        db,
         "p2",
         "s2",
         [
@@ -115,7 +115,8 @@ async def test_analyzer_only_emits_for_its_finding_types(db):
 
 @pytest.mark.asyncio
 async def test_analyzer_respects_disabled_rule(db):
-    await CryptoAssetRepository(db).bulk_upsert(
+    await store_assets(
+        db,
         "p3",
         "s3",
         [
@@ -172,7 +173,7 @@ async def test_analyzer_adds_nothing_to_the_shared_rule_evaluation(db):
             primitive=CryptoPrimitive.HASH,
         ),
     ]
-    await CryptoAssetRepository(db).bulk_upsert(_SHARED_PROJECT, _SHARED_SCAN, stored)
+    await store_assets(db, _SHARED_PROJECT, _SHARED_SCAN, stored)
 
     owned = _rule("md5", FindingType.CRYPTO_WEAK_ALGORITHM, match_name_patterns=["MD5", "SHA-256"])
     await CryptoPolicyRepository(db).upsert_system_policy(
@@ -258,6 +259,25 @@ def test_a_rule_finding_carries_the_first_twenty_locations_and_the_total():
     (finding,) = crypto_findings_for_assets([asset], [rule], scanner="crypto_weak_algorithm")
     assert finding["found_in"] == asset.occurrence_locations[:20]
     assert finding["details"]["occurrence_count"] == 25
+
+
+@pytest.mark.parametrize("locations", [0, 3, 20])
+def test_a_rule_finding_listing_every_location_carries_no_separate_count(locations):
+    asset = CryptoAsset(
+        project_id="p",
+        scan_id="s",
+        bom_ref="md5",
+        name="MD5",
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=CryptoPrimitive.HASH,
+        occurrence_locations=[f"src/Crypto{index}.java" for index in range(locations)],
+    )
+    rule = _rule("md5", FindingType.CRYPTO_WEAK_ALGORITHM, match_name_patterns=["MD5"])
+
+    (finding,) = crypto_findings_for_assets([asset], [rule], scanner="crypto_weak_algorithm")
+
+    assert len(finding["found_in"]) == locations
+    assert "occurrence_count" not in finding["details"]
 
 
 def test_every_crypto_finding_names_the_asset_it_flags():
