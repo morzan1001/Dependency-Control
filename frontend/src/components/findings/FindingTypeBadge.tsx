@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import { CRYPTO_FINDING_TYPES, FINDING_TYPE_LABELS } from '@/lib/constants'
 import { getFindingTypeBadgeClass } from '@/lib/finding-utils'
+import { cn } from '@/lib/utils'
 import {
   ShieldAlert,
   FileCode,
@@ -27,7 +28,7 @@ const TYPE_ICONS: Record<string, LucideIcon> = {
   malware: Bug,
 }
 
-export function FindingTypeBadge({ type }: Readonly<{ type: string }>) {
+export function FindingTypeBadge({ type, className }: Readonly<{ type: string; className?: string }>) {
   const key = type?.toLowerCase()
   const crypto = CRYPTO_FINDING_TYPES.find((entry) => entry.value === key)
   const Icon = TYPE_ICONS[key] ?? (crypto ? KeyRound : null)
@@ -37,7 +38,7 @@ export function FindingTypeBadge({ type }: Readonly<{ type: string }>) {
   return (
     <Badge
       variant={key === 'system_warning' ? 'destructive' : 'outline'}
-      className={`${getFindingTypeBadgeClass(type)} inline-flex max-w-full items-center gap-1.5`}
+      className={cn(getFindingTypeBadgeClass(type), 'inline-flex max-w-full items-center gap-1.5', className)}
     >
       {Icon && <Icon className="h-3 w-3 shrink-0" />}
       <span className={known ? 'wrap-anywhere' : 'wrap-anywhere capitalize'}>{label}</span>
