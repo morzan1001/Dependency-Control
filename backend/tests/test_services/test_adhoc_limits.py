@@ -6,7 +6,6 @@ import pytest
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis import adhoc
 from app.services.analysis.adhoc import run_adhoc_analysis
-from app.services.reachability_enrichment import _prepare_callgraph
 from tests.mocks.fake_mongo import FakeDatabase
 
 _COMPONENT = "requests"
@@ -77,7 +76,6 @@ def _symbols_on_one_import(symbols: int) -> dict:
 
 _LARGE_CALLGRAPH_FILES = 2000
 _LARGE_CALLGRAPH_MODULES = ("requests", "urllib3", "yaml", "jinja2", "click")
-_SHARED_SYMBOLS = ["sym0", "common", "sym1", "sym2", "sym3"]
 
 
 def _large_callgraph() -> dict:
@@ -107,19 +105,12 @@ def test_a_large_valid_callgraph_prepares_to_the_pinned_result():
     payload = _large_callgraph()
 
     callgraph = adhoc._prepare_posted_callgraph(payload)
-    prepared = _prepare_callgraph(callgraph)
 
-    every_file = [f"app/f{file}.py" for file in range(_LARGE_CALLGRAPH_FILES)]
     submodules = [f"{module}.sub{n}" for n in range(3) for module in _LARGE_CALLGRAPH_MODULES]
     assert callgraph.total_imports == _LARGE_CALLGRAPH_FILES * len(_LARGE_CALLGRAPH_MODULES)
     assert callgraph.analyzed_modules == list(_LARGE_CALLGRAPH_MODULES)
     assert list(callgraph.module_usage or {}) == [*submodules, "requests"]
     assert (callgraph.module_usage or {})["requests"]["used_symbols"] == ["post", "get"]
-    for module in _LARGE_CALLGRAPH_MODULES:
-        folded = prepared.usage_index[module]
-        extra_symbols = {"post", "get"} if module == "requests" else set()
-        assert sorted(folded["import_locations"]) == sorted(every_file)
-        assert set(folded["used_symbols"]) == {*_SHARED_SYMBOLS, *extra_symbols}
 
 
 @pytest.mark.asyncio

@@ -120,6 +120,25 @@ class TestImportMatchingUsesWholePackageKeys:
 
         assert finding["details"]["reachability"]["import_locations"] == ["a.src"]
 
+    def test_python_submodule_usage_folds_into_its_package(self):
+        files = [f"app/f{n}.py" for n in range(6)]
+        imports = [
+            {"module": f"{module}.sub{n % 3}", "file": file, "line": 1, "symbols": [f"sym{n % 4}", "common"]}
+            for n, file in enumerate(files)
+            for module in ("requests", "yaml")
+        ]
+        calls = [
+            {"caller_file": files[0], "callee_module": "requests", "callee_function": "post"},
+            {"caller_file": files[1], "callee_module": "requests", "callee_function": "get"},
+        ]
+        module_usage = parse_generic_format({"imports": imports, "calls": calls}, "python").module_usage
+        prepared = _prepared({key: usage.model_dump() for key, usage in module_usage.items()})
+
+        for module, called in (("requests", {"post", "get"}), ("yaml", set())):
+            folded = prepared.usage_index[module]
+            assert sorted(folded["import_locations"]) == files
+            assert set(folded["used_symbols"]) == {"sym0", "sym1", "sym2", "sym3", "common", *called}
+
 
 class TestEcosystemFromDependencyMap:
     """Vulnerability findings carry no details.purl, so the ecosystem gate reads the scan's dependencies."""
