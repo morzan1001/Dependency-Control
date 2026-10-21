@@ -283,6 +283,11 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                         → {pkg.suggestion}
                       </div>
                     )}
+                    {pkg.suggestion === null && (
+                      <div className="mt-1">
+                        <WarningHint>No version in use is free of known vulnerabilities</WarningHint>
+                      </div>
+                    )}
                   </div>
                 ))}
               </ActionSection>

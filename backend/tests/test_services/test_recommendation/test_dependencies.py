@@ -49,7 +49,7 @@ def _eol_finding(
 
 class TestAnalyzeVersionFragmentationEmpty:
     def test_empty_returns_empty(self):
-        assert analyze_version_fragmentation([]) == []
+        assert analyze_version_fragmentation([], []) == []
 
 
 class TestAnalyzeVersionFragmentationSignificant:
@@ -59,17 +59,17 @@ class TestAnalyzeVersionFragmentationSignificant:
             _dep(name="lodash", version="4.17.20"),
             _dep(name="lodash", version="4.17.21"),
         ]
-        result = analyze_version_fragmentation(deps)
+        result = analyze_version_fragmentation(deps, [])
         assert len(result) == 1
 
     def test_three_versions_type(self):
         deps = [_dep(name="lodash", version=f"4.17.{15 + i}") for i in range(3)]
-        rec = analyze_version_fragmentation(deps)[0]
+        rec = analyze_version_fragmentation(deps, [])[0]
         assert rec.type == RecommendationType.VERSION_FRAGMENTATION
 
     def test_affected_components_name_the_package_and_the_action_counts_its_versions(self):
         deps = [_dep(name="lodash", version=f"4.17.{15 + i}") for i in range(3)]
-        rec = analyze_version_fragmentation(deps)[0]
+        rec = analyze_version_fragmentation(deps, [])[0]
         assert rec.affected_components == ["lodash"]
         assert rec.action["packages"][0]["version_count"] == 3
 
@@ -81,11 +81,11 @@ class TestAnalyzeVersionFragmentationCuts:
 
     @pytest.mark.parametrize(("packages", "priority"), [(3, Priority.LOW), (4, Priority.MEDIUM)])
     def test_more_than_three_fragmented_packages_raise_the_priority(self, packages, priority):
-        (rec,) = analyze_version_fragmentation(self._fragmented(packages, 3))
+        (rec,) = analyze_version_fragmentation(self._fragmented(packages, 3), [])
         assert rec.priority == priority
 
     def test_the_card_counts_packages_rather_than_findings(self):
-        (rec,) = analyze_version_fragmentation(self._fragmented(2, 5))
+        (rec,) = analyze_version_fragmentation(self._fragmented(2, 5), [])
         assert rec.impact == {"total": 0}
         assert rec.action["packages_total"] == 2
 
@@ -96,7 +96,7 @@ class TestAnalyzeVersionFragmentationBelowThreshold:
             _dep(name="lodash", version="4.17.15"),
             _dep(name="lodash", version="4.17.20"),
         ]
-        result = analyze_version_fragmentation(deps)
+        result = analyze_version_fragmentation(deps, [])
         assert len(result) == 0
 
 
@@ -107,7 +107,7 @@ class TestAnalyzeVersionFragmentationDifferentPackages:
             _dep(name="express", version="4.18.0"),
             _dep(name="react", version="18.2.0"),
         ]
-        result = analyze_version_fragmentation(deps)
+        result = analyze_version_fragmentation(deps, [])
         assert len(result) == 0
 
 
@@ -118,7 +118,7 @@ class TestAnalyzeVersionFragmentationCaseInsensitive:
             _dep(name="lodash", version="4.17.20"),
             _dep(name="LODASH", version="4.17.21"),
         ]
-        result = analyze_version_fragmentation(deps)
+        result = analyze_version_fragmentation(deps, [])
         assert len(result) == 1
 
 
@@ -137,12 +137,12 @@ class TestAnalyzeVersionFragmentationEcosystems:
         ]
 
     def test_each_package_names_its_ecosystem(self):
-        [rec] = analyze_version_fragmentation(self._fragmented("npm", "pypi"))
+        [rec] = analyze_version_fragmentation(self._fragmented("npm", "pypi"), [])
 
         assert sorted((p["name"], p["type"]) for p in rec.action["packages"]) == [("foo", "npm"), ("foo", "pypi")]
 
     def test_same_named_packages_of_two_ecosystems_count_as_two_components(self):
-        [rec] = analyze_version_fragmentation(self._fragmented("npm", "pypi"))
+        [rec] = analyze_version_fragmentation(self._fragmented("npm", "pypi"), [])
 
         assert (sorted(rec.affected_components), rec.affected_components_total) == (["foo (npm)", "foo (pypi)"], 2)
 
@@ -156,12 +156,12 @@ class TestAnalyzeVersionFragmentationEcosystems:
         ],
     )
     def test_the_commands_follow_the_ecosystems_of_the_fragmented_packages(self, purl_types, commands):
-        [rec] = analyze_version_fragmentation(self._fragmented(*purl_types))
+        [rec] = analyze_version_fragmentation(self._fragmented(*purl_types), [])
 
         assert rec.action["commands"] == commands
 
     def test_an_ecosystem_without_a_dedupe_tool_gets_no_commands(self):
-        [rec] = analyze_version_fragmentation(self._fragmented("golang", "deb"))
+        [rec] = analyze_version_fragmentation(self._fragmented("golang", "deb"), [])
 
         assert "commands" not in rec.action
 
@@ -316,7 +316,7 @@ class TestAnalyzeVersionFragmentationPackageIdentity:
             {**_dep(name="core", version="10.0.0"), "purl": "pkg:npm/%40nestjs/core@10.0.0"},
         ]
 
-        assert analyze_version_fragmentation(deps) == []
+        assert analyze_version_fragmentation(deps, []) == []
 
     def test_the_card_names_the_qualified_package(self):
         deps = [
@@ -324,9 +324,41 @@ class TestAnalyzeVersionFragmentationPackageIdentity:
             for version in ("15.0.0", "16.0.0", "17.0.0")
         ]
 
-        rec = analyze_version_fragmentation(deps)[0]
+        rec = analyze_version_fragmentation(deps, [])[0]
 
         assert rec.action["packages"][0]["name"] == "@angular/core"
+
+
+class TestAnalyzeVersionFragmentationSuggestion:
+    @pytest.mark.parametrize(
+        ("vulnerable_versions", "suggestion"),
+        [
+            pytest.param((), "Pin to 4.17.21", id="all-clean"),
+            pytest.param(("v4.17.21",), "Pin to 4.17.20", id="newest-vulnerable"),
+            pytest.param(("4.17.21", "4.17.20", "4.17.15"), None, id="unknown-only-clean"),
+            pytest.param((None,), None, id="versionless-finding"),
+        ],
+    )
+    def test_the_suggestion_pins_the_newest_version_in_use_without_a_known_vulnerability(
+        self, vulnerable_versions, suggestion
+    ):
+        deps = [_dep(name="lodash", version=v) for v in ("4.17.15", "4.17.21", "unknown", "4.17.20")]
+        vulns = [{"type": "vulnerability", "component": "lodash", "version": v} for v in vulnerable_versions]
+
+        [rec] = analyze_version_fragmentation(deps, vulns)
+
+        assert rec.action["packages"][0]["suggestion"] == suggestion
+
+    def test_a_maven_package_meets_the_findings_naming_it_group_colon_artifact(self):
+        deps = [
+            {**_dep(name="log4j-core", version=v), "purl": f"pkg:maven/org.apache.logging.log4j/log4j-core@{v}"}
+            for v in ("2.14.1", "2.16.0", "2.17.1")
+        ]
+        vulns = [{"type": "vulnerability", "component": "org.apache.logging.log4j:log4j-core", "version": "2.17.1"}]
+
+        [rec] = analyze_version_fragmentation(deps, vulns)
+
+        assert rec.action["packages"][0]["suggestion"] == "Pin to 2.16.0"
 
 
 class TestHygieneCardsMatchTheQualifiedName:

@@ -13,8 +13,10 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.schemas.sbom import has_known_version
 from app.services.aggregation.cross_link import is_ahead_of_default
-from app.services.aggregation.versions import newest_first
+from app.services.aggregation.versions import newest_first, normalize_version, version_covered
+from app.services.component_identity import build_component_index, finding_component_name, lookup_component
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
     AFFECTED_COMPONENTS_SHOWN,
@@ -112,6 +114,7 @@ def _outdated_card(
 
 def analyze_version_fragmentation(
     dependencies: list[ModelOrDict],
+    vulns: list[ModelOrDict],
 ) -> list[Recommendation]:
     recommendations = []
 
@@ -121,6 +124,16 @@ def analyze_version_fragmentation(
             get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "type"), get_attr(dep, "group")
         )
         versions_by_package[identity].add(get_attr(dep, "version"))
+
+    vulnerable_by_component: dict[str, set[str]] = defaultdict(set)
+    for vuln in vulns:
+        vulnerable_by_component[get_attr(vuln, "component")].add(normalize_version(get_attr(vuln, "version")))
+    vulnerable_index = build_component_index(vulnerable_by_component)
+
+    def pin_suggestion(ecosystem: str, name: str, versions: list[str]) -> str | None:
+        vulnerable = lookup_component(vulnerable_index, finding_component_name(ecosystem, name)) or set()
+        clean = [v for v in newest_first(versions) if has_known_version(v) and not version_covered(vulnerable, v)]
+        return f"Pin to {clean[0]}" if clean else None
 
     significant_fragmented: list[dict[str, Any]] = sorted(
         (
@@ -164,7 +177,7 @@ def analyze_version_fragmentation(
                                 # Sets are unordered; rank first so the sample shows the newest versions.
                                 "versions": newest_first(f["versions"])[:ACTION_VERSION_SAMPLE],
                                 "version_count": f["count"],
-                                "suggestion": f"Pin to {newest_first(f['versions'])[0]}",
+                                "suggestion": pin_suggestion(f["type"], f["name"], f["versions"]),
                             }
                             for f in significant_fragmented
                         ],

@@ -108,7 +108,7 @@ def generate_recommendations(
     )
     _safe_extend(
         recommendations,
-        lambda: dep_analysis.analyze_version_fragmentation(dependencies_list),
+        lambda: dep_analysis.analyze_version_fragmentation(dependencies_list, vulns),
         "version_fragmentation",
     )
     _safe_extend(

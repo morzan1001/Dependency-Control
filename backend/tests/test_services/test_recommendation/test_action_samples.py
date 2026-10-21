@@ -142,7 +142,7 @@ def test_the_deduplication_action_ranks_versions_before_sampling_them():
         for major in range(1, _FRAGMENTED_VERSIONS + 1)
     ]
 
-    action = analyze_version_fragmentation(dependencies)[0].action
+    action = analyze_version_fragmentation(dependencies, [])[0].action
 
     assert action["packages"][0]["versions"][0] == _NEWEST_VERSION
     assert action["packages"][0]["version_count"] == _FRAGMENTED_VERSIONS

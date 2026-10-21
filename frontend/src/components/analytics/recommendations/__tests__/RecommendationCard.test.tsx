@@ -434,3 +434,18 @@ describe('RecommendationCard version standardization', () => {
     expect(screen.getByText('No version in use is free of known vulnerabilities')).toBeInTheDocument()
   })
 })
+
+describe('RecommendationCard version fragmentation', () => {
+  it('says so instead of a version to pin when every version in use is vulnerable', () => {
+    renderExpanded(makeRecommendation({
+      type: 'deduplicate_versions',
+      packages: [
+        { name: 'lodash', type: 'npm', versions: ['4.17.21', '4.17.20', '4.17.15'], suggestion: 'Pin to 4.17.20' },
+        { name: 'minimist', type: 'npm', versions: ['1.2.5', '1.2.0', '0.0.8'], suggestion: null },
+      ],
+    }))
+
+    expect(screen.getAllByText(/Pin to/)).toHaveLength(1)
+    expect(screen.getByText('No version in use is free of known vulnerabilities')).toBeInTheDocument()
+  })
+})
