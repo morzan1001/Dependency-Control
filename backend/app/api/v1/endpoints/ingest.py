@@ -12,12 +12,11 @@ from app.api.v1.helpers.request_body import read_json_body
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_409_500, RESP_AUTH_409
 from app.core.constants import (
     NOTIFICATION_EVENT_SBOM_INGESTED,
-    RETENTION_ACTION_NONE,
     SCAN_STATUS_FAILED,
     SCAN_USABLE_STATUSES,
     WEBHOOK_EVENT_SBOM_INGESTED,
 )
-from app.core.housekeeping import effective_retention
+from app.core.housekeeping import effective_retention, retention_deletes
 from app.models.system import SystemSettings
 from app.repositories.scans import ScanRepository
 from app.schemas.bearer import BearerIngest
@@ -202,5 +201,5 @@ async def get_project_config(
     return ProjectConfigResponse(
         project_id=str(project.id),
         active_analyzers=project.active_analyzers,
-        retention_days=0 if action == RETENTION_ACTION_NONE else days,
+        retention_days=days if days > 0 and retention_deletes(action) else 0,
     )

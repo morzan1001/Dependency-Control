@@ -14,7 +14,7 @@ from app.models.system import SystemSettings
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("project", "system", "days"),
+    ("project", "system", "archive_enabled", "days"),
     [
         pytest.param(
             {"retention_days": 30, "retention_action": RETENTION_ACTION_DELETE},
@@ -23,18 +23,35 @@ from app.models.system import SystemSettings
                 "global_retention_days": 365,
                 "global_retention_action": RETENTION_ACTION_ARCHIVE,
             },
+            True,
             365,
             id="global-mode-overrides-the-project",
         ),
         pytest.param(
             {"retention_days": 30, "retention_action": RETENTION_ACTION_ARCHIVE},
             {"retention_mode": SETTINGS_MODE_PROJECT, "global_retention_days": 365},
+            True,
             30,
             id="project-mode-uses-the-project",
         ),
         pytest.param(
+            {"retention_days": 30, "retention_action": RETENTION_ACTION_ARCHIVE},
+            {"retention_mode": SETTINGS_MODE_PROJECT},
+            False,
+            0,
+            id="archive-without-s3-keeps-forever",
+        ),
+        pytest.param(
+            {"retention_days": 30, "retention_action": "shred"},
+            {"retention_mode": SETTINGS_MODE_PROJECT},
+            True,
+            0,
+            id="unknown-stored-action-keeps-forever",
+        ),
+        pytest.param(
             {"retention_days": 30, "retention_action": RETENTION_ACTION_NONE},
             {"retention_mode": SETTINGS_MODE_PROJECT},
+            False,
             0,
             id="no-action-keeps-forever",
         ),
@@ -45,12 +62,17 @@ from app.models.system import SystemSettings
                 "global_retention_days": 365,
                 "global_retention_action": RETENTION_ACTION_NONE,
             },
+            False,
             0,
             id="global-no-action-keeps-forever",
         ),
     ],
 )
-async def test_the_pipeline_config_reports_the_retention_housekeeping_applies(project, system, days):
+async def test_the_pipeline_config_reports_the_retention_housekeeping_applies(
+    monkeypatch, project, system, archive_enabled, days
+):
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: archive_enabled)
+
     config = await get_project_config(Project(id="p-1", name="p", **project), SystemSettings(**system))
 
     assert config.retention_days == days
