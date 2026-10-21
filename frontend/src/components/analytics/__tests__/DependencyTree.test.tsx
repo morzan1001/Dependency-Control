@@ -172,19 +172,20 @@ describe("DependencyTree on a narrow screen", () => {
 describe("DependencyTree locations", () => {
   beforeEach(() => getTree.mockReset());
 
-  it("counts the locations past the three the server sends from their total", async () => {
-    const locations = ["/app/a/requirements.txt", "/app/b/requirements.txt", "/app/c/requirements.txt"];
+  it("shows the first three locations and counts the rest", async () => {
+    const locations = ["a", "b", "c", "d", "e", "f", "g"].map((dir) => `/app/${dir}/requirements.txt`);
     renderTree(graph([node("a", { source_type: "image", locations, locations_total: 7 })], ["a"]));
 
     const row = (await screen.findByText("a")).closest('[role="treeitem"]') as HTMLElement;
     fireEvent.focus(row.querySelector("svg.text-blue-500")!.parentElement!);
 
     const tooltip = await screen.findByRole("tooltip");
-    for (const location of locations) expect(tooltip).toHaveTextContent(location);
+    for (const location of locations.slice(0, 3)) expect(tooltip).toHaveTextContent(location);
+    for (const location of locations.slice(3)) expect(tooltip).not.toHaveTextContent(location);
     expect(tooltip).toHaveTextContent("+4 more");
   });
 
-  it("adds no remainder when the server sent every location", async () => {
+  it("adds no remainder for three locations or fewer", async () => {
     renderTree(graph([node("a", { source_type: "image", locations: ["/app/requirements.txt"], locations_total: 1 })], ["a"]));
 
     const row = (await screen.findByText("a")).closest('[role="treeitem"]') as HTMLElement;

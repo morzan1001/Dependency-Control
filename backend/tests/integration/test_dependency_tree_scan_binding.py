@@ -182,7 +182,7 @@ async def test_the_graph_is_built_without_the_payload_the_tree_does_not_show(cli
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_a_node_names_three_locations_beside_how_many_there_are(client, db, seeded):
+async def test_a_node_names_every_location_beside_how_many_there_are(client, db, seeded):
     locations = [f"/srv/app-{index}/requirements.txt" for index in range(5)]
     await db.dependencies.update_one({"_id": "d-own"}, {"$set": {"locations": locations}})
     await db.dependencies.insert_one(_dependency("d-bare", _OWN_SCAN, _OWN_PROJECT, "bare-lib"))
@@ -191,7 +191,7 @@ async def test_a_node_names_three_locations_beside_how_many_there_are(client, db
 
     assert resp.status_code == 200, resp.text
     nodes = {node["name"]: node for node in resp.json()["nodes"]}
-    assert (nodes[_OWN_PACKAGE]["locations"], nodes[_OWN_PACKAGE]["locations_total"]) == (locations[:3], 5)
+    assert (nodes[_OWN_PACKAGE]["locations"], nodes[_OWN_PACKAGE]["locations_total"]) == (locations, 5)
     assert (nodes["bare-lib"]["locations"], nodes["bare-lib"]["locations_total"]) == ([], 0)
 
 

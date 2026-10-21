@@ -41,7 +41,6 @@ export interface DependencyTreeNode {
   source_type?: string;
   source_target?: string;
   layer_digest?: string;
-  // The first few locations; locations_total counts them all.
   locations?: string[];
   locations_total?: number;
   child_ids: string[];

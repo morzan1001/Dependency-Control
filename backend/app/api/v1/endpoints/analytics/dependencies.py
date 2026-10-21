@@ -52,10 +52,9 @@ router = CustomAPIRouter()
 TreeFindings = dict[str, dict[str, list[Any]]]
 
 _COMPONENT_FINDINGS_SHOWN = 100
-_LOCATIONS_SHOWN = 3
 
 _ALL_LOCATIONS = {"$ifNull": ["$locations", []]}
-# What build_dependency_edges and _build_tree_node read of a row, the location sample beside its count.
+# What build_dependency_edges and _build_tree_node read of a row.
 _TREE_ROW = {
     "$project": {
         **dict.fromkeys(
@@ -73,7 +72,7 @@ _TREE_ROW = {
             ),
             1,
         ),
-        "locations": {"$slice": [_ALL_LOCATIONS, _LOCATIONS_SHOWN]},
+        "locations": _ALL_LOCATIONS,
         "locations_total": {"$size": _ALL_LOCATIONS},
     }
 }

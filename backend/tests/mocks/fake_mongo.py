@@ -537,11 +537,6 @@ def _eval_expr(doc: dict, expr):
     if "$split" in expr:
         value, sep = (_eval_expr(doc, e) for e in expr["$split"])
         return str(value).split(str(sep)) if value is not None else None
-    if "$slice" in expr:
-        array, count = (_eval_expr(doc, e) for e in expr["$slice"])
-        if array is None or array is _REMOVE:
-            return None
-        return array[:count] if count >= 0 else array[count:]
     if "$arrayElemAt" in expr:
         array, idx = (_eval_expr(doc, e) for e in expr["$arrayElemAt"])
         if not isinstance(array, list):
