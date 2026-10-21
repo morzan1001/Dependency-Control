@@ -327,14 +327,15 @@ class TestAnalyzeCrossProjectPatternsInconsistentVersions:
         [
             pytest.param((), "4.17.21", id="all-clean"),
             pytest.param(("4.17.21",), "4.17.20", id="newest-vulnerable"),
-            pytest.param(("4.17.21", "4.17.20", "4.17.15"), None, id="none-clean"),
+            pytest.param(("4.17.21", "4.17.20", "4.17.15", "unknown"), None, id="none-clean"),
+            pytest.param(("4.17.21", "4.17.20", "4.17.15"), None, id="unknown-only-clean"),
         ],
     )
     def test_the_suggestion_is_the_newest_version_in_use_without_a_known_vulnerability(
         self, vulnerable_versions, suggestion
     ):
         package = _shared_package(
-            "lodash", versions=("4.17.15", "4.17.21", "4.17.20"), vulnerable_versions=vulnerable_versions
+            "lodash", versions=("4.17.15", "4.17.21", "unknown", "4.17.20"), vulnerable_versions=vulnerable_versions
         )
         data = _cross_project_data([_project(project_id="p1"), _project(project_id="p2")], shared_packages=[package])
 
