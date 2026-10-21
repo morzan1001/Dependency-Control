@@ -232,6 +232,18 @@ async def test_a_cve_is_found_under_the_ghsa_advisory_that_resolved_to_it(db, da
     assert [f["component"] for f in search["findings"]] == ["log4j-core"]
 
 
+async def test_a_cve_is_found_under_a_ghsa_advisory_that_only_lists_it_as_an_alias(db, database):
+    await _seed_head(db)
+    advisory = {"id": _GHSA, "aliases": [_LOG4SHELL], "severity": "CRITICAL"}
+    await db.findings.insert_one(_finding("f-ghsa-alias", "CRITICAL", "log4j-core", [advisory]))
+
+    by_cve = await _call(db, "get_findings_by_cve", cve_id=_LOG4SHELL)
+    waiver = await _call(db, "get_waiver_status", project_id=_PROJECT, finding_id=_LOG4SHELL)
+
+    assert by_cve["total_occurrences"] == 1
+    assert [f["component"] for f in waiver["findings"]] == ["log4j-core"]
+
+
 async def test_a_ghsa_advisory_is_found_whatever_casing_the_question_uses(db, database):
     await _seed_head(db)
     await db.findings.insert_one(
