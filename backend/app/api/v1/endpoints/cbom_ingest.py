@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.api.deps import DatabaseDep, ProjectIngestDep
 from app.api.router import CustomAPIRouter
@@ -19,8 +19,7 @@ from app.core.metrics import cbom_ingests_total
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.scans import ScanRepository
-from app.schemas.cbom import ParsedCryptoAsset
-from app.schemas.ingest import BaseIngest
+from app.schemas.cbom import CBOMIngest, ParsedCryptoAsset
 from app.services.cbom_parser import flatten_cyclonedx_components, parse_cbom
 from app.services.notifications.service import safe_notify_project_event
 from app.services.scan_manager import ScanManager
@@ -29,15 +28,6 @@ from app.services.webhooks import webhook_service
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
-
-
-class CBOMIngest(BaseIngest):
-    cbom: dict[str, Any] = Field(..., description="CycloneDX 1.6 CBOM payload")
-
-    # Optional so a manual upload without pipeline data can still ingest.
-    pipeline_id: int | None = Field(None, description="Unique ID of the pipeline run")  # type: ignore[assignment]
-    commit_hash: str | None = Field(None, description="Git commit hash")  # type: ignore[assignment]
-    branch: str | None = Field(None, description="Git branch name")  # type: ignore[assignment]
 
 
 class CBOMIngestResponse(BaseModel):

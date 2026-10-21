@@ -2,6 +2,7 @@ import json
 
 import pytest
 from bson import ObjectId
+from pydantic import ValidationError
 from app.api.v1.helpers.callgraph import (
     detect_format,
     parse_generic_format,
@@ -9,6 +10,7 @@ from app.api.v1.helpers.callgraph import (
     resolve_callgraph_payload,
 )
 from app.services.component_identity import build_component_index, canonical_module_key, lookup_component
+from app.schemas.callgraph import CallgraphUploadRequest
 from app.schemas.projections import CallgraphMinimal
 from app.services.reachability_enrichment import (
     _find_usage,
@@ -342,9 +344,25 @@ class TestFormatDetectionRegressions:
         with pytest.raises(ValueError, match="auto-detect"):
             resolve_callgraph_payload("auto", "python", payload)
 
+    @pytest.mark.parametrize(
+        "payload",
+        [pytest.param({}, id="empty_payload"), pytest.param(NODE_EDGE_PAYLOAD, id="frozen_scanner_go_payload")],
+    )
+    def test_an_explicit_generic_payload_without_its_keys_is_rejected(self, payload):
+        with pytest.raises(ValueError, match="imports, calls, analyzed_modules"):
+            resolve_callgraph_payload("generic", "go", payload)
+
     def test_pyan_format_is_no_longer_parseable(self):
         with pytest.raises(ValueError, match="pyan"):
             resolve_callgraph_payload("pyan", "python", {})
+
+    def test_a_misspelt_format_is_named_rather_than_asking_for_a_language(self):
+        with pytest.raises(ValueError, match="Unsupported format: madgee"):
+            resolve_callgraph_payload("madgee", None, {"src/index.ts": ["lodash"]})
+
+    def test_the_upload_schema_lists_the_formats_it_accepts(self):
+        with pytest.raises(ValidationError, match="'auto', 'madge' or 'generic'"):
+            CallgraphUploadRequest(format="madgee", data={})
 
     def test_madge_without_dependencies_is_valid_alongside_a_universe(self):
         data = {"src/index.ts": [], "__analyzed_modules__": ["lodash"]}
@@ -458,3 +476,28 @@ class TestCallEdges:
 
         assert usage.import_locations == ["app/client.py", "app/jobs.py"]
         assert (usage.import_count, usage.call_count) == (1, 2)
+
+
+class TestRelativeModules:
+    @pytest.mark.parametrize(
+        ("language", "module"),
+        [
+            ("javascript", "./utils"),
+            ("javascript", "../lib/helpers"),
+            ("python", ".utils"),
+            ("python", "..pkg.mod"),
+            ("python", "."),
+        ],
+    )
+    def test_a_relative_import_or_call_names_no_package(self, language, module):
+        data = {
+            "imports": [{"module": module, "file": "src/a", "symbols": ["helper"]}],
+            "calls": [{"caller_file": "src/a", "callee_module": module, "callee_function": "helper"}],
+            "analyzed_modules": [module, "requests"],
+        }
+
+        parsed = parse_generic_format(data, language)
+
+        assert parsed.module_usage == {}
+        assert parsed.analyzed_modules == ["requests"]
+        assert (parsed.total_imports, parsed.total_calls) == (1, 1)

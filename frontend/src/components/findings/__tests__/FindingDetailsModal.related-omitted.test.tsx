@@ -53,6 +53,15 @@ describe("FindingDetailsModal related findings", () => {
     expect(screen.getByText(new RegExp(OMITTED.toLocaleString()))).toBeInTheDocument();
   });
 
+  it.each([
+    [1, "1 other finding on this component"],
+    [2, "2 other findings on this component"],
+  ])("counts %i omitted sibling(s) in the right number", (omitted, text) => {
+    renderModal(makeFinding({ related_findings: [], related_findings_omitted: omitted }));
+
+    expect(screen.getByText(new RegExp(text))).toBeInTheDocument();
+  });
+
   it("renders no such note for a finding that genuinely has no siblings", () => {
     renderModal(makeFinding({ related_findings: [] }));
 

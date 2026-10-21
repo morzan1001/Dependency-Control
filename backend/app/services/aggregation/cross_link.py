@@ -142,7 +142,7 @@ def add_context_to_vulnerability(vuln_finding: Finding, other_finding: Finding) 
     elif other_finding.type == FindingType.LICENSE:
         current = details.get("license_info")
         severity = str(other_finding.severity)
-        # Pairs arrive in get_findings sort order, so a strict comparison leaves a tie to the lower id.
+        # Pairs arrive in get_findings sort order, so a strict comparison leaves a tie to the first in that order.
         if current is None or get_severity_value(severity) > get_severity_value(current["license_severity"]):
             details["license_info"] = LicenseInfo(
                 license=other_details.get("license"),

@@ -9,7 +9,7 @@ from app.core.constants import (
     MAX_CROSS_LINK_GROUP_SIZE,
     UNKNOWN_LICENSE_PATTERNS,
 )
-from app.models.finding import PACKAGE_FINDING_TYPES, Finding, FindingType, Severity
+from app.models.finding import LOCATION_FINDING_TYPES, PACKAGE_FINDING_TYPES, Finding, FindingType, Severity
 from app.models.license import CATEGORY_RESTRICTIVENESS
 from app.schemas.enrichment import DependencyEnrichment
 from app.schemas.finding import (
@@ -18,7 +18,7 @@ from app.schemas.finding import (
     VulnerabilityAggregatedDetails,
     VulnerabilityEntry,
 )
-from app.schemas.finding_details import SystemWarningDetails
+from app.schemas.finding_details import FindingLocation, SystemWarningDetails
 from app.services.component_identity import (
     cluster_by_package_identity,
     extract_artifact_name,
@@ -106,15 +106,60 @@ def _adopt_smallest_spelling(existing: Finding, finding: Finding, id_prefix: str
     existing.component, existing.version = min(
         (existing.component, existing.version),
         (finding.component, finding.version),
-        key=lambda cv: (cv[0], cv[1] or ""),
+        key=lambda cv: (cv[0], cv[1] or "", cv[1] is None),
     )
     existing.id = f"{id_prefix}{existing.component}:{existing.version}"
+
+
+def _location(details: dict[str, Any]) -> dict[str, Any]:
+    return {key: details[key] for key in FindingLocation.model_fields if details.get(key) is not None}
+
+
+def _record_additional_location(existing: Finding, finding: Finding) -> None:
+    """The id keeps rule, file and at most the start line, so a same-identity hit differs only in its position."""
+    location = _location(finding.details)
+    if not location or location == _location(existing.details):
+        return
+    others = existing.details.setdefault("additional_locations", [])
+    if location not in others:
+        others.append(location)
 
 
 def _record_license(enrichment: DependencyEnrichment, entry: dict[str, Any]) -> None:
     """Record a license once per (spdx_id, source): every SBOM of a scan feeds the same enrichment."""
     if not any(e["spdx_id"] == entry["spdx_id"] and e["source"] == entry["source"] for e in enrichment.licenses):
         enrichment.licenses.append(entry)
+
+
+def _plausible_spdx_token(token: str) -> bool:
+    if token.upper() in _LICENSE_SENTINELS:
+        return False
+    if token.startswith("LicenseRef-"):
+        return True
+    return all(_SPDX_TOKEN_SHAPE.match(part) for part in token.split(" WITH "))
+
+
+def _sanitize_deps_dev_license(lic: Any) -> str | None:
+    """deps.dev emits sentinels like 'non-standard'; drop those but keep any plausible SPDX id or expression."""
+    if not isinstance(lic, str):
+        return None
+    value = lic.strip()
+    if not value or value.upper() in _LICENSE_SENTINELS:
+        return None
+    normalized = normalize_spdx_id(value)
+    if normalized in LICENSE_DATABASE:
+        return normalized
+    tokens = tokenize_license_string(value)
+    if tokens and all(_plausible_spdx_token(t) for t in tokens):
+        return value
+    return None
+
+
+def _record_deps_dev_license(enrichment: DependencyEnrichment, lic: Any, source: str) -> None:
+    spdx_id = _sanitize_deps_dev_license(lic)
+    if spdx_id:
+        _record_license(enrichment, {"spdx_id": spdx_id, "source": source})
+        enrichment.primary_license = enrichment.primary_license or spdx_id
 
 
 def _deps_dev_block(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -157,37 +202,6 @@ class ResultAggregator:
             )
         return self._dependency_enrichments[key]
 
-    @staticmethod
-    def _plausible_spdx_token(token: str) -> bool:
-        if token.upper() in _LICENSE_SENTINELS:
-            return False
-        if token.startswith("LicenseRef-"):
-            return True
-        return all(_SPDX_TOKEN_SHAPE.match(part) for part in token.split(" WITH "))
-
-    @staticmethod
-    def _sanitize_deps_dev_license(lic: Any) -> str | None:
-        """deps.dev emits sentinels like 'non-standard'; drop those but keep any plausible SPDX id or expression."""
-        if not isinstance(lic, str):
-            return None
-        value = lic.strip()
-        if not value or value.upper() in _LICENSE_SENTINELS:
-            return None
-        normalized = normalize_spdx_id(value)
-        if normalized in LICENSE_DATABASE:
-            return normalized
-        tokens = tokenize_license_string(value)
-        if tokens and all(ResultAggregator._plausible_spdx_token(t) for t in tokens):
-            return value
-        return None
-
-    @staticmethod
-    def _record_deps_dev_license(enrichment: DependencyEnrichment, lic: Any, source: str) -> None:
-        spdx_id = ResultAggregator._sanitize_deps_dev_license(lic)
-        if spdx_id:
-            _record_license(enrichment, {"spdx_id": spdx_id, "source": source})
-            enrichment.primary_license = enrichment.primary_license or spdx_id
-
     def enrich_from_deps_dev(self, name: str, version: str, metadata: dict[str, Any]) -> None:
         enrichment = self._get_or_create_enrichment(name, version, metadata.get("purl"))
         if "deps_dev" not in enrichment.sources:
@@ -197,8 +211,8 @@ class ResultAggregator:
         links = metadata.get("links") or {}
         # Recorded before the repository's license, so the version's own one wins primary.
         for lic in metadata.get("licenses") or []:
-            self._record_deps_dev_license(enrichment, lic, "deps_dev")
-        self._record_deps_dev_license(enrichment, project.get("license"), "deps_dev_project")
+            _record_deps_dev_license(enrichment, lic, "deps_dev")
+        _record_deps_dev_license(enrichment, project.get("license"), "deps_dev_project")
 
         # The version-level links homepage is more specific than the project one.
         enrichment.homepage = enrichment.homepage or links.get("homepage") or project.get("homepage")
@@ -575,6 +589,8 @@ class ResultAggregator:
         comp_key, version_key = _package_key(finding)
         key = f"{finding.type}:{finding.id}:{comp_key}:{version_key}"
         if existing := self.findings.get(key):
+            if existing.type in LOCATION_FINDING_TYPES:
+                _record_additional_location(existing, finding)
             self._merge_generic_into_existing(existing, finding)
         else:
             self.findings[key] = finding

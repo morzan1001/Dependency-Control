@@ -27,6 +27,17 @@ class LineSpan(_DetailsModel):
     column: int | None = None
 
 
+class FindingLocation(_DetailsModel):
+    """A position of a location finding's hit in its file, as its details give the first one."""
+
+    start: LineSpan | None = None
+    end: LineSpan | None = None
+    line: int | None = None
+    commit: str | None = None
+    commit_timestamp: str | None = None
+    search_key: str | None = None
+
+
 class ReachabilityInfo(_DetailsModel):
     is_reachable: bool | None = None
     confidence_score: float | None = None
@@ -181,6 +192,7 @@ class SecretDetails(_DetailsModel):
     line: int | None = None
     in_current_tree: bool | None = None
     risk_score: float
+    additional_locations: list[FindingLocation] | None = None
 
 
 class EolDetails(_DetailsModel):
@@ -268,6 +280,7 @@ class SastScannerDetails(_DetailsModel):
     license: str | None = None
     fingerprint: str | None = None
     documentation_url: str | None = None
+    additional_locations: list[FindingLocation] | None = None
 
 
 class SastFindingEntry(_DetailsModel):
@@ -298,6 +311,7 @@ class IacDetails(_DetailsModel):
     cwe_ids: list[str] = []
     documentation_url: str | None = None
     references: list[Any] = []
+    additional_locations: list[FindingLocation] | None = None
 
 
 class TyposquattingDetails(_DetailsModel):

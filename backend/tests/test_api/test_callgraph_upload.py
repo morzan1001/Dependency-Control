@@ -308,6 +308,16 @@ class TestPayloadValidation:
         assert await db.callgraphs.count_documents({}) == 0
 
     @pytest.mark.asyncio
+    async def test_a_generic_payload_without_imports_calls_or_universe_is_rejected(self, client, db):
+        frozen_scanner_go = {"nodes": [{"id": "main.main"}], "edges": [{"from": "main.main", "to": "fmt.Println"}]}
+
+        response = await _upload(client, _envelope("generic", "go", frozen_scanner_go))
+
+        assert response.status_code == 400
+        assert "imports, calls, analyzed_modules" in response.json()["detail"]
+        assert await db.callgraphs.count_documents({}) == 0
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("sent", "stored"), [("golang", "go"), ("Python", "python"), (" JS ", "javascript"), ("ts", "typescript")]
     )
@@ -509,6 +519,26 @@ class TestReachabilityVerdicts:
             }
         )
         await _seed_rescan(db)
+
+        await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+
+        assert (await db.findings.find_one({"_id": "f-CVE-PY"}))["reachable"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_later_upload_also_reaches_the_lineage_s_newest_rescan_after_its_enrichment(self, client, db):
+        """An enriched rescan no longer waits for a callgraph, yet it still shows the missing language's verdict."""
+        await db.scans.insert_one(
+            {
+                "_id": _SCAN_ID,
+                "project_id": _PROJECT_ID,
+                "branch": _BRANCH,
+                "status": "completed",
+                "created_at": datetime.now(timezone.utc),
+                "latest_run": {"scan_id": _RESCAN_ID, "status": "completed"},
+            }
+        )
+        await _seed_rescan(db)
+        await db.scans.update_one({"_id": _RESCAN_ID}, {"$unset": {"reachability_pending": ""}})
 
         await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
 

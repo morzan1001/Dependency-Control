@@ -43,6 +43,17 @@ class TestParseVersionKey:
             pytest.param("4.1.0", "4.1", id="trailing-zero"),
             pytest.param("1:2.30-1", "2.30-1", id="epoch"),
             pytest.param("2", "2.0.0", id="bare-major"),
+            pytest.param("1.0pre1", "1.0rc1", id="pep440-pre-spells-rc"),
+            pytest.param("1.0.0-preview1", "1.0.0-rc1", id="pep440-preview-spells-rc"),
+            pytest.param("0.0.0-20220314234659-c1aeb04d8e3f", "0.0.0-20220314234659", id="go-pseudo-version-hash"),
+            pytest.param(
+                "1.2.4-0.20220314234659-a1b2c3d4e5f6", "1.2.4-0.20220314234659", id="go-pseudo-version-after-a-tag"
+            ),
+            pytest.param(
+                "2.0.0-20190101000000-b1c2d3e4f5a6+incompatible",
+                "2.0.0-20190101000000+incompatible",
+                id="go-incompatible-pseudo-version-hash",
+            ),
         ],
     )
     def test_spellings_of_one_release_share_a_key(self, spelling, same):
@@ -58,6 +69,7 @@ class TestParseVersionKey:
             pytest.param("3.0.0a1", "3.0.0", id="pep440-prerelease-below-release"),
             pytest.param("5.0.0-beta.2", "5.0.0-rc.1", id="rc-above-beta"),
             pytest.param("1.0.0-rc1", "1.0.0-rc2", id="prerelease-number"),
+            pytest.param("1.0.0-rc1", "1.0.0-preview2", id="pep440-preview-ranks-with-rc"),
             pytest.param("1.0.0-rc", "1.0.0.1", id="longer-release-above-prerelease"),
             pytest.param("1.0.0", "1.0.0.1", id="longer-release-above-release"),
             pytest.param("1.0.0-SNAPSHOT", "1.0.0", id="maven-snapshot-below-release"),
@@ -75,6 +87,7 @@ class TestParseVersionKey:
             pytest.param("1.1.1", "1.1.1a", id="openssl-letter-a-is-no-alpha"),
             pytest.param("1.1.1n", "1.1.2", id="openssl-letter-release-below-next-patch"),
             pytest.param("0.6.0", "0.6.0+incompatible", id="go-incompatible-above-bare"),
+            pytest.param("2.4.1-r0", "2.4.1_p1", id="apk-patch-suffix-above-package-revision"),
         ],
     )
     def test_higher_version_compares_as_greater(self, lower, higher):
@@ -222,6 +235,15 @@ class TestAggregateFixedVersion:
     )
     def test_fixes_below_the_installed_release_are_not_upgrade_targets(self, installed, fixes, expected):
         assert aggregate_fixed_version(_entries(*fixes), installed) == expected
+
+    @pytest.mark.parametrize("commit", ["1baeb04d8e3f", "c1aeb04d8e3f"])
+    def test_a_go_pseudo_versions_hash_does_not_decide_whether_it_is_a_prerelease(self, commit):
+        pseudo_version = f"0.0.0-20220314234659-{commit}"
+        assert aggregate_fixed_version(_entries(f"{pseudo_version}, 0.1.0"), None) == pseudo_version
+
+    @pytest.mark.parametrize("hash_like", ["a1b2c3d4", "c3f00d"])
+    def test_a_fix_with_a_non_numeric_start_is_no_release_line_of_its_rank(self, hash_like):
+        assert aggregate_fixed_version(_entries(hash_like, "1.2.3, 5.0.1"), None) is None
 
     def test_mixed_numeric_and_named_majors_sort_numerically(self):
         assert aggregate_fixed_version(_entries("9.1.0, 10.2.0, r5"), None) == "9.1.0, 10.2.0, r5"
@@ -1150,3 +1172,79 @@ class TestStoredEntryShape:
         [finding] = agg.get_findings()
         assert finding.found_in == ["sbom-a.json", "sbom-b.json"]
         assert "source" not in finding.details["quality_issues"][0]
+
+
+def _opengrep_hit(col: int) -> dict:
+    return {
+        "check_id": "python.lang.security.audit.eval",
+        "path": "app/views.py",
+        "start": {"line": 10, "col": col},
+        "end": {"line": 10, "col": col + 6},
+        "extra": {"severity": "ERROR", "message": "eval", "lines": "eval(a); eval(b)"},
+    }
+
+
+def _trufflehog_hit(line: int, commit: str) -> dict:
+    return {
+        "DetectorType": 2,
+        "Raw": "AKIAIOSFODNN7EXAMPLE",
+        "SourceMetadata": {"Data": {"Git": {"file": "deploy/.env", "line": line, "commit": commit}}},
+    }
+
+
+def _kics_hit(search_key: str) -> dict:
+    return {"file_name": "deploy/pod.yaml", "line": 7, "search_key": search_key}
+
+
+class TestSameIdentityHitsInOneFile:
+    """The id keeps rule, file and at most the start line, so other hits of one identity become locations."""
+
+    def test_a_second_hit_on_the_same_line_is_listed_as_a_location(self):
+        agg = ResultAggregator()
+        agg.aggregate("opengrep", {"results": [_opengrep_hit(1), _opengrep_hit(11)]})
+
+        [finding] = agg.get_findings()
+        details = finding.details["sast_findings"][0]["details"]
+        assert details["start"] == {"line": 10, "column": 1}
+        assert details["additional_locations"] == [
+            {"start": {"line": 10, "column": 11}, "end": {"line": 10, "column": 17}}
+        ]
+
+    def test_one_secret_at_other_lines_and_commits_of_its_file_lists_each(self):
+        agg = ResultAggregator()
+        hits = [_trufflehog_hit(3, "a" * 40), _trufflehog_hit(9, "a" * 40), _trufflehog_hit(3, "b" * 40)]
+        agg.aggregate("trufflehog", {"findings": hits})
+
+        [finding] = agg.get_findings()
+        assert (finding.details["line"], finding.details["commit"]) == (3, "a" * 40)
+        assert finding.details["additional_locations"] == [
+            {"line": 9, "commit": "a" * 40},
+            {"line": 3, "commit": "b" * 40},
+        ]
+
+    def test_an_iac_hit_on_the_same_line_is_told_apart_by_its_search_key(self):
+        agg = ResultAggregator()
+        query = {"query_name": "Privileged", "query_id": "q1", "severity": "HIGH"}
+        files = [_kics_hit("spec.containers.name={{a}}"), _kics_hit("spec.containers.name={{b}}")]
+        agg.aggregate("kics", {"queries": [{**query, "files": files}]})
+
+        [finding] = agg.get_findings()
+        assert finding.details["search_key"] == "spec.containers.name={{a}}"
+        assert finding.details["additional_locations"] == [
+            {"start": {"line": 7}, "end": {"line": 7}, "search_key": "spec.containers.name={{b}}"}
+        ]
+
+    def test_the_same_hit_posted_twice_adds_no_location(self):
+        agg = ResultAggregator()
+        agg.aggregate("opengrep", {"results": [_opengrep_hit(1)]}, source="job-a")
+        agg.aggregate("opengrep", {"results": [_opengrep_hit(1)]}, source="job-b")
+
+        [finding] = agg.get_findings()
+        assert "additional_locations" not in finding.details["sast_findings"][0]["details"]
+
+    def test_the_waiver_signature_stays_on_the_first_hit(self):
+        single, double = ResultAggregator(), ResultAggregator()
+        single.aggregate("opengrep", {"results": [_opengrep_hit(1)]})
+        double.aggregate("opengrep", {"results": [_opengrep_hit(1), _opengrep_hit(11)]})
+
+        assert double.get_findings()[0].match == single.get_findings()[0].match

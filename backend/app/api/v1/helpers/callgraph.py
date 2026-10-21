@@ -7,6 +7,7 @@ from app.services.component_identity import canonical_callgraph_language, canoni
 _NODE_MODULES = "node_modules/"
 _TYPES_SCOPE = "@types/"
 _ANALYZED_MODULES_KEY = "__analyzed_modules__"
+_GENERIC_KEYS = ("imports", "calls", "analyzed_modules")
 
 
 class ParsedCallgraph(NamedTuple):
@@ -17,13 +18,16 @@ class ParsedCallgraph(NamedTuple):
     source_files: int
 
 
+def _package_key(module: str, language: str) -> str | None:
+    """None for '' and a relative specifier ('./x', '../x', Python '.x'), which name first-party code."""
+    return canonical_module_key(module, language) if module and not module.startswith(".") else None
+
+
 def _canonical_module_list(names: Any, language: str) -> list[str]:
     if not isinstance(names, list):
         return []
 
-    return list(
-        dict.fromkeys(key for name in names if isinstance(name, str) and (key := canonical_module_key(name, language)))
-    )
+    return list(dict.fromkeys(key for name in names if isinstance(name, str) and (key := _package_key(name, language))))
 
 
 def _dedupe_module_usage(module_usage: dict[str, ModuleUsage]) -> None:
@@ -89,10 +93,11 @@ def _record_generic_import(imp: dict[str, Any], language: str, module_usage: dic
     if not well_typed or not all(isinstance(symbol, str) for symbol in symbols):
         raise ValueError("an import needs a string module and file and a list of string symbols")
 
-    if not module or module.startswith(("./", "../")):
+    key = _package_key(module, language)
+    if key is None:
         return
 
-    usage = _get_or_create_module_usage(module_usage, canonical_module_key(module, language))
+    usage = _get_or_create_module_usage(module_usage, key)
     usage.import_count += 1
     if file_path:
         usage.import_locations.append(file_path)
@@ -106,10 +111,11 @@ def _record_generic_call(call: dict[str, Any], language: str, module_usage: dict
     if not (isinstance(module, str) and isinstance(func, str) and isinstance(caller_file, str)):
         raise ValueError("a call needs a string callee_module, callee_function and caller_file")
 
-    if not module:
+    key = _package_key(module, language)
+    if key is None:
         return
 
-    usage = _get_or_create_module_usage(module_usage, canonical_module_key(module, language))
+    usage = _get_or_create_module_usage(module_usage, key)
     usage.call_count += 1
     if func:
         usage.used_symbols.append(func)
@@ -140,7 +146,7 @@ def parse_generic_format(data: dict[str, Any], language: str) -> ParsedCallgraph
 
 
 def detect_format(data: dict[str, Any]) -> str:
-    if "imports" in data or "calls" in data or "analyzed_modules" in data:
+    if any(key in data for key in _GENERIC_KEYS):
         return "generic"
 
     file_entries = {key: value for key, value in data.items() if key != _ANALYZED_MODULES_KEY}
@@ -169,11 +175,12 @@ def resolve_callgraph_payload(
     format_type = detect_format(data) if request_format == "auto" else request_format
     if format_type == "unknown":
         raise ValueError("Could not auto-detect callgraph format. Please specify 'format' explicitly.")
+    # The upload schema pins the format, but an ad-hoc posted callgraph carries any string.
+    if format_type not in _FORMAT_PARSERS:
+        raise ValueError(f"Unsupported format: {format_type}")
+    if format_type == "generic" and not any(key in data for key in _GENERIC_KEYS):
+        raise ValueError(f"A generic callgraph needs at least one of {', '.join(_GENERIC_KEYS)}")
     language = language or _FORMAT_LANGUAGES.get(format_type)
     if not language:
         raise ValueError(f"'language' is required for '{format_type}' callgraph payloads")
-    canonical = canonical_callgraph_language(language)
-    parser = _FORMAT_PARSERS.get(format_type)
-    if parser is None:
-        raise ValueError(f"Unsupported format: {format_type}")
-    return format_type, canonical, parser
+    return format_type, canonical_callgraph_language(language), _FORMAT_PARSERS[format_type]

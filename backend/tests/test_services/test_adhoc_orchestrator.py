@@ -915,3 +915,34 @@ async def test_the_requested_analyzers_run_side_by_side_on_each_input(monkeypatc
     assert {"license_compliance", _OSV_NAME} <= set(response.analyzers.ran)
     assert _findings_of_type(response, _TYPE_VULNERABILITY)
     assert _findings_of_type(response, _TYPE_LICENSE)
+
+
+# Bearer's Go struct writes a nil cwe_ids slice as null, an unset source as {}, and may leave the title empty.
+_BEARER_SPARSE_ENTRY = {
+    "id": "python_lang_logger",
+    "cwe_ids": None,
+    "source": {},
+    "full_filename": "app.py",
+    "line_number": 3,
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "entry",
+    [
+        pytest.param(_BEARER_SPARSE_ENTRY, id="null-cwe-ids-and-empty-source"),
+        pytest.param({**_BEARER_SPARSE_ENTRY, "title": ""}, id="empty-title"),
+        pytest.param({"id": "python_lang_logger", "full_filename": "app.py", "line_number": 3}, id="no-title"),
+        pytest.param({**_BEARER_SPARSE_ENTRY, "source": {"start": 3, "column": {"start": 1, "end": 9}}}, id="no-end"),
+    ],
+)
+async def test_a_bearer_entry_the_ingest_normalizer_reads_is_read_here_too(entry):
+    request = AdhocAnalyzeRequest(
+        scanners={"bearer": {"findings": {"low": [entry]}}}, analyzers=[], apply_global_waivers=False
+    )
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert "bearer" in response.analyzers.ran
+    assert [f["component"] for f in response.findings] == ["app.py"]

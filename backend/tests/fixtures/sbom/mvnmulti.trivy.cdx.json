@@ -1,0 +1,535 @@
+{
+ "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
+ "bomFormat": "CycloneDX",
+ "specVersion": "1.7",
+ "serialNumber": "urn:uuid:da4edf58-8fcc-408a-9efe-bbba89843924",
+ "version": 1,
+ "metadata": {
+  "timestamp": "2026-10-20T20:12:58+00:00",
+  "tools": {
+   "components": [
+    {
+     "type": "application",
+     "manufacturer": {
+      "name": "Aqua Security Software Ltd."
+     },
+     "group": "aquasecurity",
+     "name": "trivy",
+     "version": "0.76.0"
+    }
+   ]
+  },
+  "component": {
+   "bom-ref": "10b05275-9a0e-4232-8659-d2f13cc26dfb",
+   "type": "application",
+   "name": "/src/mvnmulti",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:SchemaVersion",
+     "value": "2"
+    }
+   ]
+  }
+ },
+ "components": [
+  {
+   "bom-ref": "0dd028ad-0b07-4078-952f-b6030d1c5447",
+   "type": "library",
+   "group": "org.slf4j",
+   "name": "slf4j-api",
+   "version": "2.0.16",
+   "licenses": [
+    {
+     "license": {
+      "id": "MIT"
+     }
+    }
+   ],
+   "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.16",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "org.slf4j:slf4j-api:2.0.16::f8452426"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "23cd82be-e795-440a-ae4c-b3356a3e51bc",
+   "type": "application",
+   "name": "pom.xml",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:Class",
+     "value": "lang-pkgs"
+    },
+    {
+     "name": "aquasecurity:trivy:Type",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "4de11265-1830-4393-8783-0609727d5e62",
+   "type": "library",
+   "group": "ch.qos.logback",
+   "name": "logback-classic",
+   "version": "1.5.6",
+   "licenses": [
+    {
+     "license": {
+      "id": "EPL-1.0"
+     }
+    },
+    {
+     "license": {
+      "id": "LGPL-2.1-only"
+     }
+    }
+   ],
+   "purl": "pkg:maven/ch.qos.logback/logback-classic@1.5.6",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "ch.qos.logback:logback-classic:1.5.6::805724bc"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "5d366289-2c7e-4275-9abf-22afa9f57fa2",
+   "type": "library",
+   "group": "org.slf4j",
+   "name": "slf4j-api",
+   "version": "2.0.16",
+   "licenses": [
+    {
+     "license": {
+      "id": "MIT"
+     }
+    }
+   ],
+   "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.16",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "org.slf4j:slf4j-api:2.0.16::f8452426"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "65c59202-4ded-49ca-b85b-ef6b8d547d5f",
+   "type": "library",
+   "group": "org.slf4j",
+   "name": "slf4j-api",
+   "version": "2.0.13",
+   "licenses": [
+    {
+     "license": {
+      "id": "MIT"
+     }
+    }
+   ],
+   "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.13",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "org.slf4j:slf4j-api:2.0.13::b2844dce"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "86a4b531-1b58-4324-b1b4-f9959cdb081d",
+   "type": "library",
+   "group": "com.example",
+   "name": "shop-app",
+   "version": "1.0.0",
+   "purl": "pkg:maven/com.example/shop-app@1.0.0",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "com.example:shop-app:1.0.0::b93dea4f"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "8fd4d0b9-7778-47fe-9575-4f9dcc3821d3",
+   "type": "application",
+   "name": "app/pom.xml",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:Class",
+     "value": "lang-pkgs"
+    },
+    {
+     "name": "aquasecurity:trivy:Type",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "9afaf920-7224-47cf-9e87-f87c79c8980e",
+   "type": "library",
+   "group": "com.example",
+   "name": "shop-app",
+   "version": "1.0.0",
+   "purl": "pkg:maven/com.example/shop-app@1.0.0",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "com.example:shop-app:1.0.0::b93dea4f"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "a4d29783-883e-4f2e-a151-f37b7f295031",
+   "type": "library",
+   "group": "org.slf4j",
+   "name": "slf4j-api",
+   "version": "2.0.13",
+   "licenses": [
+    {
+     "license": {
+      "id": "MIT"
+     }
+    }
+   ],
+   "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.13",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "org.slf4j:slf4j-api:2.0.13::b2844dce"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "b3f83b04-e411-4967-a505-8ea10c43ab57",
+   "type": "library",
+   "group": "com.example",
+   "name": "shop-core",
+   "version": "1.0.0",
+   "purl": "pkg:maven/com.example/shop-core@1.0.0",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "com.example:shop-core:1.0.0::cb62cc32"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "b4dc5e8c-12c1-4241-8a09-6ec22043bcbb",
+   "type": "library",
+   "group": "com.example",
+   "name": "shop-core",
+   "version": "1.0.0",
+   "purl": "pkg:maven/com.example/shop-core@1.0.0",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "com.example:shop-core:1.0.0::8d3cf4d3"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "bfa081ea-4579-4eae-8b7b-6dfd43d5322a",
+   "type": "library",
+   "group": "com.example",
+   "name": "shop-core",
+   "version": "1.0.0",
+   "purl": "pkg:maven/com.example/shop-core@1.0.0",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "com.example:shop-core:1.0.0::cb62cc32"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "c7fc53da-dbf5-4571-b8ed-15ddd7e14070",
+   "type": "library",
+   "group": "ch.qos.logback",
+   "name": "logback-core",
+   "version": "1.5.6",
+   "licenses": [
+    {
+     "license": {
+      "id": "EPL-1.0"
+     }
+    },
+    {
+     "license": {
+      "id": "LGPL-2.1-only"
+     }
+    }
+   ],
+   "purl": "pkg:maven/ch.qos.logback/logback-core@1.5.6",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "ch.qos.logback:logback-core:1.5.6::6eeaa674"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "d8f5179b-8c9c-446a-a2da-9f7cd84cd83f",
+   "type": "library",
+   "group": "ch.qos.logback",
+   "name": "logback-classic",
+   "version": "1.5.6",
+   "licenses": [
+    {
+     "license": {
+      "id": "EPL-1.0"
+     }
+    },
+    {
+     "license": {
+      "id": "LGPL-2.1-only"
+     }
+    }
+   ],
+   "purl": "pkg:maven/ch.qos.logback/logback-classic@1.5.6",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "ch.qos.logback:logback-classic:1.5.6::805724bc"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "dc094936-6152-4028-91c6-a76763d5d408",
+   "type": "application",
+   "name": "core/pom.xml",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:Class",
+     "value": "lang-pkgs"
+    },
+    {
+     "name": "aquasecurity:trivy:Type",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "e8767e87-b7da-434f-81c8-1dee1492a102",
+   "type": "library",
+   "group": "com.example",
+   "name": "shop-core",
+   "version": "1.0.0",
+   "purl": "pkg:maven/com.example/shop-core@1.0.0",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "com.example:shop-core:1.0.0::8d3cf4d3"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "fa4be23f-2c9e-4ead-ba35-b83c63304dba",
+   "type": "library",
+   "group": "ch.qos.logback",
+   "name": "logback-core",
+   "version": "1.5.6",
+   "licenses": [
+    {
+     "license": {
+      "id": "EPL-1.0"
+     }
+    },
+    {
+     "license": {
+      "id": "LGPL-2.1-only"
+     }
+    }
+   ],
+   "purl": "pkg:maven/ch.qos.logback/logback-core@1.5.6",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "ch.qos.logback:logback-core:1.5.6::6eeaa674"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:maven/com.example/shop-parent@1.0.0",
+   "type": "library",
+   "group": "com.example",
+   "name": "shop-parent",
+   "version": "1.0.0",
+   "purl": "pkg:maven/com.example/shop-parent@1.0.0",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "com.example:shop-parent:1.0.0::a199a502"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  }
+ ],
+ "dependencies": [
+  {
+   "ref": "0dd028ad-0b07-4078-952f-b6030d1c5447",
+   "dependsOn": []
+  },
+  {
+   "ref": "10b05275-9a0e-4232-8659-d2f13cc26dfb",
+   "dependsOn": [
+    "23cd82be-e795-440a-ae4c-b3356a3e51bc",
+    "8fd4d0b9-7778-47fe-9575-4f9dcc3821d3",
+    "dc094936-6152-4028-91c6-a76763d5d408"
+   ]
+  },
+  {
+   "ref": "23cd82be-e795-440a-ae4c-b3356a3e51bc",
+   "dependsOn": [
+    "pkg:maven/com.example/shop-parent@1.0.0"
+   ]
+  },
+  {
+   "ref": "4de11265-1830-4393-8783-0609727d5e62",
+   "dependsOn": [
+    "a4d29783-883e-4f2e-a151-f37b7f295031",
+    "c7fc53da-dbf5-4571-b8ed-15ddd7e14070"
+   ]
+  },
+  {
+   "ref": "5d366289-2c7e-4275-9abf-22afa9f57fa2",
+   "dependsOn": []
+  },
+  {
+   "ref": "65c59202-4ded-49ca-b85b-ef6b8d547d5f",
+   "dependsOn": []
+  },
+  {
+   "ref": "86a4b531-1b58-4324-b1b4-f9959cdb081d",
+   "dependsOn": [
+    "b3f83b04-e411-4967-a505-8ea10c43ab57",
+    "d8f5179b-8c9c-446a-a2da-9f7cd84cd83f"
+   ]
+  },
+  {
+   "ref": "8fd4d0b9-7778-47fe-9575-4f9dcc3821d3",
+   "dependsOn": [
+    "9afaf920-7224-47cf-9e87-f87c79c8980e"
+   ]
+  },
+  {
+   "ref": "9afaf920-7224-47cf-9e87-f87c79c8980e",
+   "dependsOn": [
+    "4de11265-1830-4393-8783-0609727d5e62",
+    "bfa081ea-4579-4eae-8b7b-6dfd43d5322a"
+   ]
+  },
+  {
+   "ref": "a4d29783-883e-4f2e-a151-f37b7f295031",
+   "dependsOn": []
+  },
+  {
+   "ref": "b3f83b04-e411-4967-a505-8ea10c43ab57",
+   "dependsOn": []
+  },
+  {
+   "ref": "b4dc5e8c-12c1-4241-8a09-6ec22043bcbb",
+   "dependsOn": [
+    "5d366289-2c7e-4275-9abf-22afa9f57fa2"
+   ]
+  },
+  {
+   "ref": "bfa081ea-4579-4eae-8b7b-6dfd43d5322a",
+   "dependsOn": []
+  },
+  {
+   "ref": "c7fc53da-dbf5-4571-b8ed-15ddd7e14070",
+   "dependsOn": []
+  },
+  {
+   "ref": "d8f5179b-8c9c-446a-a2da-9f7cd84cd83f",
+   "dependsOn": [
+    "65c59202-4ded-49ca-b85b-ef6b8d547d5f",
+    "fa4be23f-2c9e-4ead-ba35-b83c63304dba"
+   ]
+  },
+  {
+   "ref": "dc094936-6152-4028-91c6-a76763d5d408",
+   "dependsOn": [
+    "e8767e87-b7da-434f-81c8-1dee1492a102"
+   ]
+  },
+  {
+   "ref": "e8767e87-b7da-434f-81c8-1dee1492a102",
+   "dependsOn": [
+    "0dd028ad-0b07-4078-952f-b6030d1c5447"
+   ]
+  },
+  {
+   "ref": "fa4be23f-2c9e-4ead-ba35-b83c63304dba",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:maven/com.example/shop-parent@1.0.0",
+   "dependsOn": [
+    "86a4b531-1b58-4324-b1b4-f9959cdb081d",
+    "b4dc5e8c-12c1-4241-8a09-6ec22043bcbb"
+   ]
+  }
+ ],
+ "vulnerabilities": []
+}

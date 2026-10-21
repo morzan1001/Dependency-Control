@@ -38,9 +38,6 @@ def canonical_callgraph_language(raw: str) -> str:
 
 def canonical_module_key(name: str, language: str) -> str:
     """The single meeting point between callgraph parsers (stored keys) and reachability enrichment (lookup keys)."""
-    if name.startswith(("./", "../")):
-        return name
-
     language = language.lower()
 
     if language == "python":
@@ -162,20 +159,28 @@ def component_match_query(component: str) -> dict[str, Any]:
 
 def artifact_name_expr(value: Any) -> dict[str, Any]:
     """Must stay equivalent to extract_artifact_name."""
-    lowered = {"$toLower": value}
-    return {
+    name = "$$artifact_name"
+    segment = {
         "$switch": {
             "branches": [
                 {
-                    "case": {"$gt": [{"$indexOfCP": [lowered, ":"]}, -1]},
-                    "then": {"$arrayElemAt": [{"$split": [lowered, ":"]}, -1]},
+                    "case": {"$gt": [{"$indexOfCP": [name, ":"]}, -1]},
+                    "then": {"$arrayElemAt": [{"$split": [name, ":"]}, -1]},
                 },
-                {
-                    "case": {"$regexMatch": {"input": lowered, "regex": "^@[^/]*/[^/]*$"}},
-                    "then": lowered,
-                },
+                {"case": {"$regexMatch": {"input": name, "regex": "^@[^/]*/[^/]*$"}}, "then": name},
             ],
-            "default": {"$arrayElemAt": [{"$split": [lowered, "/"]}, -1]},
+            "default": {"$arrayElemAt": [{"$split": [name, "/"]}, -1]},
+        }
+    }
+    return {
+        "$let": {
+            "vars": {"artifact_name": {"$toLower": {"$trim": {"input": {"$ifNull": [value, ""]}}}}},
+            "in": {
+                "$let": {
+                    "vars": {"artifact_segment": segment},
+                    "in": {"$cond": [{"$eq": ["$$artifact_segment", ""]}, "unknown", "$$artifact_segment"]},
+                }
+            },
         }
     }
 

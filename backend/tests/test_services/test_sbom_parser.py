@@ -189,6 +189,10 @@ class TestDirectnessOfRealGraphs:
                 id="gomod",
             ),
             pytest.param("gobinary.trivy.cdx.json", {"github.com/google/uuid", "stdlib"}, id="gobinary"),
+            # trivy 0.76.0 output of a cargo-auditable binary, a .deps.json project and a uv project.
+            pytest.param("rustbinary.trivy.cdx.json", {"serde_json"}, id="rustbinary"),
+            pytest.param("dotnetcore.trivy.cdx.json", {"Newtonsoft.Json", "Serilog.Sinks.Console"}, id="dotnet-core"),
+            pytest.param("uv.trivy.cdx.json", {"httpx"}, id="uv"),
         ],
     )
     def test_trivy_root_package_is_skipped_and_its_children_are_direct(self, fixture, project_deps):
@@ -198,6 +202,20 @@ class TestDirectnessOfRealGraphs:
         assert {name for name, value in directness.items() if value == (True, False)} == project_deps
         assert all(value == (False, False) for name, value in directness.items() if name not in project_deps)
         assert result.skipped_reasons.get("root-component") == 1
+        ingested = {dep.purl for dep in result.dependencies}
+        assert all(set(dep.parent_components) <= ingested for dep in result.dependencies)
+
+    def test_trivy_multi_module_maven_skips_every_own_module_wherever_it_appears(self):
+        # trivy 0.76.0 output: a parent pom listing modules core and app, each with a pom.xml node of its own.
+        result = parse_sbom(_fixture("mvnmulti.trivy.cdx.json"))
+
+        assert sorted((dep.name, dep.version, dep.direct, dep.direct_inferred) for dep in result.dependencies) == [
+            ("logback-classic", "1.5.6", True, False),
+            ("logback-core", "1.5.6", False, False),
+            ("slf4j-api", "2.0.13", False, False),
+            ("slf4j-api", "2.0.16", True, False),
+        ]
+        assert result.skipped_reasons["root-component"] == 7
         ingested = {dep.purl for dep in result.dependencies}
         assert all(set(dep.parent_components) <= ingested for dep in result.dependencies)
 
@@ -223,15 +241,21 @@ class TestDirectnessOfRealGraphs:
         assert _directness(result) == expected
         assert "root-component" not in result.skipped_reasons
 
-    def test_trivy_go_binary_without_main_module_keeps_every_package(self):
+    def test_trivy_go_binary_without_main_module_keeps_every_package_as_a_derived_direct_one(self):
         # gofmt (Go toolchain) and a `go build main.go` binary carry no main module, so trivy gives them no root.
         result = parse_sbom(_fixture("gobinnomain.trivy.cdx.json"))
 
         assert sorted((dep.name, dep.direct, dep.direct_inferred) for dep in result.dependencies) == [
-            ("github.com/google/uuid", True, False),
-            ("stdlib", True, False),
+            ("github.com/google/uuid", True, True),
+            ("stdlib", True, True),
         ]
         assert "root-component" not in result.skipped_reasons
+
+    def test_trivy_lock_file_without_a_graph_reports_its_packages_as_derived_direct(self):
+        # trivy 0.76.0 output of a gradle.lockfile with no Gradle cache to read POMs from.
+        result = parse_sbom(_fixture("gradle.trivy.cdx.json"))
+
+        assert _directness(result) == dict.fromkeys(("logback-classic", "logback-core", "slf4j-api"), (True, True))
 
     @pytest.mark.parametrize(
         ("fixture", "expected", "skipped_roots"),
@@ -287,8 +311,9 @@ class TestDirectnessOfRealGraphs:
         assert _directness(result) == expected
         assert result.skipped_reasons.get("root-component", 0) == skipped_roots
 
-    def test_spdx_image_root_sets_the_image_source(self):
-        result = parse_sbom(_fixture("alpine.syft.spdx.json"))
+    @pytest.mark.parametrize("fixture", ["alpine.syft.spdx.json", "alpine.syft.spdx22.json"])
+    def test_spdx_image_root_sets_the_image_source(self, fixture):
+        result = parse_sbom(_fixture(fixture))
 
         apk = [dep for dep in result.dependencies if dep.type == "apk"]
         assert (result.source_type, result.source_target) == ("image", "alpine:3.20")
@@ -301,8 +326,9 @@ class TestDirectnessOfRealGraphs:
             "ssl_client",
         }
 
-    def test_the_spdx_image_root_is_skipped_and_its_distro_becomes_the_operating_system(self):
-        result = parse_sbom(_fixture("alpine.syft.spdx.json"))
+    @pytest.mark.parametrize("fixture", ["alpine.syft.spdx.json", "alpine.syft.spdx22.json"])
+    def test_the_spdx_image_root_is_skipped_and_its_distro_becomes_the_operating_system(self, fixture):
+        result = parse_sbom(_fixture(fixture))
         components = [dep.model_dump() for dep in result.dependencies]
 
         assert [dep.purl for dep in result.dependencies if dep.type == "oci"] == []
@@ -314,7 +340,9 @@ class TestDirectnessOfRealGraphs:
         ] == [("alpine", "3.20.10", "image", "alpine:3.20")]
         assert collect_products_to_check(components)["alpine-linux"] == [("alpine", "3.20.10", False)]
 
-    @pytest.mark.parametrize("fixture", ["alpine.syft.json", "alpine.syft.cdx.json", "alpine.syft.spdx.json"])
+    @pytest.mark.parametrize(
+        "fixture", ["alpine.syft.json", "alpine.syft.cdx.json", "alpine.syft.spdx.json", "alpine.syft.spdx22.json"]
+    )
     def test_every_syft_format_of_one_image_hands_its_distro_to_end_of_life(self, fixture):
         result = parse_sbom(_fixture(fixture))
         components = [dep.model_dump() for dep in result.dependencies]
@@ -379,11 +407,96 @@ class TestMalformedDependencyGraph:
                 "artifactRelationships must be a list of objects",
                 id="syft-entry",
             ),
+            pytest.param(
+                _fixture_with("mono.trivy.cdx.json", "dependencies", {"ref": None, "dependsOn": []}),
+                "dependencies entries need string endpoints",
+                id="cyclonedx-ref-missing",
+            ),
+            pytest.param(
+                _fixture_with(
+                    "mono.syft.json",
+                    "artifactRelationships",
+                    {"parent": None, "child": "4370e91781766145", "type": "depends-on"},
+                ),
+                "artifactRelationships entries need string endpoints",
+                id="syft-parent-missing",
+            ),
+            pytest.param(
+                _fixture_with(
+                    "mono.syft.json",
+                    "artifactRelationships",
+                    {"parent": "4370e91781766145", "child": {"id": "b929298c0a8dba24"}, "type": "dependency-of"},
+                ),
+                "artifactRelationships entries need string endpoints",
+                id="syft-child-object",
+            ),
+            pytest.param(
+                _fixture_with(
+                    "mono.syft.spdx.json",
+                    "relationships",
+                    {
+                        "spdxElementId": "SPDXRef-Package-npm-debug-ce803f0c77037950",
+                        "relationshipType": "DEPENDS_ON",
+                        "relatedSpdxElement": ["SPDXRef-Package-python-anyio-4370e91781766145"],
+                    },
+                ),
+                "relationships entries need string endpoints",
+                id="spdx-related-list",
+            ),
         ],
     )
     def test_malformed_edge_fails_the_document(self, sbom, message):
         with pytest.raises(ValueError, match=message):
             parse_sbom(sbom)
+
+    def test_a_syft_artifact_with_an_object_id_is_kept_off_the_graph(self):
+        odd = {"id": {"x": 1}, "name": "odd", "version": "1.0", "type": "python", "purl": "pkg:pypi/odd@1.0"}
+
+        directness = _directness(parse_sbom(_fixture_with("mono.syft.json", "artifacts", odd)))
+
+        assert directness == {**_SYFT_MONOREPO, "odd": (True, True)}
+
+    def test_a_syft_source_with_a_list_id_keeps_the_artifacts(self):
+        sbom = _fixture("mono.syft.json")
+        sbom["source"]["id"] = [sbom["source"]["id"]]
+
+        result = parse_sbom(sbom)
+
+        assert _directness(result) == _SYFT_MONOREPO
+
+    def test_a_described_spdx_package_with_a_non_string_purl_keeps_its_siblings(self):
+        sbom = _fixture("mono.syft.spdx.json")
+        root = next(pkg for pkg in sbom["packages"] if pkg["SPDXID"].startswith("SPDXRef-DocumentRoot"))
+        root["externalRefs"] = [{"referenceType": "purl", "referenceLocator": {"type": "oci"}}]
+
+        result = parse_sbom(sbom)
+
+        assert [dep.name for dep in result.dependencies] == [
+            dep.name for dep in parse_sbom(_fixture("mono.syft.spdx.json")).dependencies
+        ]
+
+    def test_an_spdx_package_with_a_list_id_is_kept_off_the_graph(self):
+        odd = {
+            "SPDXID": ["SPDXRef-odd"],
+            "name": "odd",
+            "versionInfo": "1.0",
+            "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:pypi/odd@1.0"}],
+        }
+
+        result = parse_sbom(_fixture_with("mono.syft.spdx.json", "packages", odd))
+
+        assert _directness(result)["odd"] == (True, True)
+        assert _directness(result)["ms"] == (False, True)
+
+    @pytest.mark.parametrize("refs", [["junk", {"referenceType": "purl", "referenceLocator": "pkg:pypi/odd@1.0"}], 5])
+    def test_an_unreadable_spdx_external_ref_leaves_its_package(self, refs):
+        odd = {"SPDXID": "SPDXRef-odd", "name": "odd", "versionInfo": "1.0", "externalRefs": refs}
+
+        result = parse_sbom(_fixture_with("mono.syft.spdx.json", "packages", odd))
+
+        (dep,) = [dep for dep in result.dependencies if dep.name == "odd"]
+        assert dep.purl == ("pkg:pypi/odd@1.0" if isinstance(refs, list) else "pkg:generic/odd@1.0")
+        assert "parse-error" not in result.skipped_reasons
 
     def test_malformed_source_hints_leave_the_graph_intact(self):
         sbom = _fixture("mono.trivy.cdx.json")
@@ -1635,7 +1748,7 @@ class TestMalformedComponentResilience:
             "spdxVersion": "SPDX-2.3",
             "SPDXID": "SPDXRef-DOCUMENT",
             "packages": [
-                {"SPDXID": "SPDXRef-1", "name": "ok-1", "versionInfo": "1.0", "externalRefs": 5},
+                {"SPDXID": "SPDXRef-1", "name": "ok-1", "versionInfo": "1.0", "packageFileName": 5},
                 {"SPDXID": "SPDXRef-2", "name": "ok-2", "versionInfo": "2.0"},
             ],
             "relationships": [],
@@ -2162,6 +2275,7 @@ class TestTypeIsPurlEcosystem:
                 [
                     {
                         "type": "library",
+                        "group": "org.example",
                         "name": "some-lib",
                         "version": "1.0",
                         "properties": [{"name": "syft:package:type", "value": "java-archive"}],
@@ -2169,7 +2283,52 @@ class TestTypeIsPurlEcosystem:
                 ]
             )
         )
-        assert (result.dependencies[0].type, result.dependencies[0].purl) == ("maven", "pkg:maven/some-lib@1.0")
+        assert (result.dependencies[0].type, result.dependencies[0].purl) == (
+            "maven",
+            "pkg:maven/org.example/some-lib@1.0",
+        )
+
+    def test_a_fabricated_maven_purl_needs_a_group(self):
+        cyclonedx = _cyclonedx_with(
+            [
+                {
+                    "type": "library",
+                    "name": "some-lib",
+                    "version": "1.0",
+                    "properties": [{"name": "syft:package:type", "value": "java-archive"}],
+                }
+            ]
+        )
+        syft = {
+            "descriptor": {"name": "syft", "version": "1.42.1"},
+            "source": {"id": "src", "type": "directory", "target": "/build"},
+            "artifacts": [
+                {"id": "a1", "name": "some-lib", "version": "1.0", "type": "java-archive"},
+                {"id": "a2", "name": "git-client", "version": "6.1.0", "type": "jenkins-plugin"},
+            ],
+            "artifactRelationships": [],
+        }
+        spdx = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "packages": [
+                {
+                    "SPDXID": "SPDXRef-1",
+                    "name": "some-lib",
+                    "versionInfo": "1.0",
+                    "downloadLocation": "https://repo.maven.apache.org/maven2/some-lib-1.0.jar",
+                }
+            ],
+        }
+
+        purls = [dep.purl for sbom in (cyclonedx, syft, spdx) for dep in self.parser.parse(sbom).dependencies]
+
+        assert purls == [
+            "pkg:generic/some-lib@1.0",
+            "pkg:generic/some-lib@1.0",
+            "pkg:generic/git-client@6.1.0",
+            "pkg:generic/some-lib@1.0",
+        ]
 
     def test_syft_artifact_type_replaced_by_purl_type(self):
         sbom = {
@@ -2979,6 +3138,36 @@ class TestSyftJsonRealShapes:
     )
     def test_hashes_come_from_every_syft_metadata_shape(self, name, expected):
         assert self.deps[name].hashes == expected
+
+    def test_an_rpm_vendor_is_the_publisher(self):
+        rpm = {
+            "id": "2c128a357aa75768",
+            "name": "bash",
+            "version": "5.1.8-9.el9",
+            "type": "rpm",
+            "foundBy": "rpm-db-cataloger",
+            "locations": [{"path": "/var/lib/rpm/rpmdb.sqlite", "accessPath": "/var/lib/rpm/rpmdb.sqlite"}],
+            "licenses": [],
+            "language": "",
+            "cpes": [],
+            "purl": "pkg:rpm/almalinux/bash@5.1.8-9.el9?arch=aarch64&distro=almalinux-9.8",
+            "metadataType": "rpm-db-entry",
+            "metadata": {
+                "name": "bash",
+                "version": "5.1.8",
+                "epoch": None,
+                "architecture": "aarch64",
+                "release": "9.el9",
+                "sourceRpm": "bash-5.1.8-9.el9.src.rpm",
+                "size": 7716567,
+                "vendor": "AlmaLinux",
+                "modularityLabel": "",
+            },
+        }
+
+        [dependency] = parse_sbom(_syft_142_json([rpm])).dependencies
+
+        assert dependency.publisher == "AlmaLinux"
 
     def test_composer_object_authors_keep_the_package(self):
         assert self.result.skipped_reasons == {}

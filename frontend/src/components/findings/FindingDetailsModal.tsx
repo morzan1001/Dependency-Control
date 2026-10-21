@@ -2,7 +2,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useState, type ReactNode } from "react"
-import type { Finding, FindingType } from "@/types/scan"
+import type { Finding, FindingType, ScannerFailure } from "@/types/scan"
 import { ExternalLink, ShieldAlert, ServerCrash } from "lucide-react"
 import { useAuth } from "@/context/useAuth"
 import { useNavigate } from "react-router-dom"
@@ -33,7 +33,13 @@ interface DetailsViewProps {
 }
 
 function SystemWarningView({ finding }: Readonly<{ finding: Finding }>) {
-    const errorDetails = finding.details?.error_details
+    const legacyDetails = finding.details?.error_details
+    // Findings stored before details.errors existed carry only the first failure's error_details.
+    const failures: ScannerFailure[] = finding.details?.errors?.length
+        ? finding.details.errors
+        : legacyDetails ? [{ message: finding.description, error_details: legacyDetails }] : []
+    // The banner joins several failures' messages, so each block has to say which one it is.
+    const attributed = failures.length > 1
     return (
         <div className="space-y-4">
             <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4">
@@ -47,11 +53,27 @@ function SystemWarningView({ finding }: Readonly<{ finding: Finding }>) {
                     </div>
                 </div>
             </div>
-            {errorDetails && (
+            {failures.length > 0 && (
                 <DetailSection label="Error Details">
-                    <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs font-mono border whitespace-pre-wrap">
-                        {typeof errorDetails === 'string' ? errorDetails : JSON.stringify(errorDetails, null, 2)}
-                    </pre>
+                    <div className="space-y-3">
+                        {failures.map((failure, index) => (
+                            <div key={`${failure.source ?? ''}:${index}`} className="space-y-2">
+                                {(failure.source || attributed) && (
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        {failure.source && (
+                                            <Badge variant="secondary" className="font-mono text-xs">{failure.source}</Badge>
+                                        )}
+                                        {attributed && <p className="text-sm">{failure.message}</p>}
+                                    </div>
+                                )}
+                                {failure.error_details && (
+                                    <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs font-mono border whitespace-pre-wrap">
+                                        {typeof failure.error_details === 'string' ? failure.error_details : JSON.stringify(failure.error_details, null, 2)}
+                                    </pre>
+                                )}
+                            </div>
+                        ))}
+                    </div>
                 </DetailSection>
             )}
         </div>
@@ -262,8 +284,9 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                                     <div className="col-span-2">
                                         <DetailSection label="Unlisted Findings" compact>
                                             <p className="text-xs text-muted-foreground">
-                                                Not listed: {finding.related_findings_omitted.toLocaleString()} other findings on this
-                                                component. Filter the findings table by this component to see them.
+                                                Not listed: {finding.related_findings_omitted.toLocaleString()} other finding
+                                                {finding.related_findings_omitted === 1 ? '' : 's'} on this component. Filter the
+                                                findings table by this component to see them.
                                             </p>
                                         </DetailSection>
                                     </div>

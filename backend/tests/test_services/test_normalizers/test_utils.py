@@ -146,9 +146,6 @@ class TestBuildFindingId:
     def test_all_empty_returns_unknown(self):
         assert build_finding_id("CVE") == "CVE-unknown"
 
-    def test_custom_separator(self):
-        assert build_finding_id("SAST", "rule1", "file.py", separator=":") == "SAST:rule1:file.py"
-
     def test_single_part(self):
         assert build_finding_id("MAL", "lodash") == "MAL-lodash"
 

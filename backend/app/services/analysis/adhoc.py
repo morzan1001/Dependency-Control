@@ -24,7 +24,7 @@ from app.models.waiver import Waiver
 from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.waivers import WaiverRepository
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport, WaiversApplied
-from app.schemas.bearer import BearerFinding
+from app.schemas.bearer import BearerFinding, bearer_entries
 from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.kics import KicsQuery
@@ -51,14 +51,18 @@ from app.services.analyzers.malware import MISSING_API_KEY
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import sends_ids, vulnerability_enrichment_service
 from app.services.github import installation_github_token
-from app.services.normalizers.sast import bearer_entries
 from app.services.reachability_enrichment import (
     ComponentLanguages,
     component_language_map,
     enrich_findings_with_reachability,
 )
 from app.services.recommendations import generate_recommendations
-from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
+from app.services.sbom_parser import (
+    DELIBERATE_SKIP_REASONS,
+    SKIP_CRYPTO_ASSET,
+    merge_duplicate_dependencies,
+    parse_sbom,
+)
 from app.services.waivers.matching import (
     record_matches,
     roll_up_advisories,
@@ -78,9 +82,6 @@ _REACHABILITY = "reachability"
 _NO_COMPONENTS = "no components could be parsed (detected format: {sbom_format})"
 _DROPPED_COMPONENTS = "{count} component(s) dropped by the parser ({reasons})"
 
-# Deliberate skips: a parsed crypto asset goes to crypto_assets, and the other reasons name non-dependencies.
-_CRYPTO_ASSET = "cryptographic-asset"
-_DELIBERATE_SKIP_REASONS = frozenset({_CRYPTO_ASSET, "file", "non-dependency", "root-component"})
 _UNRECOGNISED_PAYLOAD = "unrecognised payload shape: expected {keys}"
 
 _BEARER = "bearer"
@@ -300,11 +301,12 @@ def _input_defects(parsed: ParsedSBOM) -> list[str]:
     lost = {
         reason: count
         for reason, count in parsed.skipped_reasons.items()
-        if reason not in _DELIBERATE_SKIP_REASONS and count
+        if reason not in DELIBERATE_SKIP_REASONS and count
     }
-    unread_crypto = parsed.skipped_reasons.get(_CRYPTO_ASSET, 0) - len(parsed.crypto_assets)
+    # A skipped crypto asset is lost unless it reached crypto_assets.
+    unread_crypto = parsed.skipped_reasons.get(SKIP_CRYPTO_ASSET, 0) - len(parsed.crypto_assets)
     if unread_crypto > 0:
-        lost[_CRYPTO_ASSET] = unread_crypto
+        lost[SKIP_CRYPTO_ASSET] = unread_crypto
     if lost:
         reasons = ", ".join(f"{reason}={count}" for reason, count in sorted(lost.items()))
         defects.append(_DROPPED_COMPONENTS.format(count=sum(lost.values()), reasons=reasons))

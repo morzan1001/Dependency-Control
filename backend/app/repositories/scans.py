@@ -167,6 +167,12 @@ class ScanRepository:
         result = await self.collection.update_one({"_id": scan_id, **(guard or {})}, update_ops)
         return bool(result.matched_count)
 
+    async def add_received_result(self, scan_id: str, update_ops: dict[str, Any]) -> dict[str, Any] | None:
+        scan: dict[str, Any] | None = await self.collection.find_one_and_update(
+            {"_id": scan_id}, update_ops, projection={"status": 1}, return_document=ReturnDocument.AFTER
+        )
+        return scan
+
     async def set_stats(self, scan_id: str, stats: Stats, extra: dict[str, Any] | None = None) -> None:
         """Also rewrites the copy in each latest_run reporting it: its own and its root's."""
         dumped = stats.model_dump()

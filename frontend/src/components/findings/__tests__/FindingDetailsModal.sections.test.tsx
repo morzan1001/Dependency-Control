@@ -325,9 +325,16 @@ describe("FindingDetailsModal advisory details", () => {
     expect(screen.getByText("EPSS: 25.00%")).toHaveClass("text-severity-critical");
     expect(screen.getByText("(Top 3%)")).toBeInTheDocument();
     expect(screen.getByText("Published:")).toBeInTheDocument();
-    expect(screen.getByText("CWE-79")).toBeInTheDocument();
+    expect(screen.getByText("CWE-79").closest("a")).toHaveAttribute("href", "https://cwe.mitre.org/data/definitions/79.html");
     expect(screen.getByText("grype")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /References \(2\)/ })).toBeInTheDocument();
+  });
+
+  it("links an advisory's bare CWE numbers as the SAST view does", () => {
+    renderModal(finding({ details: { vulnerabilities: [{ id: "CVE-2024-1", details: { cwe_ids: ["79", "89"] } }] } }));
+
+    expect(screen.getByText("CWE-79").closest("a")).toHaveAttribute("href", "https://cwe.mitre.org/data/definitions/79.html");
+    expect(screen.getByText("CWE-89").closest("a")).toHaveAttribute("href", "https://cwe.mitre.org/data/definitions/89.html");
   });
 });
 
@@ -359,15 +366,20 @@ describe("FindingDetailsModal secret details", () => {
     expect(screen.getByText("AKIA****")).toBeInTheDocument();
   });
 
-  it("places the secret in its file only when the scan's source is known", () => {
+  it("places the secret in its file and links the file only when the scan's source is known", () => {
     const shown = secret({ line: 42 });
     const { unmount } = renderModal(shown);
-    expect(screen.queryByText("Line 42")).not.toBeInTheDocument();
+    expect(screen.getByText("Line 42")).toBeInTheDocument();
+    expect(screen.getByTitle("config/settings.py").closest("a")).toBeNull();
     unmount();
 
     renderModal(shown, { scanContext: { projectUrl: "https://gitlab.example.com/acme/app", commitHash: "abc1234" } });
 
     expect(screen.getByText("Line 42")).toBeInTheDocument();
+    expect(screen.getByTitle("config/settings.py").closest("a")).toHaveAttribute(
+      "href",
+      "https://gitlab.example.com/acme/app/-/blob/abc1234/config/settings.py#L42",
+    );
   });
 });
 
@@ -490,6 +502,35 @@ describe("FindingDetailsModal details by type", () => {
 
     expect(screen.getByText("Scanner Failure")).toBeInTheDocument();
     expect(screen.getAllByText("trivy timed out")).toHaveLength(2);
+    expect(screen.getByText("exit status 124")).toBeInTheDocument();
+  });
+
+  it("shows each failure of a scanner with its source and details, not only the first", () => {
+    const errors = [
+      { source: "SBOM #1", message: "Scanner 'trivy' failed: timed out", error_details: "exit status 124" },
+      { source: "SBOM #2", message: "Scanner 'trivy' failed: bad report", error_details: { code: "E_JSON", message: "unexpected token" } },
+    ];
+    renderModal(
+      finding({
+        type: "system_warning",
+        description: errors.map((error) => error.message).join("; "),
+        details: { error_details: "exit status 124", errors },
+      }),
+    );
+
+    expect(screen.getByText("SBOM #1")).toBeInTheDocument();
+    expect(screen.getByText("SBOM #2")).toBeInTheDocument();
+    expect(screen.getByText("Scanner 'trivy' failed: bad report")).toBeInTheDocument();
+    expect(screen.getByText("exit status 124")).toBeInTheDocument();
+    expect(screen.getByText(/unexpected token/)).toBeInTheDocument();
+  });
+
+  it("leaves a single failure's message to the banner above it", () => {
+    const error = { source: "System: trivy", message: "Scanner 'trivy' failed: timed out", error_details: "exit status 124" };
+    renderModal(finding({ type: "system_warning", description: error.message, details: { error_details: "exit status 124", errors: [error] } }));
+
+    expect(screen.getByText("System: trivy")).toBeInTheDocument();
+    expect(screen.getAllByText(error.message)).toHaveLength(2);
     expect(screen.getByText("exit status 124")).toBeInTheDocument();
   });
 

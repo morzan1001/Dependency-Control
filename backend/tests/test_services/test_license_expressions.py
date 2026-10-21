@@ -6,15 +6,17 @@ import pytest
 
 from app.models.finding import Severity
 from app.models.license import LicenseCategory
-from app.services.aggregation.aggregator import ResultAggregator
+from app.services.aggregation.aggregator import _sanitize_deps_dev_license
 from app.services.analyzers.license_compliance import normalizer
-from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
+from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer, classify_license
 from app.services.analyzers.license_compliance.compatibility import partition_or_groups
 from app.services.analyzers.license_compliance.constants import LICENSE_INCOMPATIBILITY_CATEGORY
 from app.services.inventory.licenses import license_ids
 from app.services.sbom_parser import parse_sbom
 
 _GPL_AND_CHOICE = "GPL-3.0-only AND (MIT OR Apache-2.0)"
+# 2**30 combinations, far past the parser's expansion bound.
+_PAST_THE_BOUND = " AND ".join(f"(MIT OR Apache-{i})" for i in range(30))
 
 
 def _parsed(sbom: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -251,11 +253,41 @@ class TestParseLicenseExpression:
         assert normalizer.parse_license_expression(raw) == expected
 
     def test_an_expansion_past_the_bound_reads_as_one_term(self):
-        raw = " AND ".join(f"(MIT OR Apache-{i})" for i in range(30))
+        started = time.perf_counter()
+        groups = normalizer.parse_license_expression(_PAST_THE_BOUND)
+        assert time.perf_counter() - started < 1.0
+        assert groups == [[_PAST_THE_BOUND]]
+
+    @pytest.mark.parametrize(
+        ("raw", "mandatory"),
+        [
+            pytest.param(f"GPL-3.0-only AND {_PAST_THE_BOUND}", ["GPL-3.0-only"], id="and-bound"),
+            pytest.param(
+                f"{_PAST_THE_BOUND} AND (GPL-3.0-only OR GPL-3.0-only AND ISC)",
+                ["GPL-3.0-only"],
+                id="in-every-alternative",
+            ),
+            pytest.param(f"(GPL-3.0-only AND {_PAST_THE_BOUND}) OR MIT", [], id="an-alternative-without-it"),
+            pytest.param(
+                f"(GPL-3.0-only AND {_PAST_THE_BOUND}) OR NOASSERTION", ["GPL-3.0-only"], id="beside-a-placeholder"
+            ),
+            pytest.param(
+                f"GPL-2.0-only WITH Classpath-exception-2.0 AND {_PAST_THE_BOUND}",
+                ["GPL-2.0-only WITH Classpath-exception-2.0"],
+                id="with-an-exception",
+            ),
+            pytest.param(f"Acme-1.0 AND {_PAST_THE_BOUND}", [], id="unrecognised-stays-in-the-raw-term"),
+        ],
+    )
+    def test_past_the_bound_the_licences_every_alternative_binds_stay_beside_the_raw_term(self, raw, mandatory):
+        assert normalizer.parse_license_expression(raw) == [[*mandatory, raw]]
+
+    def test_a_long_choice_past_the_bound_parses_in_linear_time(self):
+        raw = " OR ".join(f"(GPL-3.0-only AND {_PAST_THE_BOUND})" for _ in range(200))
         started = time.perf_counter()
         groups = normalizer.parse_license_expression(raw)
         assert time.perf_counter() - started < 1.0
-        assert groups == [[raw]]
+        assert groups == [["GPL-3.0-only", raw]]
 
     def test_deep_nesting_reads_as_one_term_instead_of_raising(self):
         raw = "(" * 5000 + "MIT" + ")" * 5000
@@ -271,7 +303,40 @@ class TestParseLicenseExpression:
 
 def test_the_or_partition_returns_the_ids_it_checked():
     groups = normalizer.parse_license_expression("(gpl-2.0-only WITH Classpath-exception-2.0) OR mit OR Acme-1.0")
-    assert partition_or_groups(groups) == ([["GPL-2.0-only"], ["MIT"]], ["Acme-1.0"])
+    assert partition_or_groups(groups) == (
+        [{"GPL-2.0-only": "GPL-2.0-only WITH Classpath-exception-2.0"}, {"MIT": "MIT"}],
+        ["Acme-1.0"],
+    )
+
+
+_UNPARSEABLE_WITH = "GPL-2.0-only WITH Classpath-exception-2.0 OR (MIT"
+
+
+@pytest.mark.parametrize(
+    ("member", "expected"),
+    [
+        pytest.param("GPL-2.0-only WITH Classpath-exception-2.0", "GPL-2.0-only", id="parsed-exception"),
+        pytest.param(
+            "Eclipse Distribution License (EDL) WITH Foo exception",
+            "Eclipse Distribution License (EDL)",
+            id="parsed-names-with-spaces",
+        ),
+        pytest.param("MIT", "MIT", id="bare"),
+        pytest.param(_UNPARSEABLE_WITH, _UNPARSEABLE_WITH, id="unparseable-fallback"),
+        pytest.param(
+            "GPL-2.0-only WITH Classpath-exception-2.0 AND (",
+            "GPL-2.0-only WITH Classpath-exception-2.0 AND (",
+            id="fallback-starting-with-an-exception",
+        ),
+    ],
+)
+def test_only_a_parsed_exception_names_the_licence_it_modifies(member, expected):
+    assert normalizer.license_base(member) == expected
+
+
+def test_inventory_does_not_classify_an_unparseable_term_by_its_first_word():
+    assert license_ids(_UNPARSEABLE_WITH) == [_UNPARSEABLE_WITH]
+    assert classify_license(_UNPARSEABLE_WITH) is None
 
 
 def test_inventory_keeps_a_with_exception_on_its_licence():
@@ -284,7 +349,7 @@ def test_inventory_keeps_a_with_exception_on_its_licence():
 
 def test_a_deps_dev_expression_with_an_exception_stays_plausible():
     value = "GPL-2.0-only WITH Classpath-exception-2.0"
-    assert ResultAggregator._sanitize_deps_dev_license(value) == value
+    assert _sanitize_deps_dev_license(value) == value
 
 
 class TestCycloneDX:
@@ -318,6 +383,13 @@ class TestCycloneDX:
     def test_an_explicit_unlicensed_declaration_is_named_in_the_finding(self):
         [issue] = _issues(_analyze([self.deps["private-app"]]), LicenseCategory.UNKNOWN)
         assert "The SBOM declares UNLICENSED" in issue["explanation"]
+
+    def test_a_licence_bound_past_the_bound_keeps_its_finding_beside_the_undeterminable_rest(self):
+        texlive = {**self.deps["libchoice"], "name": "texlive", "license": f"GPL-3.0-only AND {_PAST_THE_BOUND}"}
+        result = _analyze([texlive])
+        assert [issue["license"] for issue in _issues(result, LicenseCategory.STRONG_COPYLEFT)] == ["GPL-3.0-only"]
+        [undeterminable] = _issues(result, LicenseCategory.UNKNOWN)
+        assert texlive["license"] in undeterminable["explanation"]
 
     def test_the_mandatory_gpl_term_still_reaches_the_conflict_check(self):
         gpl2 = {**self.deps["mixed-lib"], "name": "gpl2-lib", "license": "GPL-2.0-only AND (MIT OR Apache-2.0)"}

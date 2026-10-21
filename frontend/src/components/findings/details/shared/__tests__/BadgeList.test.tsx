@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { AlertTriangle } from "lucide-react";
-import { BadgeList } from "../BadgeList";
+import { BadgeList, CweBadgeList } from "../BadgeList";
 
 describe("BadgeList", () => {
   it("links each item it can build a URL for, under its formatted label", () => {
@@ -36,5 +36,14 @@ describe("BadgeList", () => {
     const { container } = render(<BadgeList items={[]} />);
 
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe("CweBadgeList", () => {
+  it("links a bare and a CWE- prefixed id to the same MITRE page", () => {
+    render(<CweBadgeList ids={["79", "cwe-89"]} />);
+
+    expect(screen.getByText("CWE-79").closest("a")).toHaveAttribute("href", "https://cwe.mitre.org/data/definitions/79.html");
+    expect(screen.getByText("CWE-89").closest("a")).toHaveAttribute("href", "https://cwe.mitre.org/data/definitions/89.html");
   });
 });

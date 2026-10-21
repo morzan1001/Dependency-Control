@@ -1,4 +1,4 @@
-import { Finding } from "@/types/scan"
+import type { Finding, FindingLocation } from "@/types/scan"
 import { Badge } from "@/components/ui/badge"
 import { ExternalLink, AlertTriangle, Info, BookOpen, Shield, Target, Gauge, ChevronDown, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -7,9 +7,11 @@ import { useState } from "react"
 import { 
     DetailSection, 
     BadgeList, 
+    CweBadgeList,
     ReferencesList, 
     RiskBadge, 
-    FileLocation 
+    FileLocation,
+    AdditionalLocations
 } from "./shared"
 import { SeverityBadge } from '../SeverityBadge'
 import { markdownHeadings, markdownHeadingTag } from '@/lib/markdown'
@@ -72,6 +74,7 @@ interface SastDetails {
     sast_findings?: SastIssueEntry[];
     start?: { line: number; column?: number };
     end?: { line: number; column?: number };
+    additional_locations?: FindingLocation[];
     line?: number;
     rule_id?: string;
     check_id?: string;
@@ -139,13 +142,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
 
             {details.cwe_ids && details.cwe_ids.length > 0 && (
                 <DetailSection label="CWE References">
-                    <BadgeList
-                        items={details.cwe_ids}
-                        variant="outline"
-                        icon={AlertTriangle}
-                        formatLabel={(cwe: string) => `CWE-${cwe}`}
-                        buildUrl={(cwe: string) => `https://cwe.mitre.org/data/definitions/${cwe}.html`}
-                    />
+                    <CweBadgeList ids={details.cwe_ids} />
                 </DetailSection>
             )}
 
@@ -297,6 +294,13 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                             <p className="text-sm font-mono text-red-600">{details.actual_value}</p>
                         </DetailSection>
                     )}
+                    {details.search_key && (
+                        <div className="col-span-2">
+                            <DetailSection label="Search Key" compact>
+                                <p className="text-sm font-mono break-all">{details.search_key}</p>
+                            </DetailSection>
+                        </div>
+                    )}
                 </div>
             )}
          </div>
@@ -312,6 +316,11 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                     endLine={endLine}
                     startCol={position.start?.column}
                     endCol={position.end?.column}
+                    scmContext={scanContext}
+                />
+                <AdditionalLocations
+                    filePath={finding.component || "Unknown"}
+                    locations={position.additional_locations}
                     scmContext={scanContext}
                 />
                 
@@ -375,6 +384,11 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 endLine={endLine}
                 startCol={position.start?.column}
                 endCol={position.end?.column}
+                scmContext={scanContext}
+            />
+            <AdditionalLocations
+                filePath={finding.component || "Unknown"}
+                locations={position.additional_locations}
                 scmContext={scanContext}
             />
             

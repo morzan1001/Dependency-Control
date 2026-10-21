@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-from app.schemas.ingest import BaseIngest
+from app.schemas.ingest import PipelineIngest
 
 
 class KicsFile(BaseModel):
@@ -29,6 +29,6 @@ class KicsQuery(BaseModel):
     files: list[KicsFile]
 
 
-class KicsIngest(BaseIngest):
+class KicsIngest(PipelineIngest):
     kics_version: str | None = None
     queries: list[KicsQuery] = Field(default_factory=list)

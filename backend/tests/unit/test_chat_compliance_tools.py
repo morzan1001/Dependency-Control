@@ -31,13 +31,11 @@ async def audited(db):
         action=PolicyAuditAction.UPDATE,
         actor=make_admin(),
     )
-    old = LicensePolicySchema().model_dump()
     await record_license_policy_change(
         db,
         project_id=_PROJECT,
-        old_policy=old,
-        new_policy={**old, "allow_strong_copyleft": True},
-        action=PolicyAuditAction.UPDATE,
+        old_entry=LicensePolicySchema().model_dump(),
+        new_entry={"allow_strong_copyleft": True},
         actor=make_admin(),
     )
     return db

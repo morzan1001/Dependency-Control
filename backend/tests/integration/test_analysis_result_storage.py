@@ -36,6 +36,7 @@ _ENVELOPE = {
     "commit_message": "bump deps",
     "pipeline_user": "ci-bot",
     "job_id": 9,
+    "job_name": "sast: backend",
     "is_release": False,
 }
 _MONGO_DOCUMENT_LIMIT = 16 * 1024 * 1024
@@ -159,6 +160,23 @@ async def test_a_retried_scanner_job_replaces_the_result_of_the_first_attempt(cl
     assert [(row["_id"], await _stored(db, row)) for row in await _rows(db, scan_id)] == [
         (first_row["_id"], {"findings": []})
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_parallel_jobs_of_one_scanner_keep_their_results_side_by_side(client, db, api_key_headers):
+    async def post(job_name: str, findings: list[dict[str, Any]]) -> str:
+        body = {**_RUN, "job_name": job_name, "findings": findings}
+        resp = await client.post("/api/v1/ingest/opengrep", json=body, headers=api_key_headers)
+        assert resp.status_code == 200, resp.text
+        return str(resp.json()["scan_id"])
+
+    scan_id = await post("sast: backend", [_OPENGREP_FINDING])
+    assert await post("sast: frontend", []) == scan_id
+    assert await post("sast: frontend", [_OPENGREP_FINDING]) == scan_id
+
+    stored = [(row["source"], len((await _stored(db, row))["findings"])) for row in await _rows(db, scan_id)]
+    assert sorted(stored) == [("sast: backend", 1), ("sast: frontend", 1)]
 
 
 @pytest.mark.asyncio

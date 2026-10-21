@@ -1,26 +1,29 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import BackgroundTasks, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, HTTPException, Request
 
-from app.api.deps import DatabaseDep, ProjectIngestDep
+from app.api.deps import DatabaseDep, ProjectIngestDep, get_system_settings
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.request_body import read_json_body
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import (
     NOTIFICATION_EVENT_SBOM_INGESTED,
+    RETENTION_ACTION_NONE,
     SCAN_STATUS_FAILED,
     SCAN_USABLE_STATUSES,
     WEBHOOK_EVENT_SBOM_INGESTED,
 )
+from app.core.housekeeping import effective_retention
+from app.models.system import SystemSettings
 from app.repositories.scans import ScanRepository
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
-    BaseIngest,
     FindingsIngestResponse,
+    PipelineIngest,
     ProjectConfigResponse,
     SBOMIngest,
     SBOMIngestResponse,
@@ -66,7 +69,7 @@ async def ingest_trufflehog(
     )
 
 
-def _route_findings_ingest(analyzer: str, label: str, model: type[BaseIngest], description: str) -> None:
+def _route_findings_ingest(analyzer: str, label: str, model: type[PipelineIngest], description: str) -> None:
     async def ingest(request: Request, project: ProjectIngestDep, db: DatabaseDep) -> FindingsIngestResponse:
         return await process_findings_ingest(ScanManager(db, project), analyzer, await read_json_body(request, model))
 
@@ -192,10 +195,12 @@ async def ingest_sbom(
 )
 async def get_project_config(
     project: ProjectIngestDep,
+    system_settings: Annotated[SystemSettings, Depends(get_system_settings)],
 ) -> ProjectConfigResponse:
     """Get project configuration (active analyzers and settings) for CI/CD pipelines."""
+    days, action, _ = effective_retention(project.retention_days, project.retention_action, system_settings)
     return ProjectConfigResponse(
         project_id=str(project.id),
         active_analyzers=project.active_analyzers,
-        retention_days=project.retention_days,
+        retention_days=0 if action == RETENTION_ACTION_NONE else days,
     )

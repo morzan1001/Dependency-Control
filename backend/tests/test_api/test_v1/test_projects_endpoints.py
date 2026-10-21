@@ -665,6 +665,7 @@ class TestAnalyzerNamesAreCheckedWhereTheyEnter:
     async def test_the_cbom_template_switch_can_be_turned_on_and_reaches_the_pipeline_config(self):
         from app.api.v1.endpoints.ingest import get_project_config
         from app.api.v1.endpoints.projects import update_project
+        from app.models.system import SystemSettings
         from app.schemas.project import ProjectUpdate
 
         user = _make_admin_user()
@@ -673,7 +674,8 @@ class TestAnalyzerNamesAreCheckedWhereTheyEnter:
 
         with patch(f"{MODULE}.check_project_access", AsyncMock(return_value=project)):
             await update_project("proj-1", ProjectUpdate(active_analyzers=["osv", "cbomkit"]), user, db)
-        config = await get_project_config(Project.model_validate(await db.projects.find_one({"_id": "proj-1"})))
+        stored = Project.model_validate(await db.projects.find_one({"_id": "proj-1"}))
+        config = await get_project_config(stored, SystemSettings())
 
         assert config.active_analyzers == ["osv", "cbomkit"]
 

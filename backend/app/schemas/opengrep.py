@@ -2,7 +2,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.schemas.ingest import BaseIngest
+from app.schemas.ingest import PipelineIngest
 
 
 class OpenGrepExtra(BaseModel):
@@ -21,7 +21,7 @@ class OpenGrepFinding(BaseModel):
     extra: OpenGrepExtra
 
 
-class OpenGrepIngest(BaseIngest):
+class OpenGrepIngest(PipelineIngest):
     findings: list[OpenGrepFinding] = Field(
         default_factory=list,
         description="List of SAST findings from OpenGrep.",

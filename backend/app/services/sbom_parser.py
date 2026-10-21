@@ -58,6 +58,13 @@ _LICENSE_CHOICE_PURL_TYPES = frozenset({"maven", "npm"})
 _SPDX_LICENSE_REF = re.compile(r"LicenseRef-[A-Za-z0-9.\-]+")
 _HEX_SHA512 = re.compile(r"[0-9a-fA-F]{128}")
 
+SKIP_CRYPTO_ASSET = "cryptographic-asset"
+_SKIP_FILE = "file"
+_SKIP_NON_DEPENDENCY = "non-dependency"
+_SKIP_ROOT = "root-component"
+# Skips of entries that are no dependencies; every other skip reason counts a lost component.
+DELIBERATE_SKIP_REASONS = frozenset({SKIP_CRYPTO_ASSET, _SKIP_FILE, _SKIP_NON_DEPENDENCY, _SKIP_ROOT})
+
 
 def _join_licenses(entries: list[str], purl: str | None) -> str:
     unique = list(dict.fromkeys(entries))
@@ -142,8 +149,21 @@ def _graph_entries(value: Any, field: str) -> list[dict[str, Any]]:
     return value
 
 
+def _check_endpoints(field: str, *endpoints: Any) -> None:
+    if not all(isinstance(endpoint, str) for endpoint in endpoints):
+        raise ValueError(f"{field} entries need string endpoints")
+
+
+def _graph_id(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
+
+
 def _resolve_directness(
-    forward: dict[Any, list[Any]], anchors: set[Any], transparent: set[Any], project: set[Any]
+    forward: dict[Any, list[Any]],
+    anchors: set[Any],
+    transparent: set[Any],
+    project: set[Any],
+    flat: set[Any] | frozenset[Any] = frozenset(),
 ) -> tuple[Callable[[Any], tuple[bool, bool]], set[Any]]:
     targets = {child for children in forward.values() for child in children}
     subjects = {ref for ref in anchors if forward.get(ref)}
@@ -155,14 +175,19 @@ def _resolve_directness(
         seeds = [ref for ref in roots if ref not in subjects]
     seeds += [child for ref in subjects for child in forward[ref]]
     direct: set[Any] = set()
+    guessed: set[Any] = set()
     while seeds:
         ref = seeds.pop()
         if ref not in direct:
             direct.add(ref)
+            # A lock-file node without a graph lists transitive packages beside the direct ones.
+            if ref in flat:
+                guessed.update(forward[ref])
             # Aggregator and OS-descriptor nodes are no dependency layer of their own.
-            if ref in transparent:
+            elif ref in transparent:
                 seeds.extend(forward.get(ref, ()))
     resolved = dict.fromkeys(targets, (False, inferred))
+    resolved.update(dict.fromkeys(guessed, (True, True)))
     resolved.update(dict.fromkeys(direct, (True, inferred)))
     resolved.update(dict.fromkeys(anchors - subjects, (True, False)))
     return lambda ref: resolved.get(ref, (True, True)), subjects
@@ -210,7 +235,9 @@ _SYFT_PROJECT_ROOT_PROPERTIES = (
     ("syft:package:foundBy", "java-pom-cataloger"),
 )
 # Trivy lock-file types whose single root package is the project; a Cargo workspace omits its members, so cargo is ambiguous.
-_TRIVY_ROOT_PACKAGE_TYPES = tuple(("aquasecurity:trivy:Type", kind) for kind in ("pom", "gomod", "gobinary"))
+_TRIVY_ROOT_PACKAGE_TYPES = tuple(
+    ("aquasecurity:trivy:Type", kind) for kind in ("pom", "gomod", "gobinary", "rustbinary", "dotnet-core", "uv")
+)
 
 
 def is_url(value: str) -> bool:
@@ -275,6 +302,9 @@ def _purl_less_identity(
     if not has_known_version(version):
         return False, None
     purl_type = _FABRICATED_PURL_TYPES.get(pkg_type, pkg_type)
+    # The purl spec requires a maven namespace.
+    if purl_type == "maven" and not group:
+        purl_type = "generic"
     namespace = f"{quote(str(group), safe='')}/" if group else ""
     return True, f"pkg:{purl_type}/{namespace}{quote(str(name), safe='')}@{quote(str(version), safe='')}"
 
@@ -308,7 +338,7 @@ def _spdx_value(pkg: dict[str, Any], key: str) -> str | None:
     return value if isinstance(value, str) and value not in _SPDX_NO_VALUE else None
 
 
-# osv derives a distro binary's source package from these; nothing reads any other raw property.
+# Trivy Src* keys: the only raw properties persisted.
 _OS_SOURCE_PACKAGE_PROPERTIES = tuple(
     f"aquasecurity:trivy:{key}" for key in ("SrcName", "SrcVersion", "SrcRelease", "SrcEpoch")
 )
@@ -398,7 +428,7 @@ class SBOMParser:
 
     @staticmethod
     def _append_distro(result: ParsedSBOM, distro_id: Any, version: Any, description: Any = None) -> None:
-        """Shaped like the CycloneDX row base-image end-of-life detection reads."""
+        """Shaped like the row a CycloneDX operating-system component parses into."""
         if not (isinstance(distro_id, str) and distro_id and isinstance(version, str) and version):
             return
         result.dependencies.append(
@@ -429,8 +459,9 @@ class SBOMParser:
         forward: dict[Any, list[Any]] = {}
         for entry in _graph_entries(dependencies, "dependencies"):
             ref, depends_on = entry.get("ref"), entry.get("dependsOn") or []
-            if not isinstance(depends_on, list) or not all(isinstance(r, str) for r in (ref, *depends_on)):
-                raise ValueError("dependencies entries need a string ref and a string list dependsOn")
+            if not isinstance(depends_on, list):
+                raise ValueError("dependencies entries need a list dependsOn")
+            _check_endpoints("dependencies", ref, *depends_on)
             forward.setdefault(ref, []).extend(depends_on)
         return forward
 
@@ -440,15 +471,19 @@ class SBOMParser:
     @classmethod
     def _cyclonedx_graph_roles(
         cls, components: list[dict[str, Any]], forward: dict[Any, list[Any]]
-    ) -> tuple[set[Any], set[Any], set[Any]]:
+    ) -> tuple[set[Any], set[Any], set[Any], set[Any]]:
         packages: set[str] = set()
         trivy_roots: set[Any] = set()
+        flat: set[Any] = set()
+        refs_by_purl: dict[str, list[str]] = {}
         syft_roots_by_lock: dict[str, list[str]] = {}
         targets = set().union(*forward.values())
         for comp in components:
             ref, comp_type = comp.get("bom-ref") or comp.get("purl"), comp.get("type")
             if not isinstance(ref, str) or comp_type in cls._NON_PACKAGE_COMPONENT_TYPES:
                 continue
+            if isinstance(purl := comp.get("purl"), str) and purl:
+                refs_by_purl.setdefault(purl, []).append(ref)
             raw_props = comp.get("properties")
             entries = raw_props if isinstance(raw_props, list) else []
             props = [(p.get("name"), p.get("value")) for p in entries if isinstance(p, dict)]
@@ -462,14 +497,18 @@ class SBOMParser:
                     and any(prop in _TRIVY_ROOT_PACKAGE_TYPES for prop in props)
                 ):
                     trivy_roots.add(children[0])
+                elif children and not any(forward.get(child) for child in children):
+                    flat.add(ref)
                 continue
             packages.add(ref)
             if forward.get(ref) and ref not in targets and any(prop in _SYFT_PROJECT_ROOT_PROPERTIES for prop in props):
                 lock = next((value for name, value in props if name == "syft:location:0:path"), None)
                 syft_roots_by_lock.setdefault(str(lock), []).append(ref)
+        # A module of the project roots its own lock-file node, so its copies elsewhere are the project too.
+        trivy_roots.update(*(refs for refs in refs_by_purl.values() if trivy_roots.intersection(refs)))
         # A second root in one lock file (an unlinked npm peer, a uv dev group) leaves the project ambiguous.
         project = {roots[0] for roots in syft_roots_by_lock.values() if len(roots) == 1}
-        return set(forward).union(targets) - packages, trivy_roots, project
+        return set(forward).union(targets) - packages, trivy_roots, project, flat
 
     def _parse_cyclonedx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         metadata = sbom.get("metadata", {})
@@ -496,21 +535,21 @@ class SBOMParser:
         result.crypto_assets = parse_crypto_components(components)
 
         forward = self._build_cyclonedx_deps_graph(sbom.get("dependencies") or [])
-        transparent, trivy_roots, project = self._cyclonedx_graph_roles(components, forward)
-        directness, subjects = _resolve_directness(forward, main_refs, transparent | trivy_roots, project)
+        transparent, trivy_roots, project, flat = self._cyclonedx_graph_roles(components, forward)
+        directness, subjects = _resolve_directness(forward, main_refs, transparent | trivy_roots, project, flat)
         # A tuple compares by equality, so an unhashable bom-ref cannot fail the whole document.
         root_refs = (*main_refs, *trivy_roots, *subjects)
 
         parsed_by_ref: dict[Any, ParsedDependency] = {}
         for comp in components:
             comp_type, bom_ref = comp.get("type"), comp.get("bom-ref")
-            if comp_type in ("cryptographic-asset", "file"):
+            if comp_type in (SKIP_CRYPTO_ASSET, _SKIP_FILE):
                 # Crypto assets are parsed into crypto_assets; file-catalog entries aren't dependencies.
                 self._count_skipped(result, comp_type)
             elif comp_type in self._NON_DEPENDENCY_COMPONENT_TYPES:
-                self._count_skipped(result, "non-dependency")
+                self._count_skipped(result, _SKIP_NON_DEPENDENCY)
             elif bom_ref in root_refs or comp.get("purl") in root_refs:
-                self._count_skipped(result, "root-component")
+                self._count_skipped(result, _SKIP_ROOT)
             elif parsed := self._append_parsed(
                 result,
                 "CycloneDX component",
@@ -543,7 +582,7 @@ class SBOMParser:
             self._count_skipped(result, "parse-error")
             return None
         if parsed is None:
-            self._count_skipped(result, "non-dependency" if structural else "unidentifiable")
+            self._count_skipped(result, _SKIP_NON_DEPENDENCY if structural else "unidentifiable")
         else:
             result.dependencies.append(parsed)
         return parsed
@@ -711,7 +750,7 @@ class SBOMParser:
         pkg_type = _SYFT_TYPE_TO_PURL_TYPE.get(syft_type, syft_type) if syft_type else component_type
 
         if not purl:
-            # OS descriptors stay without a purl: they feed base-image EOL detection.
+            # OS descriptors stay without a purl.
             kind = {"operating-system": "os", "application": "binary"}.get(component_type, "package")
             keep, purl = _purl_less_identity(kind, name, version, pkg_type, group, cpes)
             if not keep:
@@ -827,19 +866,22 @@ class SBOMParser:
         contains: dict[Any, list[Any]] = {}
         for rel in _graph_entries(relationships, "artifactRelationships"):
             parent, child, rel_type = rel.get("parent"), rel.get("child"), rel.get("type")
+            if rel_type not in ("depends-on", "dependency-of", "contains"):
+                continue
+            _check_endpoints("artifactRelationships", parent, child)
             if parent not in node_ids or child not in node_ids:
                 continue
             if rel_type == "depends-on":
                 forward.setdefault(parent, []).append(child)
             elif rel_type == "dependency-of":
                 forward.setdefault(child, []).append(parent)
-            elif rel_type == "contains":
+            else:
                 contains.setdefault(parent, []).append(child)
         return forward, contains
 
     def _parse_syft(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         source = sbom.get("source", {})
-        source_id = source.get("id", "")
+        source_id = _graph_id(source.get("id"))
         source_type, source_target = self._resolve_syft_source(source)
         if source_type is not None:
             result.source_type = source_type
@@ -848,21 +890,24 @@ class SBOMParser:
         raw_artifacts = sbom.get("artifacts") or []
         artifacts = [artifact for artifact in raw_artifacts if isinstance(artifact, dict)]
         self._count_skipped(result, "malformed", len(raw_artifacts) - len(artifacts))
-        self._count_skipped(result, "file", len(sbom.get("files") or []))
+        self._count_skipped(result, _SKIP_FILE, len(sbom.get("files") or []))
 
-        node_ids = {source_id, *(artifact.get("id") for artifact in artifacts)}
+        node_ids = {source_id, *(_graph_id(artifact.get("id")) for artifact in artifacts)} - {None}
         forward, contains = self._build_syft_dependency_graph(sbom.get("artifactRelationships") or [], node_ids)
-        project = {artifact.get("id") for artifact in artifacts if _has_local_origin(artifact.get("metadata"))}
-        directness, subjects = _resolve_directness(forward, {source_id}, set(), project)
+        project = {
+            _graph_id(artifact.get("id")) for artifact in artifacts if _has_local_origin(artifact.get("metadata"))
+        }
+        directness, subjects = _resolve_directness(forward, {source_id} - {None}, set(), project)
 
         parsed_by_id: dict[Any, ParsedDependency] = {}
         for artifact in artifacts:
-            if artifact.get("id") in subjects:
-                self._count_skipped(result, "root-component")
+            artifact_id = _graph_id(artifact.get("id"))
+            if artifact_id in subjects:
+                self._count_skipped(result, _SKIP_ROOT)
             elif parsed := self._append_parsed(
                 result, "Syft artifact", self._parse_syft_artifact, artifact, source_type, source_target, directness
             ):
-                parsed_by_id[artifact.get("id")] = parsed
+                parsed_by_id[artifact_id] = parsed
         _resolve_parent_refs(parsed_by_id, forward, contains)
 
         distro = sbom.get("distro")
@@ -943,7 +988,7 @@ class SBOMParser:
             None,
         )
         homepage = metadata.get("homepage") or (None if pkg_type == "npm" else metadata.get("url")) or None
-        is_direct, direct_inferred = directness(artifact.get("id"))
+        is_direct, direct_inferred = directness(_graph_id(artifact.get("id")))
 
         return ParsedDependency(
             name=name,
@@ -968,6 +1013,8 @@ class SBOMParser:
             cpes=cpes,
             description=metadata.get("description") or metadata.get("summary"),
             author=_people_to_str(metadata.get("authors") or metadata.get("author") or metadata.get("maintainer")),
+            # Syft's CycloneDX and SPDX writers name an RPM's vendor as its publisher.
+            publisher=_people_to_str(metadata.get("vendor")),
             group=_group_for(None, purl),
             homepage=homepage,
             repository_url=repository_url,
@@ -990,28 +1037,31 @@ class SBOMParser:
 
     @staticmethod
     def _build_spdx_dependency_graph(
-        relationships: Any, doc_spdx_id: Any
-    ) -> tuple[dict[Any, list[Any]], set[Any], set[str]]:
+        relationships: Any, doc_spdx_id: str
+    ) -> tuple[dict[Any, list[Any]], set[Any], set[Any]]:
         forward: dict[Any, list[Any]] = {}
         described: set[Any] = set()
-        containers: set[str] = set()
+        containers: set[Any] = set()
         for rel in _graph_entries(relationships, "relationships"):
             rel_type = rel.get("relationshipType")
+            if rel_type not in ("DEPENDS_ON", "DEPENDENCY_OF", "DESCRIBES", "DOCUMENT_DESCRIBES", "CONTAINS"):
+                continue
             element, related = rel.get("spdxElementId"), rel.get("relatedSpdxElement")
+            _check_endpoints("relationships", element, related)
             if rel_type == "DEPENDS_ON":
                 forward.setdefault(element, []).append(related)
             elif rel_type == "DEPENDENCY_OF":
                 forward.setdefault(related, []).append(element)
-            elif rel_type in ("DESCRIBES", "DOCUMENT_DESCRIBES") and element == doc_spdx_id:
-                described.add(related)
-            elif rel_type == "CONTAINS" and isinstance(element, str):
+            elif rel_type == "CONTAINS":
                 containers.add(element)
+            elif element == doc_spdx_id:
+                described.add(related)
         return forward, described, containers
 
     def _parse_spdx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         creation_info = sbom.get("creationInfo")
         creators = creation_info.get("creators") if isinstance(creation_info, dict) else None
-        # osv reads a set found_by as "syft catalogued this", which only the syft creator tool can vouch for.
+        # found_by is set only when the syft creator tool vouches for it.
         found_by = next(
             (
                 creator.removeprefix("Tool: ")
@@ -1021,7 +1071,7 @@ class SBOMParser:
             None,
         )
 
-        doc_spdx_id = sbom.get("SPDXID", "SPDXRef-DOCUMENT")
+        doc_spdx_id = _graph_id(sbom.get("SPDXID")) or "SPDXRef-DOCUMENT"
         forward, described, containers = self._build_spdx_dependency_graph(sbom.get("relationships") or [], doc_spdx_id)
         # SPDX 2.2 names the described packages in documentDescribes instead of DESCRIBES relationships.
         described.update(ref for ref in sbom.get("documentDescribes") or [] if isinstance(ref, str))
@@ -1029,13 +1079,15 @@ class SBOMParser:
 
         packages = sbom.get("packages") or []
         license_refs = self._spdx_license_refs(sbom)
-        self._count_skipped(result, "file", len(sbom.get("files") or []))
+        self._count_skipped(result, _SKIP_FILE, len(sbom.get("files") or []))
 
         roots = set(subjects)
         for pkg in packages:
-            if not isinstance(pkg, dict) or pkg.get("SPDXID") not in described:
+            if not isinstance(pkg, dict) or _graph_id(pkg.get("SPDXID")) not in described:
                 continue
-            if pkg.get("primaryPackagePurpose") == "CONTAINER":
+            # SPDX 2.2 has no primaryPackagePurpose, so there only the root's purl names an image.
+            purl, _ = self._extract_spdx_external_refs(pkg.get("externalRefs"))
+            if pkg.get("primaryPackagePurpose") == "CONTAINER" or get_purl_type(purl) in ("oci", "docker"):
                 result.source_type = SOURCE_TYPE_IMAGE
                 result.source_target = _image_reference(_spdx_value(pkg, "name"), _spdx_value(pkg, "versionInfo"))
                 roots.add(pkg["SPDXID"])
@@ -1048,8 +1100,10 @@ class SBOMParser:
         for pkg in packages:
             if not isinstance(pkg, dict):
                 self._count_skipped(result, "malformed")
-            elif pkg.get("SPDXID") in roots:
-                self._count_skipped(result, "root-component")
+                continue
+            spdx_id = _graph_id(pkg.get("SPDXID"))
+            if spdx_id in roots:
+                self._count_skipped(result, _SKIP_ROOT)
             elif parsed := self._append_parsed(
                 result,
                 "SPDX package",
@@ -1061,10 +1115,10 @@ class SBOMParser:
                 result.source_target,
                 found_by,
                 # Trivy's purl-less lock-file and binary nodes only group packages.
-                structural=pkg.get("SPDXID") in described
-                or (pkg.get("primaryPackagePurpose") == "APPLICATION" and pkg.get("SPDXID") in containers),
+                structural=spdx_id in described
+                or (pkg.get("primaryPackagePurpose") == "APPLICATION" and spdx_id in containers),
             ):
-                parsed_by_id[pkg.get("SPDXID")] = parsed
+                parsed_by_id[spdx_id] = parsed
         _resolve_parent_refs(parsed_by_id, forward)
 
         if not any(
@@ -1087,15 +1141,15 @@ class SBOMParser:
     )
 
     @staticmethod
-    def _extract_spdx_external_refs(
-        external_refs: list[dict[str, Any]],
-    ) -> tuple[str | None, list[str]]:
+    def _extract_spdx_external_refs(external_refs: Any) -> tuple[str | None, list[str]]:
         purl: str | None = None
         cpes: list[str] = []
-        for ref in external_refs:
+        for ref in external_refs if isinstance(external_refs, list) else []:
+            if not isinstance(ref, dict):
+                continue
             ref_type = ref.get("referenceType", "")
             locator = ref.get("referenceLocator", "")
-            if ref_type == "purl" and not purl:
+            if ref_type == "purl" and not purl and isinstance(locator, str):
                 purl = locator
             elif ref_type in ("cpe22Type", "cpe23Type"):
                 cpes.append(locator)
@@ -1175,7 +1229,7 @@ class SBOMParser:
         if not name:
             return None
 
-        purl, cpes = self._extract_spdx_external_refs(pkg.get("externalRefs") or [])
+        purl, cpes = self._extract_spdx_external_refs(pkg.get("externalRefs"))
         version = self._normalize_version(pkg.get("versionInfo"), purl)
         download_url = _spdx_value(pkg, "downloadLocation")
 
@@ -1192,7 +1246,7 @@ class SBOMParser:
         pkg_type = get_purl_type(purl) or "unknown"
         author, publisher = self._resolve_spdx_originator(pkg)
         package_file_name = pkg.get("packageFileName")
-        is_direct, direct_inferred = directness(pkg.get("SPDXID"))
+        is_direct, direct_inferred = directness(_graph_id(pkg.get("SPDXID")))
 
         return ParsedDependency(
             name=name,

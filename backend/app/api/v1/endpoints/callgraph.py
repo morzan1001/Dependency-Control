@@ -134,7 +134,10 @@ async def upload_callgraph(
         pending_rescans = await scan_repo.distinct(
             "_id", {"project_id": project_id, "original_scan_id": scan_id, "reachability_pending": True}
         )
-        for target_scan_id in [scan_id, *pending_rescans]:
+        # The newest run re-runs even when enriched, or it keeps the verdict of a language uploaded after it.
+        root = await scan_repo.collection.find_one({"_id": scan_id}, {"latest_run.scan_id": 1}) or {}
+        newest_run = (root.get("latest_run") or {}).get("scan_id")
+        for target_scan_id in dict.fromkeys(filter(None, [scan_id, newest_run, *pending_rescans])):
             written = {"reachability_pending": True, "updated_at": datetime.now(timezone.utc)}
             await scan_repo.update_raw(target_scan_id, {"$set": written})
             try:

@@ -1,0 +1,155 @@
+{
+ "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
+ "bomFormat": "CycloneDX",
+ "specVersion": "1.7",
+ "serialNumber": "urn:uuid:09533acd-8141-49a8-a85f-53302a24a0a3",
+ "version": 1,
+ "metadata": {
+  "timestamp": "2026-10-20T20:11:48+00:00",
+  "tools": {
+   "components": [
+    {
+     "type": "application",
+     "manufacturer": {
+      "name": "Aqua Security Software Ltd."
+     },
+     "group": "aquasecurity",
+     "name": "trivy",
+     "version": "0.76.0"
+    }
+   ]
+  },
+  "component": {
+   "bom-ref": "732bd3da-e447-4f7b-86e2-ea5cd64caa94",
+   "type": "application",
+   "name": "/src/dotnet",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:SchemaVersion",
+     "value": "2"
+    }
+   ]
+  }
+ },
+ "components": [
+  {
+   "bom-ref": "ae5ae171-b9e8-49ec-b232-c9ae32fccea8",
+   "type": "application",
+   "name": "app/MyService.deps.json",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:Class",
+     "value": "lang-pkgs"
+    },
+    {
+     "name": "aquasecurity:trivy:Type",
+     "value": "dotnet-core"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:nuget/MyService@1.0.0",
+   "type": "library",
+   "name": "MyService",
+   "version": "1.0.0",
+   "purl": "pkg:nuget/MyService@1.0.0",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "MyService/1.0.0"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "dotnet-core"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:nuget/Newtonsoft.Json@13.0.3",
+   "type": "library",
+   "name": "Newtonsoft.Json",
+   "version": "13.0.3",
+   "purl": "pkg:nuget/Newtonsoft.Json@13.0.3",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "Newtonsoft.Json/13.0.3"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "dotnet-core"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:nuget/Serilog.Sinks.Console@6.0.0",
+   "type": "library",
+   "name": "Serilog.Sinks.Console",
+   "version": "6.0.0",
+   "purl": "pkg:nuget/Serilog.Sinks.Console@6.0.0",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "Serilog.Sinks.Console/6.0.0"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "dotnet-core"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:nuget/Serilog@4.0.0",
+   "type": "library",
+   "name": "Serilog",
+   "version": "4.0.0",
+   "purl": "pkg:nuget/Serilog@4.0.0",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "Serilog/4.0.0"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "dotnet-core"
+    }
+   ]
+  }
+ ],
+ "dependencies": [
+  {
+   "ref": "732bd3da-e447-4f7b-86e2-ea5cd64caa94",
+   "dependsOn": [
+    "ae5ae171-b9e8-49ec-b232-c9ae32fccea8"
+   ]
+  },
+  {
+   "ref": "ae5ae171-b9e8-49ec-b232-c9ae32fccea8",
+   "dependsOn": [
+    "pkg:nuget/MyService@1.0.0"
+   ]
+  },
+  {
+   "ref": "pkg:nuget/MyService@1.0.0",
+   "dependsOn": [
+    "pkg:nuget/Newtonsoft.Json@13.0.3",
+    "pkg:nuget/Serilog.Sinks.Console@6.0.0"
+   ]
+  },
+  {
+   "ref": "pkg:nuget/Newtonsoft.Json@13.0.3",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:nuget/Serilog.Sinks.Console@6.0.0",
+   "dependsOn": [
+    "pkg:nuget/Serilog@4.0.0"
+   ]
+  },
+  {
+   "ref": "pkg:nuget/Serilog@4.0.0",
+   "dependsOn": []
+  }
+ ],
+ "vulnerabilities": []
+}

@@ -15,6 +15,7 @@ from .constants import (
     LICENSE_INCOMPATIBILITY_CATEGORY,
 )
 from .evaluator import create_issue
+from .normalizer import governing_members
 
 _CONFLICT_OPTIONS = (
     "• Replace one of the conflicting components with an alternative\n"
@@ -23,18 +24,18 @@ _CONFLICT_OPTIONS = (
 )
 
 
-def partition_or_groups(or_groups: list[list[str]]) -> tuple[list[list[str]], list[str]]:
-    readable: list[list[str]] = []
+def partition_or_groups(or_groups: list[list[str]]) -> tuple[list[dict[str, str]], list[str]]:
+    readable: list[dict[str, str]] = []
     unreadable: list[str] = []
     for group in or_groups:
         # A WITH exception only grants more, so the licence it modifies decides the verdict.
-        ids = list(dict.fromkeys(member.partition(" WITH ")[0] for member in group))
+        governing = governing_members(group)
         # AND binds every member, so one unrecognised member leaves the whole alternative unreadable.
-        missing = [lic for lic in ids if lic not in LICENSE_DATABASE]
+        missing = [lic for lic in governing if lic not in LICENSE_DATABASE]
         if missing:
             unreadable.extend(lic for lic in missing if lic not in unreadable)
         else:
-            readable.append(ids)
+            readable.append(governing)
     return readable, unreadable
 
 

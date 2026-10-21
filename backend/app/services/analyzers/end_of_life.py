@@ -43,6 +43,22 @@ _CPE_APPLICATION_PRODUCT = re.compile(r"cpe:(?:/?2\.3:|/)a:[^:]+:([^:]+)")
 _VERSION_DECORATION = re.compile(r"^(?:\d+:|go(?=\d)|v(?=\d))")
 # Debian, Ubuntu, RHEL/Fedora and Amazon rebuilds: the distribution backports fixes until its own end of life.
 _DISTRO_REBUILD = re.compile(r"[+~]deb\d+u\d|\+b\d+$|ubuntu\d|\.el\d|\+el\d|\.fc\d|\.amzn\d")
+# Trivy's osVendors (pkg/fanal/analyzer/pkg/rpm): an RPM from any other vendor (docker-ce) follows upstream.
+_DISTRIBUTION_RPM_VENDORS = (
+    "Amazon Linux",
+    "Amazon.com",
+    "CentOS",
+    "Fedora Project",
+    "Oracle America",
+    "Red Hat",
+    "AlmaLinux",
+    "CloudLinux",
+    "VMware",
+    "SUSE",
+    "openSUSE",
+    "Microsoft Corporation",
+    "Rocky",
+)
 
 
 def _mapped_products(key: str) -> set[str]:
@@ -67,14 +83,20 @@ def _resolve_eol_products(component: dict[str, Any]) -> set[str]:
     return products - _SERVER_PRODUCTS if purl_type in _CLIENT_REGISTRIES else products
 
 
+def _is_distro_build(component: dict[str, Any], version: str) -> bool:
+    purl = component.get("purl")
+    if not is_os_package_type(purl, component.get("type")) or not _DISTRO_REBUILD.search(version):
+        return False
+    # A deb's publisher is its maintainer, and an RPM without a recorded vendor has only its release suffix to go by.
+    vendor = component.get("publisher")
+    return get_purl_type(purl) != "rpm" or not vendor or vendor.startswith(_DISTRIBUTION_RPM_VENDORS)
+
+
 def collect_products_to_check(components: list[dict[str, Any]]) -> dict[str, list[tuple[str, str, bool]]]:
     out: dict[str, list[tuple[str, str, bool]]] = {}
     for component in components:
         version = component.get("version") or ""
-        distro_build = is_os_package_type(component.get("purl"), component.get("type")) and bool(
-            _DISTRO_REBUILD.search(version)
-        )
-        entry = (component.get("name") or "", version, distro_build)
+        entry = (component.get("name") or "", version, _is_distro_build(component, version))
         for product in _resolve_eol_products(component):
             bucket = out.setdefault(product, [])
             if entry not in bucket:

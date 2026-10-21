@@ -157,6 +157,22 @@ export interface ErrorDetails {
   [key: string]: string | number | boolean | undefined;
 }
 
+// One more hit of a location finding's identity in its file, in the shape its details give the first.
+export interface FindingLocation {
+  start?: { line?: number; column?: number };
+  end?: { line?: number; column?: number };
+  line?: number;
+  commit?: string;
+  commit_timestamp?: string;
+  search_key?: string;
+}
+
+export interface ScannerFailure {
+  source?: string | null;
+  message: string;
+  error_details?: string | ErrorDetails;
+}
+
 export interface FindingDetails {
   vulnerabilities?: NestedVulnerability[];
   quality_issues?: QualityIssue[];
@@ -198,6 +214,7 @@ export interface FindingDetails {
   sast_findings?: Array<{ id: string }>;
   start?: { line?: number; column?: number };
   end?: { line?: number; column?: number };
+  additional_locations?: FindingLocation[];
   metadata?: FindingMetadata;
   cwe_ids?: string[];
   published_date?: string;
@@ -252,6 +269,7 @@ export interface FindingDetails {
   scorecard?: ScorecardData;
   maintainer_risk?: MaintainerRiskData;
   error_details?: string | ErrorDetails;
+  errors?: ScannerFailure[];
 }
 
 export interface Finding {

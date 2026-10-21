@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.schemas.ingest import BaseIngest
+from app.schemas.ingest import PipelineIngest
 
 
 class TruffleHogFinding(BaseModel):
@@ -45,7 +45,7 @@ class TruffleHogFinding(BaseModel):
         return data
 
 
-class TruffleHogIngest(BaseIngest):
+class TruffleHogIngest(PipelineIngest):
     findings: list[TruffleHogFinding] = Field(
         default_factory=list,
         description="List of secrets found by TruffleHog.",

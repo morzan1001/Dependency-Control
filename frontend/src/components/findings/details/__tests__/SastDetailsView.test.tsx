@@ -55,6 +55,51 @@ describe("SastDetailsView location", () => {
 
     expect(screen.getByText("Line 12 - 14 (Col 5-20)")).toBeInTheDocument();
   });
+
+  it("lists the rule's other hits in the file as additional locations, linked like the first", () => {
+    const other = { start: { line: 12, column: 30 }, end: { line: 12, column: 36 } };
+    const sast = finding("sast", {
+      file: "app/handlers.py",
+      line: 12,
+      sast_findings: [
+        { id: "python.eval", scanner: "opengrep", severity: "HIGH", details: { ...SPAN, additional_locations: [other] } },
+      ],
+    });
+    const scanContext = { projectUrl: "https://github.com/acme/app", commitHash: "c0ffee" };
+
+    render(<SastDetailsView finding={sast} scanContext={scanContext} />);
+
+    expect(screen.getByText("Additional Locations")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Line 12 (Col 30-36)" })).toHaveAttribute(
+      "href",
+      "https://github.com/acme/app/blob/c0ffee/app/handlers.py#L12",
+    );
+  });
+
+  it("tells an IaC hit on the same line apart by its search key, beside the first hit's own", () => {
+    const iac = {
+      ...finding("iac", {
+        rule_id: "kics-1",
+        ...SPAN,
+        search_key: "spec.containers.name={{a}}",
+        additional_locations: [{ start: { line: 12 }, end: { line: 12 }, search_key: "spec.containers.name={{b}}" }],
+      }),
+      scanners: ["kics"],
+    };
+
+    render(<SastDetailsView finding={iac} />);
+
+    expect(screen.getByText("Line 12")).toBeInTheDocument();
+    expect(screen.getByText("spec.containers.name={{b}}")).toBeInTheDocument();
+    expect(screen.getByText("Search Key")).toBeInTheDocument();
+    expect(screen.getByText("spec.containers.name={{a}}")).toBeInTheDocument();
+  });
+
+  it("adds no section for a finding with a single hit", () => {
+    render(<SastDetailsView finding={finding("iac", { rule_id: "kics-1", ...SPAN })} />);
+
+    expect(screen.queryByText("Additional Locations")).not.toBeInTheDocument();
+  });
 });
 
 describe("SastDetailsView description", () => {
