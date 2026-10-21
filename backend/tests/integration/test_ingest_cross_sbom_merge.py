@@ -338,6 +338,40 @@ async def test_overlapping_stores_of_one_scan_leave_the_later_inventory(db, earl
     assert sorted(await _inventory(db)) == sorted(later)
 
 
+class _ChunksInStep(DependencyRepository):
+    def __init__(self, db, chunk_start: asyncio.Barrier):
+        super().__init__(db)
+        self._chunk_start = chunk_start
+
+    async def upsert_many(self, dependencies, fresh=False):
+        await self._chunk_start.wait()
+        await super().upsert_many(dependencies, fresh)
+
+
+async def _store_after(delay: float, names: list[str], scan_id: str, repo: DependencyRepository, **fields) -> None:
+    await asyncio.sleep(delay)
+    await store_scan_dependencies([_sbom(*(_dep(name, **fields) for name in names))], _PROJECT_ID, scan_id, repo, {})
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_overlapping_stores_inserting_the_same_new_packages_keep_each_with_the_later_content(db):
+    await create_indexes(db)
+    repo = _ChunksInStep(db, asyncio.Barrier(2))
+    names = [f"pkg-{i}" for i in range(1500)]
+    lost = []
+    for attempt in range(8):
+        scan_id = f"{_SCAN_ID}-{attempt}"
+        # A stored row makes both stores upsert, where they race to insert each new package.
+        await store_scan_dependencies([_sbom(_dep("seed"))], _PROJECT_ID, scan_id, DependencyRepository(db), {})
+        await asyncio.gather(
+            _store_after(0, names, scan_id, repo), _store_after(0.002, names, scan_id, repo, scope="runtime")
+        )
+        lost.append(len(names) - await db.dependencies.count_documents({"scan_id": scan_id, "scope": "runtime"}))
+
+    assert lost == [0] * 8
+
+
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_a_description_past_the_document_limit_is_stored_clipped(db):
