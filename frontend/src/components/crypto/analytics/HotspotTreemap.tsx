@@ -30,10 +30,15 @@ export function HotspotTreemap({ scope, scopeId, groupBy }: Readonly<Props>) {
   }));
 
   return (
-    <div style={{ width: "100%", height: 500 }}>
-      <ResponsiveContainer>
-        <Treemap data={chartData} dataKey="size" stroke="#fff" />
-      </ResponsiveContainer>
+    <div className="space-y-2">
+      {data.total > data.items.length && (
+        <p className="text-xs text-muted-foreground">{`Showing ${data.items.length} of ${data.total} hotspots`}</p>
+      )}
+      <div style={{ width: "100%", height: 500 }}>
+        <ResponsiveContainer>
+          <Treemap data={chartData} dataKey="size" stroke="#fff" />
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
