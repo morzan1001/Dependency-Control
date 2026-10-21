@@ -3,6 +3,7 @@ from typing import Any
 from pymongo import UpdateOne
 from pymongo.errors import BulkWriteError
 
+from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.core.purl import package_identity_expr
 from app.models.dependency import Dependency
 from app.repositories.base import DUPLICATE_KEY_ERROR, BaseRepository
@@ -58,8 +59,6 @@ class DependencyRepository(BaseRepository[Dependency]):
         return result[0]["count"] if result else 0
 
     async def get_type_distribution(self, scan_ids: list[str]) -> list[dict[str, Any]]:
-        from app.api.v1.helpers.sorting import case_insensitive_sort  # app.api.v1.helpers imports this module
-
         pipeline: list[dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},
             {"$group": {"_id": "$type", "count": {"$sum": 1}}},
@@ -69,8 +68,6 @@ class DependencyRepository(BaseRepository[Dependency]):
         return await self.aggregate(pipeline)
 
     async def get_top_usage(self, scan_ids: list[str], limit: int, type_filter: str | None) -> list[dict[str, Any]]:
-        from app.api.v1.helpers.sorting import case_insensitive_sort  # app.api.v1.helpers imports this module
-
         match: dict[str, Any] = {"scan_id": {"$in": scan_ids}}
         if type_filter:
             match["type"] = type_filter
