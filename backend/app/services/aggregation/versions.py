@@ -151,3 +151,8 @@ def normalize_version(version: str | None) -> str:
     if v.startswith("v") and len(v) > 1 and v[1].isdigit():
         return v[1:]
     return v
+
+
+def version_covered(versions: set[str], version: str | None) -> bool:
+    # A finding without a version cannot tell the package's versions apart, so it covers them all.
+    return "unknown" in versions or normalize_version(version) in versions

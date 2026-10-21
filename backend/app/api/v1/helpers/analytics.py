@@ -45,7 +45,12 @@ from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
 from app.schemas.analytics import ThreatIntelFields
 from app.schemas.enrichment import VulnerabilityEnrichment
-from app.services.aggregation.versions import aggregate_fixed_version, normalize_version, split_fixed_versions
+from app.services.aggregation.versions import (
+    aggregate_fixed_version,
+    normalize_version,
+    split_fixed_versions,
+    version_covered,
+)
 from app.services.analytics.scopes import ScopeResolver, read_scope_project_ids
 from app.services.component_identity import build_component_index, lookup_component
 from app.services.enrichment.scoring import fold_enrichments
@@ -473,12 +478,7 @@ async def gather_cross_project_data(
         vulnerable_index = build_component_index(vulnerable_by_component)
         for package in shared_packages:
             vulnerable = lookup_component(vulnerable_index, package["name"]) or set()
-            # A finding without a version cannot tell the versions apart, so it marks every one of them.
-            package["vulnerable_versions"] = [
-                version
-                for version in package["versions"]
-                if "unknown" in vulnerable or normalize_version(version) in vulnerable
-            ]
+            package["vulnerable_versions"] = [v for v in package["versions"] if version_covered(vulnerable, v)]
         cross_project_data["shared_packages"] = shared_packages
 
     for project in compared:

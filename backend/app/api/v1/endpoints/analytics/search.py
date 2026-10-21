@@ -45,7 +45,7 @@ from app.schemas.analytics import (
     VulnerabilitySearchResponse,
     VulnerabilitySearchResult,
 )
-from app.services.aggregation.versions import normalize_version
+from app.services.aggregation.versions import normalize_version, version_covered
 from app.services.component_identity import build_component_index, lookup_component
 from app.services.inventory.components import NUMBERED_SORT_FIELDS, TEXT_SORT_FIELDS
 from app.services.recommendation.common import max_advisory_cvss
@@ -125,8 +125,7 @@ async def _dependency_ids_by_vulnerability(
 
     def is_vulnerable(dep: dict[str, Any]) -> bool:
         versions = lookup_component(vuln_versions.get(dep["project_id"], {}), dep["name"]) or set()
-        # A finding without a version cannot tell the package's versions apart, so it covers them all.
-        return "unknown" in versions or normalize_version(dep["version"]) in versions
+        return version_covered(versions, dep["version"])
 
     return [dep["_id"] for dep in candidates if is_vulnerable(dep) == has_vulnerabilities]
 
