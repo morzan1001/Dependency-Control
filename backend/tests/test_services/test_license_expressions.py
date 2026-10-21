@@ -231,6 +231,7 @@ class TestParseLicenseExpression:
                 ],
             ),
             ("((MIT OR (ISC AND Apache-2.0)))", [["MIT"], ["ISC", "Apache-2.0"]]),
+            ("MIT OR ISC AND Apache-2.0", [["MIT"], ["ISC", "Apache-2.0"]]),
             ("MIT OR MIT", [["MIT"]]),
             ("mit AND gpl-2.0+", [["MIT", "GPL-2.0-or-later"]]),
             ("Apache License, Version 2.0", [["Apache-2.0"]]),
@@ -239,6 +240,7 @@ class TestParseLicenseExpression:
             ("(MIT OR NOASSERTION) AND ISC", [["MIT", "ISC"]]),
             ("NOASSERTION", []),
             ("", []),
+            ("   ", []),
             ("UNLICENSED", [["UNLICENSED"]]),
             (
                 "GPL-2.0-only AND Common Development and Distribution License (CDDL) v1.0",
