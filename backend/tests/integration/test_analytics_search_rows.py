@@ -60,7 +60,7 @@ def _kev_and_plain():
         cve="CVE-2021-0001",
         epss_score=0.9,
         epss_percentile=99.0,
-        is_kev=True,
+        in_kev=True,
         kev_due_date="2022-01-01",
         kev_ransomware_use=True,
         risk_score=90.0,

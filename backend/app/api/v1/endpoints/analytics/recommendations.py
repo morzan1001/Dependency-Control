@@ -94,7 +94,7 @@ async def _apply_live_threat_intel(findings: list[FindingRecord]) -> dict[str, V
         return {}
 
     # A CVE the live sources returned nothing for keeps the scores stored at scan time.
-    live = {cve: e for cve, e in enrichments.items() if e.epss_score is not None or e.is_kev}
+    live = {cve: e for cve, e in enrichments.items() if e.epss_score is not None or e.in_kev}
     for f in vuln_findings:
         refreshed = [v for v in f.details.get("vulnerabilities") or [] if any(c in live for c in entry_cves(v))]
         apply_enrichments({"vulnerabilities": refreshed}, live)

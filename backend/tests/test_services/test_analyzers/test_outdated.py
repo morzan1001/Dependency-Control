@@ -1,4 +1,6 @@
 import asyncio
+import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -7,6 +9,7 @@ from typing_extensions import Self
 
 from app.core.cache import CacheTTL
 from app.services.analyzers.outdated import OutdatedAnalyzer
+from app.services.release_history import DepsDevReleaseHistoryFetcher, ReleaseInfo
 
 _API = "https://api.deps.dev/v3alpha/systems"
 
@@ -117,6 +120,18 @@ class TestDepsDevStatusPolicy:
         assert await fake_cache.get("latest3:pypi:flaky") is None
 
     @pytest.mark.asyncio
+    async def test_failed_lookups_are_logged_once_per_run(self, fake_cache, monkeypatch, caplog) -> None:
+        _serve(monkeypatch, fake_cache, {"flaky": 500, "broken": httpx.ConnectError("refused")})
+
+        result = await OutdatedAnalyzer().analyze(
+            {}, parsed_components=[_component("flaky", "1.0.0"), _component("broken", "1.0.0")]
+        )
+
+        [warning] = [record for record in caplog.records if record.levelno >= logging.WARNING]
+        assert result["partial_components_skipped"] == 2
+        assert warning.getMessage().startswith("outdated_packages: 2 components not checked, first failure: ")
+
+    @pytest.mark.asyncio
     async def test_an_unknown_package_is_negative_cached_briefly(self, fake_cache, monkeypatch) -> None:
         _serve(monkeypatch, fake_cache, {})
 
@@ -143,6 +158,18 @@ class TestDefaultVersionSelection:
         component = {"name": "lodash", "version": "unknown", "purl": "pkg:npm/lodash"}
 
         result = await OutdatedAnalyzer().analyze({}, parsed_components=[component])
+
+        assert result == {"outdated_dependencies": [], "ahead_of_default": []}
+        assert client.urls == []
+
+    @pytest.mark.parametrize("purl", ["pkg:npm/", "pkg:maven/org.example/"], ids=["npm", "maven"])
+    @pytest.mark.asyncio
+    async def test_a_purl_without_a_package_name_is_not_looked_up(self, fake_cache, monkeypatch, purl) -> None:
+        client = _serve(monkeypatch, fake_cache, {})
+
+        result = await OutdatedAnalyzer().analyze(
+            {}, parsed_components=[{"name": "ghost", "version": "1.0.0", "purl": purl}]
+        )
 
         assert result == {"outdated_dependencies": [], "ahead_of_default": []}
         assert client.urls == []
@@ -260,3 +287,15 @@ async def test_an_ecosystem_deps_dev_does_not_serve_is_neither_requested_nor_cac
     assert result == {"outdated_dependencies": [], "ahead_of_default": []}
     assert client.urls == []
     assert await fake_cache._client.keys("*") == []
+
+
+@pytest.mark.asyncio
+async def test_the_package_document_also_serves_the_release_history(fake_cache, monkeypatch) -> None:
+    _serve(monkeypatch, fake_cache, {"lodash": {"versions": [_v("4.17.20", default=True)]}})
+    monkeypatch.setattr("app.services.release_history.cache_service", fake_cache)
+    monkeypatch.setattr("app.services.release_history.InstrumentedAsyncClient", None)
+
+    await OutdatedAnalyzer().analyze({}, parsed_components=[_component("lodash", "4.17.20", "npm")])
+    history = await DepsDevReleaseHistoryFetcher().fetch([("npm", "lodash")])
+
+    assert history == {("npm", "lodash"): [ReleaseInfo("4.17.20", datetime(2024, 1, 1, tzinfo=timezone.utc))]}

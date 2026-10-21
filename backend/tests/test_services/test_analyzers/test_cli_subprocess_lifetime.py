@@ -152,7 +152,7 @@ async def test_the_temp_sbom_and_the_scanner_output_are_handled_off_the_event_lo
     monkeypatch.setattr(analyzer, "_execute_command", scanner_output)
     sbom = json.loads(await asyncio.to_thread(_UV_SBOM.read_text))
 
-    result = await analyzer.analyze(sbom)
+    result = await analyzer.analyze(sbom, parsed_components=[])
 
     assert [match["artifact"]["name"] for match in result["matches"]] == ["brace-expansion", "libgnutls30", "libc-bin"]
     assert sorted(threads) == ["_create_temp_sbom", "_parse_output"]

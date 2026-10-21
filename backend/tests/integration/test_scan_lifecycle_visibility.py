@@ -79,24 +79,24 @@ async def _seed_project(db, latest_scan_id: str | None = None) -> None:
 
 
 class _FailingAnalyzer:
-    async def analyze(self, sbom, settings=None, parsed_components=None):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
         raise RuntimeError("analyzer exploded")
 
 
 class _ErrorResultAnalyzer:
-    async def analyze(self, sbom, settings=None, parsed_components=None):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
         return {"error": "controlled scanner error"}
 
 
 class _CliTimeoutAnalyzer:
     """Real CLI failure shape: cli_base returns error dicts instead of raising."""
 
-    async def analyze(self, sbom, settings=None, parsed_components=None):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
         return {"error": "grype analysis failed", "details": "grype timed out after 300 seconds"}
 
 
 class _GrypeVulnAnalyzer:
-    async def analyze(self, sbom, settings=None, parsed_components=None):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
         return {
             "matches": [
                 {
@@ -117,7 +117,7 @@ class _GrypeVulnAnalyzer:
 
 
 class _PartialResultAnalyzer:
-    async def analyze(self, sbom, settings=None, parsed_components=None):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
         return {"osv_vulnerabilities": [], "partial_components_skipped": 7}
 
 
@@ -199,7 +199,7 @@ class _PartialOnTheSecondSbom:
     def __init__(self):
         self.calls = 0
 
-    async def analyze(self, sbom, settings=None, parsed_components=None):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
         self.calls += 1
         if self.calls == 1:
             return {"osv_vulnerabilities": []}

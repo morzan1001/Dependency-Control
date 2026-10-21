@@ -38,7 +38,7 @@ class TestApplyLiveThreatIntel:
     def test_kev_and_epss_written_from_canonical_cves(self):
         # advisory listed as GHSA + its CVE alias; enrichment keyed on the canonical CVE
         f = _finding([{"id": "GHSA-x", "aliases": ["CVE-1"]}])
-        _run([f], {"CVE-1": _live("CVE-1", is_kev=True, epss_score=0.9)})
+        _run([f], {"CVE-1": _live("CVE-1", in_kev=True, epss_score=0.9)})
         [advisory] = f.details["vulnerabilities"]
         assert advisory["in_kev"] is True
         assert advisory["epss_score"] == 0.9
@@ -48,8 +48,8 @@ class TestApplyLiveThreatIntel:
         _run(
             [f],
             {
-                "CVE-1": _live("CVE-1", is_kev=False, epss_score=0.2, kev_ransomware_use=False),
-                "CVE-2": _live("CVE-2", is_kev=True, epss_score=0.7, kev_ransomware_use=True),
+                "CVE-1": _live("CVE-1", in_kev=False, epss_score=0.2, kev_ransomware_use=False),
+                "CVE-2": _live("CVE-2", in_kev=True, epss_score=0.7, kev_ransomware_use=True),
             },
         )
         first, second = sorted(f.details["vulnerabilities"], key=lambda a: a["id"])
@@ -65,7 +65,7 @@ class TestApplyLiveThreatIntel:
 
     def test_non_vulnerability_findings_untouched(self):
         f = _finding([{"id": "CVE-1"}]).model_copy(update={"type": FindingType.SECRET})
-        _run([f], {"CVE-1": _live("CVE-1", is_kev=True)})
+        _run([f], {"CVE-1": _live("CVE-1", in_kev=True)})
         assert "in_kev" not in f.details["vulnerabilities"][0]
 
     def test_no_cves_no_enrichment_call(self):
@@ -82,7 +82,7 @@ class TestApplyLiveThreatIntel:
 
     def test_the_per_cve_enrichment_is_handed_back_for_the_cards(self):
         f = _finding([{"id": "CVE-1", "aliases": ["CVE-2"]}])
-        live = {"CVE-1": _live("CVE-1"), "CVE-2": _live("CVE-2", is_kev=True)}
+        live = {"CVE-1": _live("CVE-1"), "CVE-2": _live("CVE-2", in_kev=True)}
 
         assert _run([f], live) == live
 
@@ -99,7 +99,7 @@ class TestApplyLiveThreatIntel:
 class TestRefreshedCards:
     def test_a_cve_listed_after_the_scan_leaves_the_epss_card_for_the_ransomware_card(self):
         f = _finding([{"id": "CVE-2021-44228", "epss_score": 0.8}])
-        live = _run([f], {"CVE-2021-44228": _live("CVE-2021-44228", is_kev=True, kev_ransomware_use=True)})
+        live = _run([f], {"CVE-2021-44228": _live("CVE-2021-44228", in_kev=True, kev_ransomware_use=True)})
 
         cards = {r.type for r in detect_known_exploits([f], live)}
 

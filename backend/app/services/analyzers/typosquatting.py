@@ -76,6 +76,35 @@ def _has_legitimate_prefix(longer: str, shorter: str) -> bool:
     return longer.startswith(shorter + "-")
 
 
+def _one_typo_apart(name: str, popular: str, min_length: int = 4) -> bool:
+    """One replaced letter or one swap of neighbours; under four letters such pairs are mostly unrelated words."""
+    if len(name) != len(popular) or len(name) < min_length:
+        return False
+    match [i for i in range(len(name)) if name[i] != popular[i]]:
+        case [_]:
+            return True
+        case [i, j]:
+            return j == i + 1 and name[i : j + 1] == popular[i : j + 1][::-1]
+    return False
+
+
+def _one_letter_moved(name: str, popular: str) -> bool:
+    """One added, dropped or swapped letter in a short segment; a replaced one names a sibling, like ecr beside ec2."""
+    shorter, longer = sorted((name, popular), key=len)
+    if len(longer) >= 4:
+        return False
+    if len(longer) == len(shorter) + 1:
+        return any(longer[:i] + longer[i + 1 :] == shorter for i in range(len(longer)))
+    return len(name) == len(popular) and any(
+        name == popular[:i] + popular[i + 1] + popular[i] + popular[i + 2 :] for i in range(len(popular) - 1)
+    )
+
+
+def _looks_mistyped(name: str, popular: str, similarity_threshold: float) -> bool:
+    ratio = difflib.SequenceMatcher(None, name, popular).ratio()
+    return ratio > similarity_threshold or _one_typo_apart(name, popular) or _one_letter_moved(name, popular)
+
+
 def _severity_for_ratio(ratio: float, critical_at: float, high_at: float) -> str:
     if ratio > critical_at:
         return Severity.CRITICAL.value
@@ -117,12 +146,14 @@ class TyposquattingAnalyzer(Analyzer):
     async def _fetch_pypi_packages(self) -> list[str] | None:
         timeout = ANALYZER_TIMEOUTS["typosquatting"]
         try:
-            # The corpus has moved host before; an unfollowed 301 leaves only the handful of built-in names.
-            async with InstrumentedAsyncClient("PyPI API", timeout=timeout, follow_redirects=True) as client:
-                resp = await client.get(TOP_PYPI_PACKAGES_URL)
+            # httpx times each read, so only a total limit keeps a trickling download inside the lock's lifetime.
+            async with asyncio.timeout(timeout):
+                # The corpus has moved host before; an unfollowed 301 leaves only the handful of built-in names.
+                async with InstrumentedAsyncClient("PyPI API", timeout=timeout, follow_redirects=True) as client:
+                    resp = await client.get(TOP_PYPI_PACKAGES_URL)
             reason = f"HTTP {resp.status_code}"
             if resp.status_code == 200:
-                packages = [row["project"].lower() for row in resp.json().get("rows", [])]
+                packages = [row["project"] for row in resp.json().get("rows", [])]
                 if packages:
                     logger.info(f"Loaded {len(packages)} popular PyPI packages")
                     return packages
@@ -143,13 +174,14 @@ class TyposquattingAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
         popular_packages = await self._ensure_popular_packages()
         settings = settings or {}
         issues = await asyncio.to_thread(
             self._scan_components,
-            parsed_components or [],
+            parsed_components,
             popular_packages,
             settings.get("similarity_threshold", TYPOSQUATTING_SIMILARITY_THRESHOLD),
             settings.get("critical_similarity", TYPOSQUATTING_CRITICAL_SIMILARITY),
@@ -173,12 +205,15 @@ class TyposquattingAnalyzer(Analyzer):
         critical_at: float,
         high_at: float,
     ) -> list[dict[str, Any]]:
-        corpora: dict[str, tuple[set[str], list[str]]] = {}
+        corpora = {ecosystem: _corpus(ranking) for ecosystem, ranking in popular_packages.items()}
         issues = []
         for component in components:
-            issue = self._scan_component(
-                component, popular_packages, corpora, similarity_threshold, critical_at, high_at
-            )
+            parsed = parse_purl(component.get("purl") or "")
+            ecosystem = parsed.registry_system if parsed else None
+            corpus = corpora.get(ecosystem) if ecosystem else None
+            if corpus is None:
+                continue
+            issue = self._scan_component(component, corpus, similarity_threshold, critical_at, high_at)
             if issue is not None:
                 issues.append(issue)
         return issues
@@ -186,41 +221,43 @@ class TyposquattingAnalyzer(Analyzer):
     def _scan_component(
         self,
         component: dict[str, Any],
-        popular_packages: dict[str, list[str]],
-        corpora: dict[str, tuple[set[str], list[str]]],
+        corpus: tuple[set[str], list[str]],
         similarity_threshold: float,
         critical_at: float,
         high_at: float,
     ) -> dict[str, Any] | None:
-        parsed = parse_purl(component.get("purl") or "")
-        ecosystem = parsed.registry_system if parsed else None
-        if ecosystem not in popular_packages:
-            return None
-
         full_name = pep503_normalize(component.get("name") or "")
         name = _normalize_pkg_name(full_name)
         if not name:
             return None
 
-        if ecosystem not in corpora:
-            corpora[ecosystem] = _corpus(popular_packages[ecosystem])
-        known, top = corpora[ecosystem]
-
+        known, top = corpus
         # The bare name of @myorg/axios would otherwise match axios itself.
         if full_name in known or name in known:
             return None
 
+        # Longest first, so the cut falls after the whole prefix a popular name shares.
+        family_prefixes = [name[: i + 1] for i in reversed(range(len(name))) if name[i] == "-"]
         matcher = difflib.SequenceMatcher(None, b=name)
-        best_ratio, best_popular = similarity_threshold, None
+        best_ratio, best_popular = 0.0, None
         for popular in top:
             if abs(len(name) - len(popular)) > 2:
                 continue
+            if family_prefixes and popular.startswith(family_prefixes[-1]):
+                cut = len(next(prefix for prefix in family_prefixes if popular.startswith(prefix)))
+                # mypy-boto3-ecr is no typo of mypy-boto3-ec2: siblings differ by design after their shared prefix.
+                if not _looks_mistyped(name[cut:], popular[cut:], similarity_threshold):
+                    continue
+                floor = best_ratio
+            else:
+                # One typo in a five-letter name scores 0.8; four-letter pairs (0.75) are mostly unrelated scoped names.
+                floor = best_ratio if _one_typo_apart(name, popular, 5) else max(best_ratio, similarity_threshold)
             # Both quick ratios bound ratio() from above in either orientation; ratio() itself is not symmetric.
             matcher.set_seq1(popular)
-            if matcher.real_quick_ratio() <= best_ratio or matcher.quick_ratio() <= best_ratio:
+            if matcher.real_quick_ratio() <= floor or matcher.quick_ratio() <= floor:
                 continue
             ratio = difflib.SequenceMatcher(None, name, popular).ratio()
-            if ratio > best_ratio and self._is_suspicious(name, popular):
+            if ratio > floor and self._is_suspicious(name, popular):
                 best_ratio, best_popular = ratio, popular
         if best_popular is None:
             return None

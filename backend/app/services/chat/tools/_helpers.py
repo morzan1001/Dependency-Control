@@ -212,14 +212,14 @@ def _live_threat(doc: dict[str, Any]) -> dict[str, Any]:
     top_epss = max(
         (a for a in vuln.advisories if a.get("epss_score") is not None), key=itemgetter("epss_score"), default={}
     )
-    maturity = calculate_exploit_maturity(vuln.is_kev, vuln.kev_ransomware, vuln.epss_score)
+    maturity = calculate_exploit_maturity(vuln.in_kev, vuln.kev_ransomware_use, vuln.epss_score)
     return {
         "fixed_version": vuln.fixed_version,
         "epss_score": vuln.epss_score,
         "epss_percentile": top_epss.get("epss_percentile"),
         "exploit_maturity": None if maturity == "unknown" else maturity,
         "risk_score": vuln.risk_score,
-        DETAILS_KEY_IN_KEV: vuln.is_kev or None,
+        DETAILS_KEY_IN_KEV: vuln.in_kev or None,
     }
 
 

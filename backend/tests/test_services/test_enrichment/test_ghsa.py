@@ -26,7 +26,8 @@ def _finding(*ghsa_ids: str) -> dict:
 
 
 async def _resolve(*ghsa_ids: str, token: str | None = None) -> dict[str, GHSAData]:
-    return await vulnerability_enrichment_service._ghsa_provider.resolve_ghsa_to_cve(list(ghsa_ids), token)
+    resolved, _ = await vulnerability_enrichment_service._ghsa_provider.resolve_ghsa_to_cve(list(ghsa_ids), token)
+    return resolved
 
 
 async def _exhausted(request: httpx.Request) -> httpx.Response:
@@ -35,13 +36,18 @@ async def _exhausted(request: httpx.Request) -> httpx.Response:
     return httpx.Response(403, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset})
 
 
+_SECONDARY_LIMIT_BODY = {
+    "message": "You have exceeded a secondary rate limit. Please wait a few minutes before you try again."
+}
+
+
 async def _secondary_limit(request: httpx.Request) -> httpx.Response:
     await asyncio.sleep(0)
     reset = str(int(time.time()) + 3600)
     return httpx.Response(
         403,
         headers={"Retry-After": "60", "X-RateLimit-Remaining": "4990", "X-RateLimit-Reset": reset},
-        json={"message": "You have exceeded a secondary rate limit. Please wait a few minutes before you try again."},
+        json=_SECONDARY_LIMIT_BODY,
     )
 
 
@@ -105,6 +111,21 @@ async def test_a_rate_limited_lookup_is_retried(fake_cache, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_spent_quota_429_is_sent_once_and_holds_every_lookup(fake_cache, monkeypatch):
+    reset = str(int(time.time()) + 3600)
+    seen = serve_enrichment(
+        monkeypatch,
+        fake_cache,
+        lambda r: httpx.Response(429, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset}),
+    )
+
+    await _resolve(_LOG4SHELL)
+    assert (await _resolve(_OTHER))[_OTHER].cve_id is None
+
+    assert len(seen) == 1
+
+
+@pytest.mark.asyncio
 async def test_a_failed_lookup_is_retried_on_the_next_run(fake_cache, monkeypatch):
     serve_enrichment(monkeypatch, fake_cache, Upstreams(down=frozenset({"api.github.com"})))
     assert (await _resolve(_LOG4SHELL))[_LOG4SHELL].cve_id is None
@@ -148,6 +169,37 @@ async def test_a_secondary_limit_stops_every_lookup_for_its_retry_after(fake_cac
 
 
 @pytest.mark.asyncio
+async def test_a_secondary_limit_named_only_in_its_message_stops_every_lookup_for_a_minute(fake_cache, monkeypatch):
+    healthy = Upstreams(advisories={_LOG4SHELL: _LOG4SHELL_CVE})
+    limited = [True]
+    bare_secondary_limit = httpx.Response(403, headers={"X-RateLimit-Remaining": "4990"}, json=_SECONDARY_LIMIT_BODY)
+    seen = serve_enrichment(monkeypatch, fake_cache, lambda r: bare_secondary_limit if limited[0] else healthy(r))
+
+    await _resolve(_OTHER)
+    assert (await _resolve(_LOG4SHELL))[_LOG4SHELL].cve_id is None
+    assert len(seen) == 1
+
+    limited[0] = False
+    after_a_minute = time.time() + 61
+    monkeypatch.setattr(time, "time", lambda: after_a_minute)
+    assert (await _resolve(_LOG4SHELL))[_LOG4SHELL].cve_id == _LOG4SHELL_CVE
+
+
+@pytest.mark.asyncio
+async def test_a_permission_refusal_does_not_stop_other_lookups(fake_cache, monkeypatch):
+    seen = serve_enrichment(
+        monkeypatch,
+        fake_cache,
+        lambda r: httpx.Response(403, json={"message": "Resource not accessible by personal access token"}),
+    )
+
+    await _resolve(_OTHER)
+    await _resolve(_LOG4SHELL)
+
+    assert len(seen) == 2
+
+
+@pytest.mark.asyncio
 async def test_each_ghsa_id_reads_its_own_cached_advisory(fake_cache, monkeypatch):
     serve_enrichment(monkeypatch, fake_cache, Upstreams(advisories={_LOG4SHELL: _LOG4SHELL_CVE}))
     await fake_cache.set(
@@ -168,3 +220,27 @@ async def test_an_exhausted_anonymous_quota_does_not_stop_authenticated_lookups(
     await _resolve(_OTHER)
 
     assert (await _resolve(_LOG4SHELL, token="ghp_scan"))[_LOG4SHELL].cve_id == _LOG4SHELL_CVE
+
+
+@pytest.mark.asyncio
+async def test_a_shorter_hold_answered_later_does_not_cut_a_spent_quota_short(fake_cache, monkeypatch):
+    reset = str(int(time.time()) + 3600)
+    secondary_sent = asyncio.Event()
+
+    async def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(_OTHER):
+            secondary_sent.set()
+            await asyncio.sleep(0.01)
+            return httpx.Response(
+                403, headers={"Retry-After": "60", "X-RateLimit-Remaining": "4990"}, json=_SECONDARY_LIMIT_BODY
+            )
+        await secondary_sent.wait()
+        return httpx.Response(403, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset})
+
+    seen = serve_enrichment(monkeypatch, fake_cache, answer)
+    await _resolve(_LOG4SHELL, _OTHER)
+    after_retry_after = time.time() + 61
+    monkeypatch.setattr(time, "time", lambda: after_retry_after)
+
+    assert (await _resolve(_UNKNOWN))[_UNKNOWN].cve_id is None
+    assert len(seen) == 2

@@ -35,7 +35,7 @@ async def analyze_cyclonedx(
 ) -> dict[str, Any]:
     sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
     return await analyzer.analyze(
-        sbom, settings, [dependency.model_dump() for dependency in parse_sbom(sbom).dependencies]
+        sbom, settings, parsed_components=[dependency.model_dump() for dependency in parse_sbom(sbom).dependencies]
     )
 
 

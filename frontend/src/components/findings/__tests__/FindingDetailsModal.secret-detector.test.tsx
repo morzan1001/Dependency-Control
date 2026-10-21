@@ -22,7 +22,7 @@ function secretFinding(details: Record<string, unknown>, description: string): F
     component: "config.py",
     description,
     scanners: ["trufflehog"],
-    details: { verified: false, risk_score: 40, adjusted_risk_score: 40, ...details },
+    details: { verified: false, risk_score: 40, ...details },
     found_in: [],
     aliases: [],
     waived: false,

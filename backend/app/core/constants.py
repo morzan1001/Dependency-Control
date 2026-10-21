@@ -883,7 +883,8 @@ GITHUB_USER_EMAIL_CACHE_TTL = 21600
 # One request per organisation team: at an hour the map spends ~313 of the token's 5000 hourly requests.
 GITHUB_ORG_REPO_MAP_CACHE_TTL = 3600
 
-HIGH_RISK_SCORE_THRESHOLD: float = 70.0
+# calculate_risk_score of a CVSS 9.0 CVE at EPSS_HIGH_THRESHOLD; a CVE outside KEV scores at most 65.
+HIGH_RISK_SCORE_THRESHOLD: float = 56.0
 
 # Quiet seconds after a scan's last result before it is analysed, tuned to typical CI pipeline timing.
 HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS: int = 30

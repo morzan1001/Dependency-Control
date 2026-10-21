@@ -498,10 +498,10 @@ async def _run_epss_kev_enrichment(
     ctx: _RunContext, vulnerability_findings: list[dict[str, Any]], outcomes: list[AnalyzerOutcome]
 ) -> None:
     try:
-        _, unavailable = await vulnerability_enrichment_service.enrich_findings(
+        enrichments, unavailable = await vulnerability_enrichment_service.enrich_findings(
             vulnerability_findings, github_token=ctx.github_token
         )
-        epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
+        epss_kev_summary = build_epss_kev_summary(vulnerability_findings, enrichments)
         await AnalysisResultRepository(ctx.db).save_result(ctx.scan_id, "epss_kev", epss_kev_summary)
         status = OutcomeStatus.PARTIAL if unavailable else OutcomeStatus.SUCCESS
         outcomes.append(

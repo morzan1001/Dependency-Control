@@ -11,18 +11,23 @@ from app.models.finding import Severity
 from app.schemas.enrichment import VulnerabilityEnrichment
 
 
+def kev_member(enrichments: Iterable[VulnerabilityEnrichment]) -> VulnerabilityEnrichment | None:
+    """The in-KEV CVE whose deadline an advisory folding these CVEs carries."""
+    return min((e for e in enrichments if e.in_kev), key=lambda e: (e.kev_due_date or "~", e.cve), default=None)
+
+
 def fold_enrichments(enrichments: Iterable[VulnerabilityEnrichment]) -> VulnerabilityEnrichment | None:
     items = list(enrichments)
     if not items:
         return None
     epss = max((e for e in items if e.epss_score is not None), key=lambda e: (e.epss_score, e.cve), default=None)
-    kev = min((e for e in items if e.is_kev), key=lambda e: (e.kev_due_date or "~", e.cve), default=None)
+    kev = kev_member(items)
     return VulnerabilityEnrichment(
         cve=min(e.cve for e in items),
         epss_score=epss.epss_score if epss else None,
         epss_percentile=epss.epss_percentile if epss else None,
         epss_date=epss.epss_date if epss else None,
-        is_kev=kev is not None,
+        in_kev=kev is not None,
         kev_date_added=kev.kev_date_added if kev else None,
         kev_due_date=kev.kev_due_date if kev else None,
         kev_required_action=kev.kev_required_action if kev else None,
@@ -66,19 +71,14 @@ def calculate_adjusted_risk_score(
     return min(base_risk_score * reachability_risk_modifier(is_reachable, analysis_level), 100.0)
 
 
-def calculate_secret_risk_score(
-    verified: bool | None,
-    in_current_tree: bool | None,
-) -> tuple[float, float]:
-    base = SEVERITY_CALCULATED_RISK_SCORES["CRITICAL"]
+def calculate_secret_risk_score(verified: bool | None, in_current_tree: bool | None) -> float:
     if is_actionable_secret(verified):
         modifier = 1.1
     elif in_current_tree is False:
         modifier = 0.4
     else:
         modifier = 1.0
-    adjusted = min(base * modifier, 100.0)
-    return base, adjusted
+    return round(SEVERITY_CALCULATED_RISK_SCORES["CRITICAL"] * modifier, 1)
 
 
 def calculate_secret_severity(verified: bool | None, in_current_tree: bool | None) -> Severity:

@@ -61,7 +61,7 @@ def test_entries_naming_different_cves_stay_apart_after_ghsa_resolution():
 def test_the_kev_row_names_the_cve_the_analytics_pages_count():
     entry = {"id": "CVE-2024-0001", "resolved_cve": "CVE-2024-0002", "in_kev": True}
     finding = {"component": "c", "details": {"in_kev": True, "vulnerabilities": [entry]}}
-    [row] = build_epss_kev_summary([finding])["kev_details"]
+    [row] = build_epss_kev_summary([finding], {})["kev_details"]
     assert row["cve"] == canonical_cve(entry) == "CVE-2024-0002"
 
 

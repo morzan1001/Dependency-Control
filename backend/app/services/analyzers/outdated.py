@@ -1,18 +1,17 @@
 import logging
 from typing import Any
-from urllib.parse import quote
 
 from packaging.version import InvalidVersion, Version
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, DEPS_DEV_API_URL
+from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
-from app.schemas.sbom import has_known_version
 from app.services.aggregation.versions import is_stable_release, parse_version_key
+from app.services.release_history import parse_deps_dev_response, release_list_to_cache
 
 from .base import Analyzer
-from .deps_dev import fetch_deps_dev_json
+from .deps_dev import deps_dev_coordinates, deps_dev_package_url, fetch_deps_dev_json
 from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
@@ -47,8 +46,13 @@ def _newest_stable(versions: list[dict[str, Any]], default: dict[str, Any], syst
 async def _fetch_package_info(
     client: InstrumentedAsyncClient, system: str, deps_dev_name: str
 ) -> dict[str, Any] | None:
-    url = f"{DEPS_DEV_API_URL}/systems/{system}/packages/{quote(deps_dev_name, safe='')}"
-    document = await fetch_deps_dev_json(client, url)
+    document = await fetch_deps_dev_json(client, deps_dev_package_url(system, deps_dev_name))
+    # The document holds the whole release history, so caching that as well saves a second download.
+    await cache_service.set(
+        CacheKeys.release_history(system, deps_dev_name),
+        release_list_to_cache(parse_deps_dev_response(document or {})),
+        ttl_seconds=CacheTTL.RELEASE_HISTORY,
+    )
     if document is None:
         return None
     versions: list[dict[str, Any]] = document.get("versions", [])
@@ -74,25 +78,26 @@ class OutdatedAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        components = parsed_components or []
         outdated: list[dict[str, Any]] = []
         ahead: list[dict[str, Any]] = []
-        failed: list[str] = []
+        failed: list[tuple[str, BaseException]] = []
 
-        infos = await self._resolve_package_infos(components)
+        infos = await self._resolve_package_infos(parsed_components)
 
-        for component, info in zip(components, infos, strict=True):
+        for component, info in zip(parsed_components, infos, strict=True):
             if isinstance(info, BaseException):
-                failed.append(component.get("name", ""))
+                failed.append((component.get("name", ""), info))
             elif info and info.get("default"):
                 self._classify_version(component, info, outdated, ahead)
 
         result: dict[str, Any] = {"outdated_dependencies": outdated, "ahead_of_default": ahead}
         if failed:
+            logger.warning(f"{self.name}: {len(failed)} components not checked, first failure: {failed[0][1]!r}")
             result["partial_components_skipped"] = len(failed)
-            result["lookup_failed_components"] = sorted(set(failed))
+            result["lookup_failed_components"] = sorted({name for name, _ in failed})
         return result
 
     @staticmethod
@@ -105,11 +110,8 @@ class OutdatedAnalyzer(Analyzer):
 
     @staticmethod
     def _package_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
-        parsed = parse_purl(component.get("purl", ""))
-        if not parsed or not parsed.deps_dev_system or not has_known_version(component.get("version", "")):
-            return None
-        system, name = parsed.deps_dev_system, parsed.deps_dev_name
-        return CacheKeys.latest_version(system, name), system, name
+        coordinates = deps_dev_coordinates(component)
+        return (CacheKeys.latest_version(*coordinates), *coordinates) if coordinates else None
 
     async def _resolve_package_infos(
         self, components: list[dict[str, Any]]

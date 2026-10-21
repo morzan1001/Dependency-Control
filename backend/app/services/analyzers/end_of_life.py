@@ -133,10 +133,11 @@ class EndOfLifeAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
         self._apply_settings(settings)
-        products_to_check = collect_products_to_check(parsed_components or [])
+        products_to_check = collect_products_to_check(parsed_components)
         if not products_to_check:
             return {"eol_issues": []}
 

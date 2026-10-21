@@ -153,6 +153,18 @@ describe("EPSSKEVResults high-risk list", () => {
     ).toBeInTheDocument();
   });
 
+  it("names the risk score the list was cut at", () => {
+    render(<EPSSKEVResults data={{ ...baseData, high_risk_cves: [highRiskCve(0)], high_risk_total: 1, high_risk_threshold: 56 }} />);
+
+    expect(screen.getByText("High Risk Vulnerabilities (Risk Score > 56) (1)")).toBeInTheDocument();
+  });
+
+  it("names the old cut-off for a result stored before the summary carried one", () => {
+    render(<EPSSKEVResults data={{ ...baseData, high_risk_cves: [highRiskCve(0)], high_risk_total: 1 }} />);
+
+    expect(screen.getByText("High Risk Vulnerabilities (Risk Score > 70) (1)")).toBeInTheDocument();
+  });
+
   it("says nothing about a cut when every high-risk finding is on screen", () => {
     render(
       <EPSSKEVResults

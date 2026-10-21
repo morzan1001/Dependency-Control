@@ -1,6 +1,9 @@
 import logging
 import time
+from contextlib import suppress
 from typing import Any
+
+import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.config import settings
@@ -10,7 +13,7 @@ from app.core.constants import (
     GHSA_CONCURRENT_REQUESTS_AUTHENTICATED,
     GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED,
 )
-from app.core.http_utils import InstrumentedAsyncClient, gather_bounded, quota_lifts_at
+from app.core.http_utils import UNNAMED_QUOTA_WAIT_SECONDS, InstrumentedAsyncClient, gather_bounded, quota_lifts_at
 from app.schemas.enrichment import GHSAData
 from app.services.github import github_api_headers
 
@@ -19,6 +22,16 @@ logger = logging.getLogger(__name__)
 
 def _parse_ghsa_advisory(data: dict[str, Any], ghsa_id: str) -> GHSAData:
     return GHSAData(ghsa_id=ghsa_id, cve_id=data.get("cve_id") or None, github_url=data.get("html_url") or "")
+
+
+def _bare_secondary_limit(response: httpx.Response) -> bool:
+    """GitHub can refuse a secondary limit with a plain 403 that only its message names."""
+    if response.status_code != 403:
+        return False
+    with suppress(ValueError):
+        body = response.json()
+        return isinstance(body, dict) and "rate limit" in str(body.get("message", "")).lower()
+    return False
 
 
 class GHSAProvider:
@@ -37,15 +50,21 @@ class GHSAProvider:
             response = await client.send_with_backoff(
                 "GET",
                 f"{GHSA_API_URL}/{ghsa_id}",
-                attempts=settings.ENRICHMENT_MAX_RETRIES,
+                attempts=1 + settings.ENRICHMENT_MAX_RETRIES,
                 base_delay=settings.ENRICHMENT_RETRY_DELAY,
                 headers=github_api_headers(token),
             )
             if response.status_code == 404:
                 # 404 is authoritative: cache the unresolved placeholder for the GHSA TTL, not the 1 h failure TTL.
                 return GHSAData(ghsa_id=ghsa_id).model_dump()
-            if (lifts_at := quota_lifts_at(response)) is not None:
-                self._rate_limited_until[authenticated] = lifts_at
+            lifts_at = quota_lifts_at(response)
+            if lifts_at is None and _bare_secondary_limit(response):
+                lifts_at = time.time() + UNNAMED_QUOTA_WAIT_SECONDS
+            if lifts_at is not None:
+                # Answers in flight land in any order; a short secondary limit must not end a longer quota hold.
+                self._rate_limited_until[authenticated] = max(
+                    self._rate_limited_until.get(authenticated, 0.0), lifts_at
+                )
             response.raise_for_status()
             return _parse_ghsa_advisory(response.json(), ghsa_id).model_dump()
 
@@ -57,7 +76,8 @@ class GHSAProvider:
         )
         return GHSAData(**cached) if cached else None
 
-    async def resolve_ghsa_to_cve(self, ghsa_ids: list[str], token: str | None) -> dict[str, GHSAData]:
+    async def resolve_ghsa_to_cve(self, ghsa_ids: list[str], token: str | None) -> tuple[dict[str, GHSAData], bool]:
+        """True when GitHub answered every lookup; an advisory it does not know counts as answered."""
         cached_data = await cache_service.mget([CacheKeys.ghsa(ghsa_id) for ghsa_id in ghsa_ids])
         results: dict[str, GHSAData] = {}
         missing: list[str] = []
@@ -68,7 +88,7 @@ class GHSAProvider:
             else:
                 missing.append(ghsa_id)
         if not missing:
-            return results
+            return results, True
 
         concurrency = GHSA_CONCURRENT_REQUESTS_AUTHENTICATED if token else GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED
         timeout = ANALYZER_TIMEOUTS["ghsa"]
@@ -84,4 +104,4 @@ class GHSAProvider:
         logger.info(
             f"Resolved {len(results)} GHSA IDs ({len(results) - len(missing)} from cache, concurrency: {concurrency})"
         )
-        return results
+        return results, all(isinstance(outcome, GHSAData) for outcome in outcomes)

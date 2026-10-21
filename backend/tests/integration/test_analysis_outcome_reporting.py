@@ -38,7 +38,7 @@ class _Scripted:
     def __init__(self, *answers):
         self._answers = list(answers)
 
-    async def analyze(self, sbom, settings=None, parsed_components=None):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
         answer = self._answers.pop(0)
         if isinstance(answer, Exception):
             raise answer

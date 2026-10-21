@@ -40,8 +40,8 @@ class VulnerabilityInfo:
     current_version: str
     fixed_version: str | None
     epss_score: float | None = None
-    is_kev: bool = False
-    kev_ransomware: bool = False
+    in_kev: bool = False
+    kev_ransomware_use: bool = False
     is_reachable: bool | None = None
     risk_score: float | None = None
     # The SBOM graph does not record the dependency; the parser guessed it is direct.
@@ -235,8 +235,8 @@ def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
         current_version=get_attr(f, "version") or "",
         fixed_version=live_fixed_version(f),
         epss_score=max(epss, default=None),
-        is_kev=any(a.get(DETAILS_KEY_IN_KEV) for a in advisories),
-        kev_ransomware=any(a.get(DETAILS_KEY_KEV_RANSOMWARE) for a in advisories),
+        in_kev=any(a.get(DETAILS_KEY_IN_KEV) for a in advisories),
+        kev_ransomware_use=any(a.get(DETAILS_KEY_KEV_RANSOMWARE) for a in advisories),
         is_reachable=(details.get("reachability") or {}).get("is_reachable"),
         risk_score=max(risk, default=None),
     )

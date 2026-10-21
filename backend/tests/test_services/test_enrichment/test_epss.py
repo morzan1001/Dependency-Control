@@ -76,3 +76,16 @@ async def test_each_cve_reads_its_own_cached_epss_score(fake_cache, monkeypatch)
 
     assert scores == {_SCORED: cached}
     assert [set(r.url.params["cve"].split(",")) for r in seen] == [{_UNSCORED}]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_larger_than_the_default_page_gets_every_score(fake_cache, monkeypatch):
+    """FIRST.org answers 100 rows unless asked for more; a CVE past the page would be cached as unscored."""
+    cves = [f"CVE-2026-{n:05d}" for n in range(150)]
+    serve_enrichment(monkeypatch, fake_cache, Upstreams(scores=dict.fromkeys(cves, 0.5)))
+    monkeypatch.setattr(vulnerability_enrichment_service._epss_provider, "_batch_size", len(cves))
+
+    scores, complete = await _load(*cves)
+
+    assert complete is True
+    assert sorted(scores) == cves

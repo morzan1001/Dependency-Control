@@ -1,4 +1,4 @@
-from pydantic import field_validator
+from pydantic import NonNegativeInt, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     NOTIFICATION_HTTP_TIMEOUT_SECONDS: float = 30.0
 
-    ENRICHMENT_MAX_RETRIES: int = 3
+    ENRICHMENT_MAX_RETRIES: NonNegativeInt = 3
     ENRICHMENT_RETRY_DELAY: float = 1.0
 
     # 0 disables the restart; recycling pods bounds memory growth.

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -199,8 +200,10 @@ class TestAnalyze:
         [
             ("next", {"type": "git", "url": "git+https://github.com/vercel/next.js.git"}, "vercel/next.js"),
             ("socket.io", "github:socketio/socket.io", "socketio/socket.io"),
+            ("left-pad", "stevemao/left-pad", "stevemao/left-pad"),
+            ("ms", "https://GitHub.com/Vercel/MS.git", "Vercel/MS"),
         ],
-        ids=["object", "shorthand-string"],
+        ids=["object", "shorthand-string", "bare-shorthand", "mixed-case-host"],
     )
     @pytest.mark.asyncio
     async def test_an_npm_package_finds_its_repository_through_the_registry(
@@ -228,8 +231,8 @@ class TestAnalyze:
 
     @pytest.mark.parametrize(
         "repository",
-        ["github:../repositories", "github:acme/..", "https://github.com/acme?per_page=100/lib"],
-        ids=["dot-owner", "dot-repo", "query-in-owner"],
+        ["github:../repositories", "github:acme/..", "https://github.com/acme?per_page=100/lib", "acme/..", "../acme"],
+        ids=["dot-owner", "dot-repo", "query-in-owner", "bare-dot-repo", "bare-dot-owner"],
     )
     @pytest.mark.asyncio
     async def test_a_registry_repository_outside_githubs_name_charset_is_not_requested(
@@ -377,6 +380,73 @@ class TestAnalyze:
 
         assert _risk_types(throttled) == []
         assert _risk_types(answered) == ["archived_repo"]
+
+    @pytest.mark.asyncio
+    async def test_bot_pushes_to_side_branches_do_not_make_an_abandoned_repository_active(
+        self, fake_cache, monkeypatch
+    ):
+        last_commit = _days_ago(900)
+        _serve(
+            monkeypatch,
+            fake_cache,
+            {
+                f"{PYPI_API_URL}/oldlib/json": _pypi_project(uploaded_days_ago=800),
+                f"{GITHUB_API_URL}/repos/acme/oldlib": _github_repo(pushed_days_ago=1),
+                f"{GITHUB_API_URL}/repos/acme/oldlib/commits?per_page=1": [
+                    {"commit": {"committer": {"date": last_commit}}}
+                ],
+            },
+        )
+
+        result = await analyze_cyclonedx(
+            MaintainerRiskAnalyzer(), [_component("pypi", "oldlib", "https://github.com/acme/oldlib")]
+        )
+
+        [issue] = result["maintainer_issues"]
+        [inactive] = [risk for risk in issue["risks"] if risk["type"] == "inactive_repo"]
+        assert _risk_types(result) == ["stale_package", "inactive_repo"]
+        assert issue["maintainer_info"]["github"]["days_since_push"] == 900
+        assert inactive["detail"] == f"Last activity: {last_commit.replace('Z', '+00:00')}"
+
+    @pytest.mark.parametrize("answer", [409, 500, [], {"message": "odd"}], ids=["empty-repo", "500", "none", "odd"])
+    @pytest.mark.asyncio
+    async def test_without_a_default_branch_commit_the_push_date_decides(self, fake_cache, monkeypatch, answer):
+        _serve(
+            monkeypatch,
+            fake_cache,
+            {
+                f"{PYPI_API_URL}/oldlib/json": _pypi_project(uploaded_days_ago=800),
+                f"{GITHUB_API_URL}/repos/acme/oldlib": _github_repo(pushed_days_ago=800),
+                f"{GITHUB_API_URL}/repos/acme/oldlib/commits?per_page=1": answer,
+            },
+        )
+
+        result = await analyze_cyclonedx(
+            MaintainerRiskAnalyzer(), [_component("pypi", "oldlib", "https://github.com/acme/oldlib")]
+        )
+
+        [issue] = result["maintainer_issues"]
+        assert _risk_types(result) == ["stale_package", "inactive_repo"]
+        assert issue["maintainer_info"]["github"]["days_since_push"] == 800
+
+    @pytest.mark.parametrize(
+        ("status", "warnings"),
+        [(401, ["maintainer_risk: GitHub rejected the token for 3 repositories"]), (403, [])],
+    )
+    @pytest.mark.asyncio
+    async def test_a_rejected_token_is_one_warning_per_run(self, fake_cache, monkeypatch, caplog, status, warnings):
+        names = ["one", "two", "three"]
+        _serve(monkeypatch, fake_cache, {f"{GITHUB_API_URL}/repos/acme/{name}": status for name in names})
+        caplog.set_level(logging.DEBUG, logger=maintainer_mod.__name__)
+
+        await analyze_cyclonedx(
+            MaintainerRiskAnalyzer(),
+            [_component("pypi", name, f"https://github.com/acme/{name}") for name in names],
+        )
+
+        assert [record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING] == warnings
+        debug_lines = " ".join(record.getMessage() for record in caplog.records if record.levelno == logging.DEBUG)
+        assert all(f"GitHub check failed for acme/{name}:" in debug_lines for name in names)
 
     @pytest.mark.asyncio
     async def test_a_pypi_upload_time_without_a_zone_is_read_as_utc(self, fake_cache, monkeypatch):

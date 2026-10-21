@@ -407,7 +407,7 @@ class TestDepsDevFetcher:
         assert {r.version for r in result[("pypi", "foo")]} == {"1.0.0"}
 
     def test_the_url_follows_the_configured_deps_dev_base(self, monkeypatch, cache):
-        monkeypatch.setattr("app.services.release_history.DEPS_DEV_API_URL", "https://deps.example/v3")
+        monkeypatch.setattr("app.services.analyzers.deps_dev.DEPS_DEV_API_URL", "https://deps.example/v3")
         urls = _serve(monkeypatch, lambda _url: 404)
 
         _fetch([("npm", "@babel/core")])

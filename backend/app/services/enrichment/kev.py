@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from typing import Any
@@ -11,6 +12,8 @@ from app.schemas.enrichment import KEVEntry
 logger = logging.getLogger(__name__)
 
 _MEMO_SECONDS = 15 * 60
+# A CISA outage would otherwise cost every caller a fresh 3-30 s download attempt.
+_FAILED_REFRESH_RETRY_SECONDS = 60
 
 
 async def _fetch_kev_catalog() -> dict[str, Any]:
@@ -19,7 +22,7 @@ async def _fetch_kev_catalog() -> dict[str, Any]:
         response = await client.send_with_backoff(
             "GET",
             KEV_CATALOG_URL,
-            attempts=settings.ENRICHMENT_MAX_RETRIES,
+            attempts=1 + settings.ENRICHMENT_MAX_RETRIES,
             base_delay=settings.ENRICHMENT_RETRY_DELAY,
         )
     response.raise_for_status()
@@ -44,17 +47,17 @@ class KEVProvider:
     def __init__(self) -> None:
         self._memo: dict[str, KEVEntry] = {}
         self._memo_expires = 0.0
+        self._refresh = asyncio.Lock()
 
     async def load_kev_catalog(self) -> dict[str, KEVEntry] | None:
-        if self._memo and time.monotonic() < self._memo_expires:
-            return self._memo
-        cached = await cache_service.get_or_fetch_with_lock(
-            key=CacheKeys.kev_catalog(),
-            fetch_fn=_fetch_kev_catalog,
-            ttl_seconds=CacheTTL.KEV_CATALOG,
-        )
-        if not cached:
-            return None
-        self._memo = {cve: KEVEntry(**entry) for cve, entry in cached.items()}
-        self._memo_expires = time.monotonic() + _MEMO_SECONDS
-        return self._memo
+        async with self._refresh:
+            if time.monotonic() >= self._memo_expires:
+                cached = await cache_service.get_or_fetch_with_lock(
+                    key=CacheKeys.kev_catalog(),
+                    fetch_fn=_fetch_kev_catalog,
+                    ttl_seconds=CacheTTL.KEV_CATALOG,
+                )
+                if cached:
+                    self._memo = {cve: KEVEntry(**entry) for cve, entry in cached.items()}
+                self._memo_expires = time.monotonic() + (_MEMO_SECONDS if cached else _FAILED_REFRESH_RETRY_SECONDS)
+            return self._memo or None

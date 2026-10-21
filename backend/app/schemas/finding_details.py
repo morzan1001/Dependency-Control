@@ -181,7 +181,6 @@ class SecretDetails(_DetailsModel):
     line: int | None = None
     in_current_tree: bool | None = None
     risk_score: float
-    adjusted_risk_score: float
 
 
 class EolDetails(_DetailsModel):
@@ -321,9 +320,7 @@ class OsvMalwareDetails(_DetailsModel):
 
 
 class OsMalwareDetails(_DetailsModel):
-    # info carries the raw OpenSourceMalware report block; analyzer-specific passthrough.
     info: dict[str, Any] = {}
-    threats: Any = None
     reference: str | None = None
     source: str | None = None
 

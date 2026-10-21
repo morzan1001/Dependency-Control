@@ -197,7 +197,7 @@ class TestCorpusDepthIsDeclaredAndReported:
         corpus = {"pypi": deep_ranking, "npm": ["react"]}
 
         with patch.object(analyzer, "_ensure_popular_packages", new=AsyncMock(return_value=corpus)):
-            result = await analyzer.analyze({"components": []})
+            result = await analyzer.analyze({"components": []}, parsed_components=[])
 
         assert result["popular_packages_compared"] == {"npm": 1, "pypi": TYPOSQUATTING_POPULAR_PACKAGE_RANKS}
 
@@ -255,8 +255,8 @@ class TestOnlyThePypiCorpusIsCached:
 
         corpus, _ = await self._corpus(monkeypatch, cache, payload={"rows": [{"project": "Requests"}]})
 
-        assert corpus["pypi"] == ["requests"]
-        assert cache.writes == [(_PYPI_KEY, ["requests"], CacheTTL.POPULAR_PACKAGES)]
+        assert corpus["pypi"] == ["Requests"]
+        assert cache.writes == [(_PYPI_KEY, ["Requests"], CacheTTL.POPULAR_PACKAGES)]
 
     @pytest.mark.asyncio
     async def test_peers_wait_out_the_holders_fetch_instead_of_downloading_again(self, monkeypatch):
@@ -266,6 +266,24 @@ class TestOnlyThePypiCorpusIsCached:
 
         lock_ttl, max_wait = cache.lock_timing
         assert ANALYZER_TIMEOUTS["typosquatting"] < max_wait < lock_ttl
+
+    @pytest.mark.asyncio
+    async def test_a_download_still_trickling_in_at_the_timeout_is_abandoned(self, monkeypatch, caplog):
+        """httpx times each read, so without a total limit the holder could outlast the lock and its waiting peers."""
+        monkeypatch.setitem(ANALYZER_TIMEOUTS, "typosquatting", 0.05)
+
+        async def trickle(url):
+            await asyncio.sleep(5)
+
+        with patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls:
+            ClientCls.return_value.__aenter__.return_value.get = trickle
+            started = time.perf_counter()
+            with caplog.at_level(logging.WARNING, logger="app.services.analyzers.typosquatting"):
+                packages = await TyposquattingAnalyzer()._fetch_pypi_packages()
+
+        assert packages is None
+        assert time.perf_counter() - started < 1
+        assert "TimeoutError" in caplog.text
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -328,6 +346,17 @@ class TestTheWholePypiRankingIsKnownAndOnlyItsTopIsImitated:
         assert issues == {"elasticsaerch": "elasticsearch"}
 
 
+class TestARankingIsComparedByItsNormalisedNames:
+    @pytest.mark.asyncio
+    async def test_a_ranked_name_spelled_in_another_case_is_known_and_still_imitated(self, monkeypatch):
+        payload = {"rows": [{"project": "Requests"}]}
+        components = [_pypi("requests"), _pypi("reqests")]
+
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache(), components, payload)
+
+        assert issues == {"reqests": "requests"}
+
+
 class TestTheShippedNpmRanking:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("name", ["react", "lodash", "express", "typescript", "webpack", "vue"])
@@ -375,6 +404,122 @@ class TestTheShippedNpmRanking:
         issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), components)
 
         assert issues == {"browser": "bowser"}
+
+
+class TestOneTypoInAShortName:
+    """One swapped or replaced letter of a five-letter name scores 0.8, under the similarity threshold."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("component", "imitated"),
+        [(_npm("axois"), "axios"), (_npm("raect"), "react"), (_pypi("numpi"), "numpy")],
+        ids=["axois", "raect", "numpi"],
+    )
+    async def test_one_swapped_or_replaced_letter_is_flagged_with_its_ratio(self, monkeypatch, component, imitated):
+        monkeypatch.setattr(typosquatting, "cache_service", _CorpusCache({_PYPI_KEY: {}}))
+
+        result = await analyze_cyclonedx(TyposquattingAnalyzer(), [component])
+
+        assert [
+            (issue["imitated_package"], issue["similarity"], issue["severity"])
+            for issue in result["typosquatting_issues"]
+        ] == [(imitated, 0.8, "MEDIUM")]
+
+    @pytest.mark.asyncio
+    async def test_a_ranked_name_one_letter_from_another_is_not_flagged(self, monkeypatch):
+        """blob is ranked, one letter from glob."""
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), [_npm("blob")])
+
+        assert issues == {}
+
+    @pytest.mark.asyncio
+    async def test_a_four_letter_name_one_letter_from_a_popular_one_is_not_flagged(self, monkeypatch):
+        """@acme/core is compared as core, one letter from cors."""
+        components = [_npm("@acme/core")]
+
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), components)
+
+        assert issues == {}
+
+    @pytest.mark.asyncio
+    async def test_a_three_letter_name_one_letter_from_a_popular_one_is_not_flagged(self):
+        analyzer = TyposquattingAnalyzer()
+        corpus = {"npm": ["vue", "chalk"]}
+
+        with patch.object(analyzer, "_ensure_popular_packages", new=AsyncMock(return_value=corpus)):
+            result = await analyze_cyclonedx(analyzer, [_npm("vae"), _npm("chakl")])
+
+        assert [issue["component"] for issue in result["typosquatting_issues"]] == ["chakl"]
+
+
+class TestAFamilySiblingIsJudgedAfterTheSharedPrefix:
+    """An unranked name sharing a ranked name's prefix up to a hyphen is judged only on what follows it."""
+
+    _CORPUS: ClassVar[dict[str, list[str]]] = {
+        "pypi": [
+            "mypy-boto3-ec2",
+            "apache-airflow-providers-amazon",
+            "apache-airflow-providers-google",
+            "apache-airflow-providers-common-io",
+        ]
+    }
+
+    async def _issues(self, *names):
+        analyzer = TyposquattingAnalyzer()
+        with patch.object(analyzer, "_ensure_popular_packages", new=AsyncMock(return_value=self._CORPUS)):
+            result = await analyze_cyclonedx(analyzer, [_pypi(name) for name in names])
+        return {
+            issue["component"]: (issue["imitated_package"], issue["severity"])
+            for issue in result["typosquatting_issues"]
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_sibling_for_another_service_is_not_flagged(self):
+        """As whole names they score 0.93 against mypy-boto3-ec2 and 0.85 against apache-airflow-providers-common-io."""
+        assert await self._issues("mypy-boto3-ecr", "apache-airflow-providers-anomalo") == {}
+
+    @pytest.mark.asyncio
+    async def test_a_replaced_letter_in_a_short_tail_is_not_flagged(self, monkeypatch):
+        """aws-sdj differs from aws-sdk as mypy-boto3-ecr does from mypy-boto3-ec2."""
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), [_npm("aws-sdj")])
+
+        assert issues == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("name", "imitated"),
+        [
+            ("react-dmo", "react-dom"),
+            ("react-do", "react-dom"),
+            ("core-jss", "core-js"),
+            ("core-j", "core-js"),
+            ("date-fsn", "date-fns"),
+            ("date-fn", "date-fns"),
+            ("es5-etx", "es5-ext"),
+        ],
+    )
+    async def test_a_short_tail_with_one_letter_added_dropped_or_swapped_is_flagged(self, monkeypatch, name, imitated):
+        issues = await _issues_against_the_real_corpus(monkeypatch, _CorpusCache({_PYPI_KEY: {}}), [_npm(name)])
+
+        assert issues == {name: imitated}
+
+    @pytest.mark.asyncio
+    async def test_a_typo_after_the_shared_prefix_is_flagged_with_the_whole_names_similarity(self):
+        issues = await self._issues(
+            "apache-airflow-providers-amazom", "apache-airflow-providers-googel", "apache-airflow-providers-commom-io"
+        )
+
+        assert issues == {
+            "apache-airflow-providers-amazom": ("apache-airflow-providers-amazon", "CRITICAL"),
+            "apache-airflow-providers-googel": ("apache-airflow-providers-google", "CRITICAL"),
+            "apache-airflow-providers-commom-io": ("apache-airflow-providers-common-io", "CRITICAL"),
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_typo_inside_the_family_prefix_is_flagged(self):
+        issues = await self._issues("apache-airflow-providres-amazon")
+
+        assert issues == {"apache-airflow-providres-amazon": ("apache-airflow-providers-amazon", "CRITICAL")}
 
 
 class TestTheEcosystemComesFromThePurl:

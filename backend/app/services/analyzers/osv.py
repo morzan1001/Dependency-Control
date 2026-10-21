@@ -170,13 +170,17 @@ def _query_targets(components: list[dict[str, Any]]) -> tuple[list[_Target], int
     return targets, len(unqueryable)
 
 
+_OSV_LABEL_SYSTEMS = {"crates.io": "cargo", "swifturl": "swift"}
+
+
 def _package_key(package: dict[str, Any], purl_type: str | None) -> tuple[str, str] | None:
     ecosystem, name = str(package.get("ecosystem") or ""), str(package.get("name") or "")
     if purl_type is None:
         return ecosystem, name.casefold()
     purl = package.get("purl")
+    label = ecosystem.casefold()
     # OSV makes ``purl`` optional; Maven names are group:artifact.
-    if not purl and name and PURL_TYPE_TO_SYSTEM.get(purl_type) == ecosystem.casefold():
+    if not purl and name and PURL_TYPE_TO_SYSTEM.get(purl_type) == _OSV_LABEL_SYSTEMS.get(label, label):
         purl = f"pkg:{purl_type}/{name.replace(':', '/')}"
     return package_identity(purl, "", None, None) if purl else None
 
@@ -247,9 +251,10 @@ class OSVAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        targets, unqueryable = _query_targets(parsed_components or [])
+        targets, unqueryable = _query_targets(parsed_components)
 
         pending, uncached = await self._get_cached_stubs(targets)
         logger.debug(f"OSV: {len(pending)} from cache, {len(uncached)} to fetch")
@@ -547,7 +552,7 @@ class OSVAnalyzer(Analyzer):
             raw = str(rating["score"])
             score = self._parse_cvss_score(raw)
             if score is not None:
-                return score, raw if raw.startswith("CVSS:") else None, rating["type"]
+                return score, raw if raw.startswith(("CVSS:", "AV:")) else None, rating["type"]
         return None
 
     def _severity_from_cvss_array(self, severity_array: list[dict[str, Any]]) -> str | None:

@@ -535,7 +535,7 @@ class TestIncidentCardsNameTheCvesLiveEnrichmentMarks:
     def test_the_kev_card_names_only_the_cve_in_kev(self):
         cards = self._cards(
             self._bundled(is_kev=True),
-            {self._FIRST: self._live(self._FIRST, is_kev=True), self._SECOND: self._live(self._SECOND)},
+            {self._FIRST: self._live(self._FIRST, in_kev=True), self._SECOND: self._live(self._SECOND)},
         )
         assert cards[RecommendationType.KNOWN_EXPLOIT].action["cves"] == [self._FIRST]
 
@@ -543,8 +543,8 @@ class TestIncidentCardsNameTheCvesLiveEnrichmentMarks:
         cards = self._cards(
             self._bundled(is_kev=True, kev_ransomware=True),
             {
-                self._FIRST: self._live(self._FIRST, is_kev=True),
-                self._SECOND: self._live(self._SECOND, is_kev=True, kev_ransomware_use=True),
+                self._FIRST: self._live(self._FIRST, in_kev=True),
+                self._SECOND: self._live(self._SECOND, in_kev=True, kev_ransomware_use=True),
             },
         )
         assert cards[RecommendationType.RANSOMWARE_RISK].action["cves"] == [self._SECOND]
@@ -593,7 +593,7 @@ class TestIncidentCardsLeaveWaivedAdvisoriesOut:
     def test_a_waived_cve_gets_no_card_from_live_data_either(self):
         finding = _vuln("log4j-core")
         finding["details"]["vulnerabilities"] = [{"id": _RANSOMWARE_CVE, "waived": True}]
-        live = {_RANSOMWARE_CVE: VulnerabilityEnrichment(cve=_RANSOMWARE_CVE, risk_score=90.0, is_kev=True)}
+        live = {_RANSOMWARE_CVE: VulnerabilityEnrichment(cve=_RANSOMWARE_CVE, risk_score=90.0, in_kev=True)}
 
         assert detect_known_exploits([finding], live) == []
 

@@ -11,6 +11,8 @@ from tests.helpers.osv import (
     LOG4SHELL,
     MALWARE_COMBINEZONE,
     REQUEST_SSRF,
+    SWIFT_NIO_HTTP2_HEADERS,
+    TOKIO_PIPE,
     UBUNTU_OPENSSL,
     URLLIB3_CRLF,
 )
@@ -23,6 +25,8 @@ def _purl(purl: str) -> dict[str, Any]:
 _LODASH = _purl("pkg:npm/lodash@4.17.11")
 _DJANGO_4_2_0 = _purl("pkg:pypi/django@4.2.0")
 _LOG4J_CORE_2_14_1 = _purl("pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1")
+_TOKIO_1_20_1 = _purl("pkg:cargo/tokio@1.20.1")
+_SWIFT_NIO_HTTP2_1_19_1 = _purl("pkg:swift/github.com/apple/swift-nio-http2@1.19.1")
 _OPENSSL_ON_ALPINE_3_17 = {"package": {"ecosystem": "Alpine:v3.17", "name": "openssl"}, "version": "3.0.8-r0"}
 _OPENSSL_ON_DEBIAN_12 = {"package": {"ecosystem": "Debian:12", "name": "openssl"}, "version": "3.0.9-1"}
 _OPENSSL_ON_UBUNTU_20_04 = _purl("pkg:deb/ubuntu/openssl@1.1.1f-1ubuntu2.24")
@@ -53,14 +57,11 @@ class TestParseCvssScore:
             pytest.param("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", 9.8, id="bare-v3-vector"),
             # 9.3 as published by FIRST's own calculator for this vector.
             pytest.param("CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N", 9.3, id="bare-v4-vector"),
+            pytest.param("AV:N/AC:L/Au:N/C:P/I:P/A:P", 7.5, id="bare-v2-vector"),
         ],
     )
     def test_a_rated_input_yields_its_score(self, raw, expected):
         assert self.analyzer._parse_cvss_score(raw) == expected
-
-    def test_v2_vector_returns_none(self):
-        # No source in the corpus carries v2; it stays unscored rather than mis-scored as v3.
-        assert self.analyzer._parse_cvss_score("AV:N/AC:L/Au:N/C:P/I:P/A:P") is None
 
     def test_garbage_input_returns_none(self):
         assert self.analyzer._parse_cvss_score("not-a-cvss-score") is None
@@ -148,6 +149,8 @@ class TestFixedVersion:
             pytest.param(GO_RAPID_RESET, _purl("pkg:golang/stdlib@1.21.1"), "1.21.3", id="second-interval"),
             pytest.param(GO_RAPID_RESET, _purl("pkg:golang/golang.org/x/net@v0.16.0"), "0.17.0", id="other-module"),
             pytest.param(LOG4SHELL, _LOG4J_CORE_2_14_1, "2.15.0", id="maven"),
+            pytest.param(TOKIO_PIPE, _TOKIO_1_20_1, "1.20.3", id="cargo"),
+            pytest.param(SWIFT_NIO_HTTP2_HEADERS, _SWIFT_NIO_HTTP2_1_19_1, "1.19.2", id="swift"),
             pytest.param(ALPINE_OPENSSL, _OPENSSL_ON_ALPINE_3_17, "3.0.12-r1", id="os-release-of-the-query"),
             pytest.param(DEBIAN_OPENSSL, _OPENSSL_ON_DEBIAN_12, "3.0.13-1~deb12u1", id="debian-revision"),
             pytest.param(
@@ -166,6 +169,8 @@ class TestFixedVersion:
             pytest.param(REQUEST_SSRF, _purl("pkg:npm/%40cypress/request@2.88.10"), "3.0.0", id="scoped-package"),
             pytest.param(GO_RAPID_RESET, _purl("pkg:golang/golang.org/x/net@v0.16.0"), "0.17.0", id="module-path"),
             pytest.param(LOG4SHELL, _LOG4J_CORE_2_14_1, "2.15.0", id="maven-group-artifact"),
+            pytest.param(TOKIO_PIPE, _TOKIO_1_20_1, "1.20.3", id="crates-io-label"),
+            pytest.param(SWIFT_NIO_HTTP2_HEADERS, _SWIFT_NIO_HTTP2_1_19_1, "1.19.2", id="swifturl-label"),
             pytest.param(
                 LOG4SHELL,
                 _purl("pkg:maven/com.guicedee.services/log4j-core@2.14.1"),
@@ -211,6 +216,11 @@ class TestCvssScoreAndVector:
         entry = _normalized(record, _purl("pkg:pypi/jinja2@3.1.4"))
         assert (entry["cvss_score"], entry["cvss_vector"]) == (5.4, v4)
 
+    def test_a_v2_only_record_keeps_its_rating(self):
+        record = {"id": "CVE-2014-6271", "severity": [{"type": "CVSS_V2", "score": _V2_TOP}]}
+        entry = _normalized(record, _purl("pkg:deb/debian/bash@4.2+dfsg-0.1"))
+        assert (entry["severity"], entry["cvss_score"], entry["cvss_vector"]) == ("HIGH", 10.0, _V2_TOP)
+
     def test_a_bare_number_is_a_score_without_a_vector(self):
         entry = _normalized({"id": "GHSA-x", "severity": [{"type": "CVSS_V3", "score": "9.8"}]}, _LODASH)
         assert (entry["cvss_score"], entry["cvss_vector"]) == (9.8, None)
@@ -218,6 +228,10 @@ class TestCvssScoreAndVector:
     def test_an_unrated_record_has_no_cvss(self):
         entry = _normalized(GO_RAPID_RESET, _purl("pkg:golang/stdlib@1.21.1"))
         assert (entry["cvss_score"], entry["cvss_vector"]) == (None, None)
+
+
+# CVSS v2 scores this vector 10.0.
+_V2_TOP = "AV:N/AC:L/Au:N/C:C/I:C/A:C"
 
 
 class TestCvssVersionAwareSeverity:
@@ -229,11 +243,11 @@ class TestCvssVersionAwareSeverity:
     @pytest.mark.parametrize(
         ("severity_array", "expected"),
         [
-            pytest.param([{"type": "CVSS_V2", "score": "9.5"}], "HIGH", id="v2-top-score-is-high"),
+            pytest.param([{"type": "CVSS_V2", "score": _V2_TOP}], "HIGH", id="v2-top-score-is-high"),
             pytest.param([{"type": "CVSS_V3", "score": "9.5"}], "CRITICAL", id="v3-critical-score"),
             # Both v2 and v3 present: prefer the newer standard -> 5.0 -> MEDIUM.
             pytest.param(
-                [{"type": "CVSS_V2", "score": "9.5"}, {"type": "CVSS_V3", "score": "5.0"}],
+                [{"type": "CVSS_V2", "score": _V2_TOP}, {"type": "CVSS_V3", "score": "5.0"}],
                 "MEDIUM",
                 id="v3-preferred-over-v2",
             ),

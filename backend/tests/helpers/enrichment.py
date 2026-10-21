@@ -40,17 +40,17 @@ def github_advisory(ghsa_id: str, cve_id: str | None, html_url: str | None = "")
     }
 
 
-def epss_page(scores: dict[str, float]) -> dict[str, Any]:
-    """FIRST.org's /data/v1/epss envelope; it leaves CVEs it has no score for out of ``data``."""
+def epss_page(scores: dict[str, float], limit: int = 100) -> dict[str, Any]:
+    """FIRST.org's /data/v1/epss envelope; it leaves CVEs it has no score for out of ``data`` and pages the rest."""
     return {
         "status": "OK",
         "status-code": 200,
         "total": len(scores),
         "offset": 0,
-        "limit": 100,
+        "limit": limit,
         "data": [
             {"cve": cve, "epss": f"{score:.9f}", "percentile": "0.500000000", "date": "2026-09-29"}
-            for cve, score in scores.items()
+            for cve, score in list(scores.items())[:limit]
         ],
     }
 
@@ -96,7 +96,8 @@ class Upstreams:
             return httpx.Response(200, json=github_advisory(ghsa_id, self.advisories[ghsa_id]))
         if host == FIRST_HOST:
             asked = request.url.params["cve"].split(",")
-            return httpx.Response(200, json=epss_page({c: self.scores[c] for c in asked if c in self.scores}))
+            scored = {c: self.scores[c] for c in asked if c in self.scores}
+            return httpx.Response(200, json=epss_page(scored, int(request.url.params.get("limit", 100))))
         if host == CISA_HOST:
             return httpx.Response(200, json=kev_feed(*self.kev))
         raise AssertionError(f"unexpected upstream {request.url}")

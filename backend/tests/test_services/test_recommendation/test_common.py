@@ -180,7 +180,7 @@ class TestVulnInfo:
     def test_a_waived_advisory_lends_the_record_none_of_its_marks(self):
         vuln = vuln_info(self._finding([_WAIVED_KEV, _LIVE]))
 
-        assert (vuln.is_kev, vuln.kev_ransomware, vuln.epss_score, vuln.risk_score) == (False, False, 0.02, 41.0)
+        assert (vuln.in_kev, vuln.kev_ransomware_use, vuln.epss_score, vuln.risk_score) == (False, False, 0.02, 41.0)
         assert vuln.advisories == [_LIVE]
 
     def test_the_record_takes_the_worst_mark_across_its_live_advisories(self):
@@ -188,7 +188,7 @@ class TestVulnInfo:
 
         vuln = vuln_info(self._finding([_LIVE, kev]))
 
-        assert (vuln.is_kev, vuln.kev_ransomware, vuln.epss_score, vuln.risk_score) == (True, False, 0.3, 70.0)
+        assert (vuln.in_kev, vuln.kev_ransomware_use, vuln.epss_score, vuln.risk_score) == (True, False, 0.3, 70.0)
 
     def test_the_stats_name_every_live_cve_once(self):
         first = self._finding([_WAIVED_KEV, _LIVE, {"id": "CVE-2021-45105"}])

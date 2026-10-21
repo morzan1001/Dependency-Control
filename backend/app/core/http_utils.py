@@ -27,7 +27,7 @@ SSL_CONTEXT = httpx.create_ssl_context()
 _MAX_RETRY_AFTER_SECONDS = 60.0
 
 # GitHub's advice for a rate-limit refusal that names no wait.
-_UNNAMED_QUOTA_WAIT_SECONDS = 60.0
+UNNAMED_QUOTA_WAIT_SECONDS = 60.0
 
 
 def _retry_after_seconds(outcome: httpx.Response | httpx.TransportError) -> float | None:
@@ -52,7 +52,12 @@ def quota_lifts_at(response: httpx.Response) -> float | None:
     with suppress(KeyError, ValueError):
         if spent:
             lifts.append(float(headers["X-RateLimit-Reset"]))
-    return max(lifts, default=now + _UNNAMED_QUOTA_WAIT_SECONDS)
+    return max(lifts, default=now + UNNAMED_QUOTA_WAIT_SECONDS)
+
+
+def _quota_outlasts_a_retry(outcome: httpx.Response | httpx.TransportError) -> bool:
+    lifts_at = quota_lifts_at(outcome) if isinstance(outcome, httpx.Response) else None
+    return lifts_at is not None and lifts_at > time.time() + _MAX_RETRY_AFTER_SECONDS
 
 
 class InstrumentedAsyncClient:
@@ -145,7 +150,11 @@ class InstrumentedAsyncClient:
             if isinstance(outcome, httpx.Response) and outcome.status_code != 429 and outcome.status_code < 500:
                 return outcome
             delay = d if (d := _retry_after_seconds(outcome)) is not None else base_delay * 2**attempt
-            if attempt == attempts - 1 or (deadline is not None and loop.time() + delay >= deadline):
+            if (
+                attempt == attempts - 1
+                or _quota_outlasts_a_retry(outcome)
+                or (deadline is not None and loop.time() + delay >= deadline)
+            ):
                 break
             cause = outcome.status_code if isinstance(outcome, httpx.Response) else type(outcome).__name__
             logger.debug(f"{self.service_name} {method} failed with {cause}; retrying in {delay:.1f}s")

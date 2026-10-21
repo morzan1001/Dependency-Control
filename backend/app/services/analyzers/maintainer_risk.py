@@ -34,7 +34,11 @@ _UNADDRESSED_ISSUES_MIN = 100
 # PyPI project_urls labels that name the source repository, most specific first.
 _REPOSITORY_LABELS = ("source", "source code", "repository", "github", "homepage")
 # GitHub's owner and repo charsets, so registry metadata cannot steer the token-bearing request off /repos/.
-_GITHUB_REPO = re.compile(r"(?:github\.com[/:]|^github:)([\w-]+)/(\.?[\w-][\w.-]*?)(?:\.git)?(?:[/#?]|$)")
+# A bare owner/repo is npm's GitHub shorthand.
+_GITHUB_REPO = re.compile(
+    r"(?:github\.com[/:]|^github:|^(?=[\w-]+/[\w.-]+$))([\w-]+)/(\.?[\w-][\w.-]*?)(?:\.git)?(?:[/#?]|$)",
+    re.IGNORECASE,
+)
 
 
 def correlate_maintainer_risks(risks: list[dict[str, Any]], github_active: bool | None) -> list[dict[str, Any]]:
@@ -63,20 +67,24 @@ class MaintainerRiskAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
         settings = settings or {}
         github_token = settings.get("github_token")
         self._stale_after_days = settings.get("stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS)
         self._warn_after_days = settings.get("warn_after_days", STALE_PACKAGE_WARNING_DAYS)
         timeout = ANALYZER_TIMEOUTS["maintainer_risk"]
+        token_rejected: set[str] = set()
 
         async with InstrumentedAsyncClient("Maintainer Risk API", timeout=timeout) as client:
             results = await gather_bounded(
-                parsed_components or [],
-                lambda component: self._check_component(client, component, github_token),
+                parsed_components,
+                lambda component: self._check_component(client, component, github_token, token_rejected),
                 ANALYZER_BATCH_SIZES["maintainer_risk"],
             )
+        if token_rejected:
+            logger.warning(f"maintainer_risk: GitHub rejected the token for {len(token_rejected)} repositories")
 
         issues = []
         skipped = 0
@@ -96,6 +104,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         client: InstrumentedAsyncClient,
         component: dict[str, Any],
         github_token: str | None,
+        token_rejected: set[str],
     ) -> dict[str, Any] | None:
         name = component.get("name", "")
         purl = component.get("purl", "")
@@ -139,6 +148,8 @@ class MaintainerRiskAnalyzer(Analyzer):
                     reraise_fetch_errors=True,
                 )
             except (httpx.HTTPError, ValueError) as e:
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 401:
+                    token_rejected.add(repo)
                 logger.debug(f"GitHub check failed for {repo}: {e}")
 
         risks = self._assess_risks(maintainer_info)
@@ -228,23 +239,39 @@ class MaintainerRiskAnalyzer(Analyzer):
     async def _check_github(
         self, client: InstrumentedAsyncClient, repo: str, github_token: str | None
     ) -> dict[str, Any] | None:
-        response = await client.get(
-            f"{GITHUB_API_URL}/repos/{repo}", headers=github_api_headers(github_token), follow_redirects=True
-        )
+        headers = github_api_headers(github_token)
+        response = await client.get(f"{GITHUB_API_URL}/repos/{repo}", headers=headers, follow_redirects=True)
         if response.status_code == 404:
             return None
         response.raise_for_status()
 
         data = response.json()
         pushed_at = parse_iso_utc(data.get("pushed_at"))
+        last_commit_at = await self._last_commit_at(client, repo, headers)
+        active_at = last_commit_at or pushed_at
         return {
             "stars": data.get("stargazers_count", 0),
             "forks": data.get("forks_count", 0),
             "open_issues": data.get("open_issues_count", 0),
             "archived": data.get("archived", False),
             "pushed_at": pushed_at.isoformat() if pushed_at else None,
-            "days_since_push": ((datetime.now(timezone.utc) - pushed_at).days if pushed_at else None),
+            "last_commit_at": last_commit_at.isoformat() if last_commit_at else None,
+            "days_since_push": (datetime.now(timezone.utc) - active_at).days if active_at else None,
         }
+
+    @staticmethod
+    async def _last_commit_at(client: InstrumentedAsyncClient, repo: str, headers: dict[str, str]) -> datetime | None:
+        """Bot pushes to side branches keep pushed_at fresh; the default branch's head shows real maintenance."""
+        try:
+            response = await client.get(
+                f"{GITHUB_API_URL}/repos/{repo}/commits", params={"per_page": 1}, headers=headers, follow_redirects=True
+            )
+            response.raise_for_status()
+            [head] = response.json()
+            return parse_iso_utc(head["commit"]["committer"]["date"])
+        except (httpx.HTTPError, ValueError, LookupError, TypeError) as e:
+            logger.debug(f"GitHub default-branch commit unavailable for {repo}: {e!r}")
+            return None
 
     def _assess_risks(self, info: dict[str, Any]) -> list[dict[str, Any]]:
         risks = []
@@ -272,7 +299,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                     }
                 )
 
-        # Both registries give several maintainers as one "Name <addr>, Name2 <addr2>" string.
+        # Both registries list several maintainers comma-separated, PyPI sometimes as "Name <addr>".
         addresses = [
             addr
             for _, addr in getaddresses([info.get("maintainer_email") or info.get("author_email") or ""])
@@ -330,7 +357,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                     "type": "inactive_repo",
                     "severity_score": 3,
                     "message": f"No repository activity in {days_since_push} days",
-                    "detail": f"Last push: {gh_info.get('pushed_at')}",
+                    "detail": f"Last activity: {gh_info.get('last_commit_at') or gh_info.get('pushed_at')}",
                 }
             )
 

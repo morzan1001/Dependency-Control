@@ -49,11 +49,11 @@ class FakeOsv:
         self._advisories = list(advisories)
         self._components = components
 
-    async def analyze(self, sbom, settings=None, parsed_components=None):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
         return {
             "osv_vulnerabilities": [
                 {"component": component["name"], "version": component["version"], "vulnerabilities": self._advisories}
-                for component in parsed_components or []
+                for component in parsed_components
                 if self._advisories and (self._components is None or component["name"] in self._components)
             ]
         }
@@ -186,6 +186,44 @@ LOG4SHELL: dict[str, Any] = {
                 "purl": "pkg:maven/com.guicedee.services/log4j-core",
             },
             "ranges": _ranges({"introduced": "0"}, {"last_affected": "1.2.1.2-jre17"}),
+        }
+    ],
+}
+
+# OSV labels Rust packages "crates.io" while their purl type is cargo.
+TOKIO_PIPE: dict[str, Any] = {
+    "id": "RUSTSEC-2023-0001",
+    "summary": "reject_remote_clients Configuration corruption",
+    "aliases": ["CVE-2023-22466", "GHSA-7rrj-xr53-82p7"],
+    "affected": [
+        {
+            "package": {"name": "tokio", "ecosystem": "crates.io", "purl": "pkg:cargo/tokio"},
+            "ranges": _ranges(
+                {"introduced": "1.7.0"},
+                {"fixed": "1.18.4"},
+                {"introduced": "1.19.0"},
+                {"fixed": "1.20.3"},
+                {"introduced": "1.21.0"},
+                {"fixed": "1.23.1"},
+                kind="SEMVER",
+            ),
+        }
+    ],
+}
+
+# OSV labels Swift packages "SwiftURL" while their purl type is swift.
+SWIFT_NIO_HTTP2_HEADERS: dict[str, Any] = {
+    "id": "GHSA-ccw9-q5h2-8c2w",
+    "summary": "swift-nio-http2 vulnerable to denial of service via invalid HTTP/2 HEADERS frame length",
+    "aliases": ["CVE-2022-24666"],
+    "affected": [
+        {
+            "package": {
+                "name": "github.com/apple/swift-nio-http2",
+                "ecosystem": "SwiftURL",
+                "purl": "pkg:swift/github.com/apple/swift-nio-http2",
+            },
+            "ranges": _ranges({"introduced": "1.0.0"}, {"fixed": "1.19.2"}),
         }
     ],
 }

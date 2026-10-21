@@ -550,7 +550,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         findings=records,
         stats=stats,
         dependencies=aggregator.get_dependency_enrichments(),
-        epss_kev_summary=dict(build_epss_kev_summary(live_vulnerabilities)),
+        epss_kev_summary=dict(build_epss_kev_summary(live_vulnerabilities, threat_intel)),
         reachability_summary=dict(build_reachability_summary(live_vulnerabilities, [callgraph])) if callgraph else None,
         recommendations=[recommendation.to_dict() for recommendation in recommendations],
         analyzers=report,

@@ -60,7 +60,8 @@ class CLIAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
         sbom_path = await asyncio.to_thread(self._create_temp_sbom, sbom)
         try:
@@ -121,7 +122,7 @@ class CLIAnalyzer(Analyzer):
     cli_timeout: int = 300
 
     max_retries: int = 0
-    retry_delay: float = 2.0  # base delay in seconds, doubles each retry
+    retry_delay: float = 2.0
 
     async def _execute_command(self, args: list[str]) -> tuple[bytes, bytes, int]:
         result = await run_process(args, self.cli_timeout)

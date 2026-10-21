@@ -9,7 +9,7 @@ from app.core.constants import (
     HIGH_RISK_SCORE_THRESHOLD,
     sort_by_severity,
 )
-from app.core.cve import canonical_cve
+from app.core.cve import canonical_cve, entry_cves
 from app.core.epss import bucket_epss
 from app.core.risk_scoring import (
     ACTIVELY_EXPLOITED_MATURITY,
@@ -32,6 +32,7 @@ from app.models.stats import (
     Stats,
     ThreatIntelligenceStats,
 )
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.projections import CallgraphMinimal
 from app.services.component_identity import lookup_component
 from app.services.analysis.types import (
@@ -46,6 +47,7 @@ from app.services.analysis.types import (
     VulnerabilityInfo,
 )
 from app.services.recommendation.common import display_vulnerability_id, live_advisories
+from app.services.enrichment.scoring import kev_member
 from app.services.reachability_enrichment import (
     ComponentLanguages,
     build_component_language_map,
@@ -62,11 +64,21 @@ def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss
     summary["epss_scores"][bucket_epss(epss_score)] += 1
 
 
-def _process_finding_kev(finding: dict[str, Any], details: dict[str, Any], summary: EPSSKEVSummary) -> None:
+def _kev_row_cve(entry: dict[str, Any], enrichments: Mapping[str, VulnerabilityEnrichment]) -> str:
+    kev = kev_member(enrichments[cve] for cve in entry_cves(entry) if cve in enrichments)
+    return kev.cve if kev else canonical_cve(entry) or ""
+
+
+def _process_finding_kev(
+    finding: dict[str, Any],
+    details: dict[str, Any],
+    summary: EPSSKEVSummary,
+    enrichments: Mapping[str, VulnerabilityEnrichment],
+) -> None:
     component = finding.get("component", "")
     rows: list[KEVDetail] = [
         {
-            "cve": canonical_cve(entry_details) or "",
+            "cve": _kev_row_cve(entry_details, enrichments),
             "component": component,
             "due_date": entry_details.get("kev_due_date"),
             "ransomware": entry_details.get(DETAILS_KEY_KEV_RANSOMWARE) is True,
@@ -109,7 +121,9 @@ def _process_finding_risk(
 _HIGH_RISK_SAMPLE_CAP = 20
 
 
-def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
+def build_epss_kev_summary(
+    findings: list[dict[str, Any]], enrichments: Mapping[str, VulnerabilityEnrichment]
+) -> EPSSKEVSummary:
     epss_scores_counts: EPSSScoreCounts = {"high": 0, "medium": 0, "low": 0}
 
     exploit_maturity_counts: ExploitMaturityCounts = {
@@ -135,6 +149,7 @@ def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
         "kev_details": [],
         "high_risk_cves": [],
         "high_risk_total": 0,
+        "high_risk_threshold": HIGH_RISK_SCORE_THRESHOLD,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -145,7 +160,7 @@ def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
         details = finding.get("details", {})
 
         _process_finding_epss(details, summary, epss_scores)
-        _process_finding_kev(finding, details, summary)
+        _process_finding_kev(finding, details, summary, enrichments)
 
         maturity: str = details.get("exploit_maturity", "unknown")
         exploit_maturity = cast(dict[str, int], summary["exploit_maturity"])

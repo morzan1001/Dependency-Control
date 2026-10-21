@@ -27,7 +27,7 @@ _ROLLUP_ONLY_KEYS = frozenset({"epss_date"})
 
 
 def _build_enrichment(cve: str, kev_entry: KEVEntry | None, epss_entry: EPSSData | None) -> VulnerabilityEnrichment:
-    is_kev = kev_entry is not None
+    in_kev = kev_entry is not None
     kev_ransomware = kev_entry.known_ransomware_use if kev_entry else False
     epss_score = epss_entry.epss_score if epss_entry else None
 
@@ -36,13 +36,13 @@ def _build_enrichment(cve: str, kev_entry: KEVEntry | None, epss_entry: EPSSData
         epss_score=epss_score,
         epss_percentile=epss_entry.percentile if epss_entry else None,
         epss_date=epss_entry.date if epss_entry else None,
-        is_kev=is_kev,
+        in_kev=in_kev,
         kev_date_added=kev_entry.date_added if kev_entry else None,
         kev_due_date=kev_entry.due_date if kev_entry else None,
         kev_required_action=kev_entry.required_action if kev_entry else None,
         kev_ransomware_use=kev_ransomware,
-        exploit_maturity=calculate_exploit_maturity(is_kev, kev_ransomware, epss_score),
-        risk_score=calculate_risk_score(None, epss_score, is_kev, kev_ransomware),
+        exploit_maturity=calculate_exploit_maturity(in_kev, kev_ransomware, epss_score),
+        risk_score=calculate_risk_score(None, epss_score, in_kev, kev_ransomware),
     )
 
 
@@ -111,7 +111,7 @@ def _enrichment_fields(enrichment: VulnerabilityEnrichment) -> dict[str, Any]:
             "epss_percentile": enrichment.epss_percentile,
             "epss_date": enrichment.epss_date,
         }
-    if enrichment.is_kev:
+    if enrichment.in_kev:
         fields |= {
             DETAILS_KEY_IN_KEV: True,
             "kev_date_added": enrichment.kev_date_added,
@@ -132,7 +132,7 @@ def advisory_enrichment(
         cvss = CVSS_SEVERITY_SCORES.get(vuln.get("severity") or "UNKNOWN")
     matched = [enrichments[cve] for cve in entry_cves(vuln) if cve in enrichments]
     folded = fold_enrichments(
-        e.model_copy(update={"risk_score": calculate_risk_score(cvss, e.epss_score, e.is_kev, e.kev_ransomware_use)})
+        e.model_copy(update={"risk_score": calculate_risk_score(cvss, e.epss_score, e.in_kev, e.kev_ransomware_use)})
         for e in matched
     )
     return folded or VulnerabilityEnrichment(
@@ -173,7 +173,7 @@ class VulnerabilityEnrichmentService:
         kev_catalog = kev_catalog or {}
         results = {cve: _build_enrichment(cve, kev_catalog.get(cve), epss_data.get(cve)) for cve in unique_cves}
 
-        kev_count = sum(1 for e in results.values() if e.is_kev)
+        kev_count = sum(1 for e in results.values() if e.in_kev)
         logger.info(
             f"Enriched {len(results)} CVEs (KEV: {kev_count}, EPSS: {len(epss_data)}, {unavailable or 'complete'})"
         )
@@ -186,15 +186,16 @@ class VulnerabilityEnrichmentService:
         self, findings: list[dict[str, Any]], github_token: str | None = None
     ) -> tuple[dict[str, VulnerabilityEnrichment], str | None]:
         """Mutates the findings in place."""
+        ghsa_complete = True
         if ghsa_ids := _ghsa_ids(findings):
             logger.info(f"Resolving {len(ghsa_ids)} GHSA IDs to CVEs")
-            resolutions = await self._ghsa_provider.resolve_ghsa_to_cve(ghsa_ids, github_token)
+            resolutions, ghsa_complete = await self._ghsa_provider.resolve_ghsa_to_cve(ghsa_ids, github_token)
             _dedupe_finding_vulnerabilities(_apply_ghsa_resolutions(findings, resolutions))
 
         enrichments, unavailable = await self._enrich_cves(_cves(findings))
         for finding in findings:
             apply_enrichments(finding.setdefault("details", {}), enrichments)
-        return enrichments, unavailable
+        return enrichments, unavailable if ghsa_complete else [*unavailable, "GHSA"]
 
 
 vulnerability_enrichment_service = VulnerabilityEnrichmentService()

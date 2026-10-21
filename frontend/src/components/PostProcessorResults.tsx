@@ -76,8 +76,12 @@ export interface EPSSKEVSummary {
     exploit_maturity: string;
   }>;
   high_risk_total?: number;
+  high_risk_threshold?: number;
   timestamp: string;
 }
+
+// Results stored before the summary named its cut-off were cut at 70.
+const LEGACY_HIGH_RISK_THRESHOLD = 70;
 
 const HIGH_RISK_ROWS_SHOWN = 10;
 
@@ -291,12 +295,13 @@ export function EPSSKEVResults({ data }: Readonly<{ data: EPSSKEVSummary }>) {
       {data.high_risk_cves.length > 0 && (() => {
         const shownHighRisk = data.high_risk_cves.slice(0, HIGH_RISK_ROWS_SHOWN);
         const highRiskTotal = data.high_risk_total ?? data.high_risk_cves.length;
+        const highRiskThreshold = data.high_risk_threshold ?? LEGACY_HIGH_RISK_THRESHOLD;
         return (
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-orange-500" />
-              High Risk Vulnerabilities (Risk Score &gt; 70) ({highRiskTotal})
+              High Risk Vulnerabilities (Risk Score &gt; {highRiskThreshold}) ({highRiskTotal})
             </CardTitle>
           </CardHeader>
           <CardContent>

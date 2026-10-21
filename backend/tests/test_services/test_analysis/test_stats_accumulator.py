@@ -231,7 +231,7 @@ class TestThreatIntelBoundaries:
             _enriched("CVE-2021-0004", epss=0.5),
             _enriched("CVE-2021-0005", kev=True),
         ]
-        maturity = build_epss_kev_summary(findings)["exploit_maturity"]
+        maturity = build_epss_kev_summary(findings, {})["exploit_maturity"]
         t = compute_stats(findings, {}).threat_intel
         assert t.weaponized_count == maturity["weaponized"] == 1
         assert t.active_exploitation_count == maturity["weaponized"] + maturity["active"] == 3

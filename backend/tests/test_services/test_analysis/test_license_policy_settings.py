@@ -36,6 +36,6 @@ async def test_a_stored_legacy_license_policy_does_not_override_the_saved_settin
     ctx = await _run_context(Scan(project_id="p1", branch="main"), db, "pod-a/worker-0", None)
     settings = ctx.settings_for("license_compliance")
     parsed = [dep.model_dump() for dep in parse_sbom(_GPL_SBOM).dependencies]
-    result = await LicenseAnalyzer().analyze(_GPL_SBOM, settings, parsed)
+    result = await LicenseAnalyzer().analyze(_GPL_SBOM, settings, parsed_components=parsed)
 
     assert [issue["severity"] for issue in result["license_issues"]] == [Severity.HIGH.value]

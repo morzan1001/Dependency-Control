@@ -355,6 +355,31 @@ class TestSendWithBackoff:
         assert sleeps == [3.0]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(time.time()) + 3600)},
+            {"Retry-After": "3600"},
+        ],
+        ids=["spent-quota", "long-retry-after"],
+    )
+    async def test_a_quota_that_outlasts_the_longest_wait_is_not_retried(self, sleeps, headers):
+        service = f"BackoffSpentQuota{sorted(headers)}"
+        hits_before = _counter_value(external_api_rate_limit_hits_total, service)
+        seen: list[str] = []
+
+        def refuse(request: httpx.Request) -> httpx.Response:
+            seen.append(request.method)
+            return httpx.Response(429, headers=headers)
+
+        async with InstrumentedAsyncClient(service, transport=httpx.MockTransport(refuse)) as client:
+            response = await client.send_with_backoff("GET", "https://example.test", attempts=3, base_delay=1.0)
+
+        assert response.status_code == 429
+        assert (len(seen), sleeps) == (1, [])
+        assert _counter_value(external_api_rate_limit_hits_total, service) == hits_before + 1
+
+    @pytest.mark.asyncio
     async def test_a_zero_retry_after_retries_without_waiting(self, sleeps):
         answers = [httpx.Response(429, headers={"Retry-After": "0"}), httpx.Response(200)]
         transport = httpx.MockTransport(lambda request: answers.pop(0))

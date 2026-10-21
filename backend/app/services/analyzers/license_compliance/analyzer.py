@@ -38,21 +38,21 @@ class LicenseAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
         policy = license_policy_from_settings(settings)
 
-        components = parsed_components or []
         issues: list[dict[str, Any]] = []
         component_licenses: list[dict[str, Any]] = []
         stats = {
-            "total_components": len(components),
+            "total_components": len(parsed_components),
             **dict.fromkeys([*CATEGORY_STAT_KEY.values(), "unknown", "skipped"], 0),
         }
 
         settled = [
             (component, self._analyze_component(component, stats, issues, component_licenses, policy=policy))
-            for component in components
+            for component in parsed_components
         ]
         for conflict, is_transitive in compatibility.check_license_compatibility(settled, policy):
             self._emit_policy_issue(conflict, None, is_transitive, issues)

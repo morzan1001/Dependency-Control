@@ -31,18 +31,24 @@ async def fetch_deps_dev_json(client: InstrumentedAsyncClient, url: str) -> dict
     return document
 
 
-def _lookup_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
+def deps_dev_package_url(system: str, name: str) -> str:
+    return f"{DEPS_DEV_API_URL}/systems/{system}/packages/{quote(name, safe='')}"
+
+
+def deps_dev_coordinates(component: dict[str, Any]) -> tuple[str, str] | None:
     parsed = parse_purl(component.get("purl", ""))
-    version = component.get("version", "")
-    if not parsed or not parsed.deps_dev_system or not parsed.deps_dev_name or not has_known_version(version):
-        return None
-    system, name = parsed.deps_dev_system, parsed.deps_dev_name
-    return CacheKeys.deps_dev(system, name, version), system, name
+    if parsed and parsed.deps_dev_system and parsed.name and has_known_version(component.get("version", "")):
+        return parsed.deps_dev_system, parsed.deps_dev_name
+    return None
+
+
+def _lookup_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
+    coordinates = deps_dev_coordinates(component)
+    return (CacheKeys.deps_dev(*coordinates, component["version"]), *coordinates) if coordinates else None
 
 
 class DepsDevAnalyzer(Analyzer):
     name = "deps_dev"
-    base_url = DEPS_DEV_API_URL
 
     @staticmethod
     def _collect(
@@ -67,9 +73,9 @@ class DepsDevAnalyzer(Analyzer):
         self,
         sbom: dict[str, Any],
         settings: dict[str, Any] | None = None,
-        parsed_components: list[dict[str, Any]] | None = None,
+        *,
+        parsed_components: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        components = parsed_components or []
         scorecard_issues: list[Any] = []
         package_metadata: dict[str, Any] = {}
 
@@ -77,7 +83,7 @@ class DepsDevAnalyzer(Analyzer):
         threshold = (settings or {}).get("scorecard_threshold", SCORECARD_FLAG_THRESHOLD)
 
         targets: dict[str, tuple[dict[str, Any], str, str]] = {}
-        for component in components:
+        for component in parsed_components:
             target = _lookup_target(component)
             if target is not None:
                 targets.setdefault(target[0], (component, target[1], target[2]))
@@ -90,17 +96,15 @@ class DepsDevAnalyzer(Analyzer):
                 ANALYZER_BATCH_SIZES["deps_dev"],
             )
 
-        skipped = 0
+        failures = [payload for payload in payloads.values() if isinstance(payload, BaseException)]
         for key, payload in payloads.items():
-            if isinstance(payload, BaseException):
-                logger.warning(f"deps_dev lookup failed for {key}: {payload!r}")
-                skipped += 1
-            else:
+            if not isinstance(payload, BaseException):
                 self._collect(targets[key][0], key, payload, threshold, package_metadata, scorecard_issues)
 
         result: dict[str, Any] = {"scorecard_issues": scorecard_issues, "package_metadata": package_metadata}
-        if skipped:
-            result["partial_components_skipped"] = skipped
+        if failures:
+            logger.warning(f"{self.name}: {len(failures)} components not checked, first failure: {failures[0]!r}")
+            result["partial_components_skipped"] = len(failures)
         return result
 
     @staticmethod
@@ -128,7 +132,7 @@ class DepsDevAnalyzer(Analyzer):
         return project
 
     async def _fetch_project(self, client: InstrumentedAsyncClient, project_id: str) -> dict[str, Any] | None:
-        data = await fetch_deps_dev_json(client, f"{self.base_url}/projects/{quote(project_id, safe='')}")
+        data = await fetch_deps_dev_json(client, f"{DEPS_DEV_API_URL}/projects/{quote(project_id, safe='')}")
         if data is None:
             return None
         scorecard = data.get("scorecard")
@@ -175,9 +179,7 @@ class DepsDevAnalyzer(Analyzer):
         name = component.get("name", "")
         version = component.get("version", "")
 
-        encoded_name = quote(lookup_name, safe="")
-        encoded_version = quote(version, safe="")
-        version_url = f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}"
+        version_url = f"{deps_dev_package_url(system, lookup_name)}/versions/{quote(version, safe='')}"
 
         data = await fetch_deps_dev_json(client, version_url)
         if data is None:

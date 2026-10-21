@@ -191,6 +191,18 @@ async def test_a_component_without_a_hash_makes_no_registry_request(monkeypatch,
 
 
 @pytest.mark.asyncio
+async def test_a_run_with_nothing_to_look_up_opens_no_client(monkeypatch, fake_cache):
+    opened: list[str] = []
+    monkeypatch.setattr(hash_verification, "InstrumentedAsyncClient", lambda service, **_k: opened.append(service))
+    monkeypatch.setattr(hash_verification, "cache_service", fake_cache)
+
+    result = await analyze_cyclonedx(HashVerificationAnalyzer(), [_numpy()])
+
+    assert opened == []
+    assert result["summary"]["unverifiable_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_a_component_without_a_version_makes_no_registry_request(monkeypatch, fake_cache):
     client = _FakeClient(_PYPI_PAYLOAD)
 
@@ -198,6 +210,63 @@ async def test_a_component_without_a_version_makes_no_registry_request(monkeypat
 
     assert client.urls == []
     assert result["summary"]["unverifiable_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "purl",
+    [
+        "pkg:npm/left-pad@1.0.0?vcs_url=git%2Bhttps://github.com/stevemao/left-pad.git",
+        "pkg:npm/left-pad@1.0.0?repository_url=https://npm.corp.example",
+        "pkg:npm/left-pad@1.0.0?download_url=https://npm.corp.example/left-pad/-/left-pad-1.0.0.tgz",
+        "pkg:npm/left-pad@1.0.0?download_url=file:patches/left-pad-1.0.0.tgz",
+        "pkg:npm/left-pad@1.0.0?download_url=http://[broken",
+    ],
+    ids=["vcs", "private-registry", "other-download", "local-tarball", "unparseable-url"],
+)
+@pytest.mark.asyncio
+async def test_a_component_from_another_source_is_not_compared_with_the_registry(monkeypatch, fake_cache, purl):
+    client = _FakeClient({"dist": {"shasum": "e" * 40}})
+
+    result = await _verify(monkeypatch, fake_cache, [_left_pad(("SHA-1", "f" * 40)) | {"purl": purl}], client)
+
+    assert client.urls == []
+    assert result == {
+        "hash_issues": [],
+        "summary": {"verified_count": 0, "unverifiable_count": 1, "mismatch_count": 0},
+    }
+
+
+@pytest.mark.parametrize(
+    ("component", "client"),
+    [
+        (
+            _left_pad(("SHA-1", "e" * 40))
+            | {"purl": "pkg:npm/left-pad@1.0.0?download_url=https://registry.npmjs.org/x"},
+            _FakeClient({"dist": {"shasum": "e" * 40}}),
+        ),
+        (
+            _left_pad(("SHA-1", "e" * 40))
+            | {"purl": "pkg:npm/left-pad@1.0.0?download_url=https://registry.yarnpkg.com/x"},
+            _FakeClient({"dist": {"shasum": "e" * 40}}),
+        ),
+        (
+            _numpy(("SHA-256", _SDIST_SHA256))
+            | {"purl": "pkg:pypi/numpy@1.26.4?download_url=https://files.pythonhosted.org/x"},
+            _FakeClient(_PYPI_PAYLOAD),
+        ),
+        (
+            _numpy(("SHA-256", _SDIST_SHA256))
+            | {"purl": "pkg:pypi/numpy@1.26.4?repository_url=https://pypi.org/simple"},
+            _FakeClient(_PYPI_PAYLOAD),
+        ),
+    ],
+    ids=["npm-registry", "yarn-registry", "pypi-files", "pypi-index"],
+)
+@pytest.mark.asyncio
+async def test_a_component_the_registry_itself_serves_is_still_verified(monkeypatch, fake_cache, component, client):
+    result = await _verify(monkeypatch, fake_cache, [component], client)
+
+    assert result["summary"]["verified_count"] == 1
 
 
 @pytest.mark.asyncio

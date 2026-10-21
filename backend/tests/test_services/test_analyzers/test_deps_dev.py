@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Any
 
 import httpx
@@ -101,6 +102,19 @@ class TestIdentityOfCachedResults:
         component = {"name": "left-pad", "version": "unknown", "purl": "pkg:npm/left-pad"}
 
         result = await DepsDevAnalyzer().analyze({}, parsed_components=[component])
+
+        assert result == {"scorecard_issues": [], "package_metadata": {}}
+        assert cache.looked_up == []
+
+    @pytest.mark.parametrize("purl", ["pkg:npm/", "pkg:maven/org.example/"], ids=["npm", "maven"])
+    @pytest.mark.asyncio
+    async def test_a_purl_without_a_package_name_is_never_looked_up(self, monkeypatch, purl):
+        cache = _FakeCache({})
+        monkeypatch.setattr("app.services.analyzers.deps_dev.cache_service", cache)
+
+        result = await DepsDevAnalyzer().analyze(
+            {}, parsed_components=[{"name": "ghost", "version": "1.0.0", "purl": purl}]
+        )
 
         assert result == {"scorecard_issues": [], "package_metadata": {}}
         assert cache.looked_up == []
@@ -272,6 +286,18 @@ class TestDepsDevLookups:
         assert result["package_metadata"] == {}
         assert await fake_cache.get(_CORE_KEY) is None
 
+    @pytest.mark.asyncio
+    async def test_failed_lookups_are_logged_once_per_run(self, fake_cache, monkeypatch, caplog):
+        routes = _babel_routes()
+        routes[_CORE_URL] = routes[_TRAVERSE_URL] = 500
+        _serve(monkeypatch, fake_cache, routes)
+
+        result = await DepsDevAnalyzer().analyze({}, parsed_components=[_CORE, _TRAVERSE])
+
+        [warning] = [record for record in caplog.records if record.levelno >= logging.WARNING]
+        assert result["partial_components_skipped"] == 2
+        assert warning.getMessage().startswith("deps_dev: 2 components not checked, first failure: HTTPStatusError(")
+
     @pytest.mark.parametrize(
         "answer",
         [500, httpx.ReadTimeout("timed out"), "<html>upstream error</html>"],
@@ -353,8 +379,8 @@ class TestDepsDevLookups:
         _serve(monkeypatch, fake_cache, _babel_routes())
         analyzer = DepsDevAnalyzer()
 
-        lenient = await analyzer.analyze({}, {"scorecard_threshold": 4.0}, [_CORE])
-        strict = await analyzer.analyze({}, {"scorecard_threshold": 7.0}, [_CORE])
+        lenient = await analyzer.analyze({}, {"scorecard_threshold": 4.0}, parsed_components=[_CORE])
+        strict = await analyzer.analyze({}, {"scorecard_threshold": 7.0}, parsed_components=[_CORE])
 
         assert lenient["scorecard_issues"] == []
         assert [issue["component"] for issue in strict["scorecard_issues"]] == ["@babel/core"]
