@@ -50,7 +50,16 @@ interface ErrorWithResponse {
   message?: string;
 }
 
-export function getErrorMessage(error: unknown): string {
+function validationMessage(entry: ValidationError, withField: boolean): string {
+  // A validation entry can reach us without msg; show the raw entry instead of throwing.
+  if (entry.msg === undefined) return JSON.stringify(entry);
+  const msg = entry.msg.replace(/^(Value error, |value is not a valid email address: )/, '');
+  // loc starts with where the value came from (body, query); list indexes name no field.
+  const field = entry.loc?.slice(1).filter((part) => typeof part === 'string').pop();
+  return withField && field && !msg.startsWith(field) ? `${field}: ${msg}` : msg;
+}
+
+export function getErrorMessage(error: unknown, { withField = true }: { withField?: boolean } = {}): string {
   if (typeof error !== 'object' || error === null) {
     return 'An unknown error occurred';
   }
@@ -59,12 +68,7 @@ export function getErrorMessage(error: unknown): string {
   const detail = err.response?.data?.detail;
   if (detail) {
     if (Array.isArray(detail)) {
-      // A validation entry can reach us without msg; show the raw entry instead of throwing.
-      return detail
-        .map((validationErr: ValidationError) =>
-          (validationErr.msg ?? JSON.stringify(validationErr)).replace(/^(Value error, |value is not a valid email address: )/, ''),
-        )
-        .join('\n');
+      return detail.map((entry: ValidationError) => validationMessage(entry, withField)).join('\n');
     }
     if (typeof detail === 'string') {
       return detail;

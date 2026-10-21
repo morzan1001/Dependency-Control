@@ -43,7 +43,39 @@ describe('getErrorMessage', () => {
   it('strips the "value is not a valid email address: " prefix of a malformed address', () => {
     const msg = 'value is not a valid email address: An email address must have an @-sign.'
     const error = { response: { data: { detail: [{ type: 'value_error', loc: ['body', 'email'], msg }] } } }
-    expect(getErrorMessage(error)).toBe('An email address must have an @-sign.')
+    expect(getErrorMessage(error)).toBe('email: An email address must have an @-sign.')
+  })
+
+  it('names the field each validation entry refers to, so a toast says which input to fix', () => {
+    const error = {
+      response: {
+        data: {
+          detail: [
+            { type: 'missing', loc: ['body', 'name'], msg: 'Field required' },
+            { type: 'value_error', loc: ['body', 'events', 0], msg: 'Value error, Invalid event type: scan.started' },
+          ],
+        },
+      },
+    }
+    expect(getErrorMessage(error)).toBe('name: Field required\nevents: Invalid event type: scan.started')
+  })
+
+  it('names no field for an entry about the whole body', () => {
+    const msg = 'Value error, An access token is required to enable team syncing'
+    const error = { response: { data: { detail: [{ type: 'value_error', loc: ['body'], msg }] } } }
+    expect(getErrorMessage(error)).toBe('An access token is required to enable team syncing')
+  })
+
+  it('does not repeat a field the message already names', () => {
+    const msg = 'Value error, oidc_audience must not be empty'
+    const error = { response: { data: { detail: [{ type: 'value_error', loc: ['body', 'oidc_audience'], msg }] } } }
+    expect(getErrorMessage(error)).toBe('oidc_audience must not be empty')
+  })
+
+  it('leaves the field out for a message shown under that field', () => {
+    const msg = 'Value error, Password must contain at least one digit'
+    const error = { response: { data: { detail: [{ type: 'value_error', loc: ['body', 'new_password'], msg }] } } }
+    expect(getErrorMessage(error, { withField: false })).toBe('Password must contain at least one digit')
   })
 
   it('serializes a validation entry that carries no msg', () => {

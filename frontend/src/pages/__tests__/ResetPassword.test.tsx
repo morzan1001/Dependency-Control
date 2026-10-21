@@ -60,7 +60,7 @@ describe('ResetPassword', () => {
 
     submit('Battery-Staple')
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Password must contain at least one digit')
+    expect((await screen.findByRole('alert')).textContent).toBe('Password must contain at least one digit')
     expect(screen.queryByRole('link', { name: 'Request a new link' })).not.toBeInTheDocument()
     expect(toast.error).not.toHaveBeenCalled()
     expect(sent).toHaveLength(1)

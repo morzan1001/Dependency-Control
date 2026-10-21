@@ -62,7 +62,7 @@ export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) 
   const refusal = updatePasswordMutation.error ?? migrateToLocalMutation.error;
   const status = refusal?.response?.status;
   const currentPasswordError = isLocalUser && status === 400 ? getErrorMessage(refusal) : null;
-  const newPasswordError = status === 422 ? getErrorMessage(refusal) : null;
+  const newPasswordError = status === 422 ? getErrorMessage(refusal, { withField: false }) : null;
 
   const resetRefusal = () => {
     if (isSaving) return;

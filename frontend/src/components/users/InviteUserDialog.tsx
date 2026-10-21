@@ -29,7 +29,9 @@ export function InviteUserDialog() {
 
   const inviteUserMutation = useInviteUser();
   const emailRefusal =
-    inviteUserMutation.isError && refusesEmail(inviteUserMutation.error) ? getErrorMessage(inviteUserMutation.error) : null;
+    inviteUserMutation.isError && refusesEmail(inviteUserMutation.error)
+      ? getErrorMessage(inviteUserMutation.error, { withField: false })
+      : null;
   const emailError = blankEmail ? 'Enter an email address' : emailRefusal;
 
   const handleInviteUser = (e: React.FormEvent) => {

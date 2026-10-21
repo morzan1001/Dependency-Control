@@ -33,7 +33,7 @@ export default function ResetPassword() {
 
     resetPasswordMutation.mutate({ token, newPassword }, {
       onSuccess: () => navigate('/login', { state: { message: 'Password reset successfully. Please login.' } }),
-      onError: (err) => setError(getErrorMessage(err)),
+      onError: (err) => setError(getErrorMessage(err, { withField: false })),
     })
   }
 
