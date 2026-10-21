@@ -68,6 +68,19 @@ describe("ImpactAnalysis fix versions", () => {
     expect(screen.getByText("2 High")).toHaveClass("text-xs", "bg-severity-high", "text-severity-high-foreground");
   });
 
+  it("counts one project and one finding on a top component's card in the singular", async () => {
+    vi.mocked(analyticsApi.getImpactAnalysis).mockResolvedValue([
+      { ...result, affected_projects: 1, total_findings: 1 },
+      { ...result, component: "axios" },
+    ]);
+    renderImpact();
+
+    expect(await screen.findByText("1 project")).toBeInTheDocument();
+    expect(screen.getByText("1 finding")).toBeInTheDocument();
+    expect(screen.getByText("2 projects")).toBeInTheDocument();
+    expect(screen.getByText("4 findings")).toBeInTheDocument();
+  });
+
   it("writes a Go module's version once, as the findings table does, not as vv0.3.0", async () => {
     vi.mocked(analyticsApi.getImpactAnalysis).mockResolvedValue([{ ...result, component: "golang.org/x/text", version: "v0.3.0" }]);
     renderImpact();

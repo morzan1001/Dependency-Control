@@ -124,9 +124,9 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                     </h4>
                     <p className="text-sm text-muted-foreground">{r.version}</p>
                     <div className="flex items-center gap-2 mt-2 text-sm">
-                      <span>{r.affected_projects} projects</span>
+                      <span>{r.affected_projects} project{r.affected_projects === 1 ? '' : 's'}</span>
                       <span>•</span>
-                      <span>{r.total_findings} findings</span>
+                      <span>{r.total_findings} finding{r.total_findings === 1 ? '' : 's'}</span>
                     </div>
                     <div className="flex gap-1 mt-2 flex-wrap">
                       {r.findings_by_severity.critical > 0 && (
