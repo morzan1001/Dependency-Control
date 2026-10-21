@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import time
 from datetime import datetime, timedelta, timezone
@@ -191,6 +192,29 @@ async def test_concurrent_views_of_one_scan_share_one_computation(
 
     assert [r.status_code for r in responses] == [200, 200, 200]
     assert runs == [1]
+
+
+@pytest.mark.asyncio
+async def test_the_lock_outlasts_a_waiter_so_no_peer_recomputes_under_the_holder(
+    client, db, owner_auth_headers_proj, monkeypatch, redis_cache
+):
+    await _insert_scan(db, "s")
+    locked = redis_cache.get_or_fetch_with_lock
+    timings: list[tuple[int, float]] = []
+
+    async def _recording(*args, **kwargs):
+        call = inspect.signature(locked).bind(*args, **kwargs)
+        call.apply_defaults()
+        timings.append((call.arguments["lock_ttl_seconds"], call.arguments["max_wait_seconds"]))
+        return await locked(*args, **kwargs)
+
+    monkeypatch.setattr(redis_cache, "get_or_fetch_with_lock", _recording)
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    [(lock_ttl, max_wait)] = timings
+    assert max_wait < lock_ttl
 
 
 @pytest.mark.asyncio

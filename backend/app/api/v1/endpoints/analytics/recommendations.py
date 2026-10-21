@@ -262,13 +262,10 @@ async def get_project_recommendations(
         # mode="json" so a cache hit reconstructs the same shape as a miss (enums/datetimes).
         return response.model_dump(mode="json")
 
-    # A waiter outlasts a slow miss instead of starting a second one.
     payload = await cache_service.get_or_fetch_with_lock(
         cache_key,
         _compute,
         ttl_seconds=CacheTTL.RECOMMENDATIONS,
-        lock_ttl_seconds=30,
-        max_wait_seconds=30,
         reraise_fetch_errors=True,
     )
     return RecommendationsResponse.model_validate(payload)

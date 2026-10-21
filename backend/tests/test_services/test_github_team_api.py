@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ import pytest
 from app.core.cache import CacheService
 from app.core.constants import GITHUB_API_URL, GITHUB_TEAM_SYNC_CACHE_TTL
 from app.repositories.users import UserRepository
-from app.services.git_provider import _REQUEST_CONCURRENCY, request_gate
+from app.services.git_provider import _API_TIMEOUT, _REQUEST_CONCURRENCY, request_gate
 from app.services.github import _REPOSITORY_ACCEPT, GitHubService, _HolderBinding, build_team_slug_map
 from tests.conftest import cache_ttl
 from tests.mocks.fake_mongo import FakeDatabase
@@ -393,6 +394,25 @@ class TestOrgTeams:
         service = _service()
         with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=None)):
             assert await service.get_org_teams("acme") is None
+
+    @pytest.mark.asyncio
+    async def test_a_peer_waits_out_the_holders_request_instead_of_listing_again(self, fake_cache, monkeypatch):
+        locked = fake_cache.get_or_fetch_with_lock
+        timings: list[tuple[int, float]] = []
+
+        async def _recording(*args, **kwargs):
+            call = inspect.signature(locked).bind(*args, **kwargs)
+            call.apply_defaults()
+            timings.append((call.arguments["lock_ttl_seconds"], call.arguments["max_wait_seconds"]))
+            return await locked(*args, **kwargs)
+
+        monkeypatch.setattr(fake_cache, "get_or_fetch_with_lock", _recording)
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_TEAMS)):
+            await service.get_org_teams("acme")
+
+        [(lock_ttl, max_wait)] = timings
+        assert _API_TIMEOUT < max_wait < lock_ttl
 
     @pytest.mark.asyncio
     async def test_an_unanswered_listing_is_not_asked_again_inside_the_listing_ttl(self, fake_cache):

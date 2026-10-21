@@ -10,7 +10,7 @@ from typing import Any, NamedTuple
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.cache import cache_service
+from app.core.cache import STAMPEDE_MAX_WAIT_SECONDS, cache_service
 from app.core.constants import (
     GITHUB_API_URL,
     GITHUB_ORG_REPO_MAP_CACHE_TTL,
@@ -241,7 +241,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         expected_type: type,
         *,
         ttl_seconds: int = GITHUB_TEAM_SYNC_CACHE_TTL,
-        max_wait_seconds: float = 5.0,
+        max_wait_seconds: float = STAMPEDE_MAX_WAIT_SECONDS,
     ) -> Any:
         """Wrapped so a None answer is cached for ttl_seconds rather than the generic negative-result TTL."""
 
