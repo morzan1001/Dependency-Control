@@ -158,7 +158,6 @@ async def mcp_rpc(
     db: DatabaseDep,
     user: McpKeyDep,
 ) -> Any:
-
     try:
         payload = await request.json()
     except Exception:
