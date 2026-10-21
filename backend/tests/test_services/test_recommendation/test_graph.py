@@ -457,18 +457,13 @@ class TestDuplicatePackagesMatchTheQualifiedName:
         assert analyze_duplicate_packages(deps) == []
 
 
-class TestDuplicatePackagesCompareTheChosenPackages:
-    def test_a_transitive_package_is_no_second_choice(self):
-        deps = [_dep("axios", direct=True), _dep("got"), _dep("express", direct=True)]
-
-        assert analyze_duplicate_packages(deps) == []
-
-    def test_two_direct_packages_of_one_category_are_flagged(self):
-        deps = [_dep("axios", direct=True), _dep("got", direct=True), _dep("ky")]
+class TestDuplicatePackagesCompareEveryPackage:
+    def test_a_transitive_package_of_the_same_category_is_flagged_too(self):
+        deps = [_dep("axios", direct=True), _dep("node-fetch"), _dep("express", direct=True)]
 
         [rec] = analyze_duplicate_packages(deps)
 
-        assert rec.action["duplicates"][0]["found"] == ["axios", "got"]
+        assert rec.action["duplicates"][0]["found"] == ["axios", "node-fetch"]
 
     def test_an_sbom_without_direct_marks_compares_every_package(self):
         [rec] = analyze_duplicate_packages([_dep("axios"), _dep("got")])
