@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { gitlabInstancesApi } from "@/api/gitlab-instances";
@@ -104,5 +104,35 @@ describe("TeamMembersDialog accessible names", () => {
     renderDialog();
 
     expect(screen.getByRole("combobox", { name: "Bob Example: Role" })).toBeInTheDocument();
+  });
+});
+
+describe("TeamMembersDialog sync-owned members", () => {
+  const SYNC_OWNED: Team = {
+    ...TEAM,
+    members: [TEAM.members[0], { ...TEAM.members[1], sync_owned: true }, TEAM.members[2]],
+  };
+
+  it("offers no role change or removal for a member a live sync owns and says where to change it", async () => {
+    auth.permissions = ["team:update", "system:manage"];
+    renderDialog(SYNC_OWNED);
+
+    const role = screen.getByRole("combobox", { name: "Bob Example: Role" });
+    expect(role).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove Bob Example" })).toBeDisabled();
+
+    await screen.findByText("Synced from GitLab · Internal GitLab");
+    fireEvent.pointerMove(role.parentElement!, { pointerType: "mouse" });
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Synced from GitLab · Internal GitLab; change their membership there",
+    );
+  });
+
+  it("leaves a synced member editable when no live sync owns the entry", () => {
+    auth.permissions = ["team:update"];
+    renderDialog();
+
+    expect(screen.getByRole("combobox", { name: "Bob Example: Role" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Remove Bob Example" })).toBeEnabled();
   });
 });

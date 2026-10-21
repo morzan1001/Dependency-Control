@@ -1,7 +1,6 @@
 """Live only: the fake hands out the stored document itself, so the lost-update race cannot happen there."""
 
 import asyncio
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -50,7 +49,7 @@ async def _sync_with_an_add_in_flight(db, added: TeamMember) -> None:
 
     async def _resolve_while_the_admin_adds_one(emails: set[str]):
         await asyncio.sleep(_MID_SYNC)
-        assert await team_repo.add_member(_TEAM_ID, added.model_dump(), datetime.now(timezone.utc))
+        assert await team_repo.add_member(_TEAM_ID, added.model_dump())
         return await resolve(emails)
 
     user_repo.verified_users_by_email = _resolve_while_the_admin_adds_one

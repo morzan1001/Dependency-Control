@@ -43,7 +43,7 @@ async def test_a_binding_pushed_onto_a_second_team_is_refused_just_as_a_created_
     await repo.create(Team(id="t-other", name="Orion"))
 
     with pytest.raises(DuplicateKeyError):
-        await repo.add_binding_if_absent("t-other", _github().model_dump())
+        await repo.replace_binding_for_instance("t-other", _github().model_dump())
 
 
 async def test_the_same_gitlab_group_cannot_be_bound_twice(db):
@@ -104,24 +104,13 @@ async def test_one_team_holds_the_same_group_number_on_two_instances_of_one_prov
     assert (await repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, "gh-2", 4711))["_id"] == "t-two"
 
 
-async def test_a_second_binding_on_one_instance_is_refused_by_the_write_and_not_by_the_index(db):
-    """A multikey index dedupes one document's keys, so only the write's filter can refuse a second binding."""
-    await create_team_indexes(db)
-    repo = TeamRepository(db)
-    await repo.create(Team(id="t-1", name="Payments", bindings=[_github()]))
-
-    assert await repo.add_binding_if_absent("t-1", _github(external_id=900, slug="cards").model_dump()) is None
-
-    stored = await repo.get_raw_by_id("t-1")
-    assert [binding["key"] for binding in stored["bindings"]] == ["github:gh-1:4711"]
-
-
 async def test_replacing_the_binding_of_an_instance_rewrites_the_entry_in_place(db):
+    """A multikey index dedupes one document's keys, so only the write's filter keeps a second binding out."""
     await create_team_indexes(db)
     repo = TeamRepository(db)
     await repo.create(Team(id="t-1", name="Payments", bindings=[_github(), _github(instance_id="gh-2")]))
 
-    assert await repo.replace_binding_for_instance("t-1", _github(external_id=900, slug="cards").model_dump())
+    await repo.replace_binding_for_instance("t-1", _github(external_id=900, slug="cards").model_dump())
 
     stored = await repo.get_raw_by_id("t-1")
     assert sorted(binding["key"] for binding in stored["bindings"]) == ["github:gh-1:900", "github:gh-2:4711"]

@@ -234,9 +234,8 @@ export function ApiKeysCard() {
         {isLoading ? <Skeleton className="h-24 w-full" /> : keyListContent}
         {truncated && (
           <p className="mt-2 text-xs text-muted-foreground">
-            Showing the newest {truncated.returned} of {truncated.total} keys. Revoked keys keep
-            their place in the listing, so the {truncated.total - truncated.returned} older ones
-            cannot be reached from here.
+            Showing {truncated.returned} of {truncated.total} keys, the ones you have not revoked
+            first; the {truncated.total - truncated.returned} left out cannot be reached from here.
           </p>
         )}
         {/* A failed refetch keeps the last data, so the failure sits beside the rows, not over them. */}

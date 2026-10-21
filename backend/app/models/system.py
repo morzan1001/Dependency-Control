@@ -1,5 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.config import settings
 from app.core.constants import (
     DEFAULT_ACTIVE_ANALYZERS,
     DEFAULT_RETENTION_DAYS,
@@ -76,6 +77,11 @@ class SystemSettings(SystemSettingsFields):
     id: str = Field(default="current", validation_alias="_id", serialization_alias="_id")
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @property
+    def brand(self) -> str:
+        """What mails and authenticator apps call this instance; a blank Instance Name falls back to PROJECT_NAME."""
+        return self.instance_name.strip() or settings.PROJECT_NAME
 
     @property
     def email_configured(self) -> bool:

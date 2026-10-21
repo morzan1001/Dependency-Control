@@ -92,3 +92,19 @@ class TestDeleteUser:
         assert await db.users.find_one({"_id": "u-gone"}) is None
         assert [m["user_id"] for m in (await db.teams.find_one({"_id": "t-1"}))["members"]] == ["u-stay"]
         assert [m["user_id"] for m in (await db.projects.find_one({"_id": "p-1"}))["members"]] == ["u-stay"]
+
+    @pytest.mark.asyncio
+    async def test_the_notification_overrides_a_team_membership_gave_the_user_go_with_them(self):
+        db = FakeDatabase()
+        await db.users.insert_one({"_id": "u-gone", "username": "gone", "email": "g@corp.com", "permissions": []})
+        await db.projects.insert_one(
+            {
+                "_id": "p-team",
+                "members": [{"user_id": "u-stay", "role": "admin"}],
+                "notification_overrides": {"u-gone": {"analysis_completed": ["email"]}, "u-stay": {}},
+            }
+        )
+
+        await users.delete_user("u-gone", ADMIN, db)
+
+        assert (await db.projects.find_one({"_id": "p-team"}))["notification_overrides"] == {"u-stay": {}}

@@ -151,25 +151,24 @@ describe('CICDInstancesManagement GitHub team sync', () => {
     expect(within(screen.getByRole('table')).getByText('Sync Teams')).toBeInTheDocument()
   })
 
-  it('badges each provider whose instance holds no token', () => {
+  it('badges an instance of either provider that holds no token alike', () => {
     mockUseGitLabInstances.mockReturnValue(gitlabInstance({ token_configured: false }))
     mockUseGitHubInstances.mockReturnValue(githubInstance({ token_configured: false }))
 
     renderManagement()
 
-    const table = within(screen.getByRole('table'))
-    expect(table.getByText('No Token')).toBeInTheDocument()
-    expect(table.getByText('No PAT')).toBeInTheDocument()
+    const badges = within(screen.getByRole('table')).getAllByText('No Token')
+    expect(badges).toHaveLength(2)
+    expect(badges[0].className).toBe(badges[1].className)
   })
 
   it('badges no instance that holds a token', () => {
     mockUseGitLabInstances.mockReturnValue(gitlabInstance())
+    mockUseGitHubInstances.mockReturnValue(githubInstance())
 
     renderManagement()
 
-    const table = within(screen.getByRole('table'))
-    expect(table.queryByText('No Token')).toBeNull()
-    expect(table.queryByText('No PAT')).toBeNull()
+    expect(within(screen.getByRole('table')).queryByText('No Token')).toBeNull()
   })
 
   // GHES has no IdP team sync, so its teams may be hand-maintained and less authoritative than expected.
@@ -557,16 +556,29 @@ describe('CICDInstancesManagement outcomes', () => {
     fireEvent.click(within(screen.getByRole('row', { name: row })).getAllByRole('button')[0])
   }
 
-  it('names the GitLab version a successful test reached', async () => {
-    mockGitLabTest.mockResolvedValue({ success: true, message: 'ok', gitlab_version: '17.4.1' })
+  it('passes the server message on for a successful GitLab test with the version it reached', async () => {
+    mockGitLabTest.mockResolvedValue({ success: true, message: 'Found 2 signing key(s).', gitlab_version: '17.4.1' })
     renderManagement()
 
     testRow(/Internal GitLab/)
 
     await waitFor(() =>
-      expect(toast.success).toHaveBeenCalledWith('Connection successful!', { description: 'GitLab version: 17.4.1' }),
+      expect(toast.success).toHaveBeenCalledWith('Connection successful!', {
+        description: 'Found 2 signing key(s). GitLab version: 17.4.1.',
+      }),
     )
     expect(mockGitLabTest).toHaveBeenCalledWith('gl-1')
+  })
+
+  it('passes the server message on for a successful test of a token-less GitLab instance', async () => {
+    mockGitLabTest.mockResolvedValue({ success: true, message: 'Found 2 signing key(s).', gitlab_version: null })
+    renderManagement()
+
+    testRow(/Internal GitLab/)
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith('Connection successful!', { description: 'Found 2 signing key(s).' }),
+    )
   })
 
   it('passes the server message on for a successful GitHub test', async () => {

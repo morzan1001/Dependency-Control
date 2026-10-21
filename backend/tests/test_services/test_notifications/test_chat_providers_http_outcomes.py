@@ -1,11 +1,13 @@
 from typing import Any
 
 import pytest
+from prometheus_client import REGISTRY
 
 from app.models.system import SystemSettings
 from app.services.notifications import mattermost_provider, slack_provider
 from app.services.notifications.mattermost_provider import MattermostProvider
 from app.services.notifications.slack_provider import SlackProvider
+from tests.mocks.fake_mongo import FakeDatabase
 
 _BASE = "https://mm.example"
 
@@ -22,7 +24,8 @@ class _Response:
 
 class _Client:
     def __init__(self, routes: dict[str, _Response]) -> None:
-        self._routes = routes
+        self.routes = routes
+        self.got: list[str] = []
         self.posted: list[tuple[str, Any]] = []
 
     async def __aenter__(self) -> "_Client":
@@ -32,11 +35,12 @@ class _Client:
         return None
 
     async def get(self, url: str, **_kwargs: Any) -> _Response:
-        return self._routes[url.removeprefix(_BASE)]
+        self.got.append(url)
+        return self.routes[url.removeprefix(_BASE)]
 
     async def post(self, url: str, json: Any = None, **_kwargs: Any) -> _Response:
         self.posted.append((url, json))
-        return self._routes[url.removeprefix(_BASE)]
+        return self.routes[url.removeprefix(_BASE)]
 
 
 def _use_client(monkeypatch, module, client: _Client) -> None:
@@ -101,6 +105,45 @@ async def test_a_mattermost_dm_opens_the_channel_as_the_bot_of_the_current_token
     assert client.posted[0] == (f"{_BASE}/api/v4/channels/direct", ["bot-new", "u-1"])
 
 
+def _mattermost_server() -> _Client:
+    return _Client(
+        {
+            "/api/v4/users/username/alice": _Response(200, {"id": "u-1"}),
+            "/api/v4/users/me": _Response(200, {"id": "bot-1"}),
+            "/api/v4/channels/direct": _Response(201, {"id": "dm-1"}),
+            "/api/v4/posts": _Response(201),
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_repeat_mattermost_dm_is_a_single_post(monkeypatch):
+    client = _mattermost_server()
+    _use_client(monkeypatch, mattermost_provider, client)
+    provider, settings = MattermostProvider(), SystemSettings(mattermost_url=_BASE, mattermost_bot_token="tok")
+    await provider.send("alice", "Subj", "Body", system_settings=settings)
+    client.got.clear()
+    client.posted.clear()
+
+    assert await provider.send("alice", "Subj", "Body", system_settings=settings) is True
+    assert (client.got, [url for url, _payload in client.posted]) == ([], [f"{_BASE}/api/v4/posts"])
+
+
+@pytest.mark.asyncio
+async def test_a_refused_mattermost_post_looks_the_channel_up_again(monkeypatch):
+    client = _mattermost_server()
+    _use_client(monkeypatch, mattermost_provider, client)
+    provider, settings = MattermostProvider(), SystemSettings(mattermost_url=_BASE, mattermost_bot_token="tok")
+    await provider.send("alice", "Subj", "Body", system_settings=settings)
+    client.routes["/api/v4/posts"] = _Response(403)
+    assert await provider.send("alice", "Subj", "Body", system_settings=settings) is False
+    client.routes["/api/v4/posts"] = _Response(201)
+    client.got.clear()
+
+    assert await provider.send("alice", "Subj", "Body", system_settings=settings) is True
+    assert client.got == [f"{_BASE}/api/v4/users/username/alice", f"{_BASE}/api/v4/users/me"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("status", "payload", "expected"), [(200, {"ok": True}, True), (200, {"ok": False}, False), (500, {}, False)]
@@ -109,7 +152,9 @@ async def test_slack_send_succeeds_only_on_an_ok_answer(monkeypatch, status, pay
     client = _Client({"https://slack.com/api/chat.postMessage": _Response(status, payload)})
     _use_client(monkeypatch, slack_provider, client)
 
-    sent = await SlackProvider().send("#alerts", "Subj", "Body", system_settings=SystemSettings(slack_bot_token="xoxb"))
+    sent = await SlackProvider().send(
+        "#alerts", "Subj", "Body", db=FakeDatabase(), system_settings=SystemSettings(slack_bot_token="xoxb")
+    )
 
     assert sent is expected
     assert [payload["channel"] for _url, payload in client.posted] == ["#alerts"]
@@ -121,8 +166,59 @@ async def test_the_slack_fallback_text_keeps_a_version_range_out_of_slacks_contr
     _use_client(monkeypatch, slack_provider, client)
 
     await SlackProvider().send(
-        "#alerts", "a < b", "affected: <2.17.1 & >=2.0", system_settings=SystemSettings(slack_bot_token="xoxb")
+        "#alerts",
+        "a < b",
+        "affected: <2.17.1 & >=2.0",
+        db=FakeDatabase(),
+        system_settings=SystemSettings(slack_bot_token="xoxb"),
     )
 
     [(_url, payload)] = client.posted
     assert payload["text"] == "*a &lt; b*\naffected: &lt;2.17.1 &amp; &gt;=2.0"
+
+
+def _counts(channel: str) -> tuple[float, float]:
+    sent = REGISTRY.get_sample_value("notifications_sent_total", {"type": channel}) or 0.0
+    failed = REGISTRY.get_sample_value("notifications_failed_total", {"type": channel}) or 0.0
+    return sent, failed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("routes", "counted"),
+    [
+        ({}, (1, 0)),
+        ({"/api/v4/posts": _Response(500)}, (0, 1)),
+        ({"/api/v4/users/username/alice": _Response(404)}, (0, 1)),
+        ({"/api/v4/channels/direct": _Response(403)}, (0, 1)),
+    ],
+    ids=["posted", "post refused", "unknown user", "channel refused"],
+)
+async def test_each_mattermost_send_is_counted_once(monkeypatch, routes, counted):
+    client = _mattermost_server()
+    client.routes.update(routes)
+    _use_client(monkeypatch, mattermost_provider, client)
+    before = _counts("mattermost")
+
+    await MattermostProvider().send(
+        "alice", "Subj", "Body", system_settings=SystemSettings(mattermost_url=_BASE, mattermost_bot_token="tok")
+    )
+    await MattermostProvider().send("alice", "Subj", "Body", system_settings=SystemSettings())
+
+    assert _counts("mattermost") == (before[0] + counted[0], before[1] + counted[1])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("payload", "counted"), [({"ok": True}, (1, 0)), ({"ok": False}, (0, 1))])
+async def test_each_slack_send_is_counted_once(monkeypatch, payload, counted):
+    _use_client(
+        monkeypatch, slack_provider, _Client({"https://slack.com/api/chat.postMessage": _Response(200, payload)})
+    )
+    before = _counts("slack")
+
+    await SlackProvider().send(
+        "#alerts", "Subj", "Body", db=FakeDatabase(), system_settings=SystemSettings(slack_bot_token="xoxb")
+    )
+    await SlackProvider().send("#alerts", "Subj", "Body", db=FakeDatabase(), system_settings=SystemSettings())
+
+    assert _counts("slack") == (before[0] + counted[0], before[1] + counted[1])

@@ -302,9 +302,9 @@ class TestARejectedReadIsLogged:
         [
             (lambda service: service.get_project_details(100), "/projects/100", None),
             (
-                lambda service: service.get_merge_requests_for_commit(100, "9c1d2e3f"),
+                lambda service: service.get_merge_requests_for_commit(100, "9c1d2e3f", "main"),
                 "/projects/100/repository/commits/9c1d2e3f/merge_requests",
-                [],
+                ("9c1d2e3f", []),
             ),
         ],
         ids=["project details", "merge requests of a commit"],
@@ -319,23 +319,146 @@ class TestARejectedReadIsLogged:
         assert f"GitLab API GET {endpoint} returned HTTP 401" in [r.getMessage() for r in caplog.records]
 
 
+_MERGED_RESULT = "1f0e9c2a3b4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f"
+_TARGET_HEAD = "9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d"
+_SOURCE_HEAD = "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a"
+
+
+def _merge_request(iid, source_branch, sha=_SOURCE_HEAD):
+    """One item of GET /projects/:id/repository/commits/:sha/merge_requests."""
+    return {"iid": iid, "state": "opened", "draft": False, "sha": sha, "source_branch": source_branch}
+
+
+def _routed(routes):
+    return AsyncMock(side_effect=lambda endpoint, params=None: routes.get(endpoint))
+
+
+class TestMergeRequestsForCommit:
+    """A merged-results or merge-train pipeline's CI_COMMIT_SHA is a merge commit GitLab links to no MR."""
+
+    @staticmethod
+    def _lookup(gitlab_instance_a, branch, parent_ids, head_mrs):
+        routes = {
+            f"/projects/100/repository/commits/{_MERGED_RESULT}/merge_requests": httpx.Response(200, json=[]),
+            f"/projects/100/repository/commits/{_MERGED_RESULT}": httpx.Response(
+                200, json={"id": _MERGED_RESULT, "parent_ids": parent_ids}
+            ),
+            f"/projects/100/repository/commits/{_SOURCE_HEAD}/merge_requests": httpx.Response(200, json=head_mrs),
+        }
+        service = GitLabService(gitlab_instance_a)
+        with patch.object(service, "_api_get", _routed(routes)) as api_get:
+            head_sha, mrs = asyncio.run(service.get_merge_requests_for_commit(100, _MERGED_RESULT, branch))
+        return head_sha, [mr.iid for mr in mrs], [call.args[0] for call in api_get.await_args_list]
+
+    def test_a_merged_result_resolves_to_the_merge_request_of_its_source_head(self, gitlab_instance_a):
+        head_sha, iids, requested = self._lookup(
+            gitlab_instance_a,
+            "feature",
+            [_TARGET_HEAD, _SOURCE_HEAD],
+            [_merge_request(7, "feature"), _merge_request(8, "feature-copy")],
+        )
+
+        assert (head_sha, iids) == (_SOURCE_HEAD, [7])
+        assert requested[-1] == f"/projects/100/repository/commits/{_SOURCE_HEAD}/merge_requests"
+
+    def test_a_pushed_merge_into_another_branch_leaves_the_merged_branchs_request_alone(self, gitlab_instance_a):
+        head_sha, iids, _ = self._lookup(
+            gitlab_instance_a, "develop", [_TARGET_HEAD, _SOURCE_HEAD], [_merge_request(7, "feature")]
+        )
+
+        assert (head_sha, iids) == (_MERGED_RESULT, [])
+
+    @pytest.mark.parametrize(
+        "parent_ids",
+        [
+            pytest.param([_TARGET_HEAD], id="single-parent"),
+            pytest.param([_TARGET_HEAD, _SOURCE_HEAD, "c" * 40], id="octopus"),
+        ],
+    )
+    def test_only_a_two_parent_commit_is_retried(self, gitlab_instance_a, parent_ids):
+        head_sha, iids, requested = self._lookup(
+            gitlab_instance_a, "feature", parent_ids, [_merge_request(7, "feature")]
+        )
+
+        assert (head_sha, iids) == (_MERGED_RESULT, [])
+        assert requested == [
+            f"/projects/100/repository/commits/{_MERGED_RESULT}/merge_requests",
+            f"/projects/100/repository/commits/{_MERGED_RESULT}",
+        ]
+
+    def test_a_commit_a_merge_request_names_is_not_retried(self, gitlab_instance_a):
+        routes = {
+            f"/projects/100/repository/commits/{_SOURCE_HEAD}/merge_requests": httpx.Response(
+                200, json=[_merge_request(7, "feature")]
+            )
+        }
+        service = GitLabService(gitlab_instance_a)
+        with patch.object(service, "_api_get", _routed(routes)) as api_get:
+            head_sha, mrs = asyncio.run(service.get_merge_requests_for_commit(100, _SOURCE_HEAD, "feature"))
+
+        assert (head_sha, [mr.iid for mr in mrs]) == (_SOURCE_HEAD, [7])
+        api_get.assert_awaited_once()
+
+
+def _note(note_id, body="", author_id=7):
+    """One item of GET /projects/:id/merge_requests/:iid/notes."""
+    return {"id": note_id, "body": body, "system": False, "author": {"id": author_id, "username": f"user{author_id}"}}
+
+
+def _serve_pages(monkeypatch, *pages):
+    """Page n answers pages[n - 1], linking the next while one is left; a None page is refused."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params["page"])
+        if pages[page - 1] is None:
+            return httpx.Response(502)
+        more = page < len(pages)
+        link = {"link": f'<{request.url.copy_set_param("page", page + 1)}>; rel="next"'} if more else {}
+        return httpx.Response(200, json=pages[page - 1], headers=link)
+
+    return serve_idp(monkeypatch, answer)
+
+
+def _own_marker(note):
+    return note.author_id == 7 and "marker" in note.body
+
+
 class TestMergeRequestNotes:
-    def test_every_page_is_read(self, gitlab_instance_a):
-        """Notes come newest first, so a cap cuts off the scan note and the upsert posts another."""
-        service = GitLabService(gitlab_instance_a)
+    def test_notes_are_read_oldest_first_up_to_the_first_page_holding_a_match(self, gitlab_instance_a, monkeypatch):
+        requested = _serve_pages(
+            monkeypatch,
+            [_note(1, "chatter"), _note(2, "marker", author_id=99)],
+            [_note(3, "marker"), _note(4, "marker")],
+            [_note(5, "marker")],
+        )
 
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[])) as paginated:
-            asyncio.run(service.get_merge_request_notes(100, 7))
+        notes = asyncio.run(GitLabService(gitlab_instance_a).find_merge_request_notes(100, 7, _own_marker))
 
-        paginated.assert_awaited_once_with("/projects/100/merge_requests/7/notes")
+        assert [note.id for note in notes] == [3, 4]
+        urls = [httpx.URL(url) for url in requested]
+        assert [(url.path, url.params["sort"], url.params["order_by"]) for url in urls] == [
+            ("/api/v4/projects/100/merge_requests/7/notes", "asc", "created_at")
+        ] * 2
 
-    def test_a_failed_read_is_none_rather_than_no_notes(self, gitlab_instance_a):
-        service = GitLabService(gitlab_instance_a)
+    def test_every_page_is_read_when_none_holds_a_match(self, gitlab_instance_a, monkeypatch):
+        requested = _serve_pages(monkeypatch, [_note(1)], [_note(2)])
 
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=None)):
-            assert asyncio.run(service.get_merge_request_notes(100, 7)) is None
+        assert asyncio.run(GitLabService(gitlab_instance_a).find_merge_request_notes(100, 7, _own_marker)) == []
+        assert len(requested) == 2
+
+    def test_a_failed_read_is_none_rather_than_no_notes(self, gitlab_instance_a, monkeypatch):
+        _serve_pages(monkeypatch, [_note(1)], None)
+
+        assert asyncio.run(GitLabService(gitlab_instance_a).find_merge_request_notes(100, 7, _own_marker)) is None
 
 
+@pytest.fixture
+def group_cache(fake_cache, monkeypatch):
+    monkeypatch.setattr("app.services.gitlab.cache_service", fake_cache)
+    return fake_cache
+
+
+@pytest.mark.usefixtures("group_cache")
 class TestGroupListing:
     def test_the_search_term_is_passed_to_gitlab(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
@@ -354,6 +477,40 @@ class TestGroupListing:
             asyncio.run(service.get_groups())
 
         assert "search" not in paginated.await_args[1]["params"]
+
+    def test_the_picker_reopened_within_the_minute_walks_nothing_again(self, gitlab_instance_a, group_cache):
+        """A repeat search term within the TTL is served from the cache."""
+        service = GitLabService(gitlab_instance_a)
+
+        async def _pick_twice():
+            return [await service.get_groups("edge"), await service.get_groups("edge")]
+
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[{"id": 77}])) as paginated:
+            first, second = asyncio.run(_pick_twice())
+
+        assert first == second == [{"id": 77}]
+        paginated.assert_awaited_once()
+        [key] = asyncio.run(group_cache._client.keys("*group_picker*"))
+        assert 0 < asyncio.run(group_cache._client.ttl(key)) <= 60
+
+    def test_each_search_term_is_listed_on_its_own(self, gitlab_instance_a):
+        service = GitLabService(gitlab_instance_a)
+
+        async def _pick():
+            return [await service.get_groups("edge"), await service.get_groups("core"), await service.get_groups()]
+
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(side_effect=[[{"id": 1}], [{"id": 2}], []])):
+            assert asyncio.run(_pick()) == [[{"id": 1}], [{"id": 2}], []]
+
+    def test_a_refused_listing_is_asked_again_rather_than_remembered(self, gitlab_instance_a):
+        """An admin who fixes the token must not keep seeing the refusal."""
+        service = GitLabService(gitlab_instance_a)
+
+        async def _pick_twice():
+            return [await service.get_groups(), await service.get_groups()]
+
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(side_effect=[None, [{"id": 1}]])):
+            assert asyncio.run(_pick_twice()) == [None, [{"id": 1}]]
 
 
 class TestGetCurrentUserId:

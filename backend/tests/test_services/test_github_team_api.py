@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
+import httpx
 import pytest
 
 from app.core.cache import CacheService
@@ -830,47 +831,90 @@ class TestOrgRepositoryMap:
         assert api.paths == ["/orgs/acme/teams/payments/repos"]
 
 
-class TestOrgTeamCount:
-    @pytest.mark.asyncio
-    async def test_is_fetched_from_the_org_endpoint(self):
-        service = _service()
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_TEAMS)) as paginated:
-            assert await service.count_org_teams("acme") == 2
+def _team_count_page(teams: list[dict], last_page: int | None = None) -> httpx.Response:
+    """GitHub's answer to per_page=1: one team, and while more follow, a Link to the last page."""
+    following = (
+        f'<{_ORG_URL}/teams?per_page=1&page=2>; rel="next", <{_ORG_URL}/teams?per_page=1&page={last_page}>; rel="last"'
+    )
+    return httpx.Response(200, json=teams, headers={"link": following} if last_page else {})
 
-        assert paginated.await_args.args[0] == "/orgs/acme/teams"
+
+class TestOrgTeamCount:
+    @staticmethod
+    async def _count(answer: httpx.Response, service: GitHubService | None = None) -> tuple[int | None, _GitHubApi]:
+        service = service or _service()
+
+        async def _answer(_path, _params):
+            return answer
+
+        api = _GitHubApi(_answer)
+        with patch.object(service, "_api_client", new=api.client):
+            return await service.count_org_teams("acme"), api
+
+    @pytest.mark.asyncio
+    async def test_reads_one_team_and_counts_by_the_last_page(self):
+        """One request per organisation, counted from the last page number."""
+        count, api = await self._count(_team_count_page(_ORG_TEAMS[:1], last_page=37))
+
+        assert count == 37
+        assert api.requests == [("/orgs/acme/teams", {"per_page": 1})]
+
+    @pytest.mark.asyncio
+    async def test_an_organisation_with_one_team_counts_one(self):
+        count, _ = await self._count(_team_count_page(_ORG_TEAMS[:1]))
+
+        assert count == 1
+
+    @pytest.mark.asyncio
+    async def test_an_organisation_without_teams_counts_zero(self):
+        count, _ = await self._count(_team_count_page([]))
+
+        assert count == 0
 
     @pytest.mark.asyncio
     async def test_a_refused_request_stays_none_rather_than_zero(self):
         """The connection test tells "no teams here" from "the API refused" only by this distinction."""
-        service = _service()
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=None)):
-            assert await service.count_org_teams("acme") is None
+        count, _ = await self._count(httpx.Response(403, json={"message": "Must have admin rights to Repository."}))
+
+        assert count is None
 
     @pytest.mark.asyncio
-    async def test_an_organisation_without_teams_counts_zero(self):
-        service = _service()
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[])):
-            assert await service.count_org_teams("acme") == 0
+    async def test_a_200_html_page_counts_none(self):
+        count, _ = await self._count(
+            httpx.Response(200, text="<html>Sign in</html>", headers={"content-type": "text/html"})
+        )
+
+        assert count is None
 
     @pytest.mark.asyncio
     async def test_is_never_served_from_the_cache(self, fake_cache):
         """A connection test reporting a five-minute-old token state, in green, is worse than slow."""
         service = _service()
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_TEAMS)) as paginated:
+
+        async def _answer(_path, _params):
+            return _team_count_page(_ORG_TEAMS[:1], last_page=2)
+
+        api = _GitHubApi(_answer)
+        with patch.object(service, "_api_client", new=api.client):
             await service.count_org_teams("acme")
             await service.count_org_teams("acme")
 
-        assert paginated.await_count == 2
+        assert len(api.requests) == 2
 
     @pytest.mark.asyncio
     async def test_a_warm_get_org_teams_entry_does_not_answer_the_count(self, fake_cache):
         """A sync minutes earlier leaves that entry warm; a revoked token must still read red."""
         service = _service()
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_TEAMS)) as paginated:
+
+        async def _answer(_path, _params):
+            return _team_count_page(_ORG_TEAMS)
+
+        api = _GitHubApi(_answer)
+        with patch.object(service, "_api_client", new=api.client):
             await service.get_org_teams("acme")
             await service.count_org_teams("acme")
 
-        assert paginated.await_count == 2
+        assert api.paths == ["/orgs/acme/teams", "/orgs/acme/teams"]
 
 
 class TestTeamMembers:

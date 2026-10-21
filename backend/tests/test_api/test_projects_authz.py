@@ -2,7 +2,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 from app.core.permissions import Permissions
 from app.models.project import Project
@@ -91,7 +91,9 @@ class TestUpdateProjectRoutesThroughGate:
             ) as mock_gate,
             pytest.raises(HTTPException),
         ):
-            asyncio.run(update_project("proj-1", ProjectUpdate(name="x"), _update_user(), MagicMock()))
+            asyncio.run(
+                update_project("proj-1", ProjectUpdate(name="x"), _update_user(), MagicMock(), BackgroundTasks())
+            )
 
         assert mock_gate.call_args.kwargs.get("required_role") == "admin"
 
@@ -208,9 +210,8 @@ class TestUpdateProjectTeamAssignment:
             patch(f"{ENDPOINTS}._assert_gitlab_mr_token_present", new_callable=AsyncMock),
             patch(f"{ENDPOINTS}.deps.get_system_settings", new_callable=AsyncMock, return_value=system_settings),
             patch(f"{ENDPOINTS}.apply_system_settings_enforcement", side_effect=lambda d, *_: d),
-            patch(f"{ENDPOINTS}._audit_license_policy_change", new_callable=AsyncMock),
         ):
-            asyncio.run(update_project("proj-1", project_in, user, MagicMock()))
+            asyncio.run(update_project("proj-1", project_in, user, MagicMock(), BackgroundTasks()))
 
         return project_repo.update_fields_and_owners
 

@@ -2,7 +2,8 @@
 
 import pytest
 
-from app.api.v1.helpers.teams import resolve_team_names, team_refs
+from app.api.v1.helpers.teams import team_refs
+from app.repositories.teams import TeamRepository
 from tests.mocks.fake_mongo import FakeDatabase
 
 
@@ -49,30 +50,30 @@ def test_no_owners_is_no_rows():
 
 
 @pytest.mark.asyncio
-async def test_resolve_team_names_answers_every_id_in_one_read():
+async def test_names_by_ids_answers_every_id_in_one_read():
     db = FakeDatabase()
     await db.teams.insert_one({"_id": "t-a", "name": "Alpha"})
     await db.teams.insert_one({"_id": "t-b", "name": "Bravo"})
     await db.teams.insert_one({"_id": "t-c", "name": "Charlie"})
 
-    assert await resolve_team_names(db, ["t-c", "t-a"]) == {"t-a": "Alpha", "t-c": "Charlie"}
+    assert await TeamRepository(db).names_by_ids(["t-c", "t-a"]) == {"t-a": "Alpha", "t-c": "Charlie"}
 
 
 @pytest.mark.asyncio
-async def test_resolve_team_names_leaves_out_an_id_no_team_answers():
+async def test_names_by_ids_leaves_out_an_id_no_team_answers():
     """The absence is the signal team_refs drops on; the map must not invent an entry for it."""
     db = FakeDatabase()
     await db.teams.insert_one({"_id": "t-a", "name": "Alpha"})
 
-    assert await resolve_team_names(db, ["t-a", "t-gone"]) == {"t-a": "Alpha"}
+    assert await TeamRepository(db).names_by_ids(["t-a", "t-gone"]) == {"t-a": "Alpha"}
 
 
 @pytest.mark.asyncio
-async def test_resolve_team_names_reads_nothing_for_a_page_that_owns_nothing():
+async def test_names_by_ids_reads_nothing_for_a_page_that_owns_nothing():
     db = FakeDatabase()
     await db.teams.insert_one({"_id": "t-a", "name": "Alpha"})
 
-    assert await resolve_team_names(db, []) == {}
+    assert await TeamRepository(db).names_by_ids([]) == {}
 
 
 @pytest.mark.asyncio
@@ -80,7 +81,7 @@ async def test_a_repeated_owner_across_a_page_is_read_once():
     db = FakeDatabase()
     await db.teams.insert_one({"_id": "t-a", "name": "Alpha"})
 
-    assert await resolve_team_names(db, ["t-a", "t-a", "t-a"]) == {"t-a": "Alpha"}
+    assert await TeamRepository(db).names_by_ids(["t-a", "t-a", "t-a"]) == {"t-a": "Alpha"}
 
 
 @pytest.mark.asyncio
@@ -89,4 +90,4 @@ async def test_a_team_stored_without_a_name_resolves_to_the_empty_string():
     db = FakeDatabase()
     await db.teams.insert_one({"_id": "t-a"})
 
-    assert await resolve_team_names(db, ["t-a"]) == {"t-a": ""}
+    assert await TeamRepository(db).names_by_ids(["t-a"]) == {"t-a": ""}

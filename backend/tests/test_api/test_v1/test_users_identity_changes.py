@@ -2,6 +2,7 @@ import logging
 import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pyotp
 import pytest
 import pytest_asyncio
 from fastapi import BackgroundTasks, HTTPException
@@ -14,6 +15,7 @@ from app.models.system import SystemSettings
 from app.models.user import User
 from app.repositories.users import IdentityTakenError, UserRepository
 from app.schemas import user as user_schemas
+from app.schemas.user import UserResponse
 from tests.mocks.fake_mongo import FakeDatabase
 
 LOCAL_ID = "u-lena"
@@ -127,7 +129,7 @@ class TestRenames:
         with caplog.at_level(logging.INFO):
             result = await _patch_me(db, LOCAL, username="lena.k")
 
-        assert (await _stored(db, LOCAL_ID))["username"] == result["username"] == "lena.k"
+        assert (await _stored(db, LOCAL_ID))["username"] == result.username == "lena.k"
         assert _renames(caplog) == [f"User {LOCAL_ID} renamed user {LOCAL_ID} from 'lena' to 'lena.k'"]
 
     @pytest.mark.asyncio
@@ -531,3 +533,65 @@ class TestUsernames:
 def test_creating_a_user_requires_a_password():
     with pytest.raises(ValidationError):
         user_schemas.UserCreate(email="n@corp.com", username="nora")
+
+
+_NEW_PASSWORD = "An0ther!Secret-long"
+_TOTP_SECRET = pyotp.random_base32()
+_HASHED = {**LOCAL, "hashed_password": security.get_password_hash(PASSWORD), "totp_secret": _TOTP_SECRET}
+
+_MUTATIONS = {
+    "update_user_me": lambda db: users.update_user_me(
+        user_schemas.UserUpdateMe(slack_username="lena-s"), User(**LOCAL), db
+    ),
+    "update_user": lambda db: users.update_user(
+        LOCAL_ID, user_schemas.UserUpdate(slack_username="lena-s"), User(**ADMIN), db
+    ),
+    "change_email": lambda db: users.change_email(
+        user_schemas.UserEmailChange(email="lena.new@corp.com"), BackgroundTasks(), User(**LOCAL), db
+    ),
+    "migrate_to_local": lambda db: users.migrate_to_local(
+        password_in=user_schemas.UserMigrateToLocal(new_password=_NEW_PASSWORD), current_user=User(**IDP), db=db
+    ),
+    "migrate_user_to_local": lambda db: users.migrate_user_to_local(IDP_ID, User(**ADMIN), db),
+    "update_password_me": lambda db: users.update_password_me(
+        user_schemas.UserPasswordUpdate(current_password=PASSWORD, new_password=_NEW_PASSWORD),
+        BackgroundTasks(),
+        User(**_HASHED),
+        db,
+    ),
+    "enable_2fa": lambda db: users.enable_2fa(
+        user_schemas.User2FAVerify(code=pyotp.TOTP(_TOTP_SECRET).now(), password=PASSWORD),
+        BackgroundTasks(),
+        User(**_HASHED),
+        db,
+    ),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", _MUTATIONS)
+async def test_a_user_mutation_reads_the_user_back_once_after_its_write(db, mutation):
+    """The repository's update already answers with the stored row; a second read only costs a round trip."""
+    collection = db.users
+    real_find_one, real_update_one = collection.find_one, collection.update_one
+    events = []
+
+    async def find_one(*args, **kwargs):
+        events.append("read")
+        return await real_find_one(*args, **kwargs)
+
+    async def update_one(*args, **kwargs):
+        events.append("write")
+        return await real_update_one(*args, **kwargs)
+
+    with (
+        patch.object(collection, "find_one", find_one),
+        patch.object(collection, "update_one", update_one),
+        _system(NO_MAIL),
+    ):
+        result = await _MUTATIONS[mutation](db)
+
+    after_last_write = events[len(events) - events[::-1].index("write") :]
+    assert after_last_write == ["read"]
+    stored = User(**await _stored(db, result["_id"] if isinstance(result, dict) else result.id))
+    assert UserResponse.model_validate(result) == UserResponse.model_validate(stored)

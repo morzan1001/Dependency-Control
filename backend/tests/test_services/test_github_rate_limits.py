@@ -114,3 +114,25 @@ async def test_a_hold_whose_time_has_passed_is_no_rate_limit(monkeypatch):
     await service.get_viewer_organisations()
 
     assert service.rate_limited_until is None
+
+
+@pytest.mark.asyncio
+async def test_an_unauthorised_answer_marks_the_token_rejected(monkeypatch):
+    """GitHub answers an expired or revoked token with 401, and a missing scope or a spent budget with 403."""
+    _serve(monkeypatch, httpx.Response(401, json={"message": "Bad credentials"}))
+    service = _service()
+
+    assert await service.get_viewer_organisations() is None
+
+    assert service.token_rejected is True
+    assert service.rate_limited_until is None
+
+
+@pytest.mark.asyncio
+async def test_a_forbidden_answer_does_not_mark_the_token_rejected(monkeypatch):
+    _serve(monkeypatch, httpx.Response(403, json={"message": "Resource not accessible by personal access token"}))
+    service = _service()
+
+    await service.get_viewer_organisations()
+
+    assert service.token_rejected is False

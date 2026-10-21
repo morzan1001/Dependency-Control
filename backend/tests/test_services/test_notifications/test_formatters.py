@@ -184,6 +184,20 @@ class TestSlackAnalysisCompleted:
         assert "*&lt;!channel&gt;*" in texts
         assert "osv: Failed (&lt;timeout&gt;)" in texts
 
+    def test_a_scan_completed_with_errors_says_so(self):
+        blocks = build_analysis_completed_blocks(
+            project_name="demo",
+            scan_id="s1",
+            total_findings=0,
+            severity_counts={},
+            results_summary=[],
+            analyzer_count=1,
+            scan_link=_SCAN_LINK,
+            warning="Completed with errors (grype): results may be incomplete.",
+        )
+
+        assert "\u26a0\ufe0f *Completed with errors (grype): results may be incomplete.*" in _section_texts(blocks)
+
 
 class TestSlackAdvisoryBody:
     def test_a_long_announcement_arrives_whole_across_sections(self):
@@ -288,8 +302,8 @@ class TestMattermostAlerts:
         assert "osv: Failed \\(see \\[log\\]\\(https://x\\)\\)" in text
 
 
-def _completed_colour(**severity_counts: int) -> str:
-    props = build_analysis_completed_props(
+def _completed_props(warning: str | None = None, **severity_counts: int) -> dict:
+    return build_analysis_completed_props(
         project_name="demo",
         scan_id="s1",
         total_findings=sum(severity_counts.values()),
@@ -297,8 +311,12 @@ def _completed_colour(**severity_counts: int) -> str:
         results_summary=[],
         analyzer_count=0,
         scan_link=_SCAN_LINK,
-    )
-    return props["attachments"][0]["color"]
+        warning=warning,
+    )["attachments"][0]
+
+
+def _completed_colour(warning: str | None = None, **severity_counts: int) -> str:
+    return _completed_props(warning, **severity_counts)["color"]
 
 
 class TestMattermostSeverityColour:
@@ -309,3 +327,18 @@ class TestMattermostSeverityColour:
         tiers = {_completed_colour(CRITICAL=1, HIGH=3), _completed_colour(HIGH=3), _completed_colour()}
 
         assert len(tiers) == 3
+
+
+class TestMattermostCompletedWithErrors:
+    _WARNING = "Completed with errors (grype): results may be incomplete."
+
+    def test_a_clean_scan_with_errors_is_coloured_as_a_warning(self):
+        assert _completed_colour(self._WARNING) == _completed_colour(HIGH=3) != _completed_colour()
+
+    def test_criticals_keep_their_colour_beside_the_errors(self):
+        assert _completed_colour(self._WARNING, CRITICAL=1) == _completed_colour(CRITICAL=1)
+
+    def test_the_text_carries_the_warning(self):
+        assert (
+            "Completed with errors \\(grype\\): results may be incomplete." in _completed_props(self._WARNING)["text"]
+        )

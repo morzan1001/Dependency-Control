@@ -168,11 +168,11 @@ export function CICDInstancesManagement() {
     onSuccess: (data, { _type }) => {
       if (!data.success) {
         toast.error(`Failed to connect to ${PROVIDER_LABEL[_type]}`, { description: data.message });
-      } else if (_type === "github") {
-        toast.success("Connection successful!", { description: data.message });
       } else {
         const version = "gitlab_version" in data ? data.gitlab_version : undefined;
-        toast.success("Connection successful!", { description: version ? `GitLab version: ${version}` : undefined });
+        toast.success("Connection successful!", {
+          description: version ? `${data.message} GitLab version: ${version}.` : data.message,
+        });
       }
     },
     meta: { errorTitle: "Failed to test connection" },
@@ -300,14 +300,9 @@ export function CICDInstancesManagement() {
                           Sync Teams
                         </Badge>
                       )}
-                      {instance._type === "gitlab" && !instance.token_configured && (
-                        <Badge variant="destructive" className="text-xs">
-                          No Token
-                        </Badge>
-                      )}
-                      {instance._type === "github" && !instance.token_configured && (
+                      {!instance.token_configured && (
                         <Badge variant="secondary" className="text-xs">
-                          No PAT
+                          No Token
                         </Badge>
                       )}
                     </div>

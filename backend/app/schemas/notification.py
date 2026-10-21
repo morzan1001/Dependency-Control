@@ -3,12 +3,18 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.constants import NotificationChannel
 from app.services.aggregation.versions import parse_version_key
 
+# Dependency types a row of the ecosystem is stored under besides its purl type: syft's, or a pkg:go purl's.
+ECOSYSTEM_STORED_TYPES = {
+    "pypi": {"python"},
+    "golang": {"go", "go-module"},
+    "maven": {"java-archive"},
+    "nuget": {"dotnet"},
+}
 # Names the UI and syft use for an ecosystem, mapped to its purl type.
-_ECOSYSTEM_ALIASES = {"pip": "pypi", "python": "pypi", "go": "golang", "go-module": "golang", "dotnet": "nuget"}
-# Dependency types a purl-less row of the ecosystem is stored under, besides the purl type itself.
-ECOSYSTEM_STORED_TYPES = {"pypi": {"python"}, "golang": {"go-module"}, "maven": {"java-archive"}, "nuget": {"dotnet"}}
+_ECOSYSTEM_ALIASES = {"pip": "pypi"} | {t: eco for eco, types in ECOSYSTEM_STORED_TYPES.items() for t in types}
 # The types the purl spec registers; a rule typed otherwise could never match a dependency.
 _PURL_TYPES = frozenset(
     {
@@ -47,12 +53,16 @@ _PURL_TYPES = frozenset(
     }
 )
 _RELEASE = re.compile(r"[vV]?\d")
+_COMMIT = re.compile(r"[0-9a-f]{7,40}")
 _WILDCARD_SEGMENT = re.compile(r"(^|[.-])[xX*](\.|$)")
 
 
 def _names_release(version: str) -> bool:
-    """Ignores an epoch prefix, such as the "1:" of a Debian "1:2.30-1"."""
-    return _RELEASE.match(version.strip().split(":", 1)[-1]) is not None
+    """Ignores an epoch prefix, such as the "1:" of a Debian "1:2.30-1"; a commit hash names no release."""
+    version = version.strip().split(":", 1)[-1]
+    if _COMMIT.fullmatch(version.lower()) and not version.isdigit():
+        return False
+    return _RELEASE.match(version) is not None
 
 
 class AdvisoryPackage(BaseModel):
@@ -97,7 +107,7 @@ class AdvisoryPackage(BaseModel):
 class BroadcastRequest(BaseModel):
     target_type: Literal["global", "teams", "advisory"] = Field(..., description="Target audience")
     target_teams: list[str] | None = Field(None, description="List of Team IDs if target_type is 'teams'")
-    channels: list[str] | None = Field(None, description="Channels to send to (email, slack, mattermost)")
+    channels: list[NotificationChannel] | None = Field(None, description="Channels to send to")
 
     packages: list[AdvisoryPackage] | None = Field(None, description="List of affected packages for advisory")
 

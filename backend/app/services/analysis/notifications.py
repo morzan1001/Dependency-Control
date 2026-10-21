@@ -3,6 +3,8 @@ import json
 import logging
 from typing import Any
 
+from pymongo import ReturnDocument
+
 from app.core.config import scan_link
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
@@ -10,6 +12,7 @@ from app.core.constants import (
     NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
     NOTIFICATION_EVENT_ANALYSIS_FAILED,
     NOTIFICATION_EVENT_VULNERABILITY_FOUND,
+    SCAN_STATUS_COMPLETED_WITH_ERRORS,
     ScanStatus,
     get_severity_value,
 )
@@ -17,6 +20,7 @@ from app.core.cve import canonical_cve
 from app.core.epss import HIGH_EPSS_LABEL, bucket_epss
 from app.models.project import Project
 from app.models.stats import Stats
+from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.notification import PRIORITY_VULNS_LABEL, AlertVulnerability
 from app.services.analysis.registry import POST_PROCESSOR_ANALYZERS
 from app.services.analysis.runner import AnalyzerOutcome
@@ -126,14 +130,24 @@ def _fingerprint(content: Any) -> str:
     return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 
-async def _first_announcement(db: Database, scan_id: str, event: str, content: Any) -> bool:
-    """Claim ``event`` for ``content`` on the scan, so a re-analysis that changed nothing announces nothing."""
+def _completion_warning(status: ScanStatus, failed_analyzers: list[str]) -> str | None:
+    if status != SCAN_STATUS_COMPLETED_WITH_ERRORS:
+        return None
+    failed = f" ({', '.join(failed_analyzers)})" if failed_analyzers else ""
+    return f"Completed with errors{failed}: results may be incomplete."
+
+
+async def _announcement_revision(db: Database, scan_id: str, event: str, content: Any) -> int | None:
+    """Claim ``event`` for ``content`` on the scan; None when a re-analysis changed nothing to announce."""
     fingerprint = _fingerprint(content)
+    revision = f"announced_revisions.{event}"
     claimed = await db.scans.find_one_and_update(
         {"_id": scan_id, f"announced.{event}": {"$ne": fingerprint}},
-        {"$set": {f"announced.{event}": fingerprint}},
+        {"$set": {f"announced.{event}": fingerprint}, "$inc": {revision: 1}},
+        projection={revision: 1},
+        return_document=ReturnDocument.AFTER,
     )
-    return claimed is not None
+    return None if claimed is None else int(claimed["announced_revisions"][event])
 
 
 async def send_scan_notifications(
@@ -150,10 +164,13 @@ async def send_scan_notifications(
     link = scan_link(str(project.id), scan_id)
     severity_counts = {"CRITICAL": stats.critical, "HIGH": stats.high, "MEDIUM": stats.medium, "LOW": stats.low}
     completion = [len(findings), severity_counts, status, failed_analyzers]
-    if await _first_announcement(db, scan_id, NOTIFICATION_EVENT_ANALYSIS_COMPLETED, completion):
+    revision = await _announcement_revision(db, scan_id, NOTIFICATION_EVENT_ANALYSIS_COMPLETED, completion)
+    if revision is not None:
         results_summary = [str(outcome) for outcome in analyzer_outcomes]
         analyzer_count = sum(1 for outcome in analyzer_outcomes if outcome.name not in POST_PROCESSOR_ANALYZERS)
+        warning = _completion_warning(status, failed_analyzers)
         try:
+            brand = (await SystemSettingsRepository(db).get()).brand
             html_content = get_analysis_completed_template(
                 analysis_link=link,
                 project_name_scanned=project.name,
@@ -164,6 +181,8 @@ async def send_scan_notifications(
                 severity_medium=stats.medium,
                 severity_low=stats.low,
                 results_summary=results_summary,
+                brand=brand,
+                warning=warning,
             )
 
             results_text = "\n".join(results_summary) if results_summary else "No analyzer details available."
@@ -175,12 +194,14 @@ async def send_scan_notifications(
                 "results_summary": results_summary,
                 "analyzer_count": analyzer_count,
                 "scan_link": link,
+                "warning": warning,
             }
+            outcome_line = f"Scan {scan_id} completed." + (f"\n{warning}" if warning else "")
             await notification_service.notify_project_members(
                 project=project,
                 event_type=NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
                 subject=f"Analysis Completed: {project.name}",
-                message=f"Scan {scan_id} completed.\nFound {len(findings)} issues.\nResults:\n{results_text}",
+                message=f"{outcome_line}\nFound {len(findings)} issues.\nResults:\n{results_text}",
                 db=db,
                 html_message=html_content,
                 slack_blocks=build_analysis_completed_blocks(**completed_card),
@@ -198,6 +219,7 @@ async def send_scan_notifications(
             stats=stats.model_dump(),
             scan_status=status,
             failed_analyzers=failed_analyzers,
+            revision=revision,
             team_ids=project.team_ids,
         )
 
@@ -211,7 +233,7 @@ async def send_scan_notifications(
         if not priority_vulns:
             return
         alerted = sorted({(v.id, v.package, v.version, v.in_kev) for v in priority_vulns})
-        if not await _first_announcement(db, scan_id, NOTIFICATION_EVENT_VULNERABILITY_FOUND, alerted):
+        if await _announcement_revision(db, scan_id, NOTIFICATION_EVENT_VULNERABILITY_FOUND, alerted) is None:
             return
 
         top_vulns = sorted(
@@ -230,6 +252,7 @@ async def send_scan_notifications(
             link,
         )
 
+        brand = (await SystemSettingsRepository(db).get()).brand
         vuln_html = get_vulnerability_found_template(
             report_link=link,
             project_name_scanned=project.name,
@@ -238,6 +261,7 @@ async def send_scan_notifications(
             kev_count=len(kev_vulns),
             kev_vulnerabilities=kev_vulns,
             high_epss_count=len(high_epss_vulns),
+            brand=brand,
         )
 
         vulnerability_card: dict[str, Any] = {

@@ -45,12 +45,24 @@ def _make_repo_mock(**method_returns):
 
 
 _ONE_GROUP = [{"id": 1, "full_path": "mo", "name": "MO"}]
+_SIGNING_KEYS = {"keys": [{"kid": "k1"}, {"kid": "k2"}]}
 
 
-def _make_gitlab_service_mock(response, groups=_ONE_GROUP):
+def _group_page(groups: list[dict] | None, *, total: int | None = None, withheld: bool = False) -> httpx.Response:
+    """GitLab's answer to GET /groups?per_page=1; it withholds x-total past 10,000 rows."""
+    if groups is None:
+        return httpx.Response(403, json={"message": "403 Forbidden"})
+    headers = {} if withheld else {"x-total": str(len(groups) if total is None else total)}
+    return httpx.Response(200, json=groups[:1], headers=headers)
+
+
+def _make_gitlab_service_mock(response, groups=_ONE_GROUP, jwks=_SIGNING_KEYS, group_page=None):
     mock_svc = MagicMock()
     mock_svc.get_version = AsyncMock(return_value=response)
     mock_svc.get_groups = AsyncMock(return_value=groups)
+    mock_svc._api_get = AsyncMock(return_value=group_page or _group_page(groups))
+    mock_svc.get_jwks = AsyncMock(return_value=jwks)
+    mock_svc.refresh_jwks = AsyncMock(return_value=jwks)
     return mock_svc
 
 
@@ -327,6 +339,50 @@ class TestCreateInstance:
                         )
                     )
 
+    @pytest.mark.parametrize("jwks", [None, {"keys": []}], ids=["unreachable", "no-keys"])
+    @pytest.mark.parametrize("token", ["glpat-new-token", None], ids=["with-token", "oidc-only"])
+    def test_an_issuer_without_signing_keys_is_refused_and_not_saved(self, admin_user, jwks, token):
+        """Every OIDC token from such an issuer would fail validation, however good the access token."""
+        from app.api.v1.endpoints.gitlab_instances import create_instance
+
+        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False, create=None)
+        service = _make_gitlab_service_mock(MagicMock(status_code=200), jwks=jwks)
+
+        with (
+            patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo),
+            patch(f"{MODULE}.GitLabService", return_value=service),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            asyncio.run(
+                create_instance(
+                    instance_data=self._make_create_data(access_token=token), db=MagicMock(), current_user=admin_user
+                )
+            )
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "OIDC endpoint unreachable or returned no signing keys. Verify the issuer URL."
+        mock_repo.create.assert_not_called()
+
+    def test_an_oidc_only_instance_is_created_once_its_issuer_serves_keys(self, admin_user):
+        from app.api.v1.endpoints.gitlab_instances import create_instance
+
+        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
+        mock_repo.create = AsyncMock(side_effect=lambda inst: inst)
+        service = _make_gitlab_service_mock(MagicMock(status_code=401))
+
+        with (
+            patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo),
+            patch(f"{MODULE}.GitLabService", return_value=service),
+        ):
+            asyncio.run(
+                create_instance(
+                    instance_data=self._make_create_data(access_token=None), db=MagicMock(), current_user=admin_user
+                )
+            )
+
+        mock_repo.create.assert_called_once()
+        service.get_version.assert_not_called()
+
     def test_success_creates_and_returns_instance(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import create_instance
 
@@ -518,23 +574,39 @@ class TestTestConnection:
                 )
         assert exc_info.value.status_code == 404
 
-    def test_no_token_returns_failure(self, admin_user):
+    @staticmethod
+    def _test(admin_user, instance, service):
         from app.api.v1.endpoints.gitlab_instances import test_connection
 
-        instance = make_gitlab_instance(id="inst-1", access_token=None)
-        mock_repo = _make_repo_mock(get_by_id=instance)
+        with (
+            patch(f"{MODULE}.GitLabInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)),
+            patch(f"{MODULE}.GitLabService", return_value=service),
+        ):
+            return asyncio.run(test_connection(instance_id="inst-1", db=MagicMock(), current_user=admin_user))
 
-        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-            result = asyncio.run(
-                test_connection(
-                    instance_id="inst-1",
-                    db=MagicMock(),
-                    current_user=admin_user,
-                )
-            )
+    def test_an_oidc_only_instance_passes_on_its_signing_keys(self, admin_user):
+        """Ingest needs only the issuer's keys; a token-less instance is a complete setup."""
+        service = _make_gitlab_service_mock(MagicMock(status_code=401))
+
+        result = self._test(admin_user, make_gitlab_instance(id="inst-1", access_token=None), service)
+
+        assert result.success is True
+        assert "2 signing key(s)" in result.message
+        service.refresh_jwks.assert_awaited_once()
+        service.get_version.assert_not_called()
+
+    @pytest.mark.parametrize("jwks", [None, {"keys": []}], ids=["unreachable", "no-keys"])
+    def test_an_issuer_without_signing_keys_fails_however_good_the_token(self, admin_user, jwks):
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"version": "16.5.0"}
+        service = _make_gitlab_service_mock(response, jwks=jwks)
+
+        result = self._test(admin_user, make_gitlab_instance(id="inst-1", access_token="glpat-tok"), service)
 
         assert result.success is False
-        assert "No access token" in result.message
+        assert result.message == "JWKS endpoint unreachable or returned no signing keys"
+        service.get_version.assert_not_called()
+        service._api_get.assert_not_called()
 
     def test_success_returns_version(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import test_connection
@@ -560,13 +632,13 @@ class TestTestConnection:
         assert "1 group(s)" in result.message
 
     @staticmethod
-    def _probe(admin_user, *, sync_teams=True, groups=_ONE_GROUP):
+    def _probe(admin_user, *, sync_teams=True, groups=_ONE_GROUP, group_page=None):
         from app.api.v1.endpoints.gitlab_instances import test_connection
 
         instance = make_gitlab_instance(id="inst-1", access_token="glpat-tok", sync_teams=sync_teams)
         response = MagicMock(status_code=200)
         response.json.return_value = {"version": "16.5.0"}
-        service = _make_gitlab_service_mock(response, groups=groups)
+        service = _make_gitlab_service_mock(response, groups=groups, group_page=group_page)
 
         with (
             patch(f"{MODULE}.GitLabInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)),
@@ -575,6 +647,21 @@ class TestTestConnection:
             result = asyncio.run(test_connection(instance_id="inst-1", db=MagicMock(), current_user=admin_user))
         return result, service
 
+    def test_the_group_probe_reads_one_group_and_counts_by_the_total(self, admin_user):
+        """One /groups request; the uncapped count comes from x-total."""
+        result, service = self._probe(admin_user, group_page=_group_page(_ONE_GROUP, total=2345))
+
+        assert result.success is True
+        assert "Token reads 2345 group(s)." in result.message
+        service._api_get.assert_awaited_once_with("/groups", params={"per_page": 1})
+        service.get_groups.assert_not_called()
+
+    def test_a_total_gitlab_withholds_is_reported_as_at_least_one_group(self, admin_user):
+        result, _ = self._probe(admin_user, group_page=_group_page(_ONE_GROUP, withheld=True))
+
+        assert result.success is True
+        assert "Token reads at least one group." in result.message
+
     def test_a_token_that_cannot_list_groups_fails_a_team_syncing_instance(self, admin_user):
         """Team sync resolves a project's group through this listing, so a green test would hide that nothing syncs."""
         result, _ = self._probe(admin_user, groups=None)
@@ -582,6 +669,13 @@ class TestTestConnection:
         assert result.success is False
         assert "read_api" in result.message
         assert result.gitlab_version == "16.5.0"
+
+    def test_a_200_html_group_listing_reads_as_a_token_that_cannot_list_groups(self, admin_user):
+        html = httpx.Response(200, text="<html>Sign in</html>", headers={"content-type": "text/html"})
+        result, _ = self._probe(admin_user, group_page=html)
+
+        assert result.success is False
+        assert "read_api" in result.message
 
     def test_a_token_belonging_to_no_group_fails_a_team_syncing_instance(self, admin_user):
         result, _ = self._probe(admin_user, groups=[])
@@ -594,7 +688,7 @@ class TestTestConnection:
         result, service = self._probe(admin_user, sync_teams=False, groups=None)
 
         assert result.success is True
-        service.get_groups.assert_not_called()
+        service._api_get.assert_not_called()
 
     def test_http_error_returns_failure(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import test_connection

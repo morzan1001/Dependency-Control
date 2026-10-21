@@ -105,6 +105,25 @@ class TestReadTeams:
 
         assert [team["_id"] for team in teams] == ["t-front"]
 
+    def test_every_team_is_listed_however_many_there_are(self, admin_user):
+        """The Teams page and every team picker read this list whole, so a cap would hide teams silently."""
+        from app.api.v1.endpoints.teams import read_teams
+
+        db = FakeDatabase()
+        team_count = 1001
+        for index in range(team_count):
+            db.teams._docs[f"t-{index}"] = {
+                "_id": f"t-{index}",
+                "name": f"Team {index:04d}",
+                "members": [],
+                "created_at": _TEAM_TIMESTAMP,
+                "updated_at": _TEAM_TIMESTAMP,
+            }
+
+        teams = asyncio.run(read_teams(search=None, sort_by="name", sort_order="asc", current_user=admin_user, db=db))
+
+        assert len(teams) == team_count
+
     def test_viewer_without_read_perm_raises_403(self, viewer_user):
         from app.api.v1.endpoints.teams import read_teams
 

@@ -11,7 +11,6 @@ from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import project_admin_ids
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400
-from app.api.v1.helpers.teams import resolve_team_names
 from app.core.config import settings
 from app.core.constants import (
     DEPENDENCIES_SCAN_PACKAGE_INDEX,
@@ -61,7 +60,7 @@ async def get_broadcast_history(
     """Get history of sent broadcasts."""
     history = await BroadcastRepository(db).get_history(limit=50)
     creators_map = await UserRepository(db).usernames_by_id(h.created_by for h in history)
-    teams_map = await resolve_team_names(db, (team_id for h in history for team_id in h.teams or []))
+    teams_map = await TeamRepository(db).names_by_ids(team_id for h in history for team_id in h.teams or [])
 
     return [
         BroadcastHistoryItem(
@@ -113,7 +112,7 @@ async def suggest_packages(
 
 
 def _queue_announcement(
-    background_tasks: BackgroundTasks, query: dict[str, Any], payload: BroadcastRequest, db: Any
+    background_tasks: BackgroundTasks, query: dict[str, Any], payload: BroadcastRequest, brand: str, db: Any
 ) -> None:
     frontend_url = settings.FRONTEND_BASE_URL
     background_tasks.add_task(
@@ -124,7 +123,7 @@ def _queue_announcement(
         subject=payload.subject,
         message=payload.message,
         forced_channels=payload.channels,
-        html_message=get_announcement_template(message=payload.message, link=frontend_url),
+        html_message=get_announcement_template(message=payload.message, link=frontend_url, brand=brand),
         slack_blocks=build_advisory_blocks(
             subject=payload.subject, message=payload.message, dashboard_link=frontend_url
         ),
@@ -137,7 +136,9 @@ def _queue_announcement(
 async def _announcement_audience(payload: BroadcastRequest, team_repo: TeamRepository) -> dict[str, Any]:
     if payload.target_type == "global":
         return {"is_active": True}
-    teams = (await team_repo.members_by_team(payload.target_teams or [])).values()
+    if not payload.target_teams:
+        raise HTTPException(status_code=400, detail="At least one team required")
+    teams = (await team_repo.members_by_team(payload.target_teams)).values()
     return {"_id": {"$in": sorted({m["user_id"] for members in teams for m in members})}, "is_active": True}
 
 
@@ -208,7 +209,9 @@ def _group_projects_by_admin(
     return user_notification_map
 
 
-def _queue_advisory_for_user(data: dict, payload: BroadcastRequest, background_tasks: BackgroundTasks, db: Any) -> None:
+def _queue_advisory_for_user(
+    data: dict, payload: BroadcastRequest, brand: str, background_tasks: BackgroundTasks, db: Any
+) -> None:
     projects_data = data["projects"]
     frontend_url = settings.FRONTEND_BASE_URL
     subject = f"ACTION REQUIRED: {payload.subject}"
@@ -221,7 +224,7 @@ def _queue_advisory_for_user(data: dict, payload: BroadcastRequest, background_t
         f"{payload.message}\n\n--- Your Projects Using the Package ---\n{findings_text}\n",
         db=db,
         forced_channels=payload.channels,
-        html_message=get_advisory_template(payload.message, projects_data, frontend_url),
+        html_message=get_advisory_template(payload.message, projects_data, frontend_url, brand=brand),
         slack_blocks=build_advisory_blocks(
             subject=subject, message=payload.message, affected_projects=projects_data, dashboard_link=frontend_url
         ),
@@ -236,6 +239,7 @@ async def _notify_advisory_admins(
     affected: dict[str, dict[str, bool]],
     user_repo: UserRepository,
     payload: BroadcastRequest,
+    brand: str,
     background_tasks: BackgroundTasks,
     db: Any,
 ) -> int:
@@ -248,7 +252,7 @@ async def _notify_advisory_admins(
 
     if not payload.dry_run:
         for data in user_notification_map.values():
-            _queue_advisory_for_user(data, payload, background_tasks, db)
+            _queue_advisory_for_user(data, payload, brand, background_tasks, db)
 
     return len(user_notification_map)
 
@@ -275,6 +279,7 @@ async def broadcast_message(
     # Channels are forced so a broadcast never borrows another event's preferences.
     if not payload.channels and not payload.dry_run:
         raise HTTPException(status_code=400, detail="At least one channel required")
+    brand = (await deps.get_system_settings(db)).brand
 
     if payload.target_type == "advisory":
         if not payload.packages:
@@ -286,13 +291,13 @@ async def broadcast_message(
         if affected:
             projects = await project_repo.find_many({"_id": {"$in": list(affected)}}, limit=len(affected))
             unique_user_count = await _notify_advisory_admins(
-                projects, affected, user_repo, payload, background_tasks, db
+                projects, affected, user_repo, payload, brand, background_tasks, db
             )
     else:
         query = await _announcement_audience(payload, team_repo)
         unique_user_count = await user_repo.count(query)
         if unique_user_count and not payload.dry_run:
-            _queue_announcement(background_tasks, query, payload, db)
+            _queue_announcement(background_tasks, query, payload, brand, db)
 
     if not payload.dry_run:
         history_entry = Broadcast(

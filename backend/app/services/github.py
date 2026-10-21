@@ -4,6 +4,7 @@ import urllib.parse
 from collections.abc import Awaitable, Callable
 from contextlib import aclosing
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any, NamedTuple
 
 import httpx
@@ -180,6 +181,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
 
     def __init__(self, github_instance: GitHubInstance):
         super().__init__(github_instance)
+        self.token_rejected = False
         github_url = (github_instance.github_url or "").rstrip("/")
         if is_public_github(github_url, github_instance.url):
             self.api_url = GITHUB_API_URL
@@ -201,7 +203,12 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return super()._can_call() and self.rate_limited_until is None
 
     def _response_hooks(self) -> ResponseHooks:
-        return {"response": [self._note_rate_limit]}
+        return {"response": [self._note_rate_limit, self._note_token_rejection]}
+
+    async def _note_token_rejection(self, response: httpx.Response) -> None:
+        """GitHub answers an expired or revoked token with 401, and a missing scope or a spent budget with 403."""
+        if response.status_code == 401:
+            self.token_rejected = True
 
     async def _note_rate_limit(self, response: httpx.Response) -> None:
         """Async only because httpx.AsyncClient awaits its event hooks."""
@@ -224,7 +231,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         response = await self._get_ok(f"/repos/{owner}/{repo}")
         if response is None:
             return None
-        branch = response.json().get("default_branch")
+        branch = json_document(response).get("default_branch")
         return str(branch) if branch else None
 
     async def _cached(
@@ -396,8 +403,21 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
 
     async def count_org_teams(self, org: str) -> int | None:
         """Uncached: a connection test must see the token as it is now, not five minutes ago."""
-        teams = await self._api_get_paginated(f"/orgs/{org}/teams")
-        return None if teams is None else len(teams)
+        endpoint = f"/orgs/{org}/teams"
+        async with request_gate(self.instance_id):
+            response = await self._api_get(endpoint, params={"per_page": 1})
+        if response is None or not self._ok(endpoint, response):
+            return None
+        # One team per page, so the last page's number is the count.
+        last = urllib.parse.urlsplit(response.links.get("last", {}).get("url", ""))
+        page = urllib.parse.parse_qs(last.query).get("page", [""])[0]
+        if page.isdigit():
+            return int(page)
+        try:
+            teams = response.json()
+        except ValueError:
+            return None
+        return len(teams) if isinstance(teams, list) else None
 
     async def get_team_members(self, org: str, team_slug: str, team_id: int) -> list[dict[str, Any]] | None:
         """Cached on the numeric id because the slug is renameable."""
@@ -490,13 +510,18 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
     ) -> None:
         """None team_members leaves members alone without blocking the rename, since few logins resolve."""
         binding = binding_of(team, self.instance_id) or {}
-        # The binding is the numeric team id, so a renamed slug has to follow it.
+        # The binding is the numeric team id, so a renamed slug or organisation has to follow it.
+        binding_fields: dict[str, Any] = {}
+        if binding.get("slug") != holder.slug:
+            binding_fields["slug"] = holder.slug
+        if str(binding.get("org") or "").casefold() != org.casefold():
+            binding_fields["org"] = org
         await self._write_team_refresh(
             team_repo,
             team,
             holder.team_id,
             self._renamed_fields(team, binding, org, holder.slug),
-            {"slug": holder.slug} if binding.get("slug") != holder.slug else {},
+            binding_fields,
             team_members,
         )
 
@@ -766,54 +791,35 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
     async def get_pull_requests_for_commit(
         self, owner: str, repo: str, commit_sha: str, branch: str
     ) -> tuple[str, list[GitHubPullRequest]]:
-        pull_requests = await self._pull_requests_for_sha(owner, repo, commit_sha)
-        if pull_requests or not branch.endswith("/merge"):
-            return commit_sha, pull_requests
-
-        # A "<number>/merge" build runs a test-merge commit GitHub links to no PR (200, []); parents[1] is the PR head.
-        head_sha = await self._merge_commit_head_parent(owner, repo, commit_sha)
-        if head_sha:
-            pull_requests = [
-                pr for pr in await self._pull_requests_for_sha(owner, repo, head_sha) if branch == f"{pr.number}/merge"
-            ]
-            if pull_requests:
-                logger.info(
-                    "Resolved %s/%s commit %s to pull request(s) %s via merge-commit head parent %s",
-                    owner,
-                    repo,
-                    commit_sha,
-                    [pr.number for pr in pull_requests],
-                    head_sha,
-                )
-                return head_sha, pull_requests
-
-        logger.info(
-            "No pull request found for %s/%s commit %s (head parent tried: %s)",
-            owner,
-            repo,
+        pull_requests_for = partial(self._pull_requests_for_sha, owner, repo)
+        if not branch.endswith("/merge"):
+            return commit_sha, await pull_requests_for(commit_sha)
+        # A "<number>/merge" build runs a test-merge commit GitHub links to no PR (200, []).
+        return await self._requests_for_merge_build(
+            f"{owner}/{repo}",
             commit_sha,
-            head_sha or "none",
+            pull_requests_for,
+            partial(self._commit_parents, owner, repo),
+            lambda pr: branch == f"{pr.number}/merge",
         )
-        return commit_sha, []
 
     async def _pull_requests_for_sha(self, owner: str, repo: str, sha: str) -> list[GitHubPullRequest]:
         response = await self._get_ok(f"/repos/{owner}/{repo}/commits/{sha}/pulls")
         return [] if response is None else [GitHubPullRequest(**pr) for pr in response.json()]
 
-    async def _merge_commit_head_parent(self, owner: str, repo: str, commit_sha: str) -> str | None:
-        """Parent order is a git convention, not an API guarantee."""
-        response = await self._get_ok(f"/repos/{owner}/{repo}/commits/{commit_sha}")
-        if response is None:
-            return None
-        parents = response.json().get("parents") or []
-        if len(parents) != 2:
-            return None
-        head_sha = parents[1].get("sha")
-        return str(head_sha) if head_sha else None
+    async def _commit_parents(self, owner: str, repo: str, commit_sha: str) -> list[str]:
+        # The git object, not the REST commit, which also carries every changed file and its patch.
+        response = await self._get_ok(f"/repos/{owner}/{repo}/git/commits/{commit_sha}")
+        parents = [] if response is None else json_document(response).get("parents") or []
+        return [str(parent.get("sha") or "") for parent in parents]
 
-    async def get_pull_request_comments(self, owner: str, repo: str, pr_number: int) -> list[GitHubIssueComment] | None:
-        comments = await self._api_get_paginated(f"/repos/{owner}/{repo}/issues/{pr_number}/comments")
-        return None if comments is None else [GitHubIssueComment(**c) for c in comments]
+    async def find_pull_request_comments(
+        self, owner: str, repo: str, pr_number: int, matches: Callable[[GitHubIssueComment], bool]
+    ) -> list[GitHubIssueComment] | None:
+        # GitHub lists issue comments oldest first.
+        return await self._first_page_matches(
+            f"/repos/{owner}/{repo}/issues/{pr_number}/comments", GitHubIssueComment, matches
+        )
 
     async def post_pull_request_comment(self, owner: str, repo: str, pr_number: int, body: str) -> bool:
         return await self._send_comment("POST", f"/repos/{owner}/{repo}/issues/{pr_number}/comments", body)
@@ -822,7 +828,7 @@ class GitHubService(GitProviderService[GitHubInstance, GitHubOIDCPayload]):
         return await self._send_comment("PATCH", f"/repos/{owner}/{repo}/issues/comments/{comment_id}", body)
 
     async def _jwks_uris(self) -> list[str]:
-        if "token.actions.githubusercontent.com" in self.base_url:
+        if _hostname(self.base_url) == _hostname(GITHUB_SHARED_OIDC_ISSUER):
             return [_GITHUB_COM_JWKS_URI]
         discovered = await discover_jwks_uri(self.base_url, self._get_cache_key(f"jwks_uri:{self.base_url}"))
         return [discovered or f"{self.base_url}/.well-known/jwks"]

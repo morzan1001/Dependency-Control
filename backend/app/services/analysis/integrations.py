@@ -51,18 +51,22 @@ def _build_scan_comment(stats: Stats, scan_url: str, status: ScanStatus, error: 
     )
 
 
+def _is_scan_comment(author_id: int | None, text: str | None, bot_id: int) -> bool:
+    return author_id == bot_id and _SCAN_COMMENT_MARKER in (text or "")
+
+
 async def _upsert_scan_comment(
-    comments: list[tuple[int, str]] | None,
+    scan_comments: list[tuple[int, str]] | None,
     body: str,
     update: Callable[[int, str], Awaitable[bool]],
     post: Callable[[str], Awaitable[bool]],
     label: str,
 ) -> None:
-    """Skips on None (comments unreadable): posting blind could duplicate the bot's comment."""
-    if comments is None:
+    """Updates the oldest scan comment; skips on None (unreadable), as posting blind could duplicate it."""
+    if scan_comments is None:
         logger.warning("Scan comment on %s skipped: its comments could not be read", label)
         return
-    existing = next(((cid, text) for cid, text in comments if _SCAN_COMMENT_MARKER in text), None)
+    existing = scan_comments[0] if scan_comments else None
     if existing is None:
         action, success = "post", await post(body)
     elif existing[1] == body:
@@ -106,11 +110,11 @@ async def decorate_gitlab_mr(
 
         gitlab_service = GitLabService(gitlab_instance)
         gitlab_project_id = project.gitlab_project_id
-        mrs = await gitlab_service.get_merge_requests_for_commit(gitlab_project_id, scan_doc.commit_hash)
+        head_sha, mrs = await gitlab_service.get_merge_requests_for_commit(
+            gitlab_project_id, scan_doc.commit_hash, scan_doc.branch
+        )
         relevant_mrs = [
-            mr
-            for mr in mrs
-            if mr.state == "opened" and not mr.draft and not mr.work_in_progress and mr.sha == scan_doc.commit_hash
+            mr for mr in mrs if mr.state == "opened" and not mr.draft and not mr.work_in_progress and mr.sha == head_sha
         ]
         if not relevant_mrs:
             logger.info(f"No open MR has scan {scan_id}'s commit as head in project {project.id}")
@@ -124,11 +128,11 @@ async def decorate_gitlab_mr(
         body = _build_scan_comment(stats, scan_link(str(project.id), scan_id), status, error)
         for mr in relevant_mrs:
             try:
-                notes = await gitlab_service.get_merge_request_notes(gitlab_project_id, mr.iid)
-                # GitLab lists notes newest first.
-                own = None if notes is None else [(n.id, n.body) for n in reversed(notes) if n.author_id == bot_id]
+                notes = await gitlab_service.find_merge_request_notes(
+                    gitlab_project_id, mr.iid, lambda note: _is_scan_comment(note.author_id, note.body, bot_id)
+                )
                 await _upsert_scan_comment(
-                    own,
+                    None if notes is None else [(note.id, note.body) for note in notes],
                     body,
                     partial(gitlab_service.update_merge_request_comment, gitlab_project_id, mr.iid),
                     partial(gitlab_service.post_merge_request_comment, gitlab_project_id, mr.iid),
@@ -187,10 +191,11 @@ async def decorate_github_pr(
         body = _build_scan_comment(stats, scan_link(str(project.id), scan_id), status, error)
         for pr in relevant_prs:
             try:
-                comments = await github_service.get_pull_request_comments(owner, repo, pr.number)
-                own = None if comments is None else [(c.id, c.body or "") for c in comments if c.user_id == bot_id]
+                comments = await github_service.find_pull_request_comments(
+                    owner, repo, pr.number, lambda comment: _is_scan_comment(comment.user_id, comment.body, bot_id)
+                )
                 await _upsert_scan_comment(
-                    own,
+                    None if comments is None else [(comment.id, comment.body or "") for comment in comments],
                     body,
                     partial(github_service.update_pull_request_comment, owner, repo),
                     partial(github_service.post_pull_request_comment, owner, repo, pr.number),

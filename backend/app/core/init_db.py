@@ -49,6 +49,7 @@ from app.repositories.releases import (
     ReleaseRepository,
 )
 from app.repositories.scans import HAS_SBOM_MATCH, RESTORED_SCAN_MATCH, TAG_BUILD_MATCH
+from app.repositories.teams import BINDING_KEY_PATH
 from app.repositories.update_frequency import ScanUpdateDeltaRepository
 from app.repositories.users import UserRepository
 from app.repositories.waivers import WaiverRepository
@@ -126,9 +127,8 @@ async def _backfill_gitlab_owner_provenance(database: AsyncIOMotorDatabase[Any])
         )
 
 
-TEAM_BINDING_KEY_FIELD = "bindings.key"
 # Partial, as a sparse unique index keys teams without bindings as null; lookups COLLSCAN, fine below five figures.
-TEAM_BINDING_KEY_PARTIAL_FILTER = {TEAM_BINDING_KEY_FIELD: {MONGO_TYPE: "string"}}
+TEAM_BINDING_KEY_PARTIAL_FILTER = {BINDING_KEY_PATH: {MONGO_TYPE: "string"}}
 
 
 async def _create_unique_index(
@@ -153,8 +153,8 @@ async def create_team_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["teams"].create_index("members.user_id")
     await _create_unique_index(
         database["teams"],
-        [(TEAM_BINDING_KEY_FIELD, pymongo.ASCENDING)],
-        f"teams {TEAM_BINDING_KEY_FIELD}",
+        [(BINDING_KEY_PATH, pymongo.ASCENDING)],
+        f"teams {BINDING_KEY_PATH}",
         partialFilterExpression=TEAM_BINDING_KEY_PARTIAL_FILTER,
     )
 

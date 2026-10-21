@@ -32,6 +32,9 @@ class InvitationRepository:
         await self.system_invitations.insert_one(invitation.model_dump(by_alias=True))
         return invitation
 
+    async def extend_system_invitation(self, invitation_id: str, expires_at: datetime) -> None:
+        await self.system_invitations.update_one({"_id": invitation_id}, {"$set": {"expires_at": expires_at}})
+
     async def delete_system_invitation(self, invitation_id: str) -> bool:
         result = await self.system_invitations.delete_one({"_id": invitation_id})
         return result.deleted_count > 0

@@ -34,6 +34,9 @@ _INVENTORY = {
     ],
     "netty": [_dependency("netty", "netty-codec-http", "4.1.100.Final", None, "java-archive")],
     "js": [_dependency("js", "lodash", "4.17.15", "pkg:npm/lodash@4.17.15", "npm")],
+    "gomod": [
+        _dependency("gomod", "github.com/gin-gonic/gin", "v1.6.0", "pkg:go/github.com/gin-gonic/gin@v1.6.0", "go")
+    ],
     "scoped": [_dependency("scoped", "utils", "1.0.0", None, "npm", group="@acme")],
     "unpinned": [_dependency("unpinned", "express", "latest", "pkg:npm/express@latest", "npm")],
 }
@@ -111,6 +114,14 @@ async def test_a_pip_typed_advisory_reaches_a_differently_spelled_pypi_package(c
 @pytest.mark.parametrize("name", ["zope.interface", "Zope_Interface"])
 async def test_a_pypi_rule_folds_every_separator(client, headers, name):
     assert await _affected(client, headers, {"name": name, "version": "5.1", "type": "pypi"}) == 1
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ecosystem", ["golang", "go"])
+async def test_a_golang_rule_reaches_a_module_whose_purl_says_go(client, headers, ecosystem):
+    rule = {"name": "github.com/gin-gonic/gin", "version": "1.7.0", "type": ecosystem}
+    assert await _affected(client, headers, rule) == 1
 
 
 @pytest.mark.live_mongo
@@ -206,13 +217,26 @@ async def test_the_advisory_text_says_which_versions_could_not_be_compared(clien
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
+async def test_the_advisory_email_is_branded_with_the_instance_name(client, db, headers, monkeypatch):
+    sent = AsyncMock()
+    monkeypatch.setattr(notification_service, "notify_users", sent)
+    await db.system_settings.insert_one({"_id": "current", "instance_name": "Acme Deps"})
+
+    await _broadcast(client, headers, {"name": "lodash", "version": "4.17.21"}, dry_run=False)
+
+    [call] = sent.await_args_list
+    assert "<h1>Acme Deps</h1>" in call.kwargs["html_message"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
 async def test_a_type_that_is_no_purl_type_is_rejected(client, headers):
     resp = await client.post(
         "/api/v1/notifications/broadcast",
         json={
             "type": "advisory",
             "target_type": "advisory",
-            "packages": [{"name": "log4j-core", "type": "java-archive"}],
+            "packages": [{"name": "log4j-core", "type": "mvn"}],
             "subject": "s",
             "message": "m",
             "dry_run": True,

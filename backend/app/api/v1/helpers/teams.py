@@ -1,3 +1,4 @@
+from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -8,24 +9,21 @@ from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.constants import (
     TEAM_ROLE_ADMIN,
     TEAM_ROLES,
+    TEAM_SOURCE_GITHUB,
+    TEAM_SOURCE_GITLAB,
+    team_source,
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.team import Team
 from app.models.user import User
+from app.repositories.github_instances import GitHubInstanceRepository
+from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
+from app.repositories.vcs_instances import VcsInstanceRepository
 from app.schemas.team import TeamRef, TeamResponse
 
 _MSG_TEAM_NOT_FOUND = "Team not found"
-
-
-async def resolve_team_names(db: AsyncIOMotorDatabase, team_ids: Iterable[str]) -> dict[str, str]:
-    """Name every team in ``team_ids`` in one read, so a page of co-owned projects is still one query."""
-    wanted = sorted(set(team_ids))
-    if not wanted:
-        return {}
-    cursor = db.teams.find({"_id": {"$in": wanted}}, {"_id": 1, "name": 1})
-    return {str(team["_id"]): team.get("name", "") async for team in cursor}
 
 
 def team_refs(team_ids: Iterable[str], names: Mapping[str, str]) -> list[TeamRef]:
@@ -78,6 +76,31 @@ async def enrich_teams_with_usernames(teams: list[dict[str, Any]], db: AsyncIOMo
             member["username"] = usernames.get(member["user_id"])
 
 
+async def syncing_sources(bound: Iterable[tuple[str, str]], db: AsyncIOMotorDatabase) -> set[str]:
+    """Sources of these (provider, instance) bindings whose instance syncs teams; a sync restores their members."""
+    instance_ids: defaultdict[str, set[str]] = defaultdict(set)
+    for provider, instance_id in bound:
+        instance_ids[provider].add(instance_id)
+    repositories: dict[str, VcsInstanceRepository[Any]] = {
+        TEAM_SOURCE_GITHUB: GitHubInstanceRepository(db),
+        TEAM_SOURCE_GITLAB: GitLabInstanceRepository(db),
+    }
+    return {
+        team_source(provider, instance_id)
+        for provider, ids in instance_ids.items()
+        for instance_id in await repositories[provider].team_syncing_ids(ids)
+    }
+
+
+async def mark_sync_owned_members(teams: list[dict[str, Any]], db: AsyncIOMotorDatabase) -> None:
+    bound = {team["_id"]: {(b["provider"], b["instance_id"]) for b in team.get("bindings") or []} for team in teams}
+    syncing = await syncing_sources(set().union(*bound.values()), db)
+    for team in teams:
+        owned = syncing & {team_source(provider, instance_id) for provider, instance_id in bound[team["_id"]]}
+        for member in team.get("members", []):
+            member["sync_owned"] = member.get("source") in owned
+
+
 async def fetch_and_enrich_team(team_id: str, db: AsyncIOMotorDatabase) -> TeamResponse:
     team_repo = TeamRepository(db)
     team_data = await team_repo.get_raw_by_id(team_id)
@@ -86,6 +109,7 @@ async def fetch_and_enrich_team(team_id: str, db: AsyncIOMotorDatabase) -> TeamR
         raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
 
     await enrich_teams_with_usernames([team_data], db)
+    await mark_sync_owned_members([team_data], db)
     return TeamResponse(**team_data)
 
 

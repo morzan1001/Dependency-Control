@@ -33,7 +33,6 @@ _SLACK_ANSWERS = {
 }
 _OK = 200
 _REDIRECT = 307
-_BAD_REQUEST = 400
 _FORBIDDEN = 403
 
 
@@ -72,6 +71,13 @@ async def _install_url(client) -> tuple[str, dict[str, str]]:
     return url.netloc, {key: values[0] for key, values in parse_qs(url.query).items()}
 
 
+def _settings_page_says(response: httpx.Response, reason: str) -> bool:
+    return (
+        response.status_code == _REDIRECT
+        and response.headers["location"] == f"{settings.FRONTEND_BASE_URL}/settings?slack_error={reason}"
+    )
+
+
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["missing", "forged", "session token", "expired"])
@@ -80,9 +86,48 @@ async def test_a_callback_without_a_minted_state_keeps_the_bot_token(client, db,
 
     response = await client.get(_CALLBACK, params={"code": "foreign-code", **_state(kind)})
 
-    assert response.status_code == _BAD_REQUEST
+    assert _settings_page_says(response, "invalid_state")
     assert (await SystemSettingsRepository(db).get()).slack_bot_token == "xoxb-current"
     assert slack == []
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize("params", [{"error": "access_denied"}, {}], ids=["denied", "no-code"])
+async def test_a_cancelled_install_returns_to_the_settings_page(client, db, slack, params):
+    await SystemSettingsRepository(db).update(_SLACK_APP)
+    _, query = await _install_url(client)
+
+    response = await client.get(_CALLBACK, params={"state": query["state"], **params})
+
+    assert _settings_page_says(response, "cancelled")
+    assert slack == []
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_an_install_whose_app_was_unconfigured_meanwhile_returns_to_the_settings_page(client, db, slack):
+    await SystemSettingsRepository(db).update(_SLACK_APP)
+    _, query = await _install_url(client)
+    await SystemSettingsRepository(db).update({"slack_client_secret": None})
+
+    response = await client.get(_CALLBACK, params={"code": "admin-code", "state": query["state"]})
+
+    assert _settings_page_says(response, "not_configured")
+    assert slack == []
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_code_slack_refuses_to_exchange_returns_to_the_settings_page(client, db, slack, monkeypatch):
+    await SystemSettingsRepository(db).update(_SLACK_APP)
+    monkeypatch.setitem(_SLACK_ANSWERS, _OAUTH_ACCESS, {"ok": False, "error": "invalid_code"})
+    _, query = await _install_url(client)
+
+    response = await client.get(_CALLBACK, params={"code": "stale-code", "state": query["state"]})
+
+    assert _settings_page_says(response, "exchange_failed")
+    assert (await SystemSettingsRepository(db).get()).slack_bot_token == "xoxb-current"
 
 
 @pytest.mark.live_mongo
@@ -132,17 +177,12 @@ async def test_only_a_system_manager_gets_an_install_url(client, db):
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_an_expiring_token_is_refreshed_persisted_and_used(db, slack, monkeypatch):
+async def test_an_expiring_token_is_refreshed_persisted_and_used(db, slack):
     rotating = {**_SLACK_APP, "slack_refresh_token": "xoxe-current", "slack_token_expires_at": time.time()}
     system_settings = await SystemSettingsRepository(db).update(rotating)
-
-    async def _get_database():
-        return db
-
-    monkeypatch.setattr(slack_provider, "get_database", _get_database)
     before = time.time()
 
-    assert await SlackProvider().send("#alerts", "Subject", "Body", system_settings=system_settings)
+    assert await SlackProvider().send("#alerts", "Subject", "Body", db=db, system_settings=system_settings)
 
     refresh, post = slack
     assert (refresh["grant_type"], refresh["refresh_token"]) == ("refresh_token", "xoxe-current")
@@ -158,16 +198,11 @@ async def test_an_install_without_rotation_drops_the_rotation_fields_of_the_last
     rotating = {**_SLACK_APP, "slack_refresh_token": "xoxe-old", "slack_token_expires_at": time.time() - 60}
     await SystemSettingsRepository(db).update(rotating)
     monkeypatch.setitem(_SLACK_ANSWERS, _OAUTH_ACCESS, {"ok": True, "access_token": "xoxb-static"})
-
-    async def _get_database():
-        return db
-
-    monkeypatch.setattr(slack_provider, "get_database", _get_database)
     _, query = await _install_url(client)
     await client.get(_CALLBACK, params={"code": "admin-code", "state": query["state"]})
     stored = await SystemSettingsRepository(db).get()
 
-    assert await SlackProvider().send("#alerts", "Subject", "Body", system_settings=stored)
+    assert await SlackProvider().send("#alerts", "Subject", "Body", db=db, system_settings=stored)
 
     assert (stored.slack_bot_token, stored.slack_refresh_token, stored.slack_token_expires_at) == (
         "xoxb-static",
@@ -177,23 +212,19 @@ async def test_an_install_without_rotation_drops_the_rotation_fields_of_the_last
     assert [request["url"] for request in slack] == [_OAUTH_ACCESS, _POST_MESSAGE]
 
 
-async def _expiring_settings(db, monkeypatch):
-    async def _get_database():
-        return db
-
-    monkeypatch.setattr(slack_provider, "get_database", _get_database)
+async def _expiring_settings(db):
     rotating = {**_SLACK_APP, "slack_refresh_token": "xoxe-current", "slack_token_expires_at": time.time()}
     return await SystemSettingsRepository(db).update(rotating)
 
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_concurrent_sends_with_an_expiring_token_refresh_it_once(db, slack, monkeypatch):
-    system_settings = await _expiring_settings(db, monkeypatch)
+async def test_concurrent_sends_with_an_expiring_token_refresh_it_once(db, slack):
+    system_settings = await _expiring_settings(db)
     provider = SlackProvider()
 
     sent = await asyncio.gather(
-        *(provider.send("#alerts", "S", "B", system_settings=system_settings) for _ in range(20))
+        *(provider.send("#alerts", "S", "B", db=db, system_settings=system_settings) for _ in range(20))
     )
 
     assert all(sent)
@@ -203,8 +234,29 @@ async def test_concurrent_sends_with_an_expiring_token_refresh_it_once(db, slack
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
+async def test_a_failed_refresh_is_tried_once_per_window_not_once_per_send(db, slack, monkeypatch):
+    monkeypatch.setitem(_SLACK_ANSWERS, _OAUTH_ACCESS, {"ok": False, "error": "invalid_refresh_token"})
+    system_settings = await _expiring_settings(db)
+    provider = SlackProvider()
+
+    sent = await asyncio.gather(
+        *(provider.send("#alerts", "S", "B", db=db, system_settings=system_settings) for _ in range(20))
+    )
+
+    assert all(sent)
+    assert [r["url"] for r in slack].count(_OAUTH_ACCESS) == 1
+    assert [r["authorization"] for r in slack if r["url"] == _POST_MESSAGE] == ["Bearer xoxb-current"] * 20
+
+    monkeypatch.setattr(slack_provider, "_REFRESH_RETRY_SECONDS", 0)
+    await provider.send("#alerts", "S", "B", db=db, system_settings=system_settings)
+
+    assert [r["url"] for r in slack].count(_OAUTH_ACCESS) == 2
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
 async def test_sends_waiting_on_another_pods_refresh_wait_side_by_side_and_use_its_token(db, slack, monkeypatch):
-    system_settings = await _expiring_settings(db, monkeypatch)
+    system_settings = await _expiring_settings(db)
     assert await DistributedLocksRepository(db).acquire_lock("slack_token_refresh", new_lock_holder(), 30)
     senders = 4
     all_waiting = asyncio.Barrier(senders)
@@ -219,7 +271,7 @@ async def test_sends_waiting_on_another_pods_refresh_wait_side_by_side_and_use_i
     provider = SlackProvider()
 
     sent = await asyncio.gather(
-        *(provider.send("#alerts", "S", "B", system_settings=system_settings) for _ in range(senders))
+        *(provider.send("#alerts", "S", "B", db=db, system_settings=system_settings) for _ in range(senders))
     )
 
     assert all(sent)

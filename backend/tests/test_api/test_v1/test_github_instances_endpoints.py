@@ -183,7 +183,14 @@ _TOKEN_USER_ID = 4242
 
 
 def _run_test_connection(
-    instance, current_user, jwks, orgs=None, team_counts=None, rate_limit=_HEALTHY_BUDGET, token_probe=None
+    instance,
+    current_user,
+    jwks,
+    orgs=None,
+    team_counts=None,
+    rate_limit=_HEALTHY_BUDGET,
+    token_probe=None,
+    team_probe=None,
 ):
     """An intact budget and an accepted token by default keep any refusal the test's own."""
     from app.api.v1.endpoints.github_instances import test_connection
@@ -191,7 +198,7 @@ def _run_test_connection(
     mock_repo = _make_repo_mock(get_by_id=instance)
     org_probe = AsyncMock(return_value=orgs)
     counts = team_counts or {}
-    team_probe = AsyncMock(side_effect=lambda org: counts[org])
+    team_probe = team_probe or AsyncMock(side_effect=lambda org: counts[org])
     rate_limit_probe = AsyncMock(return_value=rate_limit)
 
     with (
@@ -422,6 +429,72 @@ class TestASecondaryRateLimitIsNotReadAsAScopeProblem:
         assert "5 minute(s)" in excinfo.value.detail
 
 
+_BAD_CREDENTIALS = {"message": "Bad credentials"}
+
+
+class TestARejectedTokenIsNotReadAsAScopeOrBudgetProblem:
+    """GitHub answers an expired or revoked token with 401 everywhere, GET /rate_limit included."""
+
+    def test_the_organisation_picker_asks_to_check_the_token(self, admin_user, monkeypatch):
+        from app.api.v1.endpoints.github_instances import list_instance_organisations
+
+        _serve_github_api(
+            monkeypatch,
+            {
+                "/user/orgs": httpx.Response(401, json=_BAD_CREDENTIALS),
+                "/rate_limit": httpx.Response(401, json=_BAD_CREDENTIALS),
+            },
+        )
+        instance = make_github_instance(id="gh-1", access_token="ghp-revoked")
+
+        with patch(f"{MODULE}.GitHubInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)):
+            with pytest.raises(HTTPException) as excinfo:
+                asyncio.run(list_instance_organisations(instance_id="gh-1", db=MagicMock(), current_user=admin_user))
+
+        assert excinfo.value.status_code == 502
+        assert "GitHub refused the access token" in excinfo.value.detail
+        assert "has not expired or been revoked" in excinfo.value.detail
+        assert "read:org" not in excinfo.value.detail
+        assert "could not be determined" not in excinfo.value.detail
+
+    def test_a_refusal_served_from_the_cache_is_named_by_the_budget_endpoint(self, monkeypatch):
+        """A cached failed listing sends no request, so only GET /rate_limit's own 401 can name the token."""
+        from app.api.v1.helpers.vcs_instances import refused_listing
+
+        _serve_github_api(monkeypatch, {"/rate_limit": httpx.Response(401, json=_BAD_CREDENTIALS)})
+        service = GitHubService(make_github_instance(id="gh-1", access_token="ghp-revoked"))
+
+        refusal = asyncio.run(refused_listing(service, "the teams of organisation 'acme'", "The token needs read:org."))
+
+        assert "GitHub refused the access token" in refusal.detail
+        assert "could not be determined" not in refusal.detail
+
+    def test_the_connection_test_asks_to_check_the_token(self, admin_user, monkeypatch):
+        from app.api.v1.endpoints.github_instances import test_connection
+
+        _serve_github_api(
+            monkeypatch,
+            {
+                "/user": httpx.Response(200, json={"id": _TOKEN_USER_ID, "login": "dc-bot"}),
+                "/user/orgs": httpx.Response(401, json=_BAD_CREDENTIALS),
+                "/rate_limit": httpx.Response(401, json=_BAD_CREDENTIALS),
+            },
+        )
+        instance = make_github_instance(id="gh-1", access_token="ghp-revoked", sync_teams=True)
+
+        with (
+            patch(f"{MODULE}.GitHubInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)),
+            patch.object(GitHubService, "refresh_jwks", new=AsyncMock(return_value={"keys": [{}]})),
+        ):
+            result = asyncio.run(test_connection(instance_id="gh-1", db=MagicMock(), current_user=admin_user))
+
+        assert result.success is False
+        assert "GitHub refused the access token" in result.message
+        assert "has not expired or been revoked" in result.message
+        assert "read:org" not in result.message
+        assert "could not be determined" not in result.message
+
+
 class TestConnectionProbesEveryOrganisation:
     """The owner runs several organisations, and a token can be green on one and blind on another."""
 
@@ -441,6 +514,29 @@ class TestConnectionProbesEveryOrganisation:
         assert "acme (7 team(s))" in result.message
         assert "globex (3 team(s))" in result.message
         assert [call.args[0] for call in team_probe.await_args_list] == ["acme", "globex"]
+
+    def test_the_organisations_are_probed_side_by_side(self, admin_user):
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
+        in_flight, peak = 0, 0
+
+        async def _count(_org):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return 1
+
+        result, *_ = _run_test_connection(
+            instance,
+            admin_user,
+            jwks={"keys": [{}]},
+            orgs=[{"login": "acme"}, {"login": "globex"}, {"login": "initech"}],
+            team_probe=AsyncMock(side_effect=_count),
+        )
+
+        assert result.success is True
+        assert peak == 3
 
     def test_one_unreadable_organisation_among_several_fails_and_names_it(self, admin_user):
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
@@ -478,7 +574,7 @@ class TestBindingPickerListings:
     @staticmethod
     def _run(endpoint, instance, **service_returns):
         mock_repo = _make_repo_mock(get_by_id=instance)
-        service = MagicMock(rate_limited_until=None)
+        service = MagicMock(rate_limited_until=None, token_rejected=False)
         # An intact budget unless the test is about the budget: a refusal under it is a scope refusal.
         for name, value in {"get_core_rate_limit": _HEALTHY_BUDGET, **service_returns}.items():
             setattr(service, name, AsyncMock(return_value=value))

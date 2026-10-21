@@ -37,6 +37,7 @@ class GitLabMergeRequest(BaseModel):
     draft: bool = False
     work_in_progress: bool = False
     sha: str | None = None
+    source_branch: str | None = None
 
 
 class GitLabNote(BaseModel):

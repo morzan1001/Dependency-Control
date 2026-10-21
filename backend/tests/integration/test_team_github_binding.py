@@ -34,18 +34,18 @@ async def _assert_a_team_bound_in_the_meantime_is_not_rebound(db) -> None:
     """With the condition in the filter, a binding written after the conflict check is replaced, not doubled."""
     repo = await _seeded(db)
 
-    assert await repo.add_binding_if_absent("t-this-instance", _BINDING) is None
+    await repo.replace_binding_for_instance("t-this-instance", _BINDING)
 
     kept = await repo.get_raw_by_id("t-this-instance")
-    assert [binding["key"] for binding in kept["bindings"]] == ["github:gh-1:1234"]
+    assert [binding["key"] for binding in kept["bindings"]] == ["github:gh-1:9000"]
 
 
 async def _assert_an_unbound_team_takes_the_whole_binding(db) -> None:
     repo = await _seeded(db)
 
-    bound = await repo.add_binding_if_absent("t-free", _BINDING)
+    await repo.replace_binding_for_instance("t-free", _BINDING)
 
-    assert bound is not None
+    bound = await repo.get_raw_by_id("t-free")
     assert bound["bindings"] == [_BINDING]
     assert bound["name"] == "Orion"
     stored = await repo.get_raw_by_binding_key("github:gh-1:9000")
@@ -56,9 +56,9 @@ async def _assert_a_team_of_another_instance_gains_a_second_binding(db) -> None:
     """The whole point of a binding per instance: one team can answer for several."""
     repo = await _seeded(db)
 
-    bound = await repo.add_binding_if_absent("t-other-instance", _BINDING)
+    await repo.replace_binding_for_instance("t-other-instance", _BINDING)
 
-    assert bound is not None
+    bound = await repo.get_raw_by_id("t-other-instance")
     assert sorted(binding["key"] for binding in bound["bindings"]) == ["github:gh-1:9000", "github:gh-2:1234"]
 
 

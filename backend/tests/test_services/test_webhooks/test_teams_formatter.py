@@ -56,6 +56,7 @@ async def _scan_card(stats: Stats, total: int = 0, status: str = SCAN_STATUS_COM
             stats.model_dump(),
             scan_status=status,
             failed_analyzers=list(failed),
+            revision=1,
         )
     )
 

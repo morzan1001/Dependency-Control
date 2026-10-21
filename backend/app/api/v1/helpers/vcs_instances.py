@@ -1,6 +1,8 @@
 import logging
+import math
 from collections.abc import Callable
 from datetime import datetime, timezone
+from enum import Enum, auto
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -15,6 +17,8 @@ from app.models.gitlab_instance import GitLabInstance
 from app.repositories.projects import ProjectRepository
 from app.repositories.teams import TeamRepository
 from app.repositories.vcs_instances import VcsInstanceRepository
+from app.services.github import GitHubService
+from app.services.gitlab import GitLabService
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,22 @@ async def get_or_404[T: VcsInstanceModel](repo: VcsInstanceRepository[T], instan
             status_code=status.HTTP_404_NOT_FOUND, detail=f"{label} instance with ID {instance_id} not found"
         )
     return instance
+
+
+async def require_signing_keys(service: GitHubService | GitLabService) -> None:
+    jwks = await service.get_jwks()
+    if not jwks or not jwks.get("keys"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OIDC endpoint unreachable or returned no signing keys. Verify the issuer URL.",
+        )
+
+
+async def signing_key_check(service: GitHubService | GitLabService) -> tuple[bool, str]:
+    jwks = await service.refresh_jwks()
+    if not jwks or not jwks.get("keys"):
+        return False, "JWKS endpoint unreachable or returned no signing keys"
+    return True, f"OIDC endpoint reachable. Found {len(jwks['keys'])} signing key(s)."
 
 
 async def list_page[T: VcsInstanceModel](
@@ -73,7 +93,7 @@ async def apply_update[T: GitLabInstance | GitHubInstance](
         value = update_dict.get(field)
         return value if field in update_dict and value != getattr(instance, field) else None
 
-    await assert_unique(repo, "", url=changed("url"), name=changed("name"), exclude_id=str(instance.id))
+    await assert_unique(repo, label, url=changed("url"), name=changed("name"), exclude_id=str(instance.id))
     if update_dict.get("sync_teams", instance.sync_teams) and not update_dict.get(
         "access_token", instance.access_token
     ):
@@ -116,3 +136,54 @@ async def delete_guarded(
     logger.warning(
         "Deleted %s instance '%s' by user %s, detached from %d teams", provider, instance.name, username, detached
     )
+
+
+TOKEN_CHECK_HINT = "Check that it is valid and has not expired or been revoked."
+
+
+class Refusal(Enum):
+    BUDGET = auto()
+    SCOPE = auto()
+    CREDENTIALS = auto()
+    UNDETERMINED = auto()
+
+
+def undetermined(failure: str) -> str:
+    return (
+        f"{failure}, and GET /rate_limit did not answer either, so whether an exhausted rate limit or a missing "
+        "read:org refused could not be determined. Check both"
+    )
+
+
+async def why_refused(github_service: GitHubService) -> tuple[Refusal, str]:
+    """Asks the uncharged GET /rate_limit only when the read's own rate-limit headers are silent."""
+    reset_at = github_service.rate_limited_until
+    if reset_at is None:
+        limit = await github_service.get_core_rate_limit()
+        # It answers a rejected token 401 too, which names the cause of a refusal served from the cache.
+        if github_service.token_rejected:
+            return Refusal.CREDENTIALS, ""
+        if limit is None:
+            return Refusal.UNDETERMINED, ""
+        if limit.remaining > 0:
+            return Refusal.SCOPE, ""
+        reset_at = limit.reset_at
+    minutes = math.ceil((reset_at - datetime.now(timezone.utc)).total_seconds() / 60)
+    due = f"about {minutes} minute(s) from now" if minutes > 0 else "any moment now"
+    return Refusal.BUDGET, f"{reset_at:%Y-%m-%d %H:%M UTC}, {due}"
+
+
+async def refused_listing(github_service: GitHubService, subject: str, scope_hint: str) -> HTTPException:
+    """Names what refused rather than assuming a missing scope."""
+    cause, reset = await why_refused(github_service)
+    if cause is Refusal.BUDGET:
+        detail = (
+            f"Could not list {subject}: the token's GitHub API rate limit is exhausted. The limit resets at {reset}."
+        )
+    elif cause is Refusal.SCOPE:
+        detail = f"Could not list {subject}. {scope_hint}"
+    elif cause is Refusal.CREDENTIALS:
+        detail = f"Could not list {subject}: GitHub refused the access token. {TOKEN_CHECK_HINT}"
+    else:
+        detail = f"{undetermined(f'Could not list {subject}')}."
+    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)

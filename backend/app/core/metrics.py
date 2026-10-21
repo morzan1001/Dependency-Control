@@ -381,6 +381,11 @@ notifications_failed_total = Counter(
     ["type"],
 )
 
+
+def record_notification(channel: str, delivered: bool) -> None:
+    (notifications_sent_total if delivered else notifications_failed_total).labels(type=channel).inc()
+
+
 auth_login_attempts_total = Counter(
     "auth_login_attempts_total",
     "Total login attempts by status",

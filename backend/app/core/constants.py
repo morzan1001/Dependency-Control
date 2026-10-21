@@ -602,15 +602,13 @@ SEVERITY_ALIASES: dict[str, str] = {
     "TRACE": "INFO",
 }
 
-NOTIFICATION_CHANNEL_EMAIL = "email"
-NOTIFICATION_CHANNEL_SLACK = "slack"
-NOTIFICATION_CHANNEL_MATTERMOST = "mattermost"
+NotificationChannel = Literal["email", "slack", "mattermost"]
 
-NOTIFICATION_CHANNELS = [
-    NOTIFICATION_CHANNEL_EMAIL,
-    NOTIFICATION_CHANNEL_SLACK,
-    NOTIFICATION_CHANNEL_MATTERMOST,
-]
+NOTIFICATION_CHANNEL_EMAIL: NotificationChannel = "email"
+NOTIFICATION_CHANNEL_SLACK: NotificationChannel = "slack"
+NOTIFICATION_CHANNEL_MATTERMOST: NotificationChannel = "mattermost"
+
+NOTIFICATION_CHANNELS: list[str] = list(get_args(NotificationChannel))
 
 NotificationEvent = Literal[
     "analysis_completed",
@@ -886,6 +884,9 @@ JWKS_URI_CACHE_TTL = 86400
 
 # GitLab answers a non-admin token's GET /users/:id 300 times per 10 minutes, and public emails rarely change.
 GITLAB_USER_EMAIL_CACHE_TTL = 86400
+
+# Spares the binding picker's walk of up to ten /groups pages per dialog open and search term; new groups show within it.
+GITLAB_GROUP_PICKER_CACHE_TTL = 60
 
 # One workflow run fans out into many jobs; without this every job refetches the same three lists.
 GITHUB_TEAM_SYNC_CACHE_TTL = 300

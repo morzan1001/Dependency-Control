@@ -193,6 +193,55 @@ class GitProviderService[InstanceT: GitHubInstance | GitLabInstance, PayloadT: B
                 items.extend(page)
         return items
 
+    async def _first_page_matches[M: BaseModel](
+        self, endpoint: str, model: type[M], matches: Callable[[M], bool], params: dict[str, Any] | None = None
+    ) -> list[M] | None:
+        """The matches of the first page holding any, which is the oldest when listed oldest first; None on failure."""
+        async with aclosing(self._iter_pages(endpoint, params)) as pages:
+            async for page in pages:
+                if page is None:
+                    return None
+                if found := [item for item in map(model.model_validate, page) if matches(item)]:
+                    return found
+        return []
+
+    async def _requests_for_merge_build[R](
+        self,
+        label: str,
+        commit_sha: str,
+        requests_for: Callable[[str], Awaitable[list[R]]],
+        parent_shas: Callable[[str], Awaitable[list[str]]],
+        of_this_build: Callable[[R], bool],
+    ) -> tuple[str, list[R]]:
+        """The head a request of this build names, and those requests; a merge build's head is its second parent."""
+        requests = await requests_for(commit_sha)
+        if requests:
+            return commit_sha, requests
+
+        # Parent order is a git convention, not an API guarantee.
+        parents = await parent_shas(commit_sha)
+        head_sha = parents[1] if len(parents) == 2 else None
+        if head_sha:
+            requests = [request for request in await requests_for(head_sha) if of_this_build(request)]
+            if requests:
+                logger.info(
+                    "%s %s: commit %s resolved via merge-commit head parent %s",
+                    self.provider,
+                    label,
+                    commit_sha,
+                    head_sha,
+                )
+                return head_sha, requests
+
+        logger.info(
+            "%s %s: no request found for commit %s (head parent tried: %s)",
+            self.provider,
+            label,
+            commit_sha,
+            head_sha or "none",
+        )
+        return commit_sha, []
+
     async def get_current_user_id(self) -> int | None:
         response = await self._get_ok("/user")
         user_id = None if response is None else json_document(response).get("id")

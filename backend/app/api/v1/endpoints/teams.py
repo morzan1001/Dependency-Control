@@ -1,6 +1,5 @@
 import logging
 import re
-from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, status
@@ -16,7 +15,8 @@ from app.api.v1.helpers import (
     get_team_with_access,
     visible_teams_filter,
 )
-from app.api.v1.helpers.teams import enrich_teams_with_usernames
+from app.api.v1.helpers.teams import enrich_teams_with_usernames, mark_sync_owned_members, syncing_sources
+from app.api.v1.helpers.vcs_instances import get_or_404, refused_listing
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
@@ -25,7 +25,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
 )
 from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, parse_sort_direction
-from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, TEAM_SOURCE_SEPARATOR, team_source
+from app.core.constants import TEAM_ROLE_ADMIN, team_source
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember, binding_of
@@ -102,9 +102,10 @@ async def read_teams(
     final_query = and_filters(search_query, visible)
 
     teams = await team_repo.find_many_raw(
-        final_query, sort_by, parse_sort_direction(sort_order), limit=1000, collation=CASE_INSENSITIVE
+        final_query, sort_by, parse_sort_direction(sort_order), collation=CASE_INSENSITIVE
     )
     await enrich_teams_with_usernames(teams, db)
+    await mark_sync_owned_members(teams, db)
     return teams
 
 
@@ -131,10 +132,7 @@ async def update_team(
 
     team_repo = TeamRepository(db)
 
-    update_data = team_in.model_dump(exclude_unset=True)
-    update_data["updated_at"] = datetime.now(timezone.utc)
-
-    await team_repo.update(team_id, update_data)
+    await team_repo.update(team_id, team_in.model_dump(exclude_unset=True))
 
     return await fetch_and_enrich_team(team_id, db)
 
@@ -163,18 +161,15 @@ async def delete_team(
 
 async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDatabase) -> GitHubTeamBinding:
     """Reading the organisation's slug also proves the team number exists."""
-    instance = await GitHubInstanceRepository(db).get_by_id(request.instance_id)
-    if not instance:
-        raise HTTPException(status_code=404, detail=f"GitHub instance with ID {request.instance_id} not found")
+    instance = await get_or_404(GitHubInstanceRepository(db), request.instance_id, "GitHub")
 
-    org_teams = await GitHubService(instance).get_org_teams(request.org)
+    github_service = GitHubService(instance)
+    org_teams = await github_service.get_org_teams(request.org)
     if org_teams is None:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=(
-                f"Could not list the teams of organisation '{request.org}' on instance "
-                f"'{instance.name}'. The token needs read:org there."
-            ),
+        raise await refused_listing(
+            github_service,
+            f"the teams of organisation '{request.org}' on instance '{instance.name}'",
+            "The token needs read:org there.",
         )
 
     slug = build_team_slug_map(org_teams).get(request.external_id)
@@ -193,9 +188,7 @@ async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDat
 
 async def _gitlab_binding(request: TeamGitLabBindingRequest, db: AsyncIOMotorDatabase) -> GitLabGroupBinding:
     """Reading the instance's full path also proves the group number exists."""
-    instance = await GitLabInstanceRepository(db).get_by_id(request.instance_id)
-    if not instance:
-        raise HTTPException(status_code=404, detail=f"GitLab instance with ID {request.instance_id} not found")
+    instance = await get_or_404(GitLabInstanceRepository(db), request.instance_id, "GitLab")
 
     lookup = await GitLabService(instance).get_group(request.external_id)
     if not lookup.reachable:
@@ -318,7 +311,7 @@ async def add_team_member(
 
     new_member = TeamMember(user_id=str(user_to_add["_id"]), role=member_in.role)
 
-    if not await team_repo.add_member(team_id, new_member.model_dump(), datetime.now(timezone.utc)):
+    if not await team_repo.add_member(team_id, new_member.model_dump()):
         raise HTTPException(status_code=400, detail=_MSG_ALREADY_IN_TEAM)
 
     return await fetch_and_enrich_team(team_id, db)
@@ -329,13 +322,8 @@ async def _ensure_hand_editable_member(team: Team, user_id: str, db: AsyncIOMoto
     member = next((m for m in team.members if m.user_id == user_id), None)
     if member is None:
         raise HTTPException(status_code=404, detail="User not in team")
-    provider, _, instance_id = member.source.partition(TEAM_SOURCE_SEPARATOR)
-    binding = next((b for b in team.bindings if b.provider == provider and b.instance_id == instance_id), None)
-    if binding is None:
-        return
-    instances = GitHubInstanceRepository(db) if provider == TEAM_SOURCE_GITHUB else GitLabInstanceRepository(db)
-    instance = await instances.get_by_id(instance_id)
-    if instance is not None and instance.sync_teams:
+    binding = next((b for b in team.bindings if team_source(b.provider, b.instance_id) == member.source), None)
+    if binding is not None and await syncing_sources([(binding.provider, binding.instance_id)], db):
         raise HTTPException(
             status_code=409,
             detail=f"This member is synced from {_binding_conflict(binding)}; change their membership there",
@@ -354,7 +342,7 @@ async def update_team_member(
     team = await get_team_with_access(team_id, current_user, db)
     await _ensure_hand_editable_member(team, user_id, db)
 
-    if not await TeamRepository(db).update_member_role(team_id, user_id, member_in.role, datetime.now(timezone.utc)):
+    if not await TeamRepository(db).update_member_role(team_id, user_id, member_in.role):
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_DEMOTE)
 
     return await fetch_and_enrich_team(team_id, db)
@@ -371,7 +359,7 @@ async def remove_team_member(
     team = await get_team_with_access(team_id, current_user, db)
     await _ensure_hand_editable_member(team, user_id, db)
 
-    if not await TeamRepository(db).remove_member(team_id, user_id, datetime.now(timezone.utc)):
+    if not await TeamRepository(db).remove_member(team_id, user_id):
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN)
 
     return await fetch_and_enrich_team(team_id, db)

@@ -1,9 +1,9 @@
 import re
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import ReturnDocument
 from pymongo.collation import Collation
 from pymongo.errors import DuplicateKeyError
 
@@ -15,7 +15,7 @@ _MEMBERS = "members"
 _MEMBERS_USER_ID = f"{_MEMBERS}.{_USER_ID}"
 _MEMBERS_SOURCE = f"{_MEMBERS}.source"
 _BINDINGS = "bindings"
-_BINDING_KEY = f"{_BINDINGS}.key"
+BINDING_KEY_PATH = f"{_BINDINGS}.key"
 _BINDING_INSTANCE = f"{_BINDINGS}.instance_id"
 # The identifier the array filters address one binding by; the update path has to name the same one.
 _ENTRY = "entry"
@@ -103,32 +103,30 @@ class TeamRepository:
 
     async def get_raw_by_binding_key(self, key: str) -> dict[str, Any] | None:
         """The team holding one binding; checked here too, since the unique index build can be skipped."""
-        return await self.collection.find_one({_BINDING_KEY: key})
+        return await self.collection.find_one({BINDING_KEY_PATH: key})
 
     async def get_raw_by_binding(self, provider: str, instance_id: str, external_id: int) -> dict[str, Any] | None:
         return await self.get_raw_by_binding_key(team_binding_key(provider, instance_id, external_id))
 
-    async def add_binding_if_absent(self, team_id: str, binding: dict[str, Any]) -> dict[str, Any] | None:
+    async def _push_binding_if_instance_free(self, team_id: str, binding: dict[str, Any]) -> bool:
         # In the filter, since a multikey unique index cannot refuse two bindings of one instance on one team.
-        adopted: dict[str, Any] | None = await self.collection.find_one_and_update(
+        result = await self.collection.update_one(
             {"_id": team_id, _BINDING_INSTANCE: {"$ne": binding["instance_id"]}},
             {"$push": {_BINDINGS: binding}, "$set": {"updated_at": datetime.now(timezone.utc)}},
-            return_document=ReturnDocument.AFTER,
         )
-        return adopted
+        return bool(result.matched_count)
 
-    async def replace_binding_for_instance(self, team_id: str, binding: dict[str, Any]) -> bool:
+    async def replace_binding_for_instance(self, team_id: str, binding: dict[str, Any]) -> None:
         """Set the team's binding for one instance; append and replace are each atomic, so nothing is doubled."""
-        if await self.add_binding_if_absent(team_id, binding) is not None:
-            return True
-        result = await self.collection.update_one(
+        if await self._push_binding_if_instance_free(team_id, binding):
+            return
+        await self.collection.update_one(
             {"_id": team_id},
             {
                 "$set": {f"{_BINDINGS}.$[{_ENTRY}]": binding, "updated_at": datetime.now(timezone.utc)},
             },
             array_filters=[{f"{_ENTRY}.instance_id": binding["instance_id"]}],
         )
-        return bool(result.matched_count)
 
     async def remove_binding_for_instance(self, team_id: str, instance_id: str, source: str) -> bool:
         result = await self.collection.update_one(
@@ -208,7 +206,9 @@ class TeamRepository:
         return document
 
     async def update(self, team_id: str, update_data: dict[str, Any]) -> Team | None:
-        await self.collection.update_one({"_id": team_id}, {"$set": update_data})
+        await self.collection.update_one(
+            {"_id": team_id}, {"$set": {**update_data, "updated_at": datetime.now(timezone.utc)}}
+        )
         return await self.get_by_id(team_id)
 
     async def delete(self, team_id: str) -> bool:
@@ -221,41 +221,49 @@ class TeamRepository:
     async def find_ids(self, query: dict[str, Any]) -> list[str]:
         return [str(doc["_id"]) async for doc in self.collection.find(query, {"_id": 1})]
 
+    async def names_by_ids(self, team_ids: Iterable[str]) -> dict[str, str]:
+        """Only teams that exist; an unnamed one maps to "", which team_refs tells apart from a gone one."""
+        wanted = list(set(team_ids))
+        if not wanted:
+            return {}
+        cursor = self.collection.find({"_id": {"$in": wanted}}, {"name": 1})
+        return {str(doc["_id"]): doc.get("name", "") async for doc in cursor}
+
     async def members_by_team(self, team_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         if not team_ids:
             return {}
         cursor = self.collection.find({"_id": {"$in": list(team_ids)}}, {"members.user_id": 1, "members.role": 1})
         return {str(doc["_id"]): doc.get(_MEMBERS) or [] async for doc in cursor}
 
-    async def add_member(self, team_id: str, member_data: dict[str, Any], updated_at: datetime) -> bool:
+    async def add_member(self, team_id: str, member_data: dict[str, Any]) -> bool:
         """False when the user is already a member; the filter decides, not an earlier read."""
         result = await self.collection.update_one(
             {"_id": team_id, _MEMBERS_USER_ID: {"$ne": member_data[_USER_ID]}},
-            {"$push": {"members": member_data}, "$set": {"updated_at": updated_at}},
+            {"$push": {"members": member_data}, "$set": {"updated_at": datetime.now(timezone.utc)}},
         )
         return bool(result.matched_count)
 
-    async def remove_member(self, team_id: str, user_id: str, updated_at: datetime) -> bool:
+    async def remove_member(self, team_id: str, user_id: str) -> bool:
         result = await self.collection.update_one(
             {"_id": team_id, **_not_the_last_admin(user_id)},
-            {"$pull": {"members": {_USER_ID: user_id}}, "$set": {"updated_at": updated_at}},
+            {"$pull": {"members": {_USER_ID: user_id}}, "$set": {"updated_at": datetime.now(timezone.utc)}},
         )
         return bool(result.matched_count)
 
-    async def remove_user_from_all(self, user_id: str, updated_at: datetime) -> None:
+    async def remove_user_from_all(self, user_id: str) -> None:
         await self.collection.update_many(
             {_MEMBERS_USER_ID: user_id},
-            {"$pull": {_MEMBERS: {_USER_ID: user_id}}, "$set": {"updated_at": updated_at}},
+            {"$pull": {_MEMBERS: {_USER_ID: user_id}}, "$set": {"updated_at": datetime.now(timezone.utc)}},
         )
 
-    async def update_member_role(self, team_id: str, user_id: str, role: str, updated_at: datetime) -> bool:
+    async def update_member_role(self, team_id: str, user_id: str, role: str) -> bool:
         query: dict[str, Any] = {"_id": team_id}
         if role != TEAM_ROLE_ADMIN:
             query.update(_not_the_last_admin(user_id))
         # Address the member by identity: a concurrent $pull shifts array indices under a positional write.
         result = await self.collection.update_one(
             query,
-            {"$set": {"members.$[m].role": role, "updated_at": updated_at}},
+            {"$set": {"members.$[m].role": role, "updated_at": datetime.now(timezone.utc)}},
             array_filters=[{f"m.{_USER_ID}": user_id}],
         )
         return bool(result.matched_count)
@@ -265,7 +273,6 @@ class TeamRepository:
         query: dict[str, Any],
         sort_by: str = "name",
         sort_order: int = 1,
-        limit: int | None = None,
         collation: Collation | None = None,
     ) -> list[dict[str, Any]]:
-        return await self.collection.find(query, collation=collation).sort(sort_by, sort_order).to_list(limit)
+        return await self.collection.find(query, collation=collation).sort(sort_by, sort_order).to_list(None)

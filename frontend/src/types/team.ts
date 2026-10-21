@@ -4,6 +4,8 @@ export interface TeamMember {
   role: string;
   // "manual", or the "<provider>:<instance id>" of the sync that owns the entry.
   source?: string;
+  // A live sync restores the entry, so its role and membership change only at the source.
+  sync_owned?: boolean;
 }
 
 // A provider's next sync restores its entries, so the UI names an owner's source; each instance replaces only its own.

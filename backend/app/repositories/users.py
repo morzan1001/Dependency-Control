@@ -12,7 +12,7 @@ _TAKEN = {"email": "Email already registered", "username": "Username already tak
 
 
 class IdentityTakenError(Exception):
-    """Another account holds this email or username; the API answers 400 with the message."""
+    """Another account holds this email or username."""
 
     def __init__(self, field: str) -> None:
         super().__init__(_TAKEN[field])

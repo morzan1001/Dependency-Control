@@ -17,7 +17,6 @@ from app.api.v1.helpers.sorting import CASE_INSENSITIVE, case_insensitive_sort
 from app.api.v1.helpers.teams import (
     check_team_access,
     enrich_teams_with_usernames,
-    resolve_team_names,
     team_refs,
     visible_teams_filter,
 )
@@ -583,7 +582,7 @@ class ChatToolRegistry:
             projection=_PROJECT_ROW_PROJECTION,
             sort=[("last_scan_at", -1)],
         )
-        team_names = await resolve_team_names(ctx.db, {tid for p in projects for tid in p.get("team_ids") or []})
+        team_names = await TeamRepository(ctx.db).names_by_ids(tid for p in projects for tid in p.get("team_ids") or [])
         stats = await self._head_scan_stats(ctx.db, await ScanRepository(ctx.db).get_latest_active_scan_ids(projects))
         rows = []
         for p in projects:

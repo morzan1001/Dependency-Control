@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import logging
@@ -35,7 +36,6 @@ from app.api.v1.helpers.responses import (
 )
 from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, parse_sort_direction
 from app.core import security
-from app.core.config import settings
 from app.core.constants import AUTH_PROVIDER_LOCAL
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User, is_local_account
@@ -61,9 +61,16 @@ router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
+async def _update_or_404(user_repo: UserRepository, user_id: str, update_data: dict[str, Any]) -> User:
+    user = await user_repo.update(user_id, update_data)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
 async def _save_user_fields(
     user_repo: UserRepository, actor: User, target_id: str, current_name: str, update_data: dict[str, Any]
-) -> None:
+) -> User:
     new_name: str | None = update_data.get("username")
     if new_name == current_name:
         del update_data["username"]
@@ -75,10 +82,10 @@ async def _save_user_fields(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         await user_repo.ensure_username_free(new_name, except_id=target_id)
 
-    if update_data:
-        await user_repo.update(target_id, update_data)
+    updated = await _update_or_404(user_repo, target_id, update_data)
     if new_name is not None:
         logger.info("User %s renamed user %s from %r to %r", actor.id, target_id, current_name, new_name)
+    return updated
 
 
 def _ensure_can_set_permissions(caller: User, existing: set[str], requested: set[str]) -> None:
@@ -167,12 +174,11 @@ async def update_user_me(
     user_in: UserUpdateMe,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> dict[str, Any]:
+) -> User:
     """Update own profile."""
-    await _save_user_fields(
+    return await _save_user_fields(
         UserRepository(db), current_user, current_user.id, current_user.username, user_in.model_dump(exclude_unset=True)
     )
-    return await get_user_or_404(current_user.id, db)
 
 
 @router.post("/me/email", response_model=EmailChangeResponse, responses=RESP_AUTH_400_501)
@@ -201,15 +207,17 @@ async def change_email(
         raise IdentityTakenError("email")
 
     if system_settings.email_configured:
-        await user_repo.update(current_user.id, {"pending_email": email_in.email})
+        updated = await _update_or_404(user_repo, current_user.id, {"pending_email": email_in.email})
         send_email_change_email(background_tasks, current_user.id, email_in.email, system_settings)
         email_change = "pending_confirmation"
     else:
         # Clearing pending_email voids the link of an earlier request.
-        await user_repo.update(current_user.id, {"email": email_in.email, "pending_email": None, "is_verified": False})
+        updated = await _update_or_404(
+            user_repo, current_user.id, {"email": email_in.email, "pending_email": None, "is_verified": False}
+        )
         email_change = "changed"
 
-    return {**await get_user_or_404(current_user.id, db), "email_change": email_change}
+    return {**updated.model_dump(by_alias=True), "email_change": email_change}
 
 
 @router.get("/{user_id}", response_model=UserResponse, responses=RESP_AUTH_404)
@@ -229,7 +237,7 @@ async def update_user(
     user_in: UserUpdate,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
     db: DatabaseDep,
-) -> dict[str, Any]:
+) -> User:
     """Update a user whose permissions the caller holds (or any user with system:manage)."""
     is_self = str(current_user.id) == user_id
 
@@ -261,9 +269,7 @@ async def update_user(
             raise HTTPException(status_code=400, detail="This account's email is managed by its identity provider")
         update_data["is_verified"] = False
 
-    await _save_user_fields(user_repo, current_user, user_id, existing_user["username"], update_data)
-
-    return await get_user_or_404(user_id, db)
+    return await _save_user_fields(user_repo, current_user, user_id, existing_user["username"], update_data)
 
 
 @router.post("/me/migrate", response_model=UserResponse, responses=RESP_AUTH_400)
@@ -272,20 +278,16 @@ async def migrate_to_local(
     password_in: UserMigrateToLocal,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> dict[str, Any]:
+) -> User:
     """Migrate SSO user to local account by setting a password."""
     if current_user.is_local:
         raise HTTPException(status_code=400, detail="User is already a local account")
 
     hashed_password = security.get_password_hash(password_in.new_password)
 
-    user_repo = UserRepository(db)
-    await user_repo.update(
-        current_user.id,
-        {"hashed_password": hashed_password, "auth_provider": AUTH_PROVIDER_LOCAL},
+    return await _update_or_404(
+        UserRepository(db), current_user.id, {"hashed_password": hashed_password, "auth_provider": AUTH_PROVIDER_LOCAL}
     )
-
-    return await get_user_or_404(current_user.id, db)
 
 
 @router.post("/{user_id}/migrate", response_model=UserResponse, responses=RESP_AUTH_400_404)
@@ -293,7 +295,7 @@ async def migrate_user_to_local(
     user_id: str,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
     db: DatabaseDep,
-) -> dict[str, Any]:
+) -> User:
     """Admin only: switch a user's auth_provider to 'local' without setting a password (follow with a reset)."""
     user = await get_user_or_404(user_id, db)
     ensure_can_manage_target(current_user, user)
@@ -301,10 +303,7 @@ async def migrate_user_to_local(
     if is_local_account(user.get("auth_provider")):
         raise HTTPException(status_code=400, detail="User is already a local account")
 
-    user_repo = UserRepository(db)
-    await user_repo.update(user_id, {"auth_provider": AUTH_PROVIDER_LOCAL})
-
-    return await get_user_or_404(user_id, db)
+    return await _update_or_404(UserRepository(db), user_id, {"auth_provider": AUTH_PROVIDER_LOCAL})
 
 
 @router.post("/{user_id}/reset-password", responses=RESP_AUTH_400_404_501)
@@ -337,7 +336,7 @@ async def update_password_me(
     background_tasks: BackgroundTasks,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> dict[str, Any]:
+) -> User:
     """Update current user password."""
     if not current_user.is_local:
         raise HTTPException(
@@ -350,16 +349,23 @@ async def update_password_me(
 
     hashed_password = security.get_password_hash(password_in.new_password)
 
-    user_repo = UserRepository(db)
-    await user_repo.update(
-        current_user.id, {"hashed_password": hashed_password, "last_logout_at": datetime.now(timezone.utc)}
+    updated = await _update_or_404(
+        UserRepository(db),
+        current_user.id,
+        {"hashed_password": hashed_password, "last_logout_at": datetime.now(timezone.utc)},
     )
 
     send_password_changed_email(
         background_tasks, current_user.email, current_user.username, await deps.get_system_settings(db)
     )
 
-    return await get_user_or_404(current_user.id, db)
+    return updated
+
+
+def _qr_png_base64(uri: str) -> str:
+    buffered = io.BytesIO()
+    qrcode.make(uri).save(buffered)
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
 
 @router.post("/me/2fa/setup", response_model=User2FASetup, responses=RESP_AUTH_400)
@@ -382,14 +388,10 @@ async def setup_2fa(
     user_repo = UserRepository(db)
     await user_repo.update_raw(current_user.id, {"$set": {"totp_secret": secret}, "$unset": {"totp_last_step": ""}})
 
-    totp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=current_user.email, issuer_name=settings.PROJECT_NAME)
+    issuer = (await deps.get_system_settings(db)).brand
+    totp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=current_user.email, issuer_name=issuer)
 
-    img = qrcode.make(totp_uri)
-    buffered = io.BytesIO()
-    img.save(buffered)
-    qr_code_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-    return {"secret": secret, "qr_code": qr_code_base64}
+    return {"secret": secret, "qr_code": await asyncio.to_thread(_qr_png_base64, totp_uri)}
 
 
 @router.post("/me/2fa/enable", response_model=UserResponse, responses=RESP_AUTH_400)
@@ -398,7 +400,7 @@ async def enable_2fa(
     background_tasks: BackgroundTasks,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> dict[str, Any]:
+) -> User:
     """Verify OTP and enable 2FA (local auth users only)."""
     if not current_user.is_local:
         raise HTTPException(
@@ -418,14 +420,13 @@ async def enable_2fa(
     if step is None:
         raise HTTPException(status_code=400, detail="Invalid OTP code")
 
-    user_repo = UserRepository(db)
-    await user_repo.update(current_user.id, {"totp_enabled": True, "totp_last_step": step})
+    updated = await _update_or_404(UserRepository(db), current_user.id, {"totp_enabled": True, "totp_last_step": step})
 
     send_2fa_enabled_email(
         background_tasks, current_user.email, current_user.username, await deps.get_system_settings(db)
     )
 
-    return await get_user_or_404(current_user.id, db)
+    return updated
 
 
 @router.post("/me/2fa/disable", response_model=UserResponse, responses=RESP_AUTH_400)
@@ -497,6 +498,6 @@ async def delete_user(
     ensure_can_manage_target(current_user, user)
 
     # Memberships first: a leftover admin entry would satisfy the last-admin guards for a ghost.
-    await TeamRepository(db).remove_user_from_all(user_id, datetime.now(timezone.utc))
+    await TeamRepository(db).remove_user_from_all(user_id)
     await ProjectRepository(db).remove_user_from_all(user_id)
     await user_repo.delete(user_id)

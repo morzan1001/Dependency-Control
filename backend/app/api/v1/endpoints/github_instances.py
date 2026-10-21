@@ -1,15 +1,26 @@
+import asyncio
 import logging
-import math
-from datetime import datetime, timezone
-from enum import Enum, auto
 from typing import Annotated, Any
 
-from fastapi import HTTPException, Query, status
+from fastapi import Query, status
 
 from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.vcs_instances import apply_update, assert_unique, delete_guarded, get_or_404, list_page
+from app.api.v1.helpers.vcs_instances import (
+    TOKEN_CHECK_HINT,
+    Refusal,
+    apply_update,
+    assert_unique,
+    delete_guarded,
+    get_or_404,
+    list_page,
+    refused_listing,
+    require_signing_keys,
+    signing_key_check,
+    undetermined,
+    why_refused,
+)
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400,
@@ -74,13 +85,7 @@ async def create_instance(
     await assert_unique(instance_repo, _LABEL, url=instance_data.url, name=instance_data.name)
 
     new_instance = GitHubInstance(**instance_data.model_dump(), created_by=str(current_user.id))
-
-    jwks = await GitHubService(new_instance).get_jwks()
-    if not jwks or not jwks.get("keys"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OIDC endpoint unreachable or returned no signing keys. Verify the issuer URL.",
-        )
+    await require_signing_keys(GitHubService(new_instance))
 
     created_instance = await instance_repo.create(new_instance)
 
@@ -117,44 +122,6 @@ async def delete_instance(
     await delete_guarded(db, instance_repo, instance, provider=TEAM_SOURCE_GITHUB, username=current_user.username)
 
 
-class _Refusal(Enum):
-    BUDGET = auto()
-    SCOPE = auto()
-    UNDETERMINED = auto()
-
-
-async def _why_refused(github_service: GitHubService) -> tuple[_Refusal, str]:
-    """Asks the uncharged GET /rate_limit only when the read's own rate-limit headers are silent."""
-    reset_at = github_service.rate_limited_until
-    if reset_at is None:
-        limit = await github_service.get_core_rate_limit()
-        if limit is None:
-            return _Refusal.UNDETERMINED, ""
-        if limit.remaining > 0:
-            return _Refusal.SCOPE, ""
-        reset_at = limit.reset_at
-    minutes = math.ceil((reset_at - datetime.now(timezone.utc)).total_seconds() / 60)
-    due = f"about {minutes} minute(s) from now" if minutes > 0 else "any moment now"
-    return _Refusal.BUDGET, f"{reset_at:%Y-%m-%d %H:%M UTC}, {due}"
-
-
-async def _refused_listing(github_service: GitHubService, subject: str, scope_hint: str) -> HTTPException:
-    """Names what refused rather than assuming a missing scope."""
-    cause, reset = await _why_refused(github_service)
-    if cause is _Refusal.BUDGET:
-        detail = (
-            f"Could not list {subject}: the token's GitHub API rate limit is exhausted. The limit resets at {reset}."
-        )
-    elif cause is _Refusal.SCOPE:
-        detail = f"Could not list {subject}. {scope_hint}"
-    else:
-        detail = (
-            f"Could not list {subject}, and GET /rate_limit did not answer either, so whether an "
-            "exhausted rate limit or a missing read:org refused could not be determined. Check both."
-        )
-    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail)
-
-
 @router.get("/{instance_id}/orgs", responses=RESP_AUTH_404_502)
 async def list_instance_organisations(
     instance_id: str,
@@ -166,7 +133,7 @@ async def list_instance_organisations(
     github_service = GitHubService(instance)
     orgs = await github_service.get_viewer_organisations()
     if orgs is None:
-        raise await _refused_listing(
+        raise await refused_listing(
             github_service,
             f"the organisations of instance '{instance.name}'",
             "The token needs read:org.",
@@ -186,7 +153,7 @@ async def list_organisation_teams(
     github_service = GitHubService(instance)
     org_teams = await github_service.get_org_teams(org)
     if org_teams is None:
-        raise await _refused_listing(
+        raise await refused_listing(
             github_service,
             f"the teams of organisation '{org}'",
             "The token needs read:org there.",
@@ -224,15 +191,14 @@ async def _probe_token(
     response = await github_service._api_get("/user")
     if response is not None and response.status_code == 200:
         return " The access token authenticates."
-    cause, reset = await _why_refused(github_service)
-    if cause is _Refusal.BUDGET:
+    cause, reset = await why_refused(github_service)
+    if cause is Refusal.BUDGET:
         return _budget_failure(instance, "the token could not be tried", reset)
     if response is not None and response.status_code in (401, 403):
         return _failed_test(
             instance,
             "OIDC endpoint reachable, but GitHub refused the access token on GET /user, so pull-request "
-            "decoration, branch housekeeping and team sync cannot use it. Check that it is valid and has "
-            "not expired or been revoked.",
+            f"decoration, branch housekeeping and team sync cannot use it. {TOKEN_CHECK_HINT}",
         )
     answer = "got no answer" if response is None else f"answered HTTP {response.status_code}"
     return _failed_test(
@@ -242,44 +208,22 @@ async def _probe_token(
     )
 
 
-async def _refused_org_listing(
-    github_service: GitHubService, instance: GitHubInstance
+async def _refused_probe(
+    github_service: GitHubService, instance: GitHubInstance, blocked: str
 ) -> GitHubInstanceTestConnectionResponse | None:
-    cause, reset = await _why_refused(github_service)
-    if cause is _Refusal.BUDGET:
-        return _budget_failure(instance, "its organisations could not be listed", reset)
-    if cause is _Refusal.UNDETERMINED:
+    """None when the budget stands and GitHub took the token, so the refusal was the missing read:org."""
+    cause, reset = await why_refused(github_service)
+    if cause is Refusal.BUDGET:
+        return _budget_failure(instance, f"its {blocked}", reset)
+    if cause is Refusal.CREDENTIALS:
         return _failed_test(
             instance,
-            "OIDC endpoint reachable, but the token could not list its organisations, and "
-            "GET /rate_limit did not answer either, so whether an exhausted rate limit or a missing "
-            "read:org refused could not be determined. Check both, then test again.",
+            f"OIDC endpoint reachable, but GitHub refused the access token, so its {blocked}. {TOKEN_CHECK_HINT}",
         )
+    if cause is Refusal.UNDETERMINED:
+        failure = f"OIDC endpoint reachable, but the token's {blocked}"
+        return _failed_test(instance, f"{undetermined(failure)}, then test again.")
     return None
-
-
-async def _refused_team_listing(
-    github_service: GitHubService, instance: GitHubInstance, unreadable: list[str]
-) -> GitHubInstanceTestConnectionResponse:
-    cause, reset = await _why_refused(github_service)
-    # Exhaustion mid-loop makes every later organisation look unreadable, so naming any could accuse a readable one.
-    if cause is _Refusal.BUDGET:
-        return _budget_failure(instance, "its team access could not be checked", reset)
-    if cause is _Refusal.UNDETERMINED:
-        return _failed_test(
-            instance,
-            "OIDC endpoint reachable, but the token's team access could not be checked, and "
-            "GET /rate_limit did not answer either, so whether an exhausted rate limit or a missing "
-            "read:org refused could not be determined. Check both, then test again.",
-        )
-    return _failed_test(
-        instance,
-        "OIDC endpoint reachable, but the token cannot read teams in "
-        f"{', '.join(unreadable)}. Every organisation the token belongs to is "
-        "probed, so either grant it read:org there, or use a dedicated identity "
-        "that belongs only to the organisations DependencyControl covers. "
-        "Until then repositories there get partial or no teams.",
-    )
 
 
 async def _probe_team_access(
@@ -287,7 +231,9 @@ async def _probe_team_access(
 ) -> GitHubInstanceTestConnectionResponse | str:
     orgs = await github_service.get_viewer_organisations()
     # Only a refusal can be a throttle; a 200 carrying an empty list already spent budget to answer.
-    if orgs is None and (refused := await _refused_org_listing(github_service, instance)):
+    if orgs is None and (
+        refused := await _refused_probe(github_service, instance, "organisations could not be listed")
+    ):
         return refused
 
     org_names = [str(org["login"]) for org in orgs if org.get("login")] if orgs else []
@@ -300,10 +246,19 @@ async def _probe_team_access(
         )
 
     # Team sync acts on every organisation of the token, so one unreadable organisation fails the test.
-    probes = [(name, await github_service.count_org_teams(name)) for name in org_names]
+    counts = await asyncio.gather(*(github_service.count_org_teams(name) for name in org_names))
+    probes = list(zip(org_names, counts, strict=True))
     unreadable = [name for name, count in probes if count is None]
     if unreadable:
-        return await _refused_team_listing(github_service, instance, unreadable)
+        # Exhaustion during the probes fails readable organisations too, so none of the failed ones is named.
+        return await _refused_probe(github_service, instance, "team access could not be checked") or _failed_test(
+            instance,
+            "OIDC endpoint reachable, but the token cannot read teams in "
+            f"{', '.join(unreadable)}. Every organisation the token belongs to is "
+            "probed, so either grant it read:org there, or use a dedicated identity "
+            "that belongs only to the organisations DependencyControl covers. "
+            "Until then repositories there get partial or no teams.",
+        )
 
     covered = ", ".join(f"{name} ({count} team(s))" for name, count in probes)
     return f" Token reads teams in {covered}."
@@ -322,12 +277,9 @@ async def test_connection(
     github_service = GitHubService(instance)
 
     try:
-        jwks = await github_service.refresh_jwks()
-
-        if not jwks or not jwks.get("keys"):
-            return _failed_test(instance, "JWKS endpoint unreachable or returned no signing keys")
-
-        message = f"OIDC endpoint reachable. Found {len(jwks['keys'])} signing key(s)."
+        ok, message = await signing_key_check(github_service)
+        if not ok:
+            return _failed_test(instance, message)
         if instance.access_token:
             token_check = await _probe_token(github_service, instance)
             if isinstance(token_check, GitHubInstanceTestConnectionResponse):

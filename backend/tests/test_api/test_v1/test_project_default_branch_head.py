@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import BackgroundTasks
 
 from app.api.v1.endpoints.projects import update_project
 from app.core.permissions import Permissions
@@ -25,9 +26,8 @@ async def _put(db: FakeDatabase, project: Project, **body):
             f"{MODULE}.deps.get_system_settings",
             AsyncMock(return_value=MagicMock(retention_mode=None, rescan_mode=None)),
         ),
-        patch(f"{MODULE}._audit_license_policy_change", AsyncMock()),
     ):
-        return await update_project(project.id, ProjectUpdate(**body), user, db)
+        return await update_project(project.id, ProjectUpdate(**body), user, db, BackgroundTasks())
 
 
 async def _seeded(project: Project) -> FakeDatabase:

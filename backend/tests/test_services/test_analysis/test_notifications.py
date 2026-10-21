@@ -251,6 +251,33 @@ class TestAnalysisCompletedSeverityCounts:
         assert build_blocks.call_args.kwargs["severity_counts"] == {"CRITICAL": 1, "HIGH": 0, "MEDIUM": 0, "LOW": 2}
 
 
+class TestScanMailsCarryTheInstanceName:
+    @pytest.mark.asyncio
+    async def test_the_completion_and_the_vulnerability_mail_are_branded_with_the_instance_name(self):
+        db = await _db_with_scan()
+        await db.system_settings.insert_one({"_id": "current", "instance_name": "Acme Deps"})
+        fake_notify = SimpleNamespace(notify_project_members=AsyncMock())
+        fake_webhook = SimpleNamespace(trigger_scan_completed=AsyncMock(), trigger_vulnerability_found=AsyncMock())
+        with (
+            patch.object(notifications, "notification_service", fake_notify),
+            patch.object(notifications, "webhook_service", fake_webhook),
+        ):
+            await send_scan_notifications(
+                scan_id="scan-abc-123",
+                project=Project(id="proj-1", name="MyProject"),
+                findings=[_finding("CVE-1", "CRITICAL")],
+                db=db,
+                **_outcome(),
+            )
+
+        mails = {
+            call.kwargs["event_type"]: call.kwargs["html_message"]
+            for call in fake_notify.notify_project_members.await_args_list
+        }
+        assert set(mails) == {"analysis_completed", "vulnerability_found"}
+        assert all("<h1>Acme Deps</h1>" in html for html in mails.values())
+
+
 class TestAnalysisCompletedAnalyzers:
     @pytest.mark.asyncio
     async def test_every_channel_lists_and_counts_each_analyzer_once(self):
@@ -277,6 +304,47 @@ class TestAnalysisCompletedAnalyzers:
         assert "*Analyzers (2)*" in json.dumps(sent["slack_blocks"])
         assert "**Analyzers (2)**" in sent["mattermost_props"]["attachments"][0]["text"]
         assert sent["message"].count("osv: Partial (7 component(s) were not scanned)") == 1
+
+
+class TestAnalysisCompletedWithErrors:
+    @staticmethod
+    async def _sent(**outcome):
+        notify = SimpleNamespace(notify_project_members=AsyncMock())
+        with (
+            patch.object(notifications, "notification_service", notify),
+            patch.object(notifications, "webhook_service", SimpleNamespace(trigger_scan_completed=AsyncMock())),
+        ):
+            await send_scan_notifications(
+                scan_id="scan-abc-123",
+                project=Project(id="proj-1", name="MyProject"),
+                findings=[],
+                db=await _db_with_scan(),
+                **_outcome(**outcome),
+            )
+        return notify.notify_project_members.await_args.kwargs
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("failed", "warning"),
+        [
+            (["grype", "osv"], "Completed with errors (grype, osv): results may be incomplete."),
+            ([], "Completed with errors: results may be incomplete."),
+        ],
+        ids=["failed analyzers", "other errors"],
+    )
+    async def test_every_channel_warns_that_results_may_be_incomplete(self, failed, warning):
+        sent = await self._sent(status=SCAN_STATUS_COMPLETED_WITH_ERRORS, failed_analyzers=failed)
+
+        assert warning in sent["html_message"]
+        assert warning in sent["message"]
+        assert warning in json.dumps(sent["slack_blocks"])
+        assert warning.replace("(", "\\(").replace(")", "\\)") in sent["mattermost_props"]["attachments"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_a_clean_completion_carries_no_warning(self):
+        sent = await self._sent()
+
+        assert "Completed with errors" not in json.dumps(sent, default=str)
 
 
 class TestScanCompletedWebhook:
@@ -394,6 +462,14 @@ class TestReAnalysisAnnouncements:
         assert events == ["analysis_completed", "vulnerability_found", "analysis_completed"]
         assert webhooks.trigger_scan_completed.await_count == 2
         assert webhooks.trigger_vulnerability_found.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_each_completion_the_scan_announces_carries_the_next_revision(self):
+        _events, webhooks = await _announce_twice(
+            [_finding("CVE-1", "CRITICAL")], [_finding("CVE-1", "CRITICAL"), _sast_finding("SAST-1")]
+        )
+
+        assert [call.kwargs["revision"] for call in webhooks.trigger_scan_completed.await_args_list] == [1, 2]
 
     @pytest.mark.asyncio
     async def test_a_new_vulnerability_alerts_again(self):

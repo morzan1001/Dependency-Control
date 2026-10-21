@@ -37,11 +37,15 @@ export function GeneralSettingsTab({
         <CardContent className="space-y-4">
           <div className="grid gap-2">
             <Label htmlFor="instance-name">Instance Name</Label>
-            <Input 
-              id="instance-name" 
-              value={formData.instance_name || ''} 
+            <Input
+              id="instance-name"
+              placeholder="Dependency Control"
+              value={formData.instance_name || ''}
               onChange={(e) => handleInputChange('instance_name', e.target.value)}
             />
+            <p className="text-sm text-muted-foreground">
+              Names this instance in emails, their subjects and authenticator apps.
+            </p>
           </div>
           <div className="grid gap-2">
             <Label htmlFor="project-limit">Project Limit per User</Label>

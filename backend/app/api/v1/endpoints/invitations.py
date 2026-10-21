@@ -51,17 +51,15 @@ async def create_system_invitation(
         raise IdentityTakenError("email")
 
     existing_invite = await invitation_repo.get_system_invitation_by_email(email)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
 
     if existing_invite:
+        # The same token, so a link from an earlier mail keeps working too.
         token = existing_invite["token"]
+        await invitation_repo.extend_system_invitation(existing_invite["_id"], expires_at)
     else:
         token = secrets.token_urlsafe(32)
-        invitation = SystemInvitation(
-            email=email,
-            token=token,
-            invited_by=current_user.id,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=7),
-        )
+        invitation = SystemInvitation(email=email, token=token, invited_by=current_user.id, expires_at=expires_at)
         await invitation_repo.create_system_invitation(invitation)
 
     link = f"{settings.FRONTEND_BASE_URL}/accept-invite?token={token}"

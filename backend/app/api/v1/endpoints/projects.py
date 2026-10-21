@@ -33,7 +33,6 @@ from app.api.v1.helpers import (
     last_admin_guard,
     may_read_projects,
     parse_sort_direction,
-    resolve_team_names,
     team_refs,
 )
 from app.api.v1.helpers.auth import send_project_member_added_email
@@ -249,6 +248,7 @@ async def create_project(
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.PROJECT_CREATE))],
     db: DatabaseDep,
     settings: Annotated[SystemSettings, Depends(deps.get_system_settings)],
+    background_tasks: BackgroundTasks,
 ) -> ProjectApiKeyResponse:
     """Create a new project and return the initial API Key, which is only returned once."""
     reject_unknown_analyzers(project_in.active_analyzers)
@@ -293,7 +293,7 @@ async def create_project(
     project_data["api_key_hash"] = api_key_hash
 
     await project_repo.create_raw(project_data)
-    await _audit_license_policy_change(db, project_id, None, project, current_user)
+    background_tasks.add_task(_audit_license_policy_change, db, project_id, None, project, current_user)
 
     return ProjectApiKeyResponse(project_id=project_id, api_key=api_key)
 
@@ -361,7 +361,7 @@ async def read_projects(
     )
     projects = [ProjectWithTeam(**doc) for doc in docs]
 
-    team_name_map = await resolve_team_names(db, {team_id for p in projects for team_id in p.team_ids})
+    team_name_map = await team_repo.names_by_ids(team_id for p in projects for team_id in p.team_ids)
     for project in projects:
         project.teams = team_refs(project.team_ids, team_name_map)
 
@@ -547,6 +547,7 @@ async def update_project(
     project_in: ProjectUpdate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
+    background_tasks: BackgroundTasks,
 ) -> ProjectDetail:
     """Update project details (name, owning teams, active analyzers). Requires 'admin' role."""
     project_repo = ProjectRepository(db)
@@ -594,7 +595,7 @@ async def update_project(
     if updated_project.default_branch != project.default_branch:
         await ScanRepository(db).sync_project_head(project_id)
         updated_project = await _reload_project(project_repo, project_id)
-    await _audit_license_policy_change(db, project_id, project, updated_project, current_user)
+    background_tasks.add_task(_audit_license_policy_change, db, project_id, project, updated_project, current_user)
     return updated_project
 
 

@@ -16,6 +16,8 @@ class TeamMemberSchema(BaseModel):
     role: str
     # "manual", or the "<provider>:<instance id>" of the sync that owns the entry.
     source: str | None = None
+    # A live sync restores the entry, so its role and membership change only at the source.
+    sync_owned: bool = False
 
 
 class TeamRef(BaseModel):
