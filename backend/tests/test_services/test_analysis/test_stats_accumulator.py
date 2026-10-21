@@ -13,6 +13,7 @@ from app.core.constants import (
     REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_SYMBOL,
 )
+from app.core.risk_scoring import RISK_SEVERITY_WEIGHTS
 from app.schemas.enrichment import EPSSData, KEVEntry
 from app.services.analysis.stats import (
     StatsAccumulator,
@@ -663,6 +664,13 @@ class TestAdjustedRiskScoreMagnitude:
 
         assert stats.risk_score == _UNMODIFIED_CRITICAL_SCORE
         assert stats.adjusted_risk_score == expected_adjusted
+
+    def test_a_newly_weighted_severity_raises_the_base_score_as_well(self, monkeypatch):
+        monkeypatch.setitem(RISK_SEVERITY_WEIGHTS, "NEGLIGIBLE", RISK_SEVERITY_WEIGHTS["CRITICAL"])
+
+        stats = compute_stats([_finding(severity="NEGLIGIBLE")], {})
+
+        assert (stats.risk_score, stats.adjusted_risk_score) == (_UNMODIFIED_CRITICAL_SCORE, _UNMODIFIED_CRITICAL_SCORE)
 
 
 def _partly_waived_log4j() -> dict[str, Any]:

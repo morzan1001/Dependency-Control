@@ -446,19 +446,15 @@ class StatsAccumulator:
         if self._counted == 0:
             return Stats()
 
-        critical = self._severity["CRITICAL"]
-        high = self._severity["HIGH"]
-        medium = self._severity["MEDIUM"]
-        low = self._severity["LOW"]
         return Stats(
-            critical=critical,
-            high=high,
-            medium=medium,
-            low=low,
+            critical=self._severity["CRITICAL"],
+            high=self._severity["HIGH"],
+            medium=self._severity["MEDIUM"],
+            low=self._severity["LOW"],
             negligible=self._severity["NEGLIGIBLE"],
             info=self._severity["INFO"],
             unknown=self._severity[_UNKNOWN_SEVERITY],
-            risk_score=saturating_risk_score(severity_exposure(critical, high, medium, low)),
+            risk_score=saturating_risk_score(severity_exposure(self._severity)),
             adjusted_risk_score=saturating_risk_score(self._adjusted_exposure),
             threat_intel=ThreatIntelligenceStats(
                 kev_count=self._kev,

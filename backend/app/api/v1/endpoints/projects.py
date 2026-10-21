@@ -70,7 +70,6 @@ from app.core.constants import (
     severity_rank_expr,
 )
 from app.core.permissions import Permissions, has_permission
-from app.core.risk_scoring import risk_score_expr
 from app.core.worker import worker_manager
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.release import Release
@@ -174,19 +173,7 @@ async def get_dashboard_stats(
             "$project": {
                 "name": 1,
                 "stats": 1,
-                "calculated_risk": {
-                    "$ifNull": [
-                        "$stats.risk_score",
-                        risk_score_expr(
-                            {
-                                "critical": "$stats.critical",
-                                "high": "$stats.high",
-                                "medium": "$stats.medium",
-                                "low": "$stats.low",
-                            }
-                        ),
-                    ]
-                },
+                "calculated_risk": {"$ifNull": ["$stats.risk_score", 0]},
             }
         },
         {

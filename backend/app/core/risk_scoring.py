@@ -1,4 +1,4 @@
-from typing import Any
+from collections.abc import Mapping
 
 from app.core.constants import (
     EPSS_HIGH_THRESHOLD,
@@ -26,39 +26,11 @@ CONFIRMED_REACHABLE_RISK_MODIFIER: float = 1.1
 
 def saturating_risk_score(exposure: float) -> float:
     """Monotone, so extra findings can never lower the score."""
-    if exposure <= 0:
-        return 0.0
     return round(100.0 * exposure / (exposure + RISK_SCORE_HALF_SATURATION), 1)
 
 
-def severity_exposure(critical: int, high: int, medium: int, low: int) -> float:
-    return (
-        RISK_SEVERITY_WEIGHTS["CRITICAL"] * critical
-        + RISK_SEVERITY_WEIGHTS["HIGH"] * high
-        + RISK_SEVERITY_WEIGHTS["MEDIUM"] * medium
-        + RISK_SEVERITY_WEIGHTS["LOW"] * low
-    )
-
-
-def risk_score_expr(count_paths: dict[str, str]) -> dict[str, Any]:
-    """saturating_risk_score as an aggregation expression over severity-count field paths."""
-    exposure = {
-        "$add": [
-            {"$multiply": [{"$ifNull": [count_paths[sev.lower()], 0]}, weight]}
-            for sev, weight in RISK_SEVERITY_WEIGHTS.items()
-        ]
-    }
-    return {
-        "$round": [
-            {
-                "$divide": [
-                    {"$multiply": [100.0, exposure]},
-                    {"$add": [exposure, RISK_SCORE_HALF_SATURATION]},
-                ]
-            },
-            1,
-        ]
-    }
+def severity_exposure(severity_counts: Mapping[str, int]) -> float:
+    return sum(weight * severity_counts.get(severity, 0) for severity, weight in RISK_SEVERITY_WEIGHTS.items())
 
 
 def reachability_display_tier(is_reachable: bool | None, analysis_level: str | None) -> str:

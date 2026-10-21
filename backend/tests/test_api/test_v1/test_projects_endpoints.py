@@ -481,19 +481,13 @@ class TestDashboardStats:
         assert stats["total_high"] == self._HIGHS
         assert stats["avg_risk_score"] == round(self._PERSISTED_RISK / 2, 1)
 
-    def test_a_project_without_a_persisted_score_is_ranked_on_a_derived_one(self):
-        db = self._db(
-            [
-                ("p-derived", {"critical": self._CRITICALS, "high": self._HIGHS}),
-                ("p-clean", {"critical": 0, "high": 0}),
-            ]
-        )
+    def test_the_ranking_reads_the_persisted_score_without_deriving_one_from_counts(self):
+        db = self._db([("p-unscored", {"critical": self._CRITICALS, "high": self._HIGHS}), ("p-unanalysed", None)])
 
         stats = self._read(db)
 
-        derived = next(p for p in stats["top_risky_projects"] if p.id == "p-derived")
-        assert derived.risk > 0
-        assert [p.id for p in stats["top_risky_projects"]] == ["p-derived", "p-clean"]
+        assert {p.id: p.risk for p in stats["top_risky_projects"]} == {"p-unscored": 0, "p-unanalysed": 0}
+        assert stats["avg_risk_score"] == 0.0
 
     def test_the_persisted_score_is_used_rather_than_recomputed(self):
         db = self._db([("p-persisted", {"risk_score": self._PERSISTED_RISK, "critical": 0, "high": 0})])
