@@ -7,7 +7,7 @@ frontend + helm chart). The CI scanner script under
 the app version must not silently change scanner behaviour. When the
 scanner itself changes, edit the value in ``ci-cd/scripts/scanner.sh``
 and re-run this script to publish a frozen copy under
-``ci-cd/scripts/versions/scanner-X.Y.Z.sh`` (see step 5 below).
+``ci-cd/scripts/versions/scanner-X.Y.Z.sh`` (see step 4 below).
 """
 
 import hashlib
@@ -123,15 +123,7 @@ def main():
         f'appVersion: "{new_version}"'
     )
 
-    # 3. Update Backend (main.py)
-    main_py_path = os.path.join(root_dir, 'backend', 'app', 'main.py')
-    update_file(
-        main_py_path,
-        r'version\s*=\s*"[^"]+"',
-        f'version="{new_version}"'
-    )
-
-    # 4. Update Frontend (package.json)
+    # 3. Update Frontend (package.json)
     package_json_path = os.path.join(root_dir, 'frontend', 'package.json')
     update_file(
         package_json_path,
@@ -139,7 +131,7 @@ def main():
         f'"version": "{new_version}"'
     )
 
-    # 5. Freeze the current scanner.sh under versions/ so pinned
+    # 4. Freeze the current scanner.sh under versions/ so pinned
     # pipelines can resolve ?v=<scanner-version> deterministically.
     # The scanner has its own SCRIPT_VERSION and is not bumped by this
     # script — see the module docstring.

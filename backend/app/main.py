@@ -42,7 +42,7 @@ from app.api.v1.endpoints import (
 )
 from app.core.config import settings
 from app.core.init_db import init_db
-from app.core.metrics import PrometheusMiddleware, metrics_endpoint
+from app.core.metrics import APP_VERSION, PrometheusMiddleware, metrics_endpoint
 from app.core.middleware import RelativeLocationMiddleware
 from app.core.worker import worker_manager
 from app.db.mongodb import close_mongo_connection, connect_to_mongo
@@ -113,7 +113,7 @@ and tracking vulnerabilities.
 
 Source Code: [GitHub Repository](https://github.com/morzan1001/Dependency-Control)
     """,
-    version="1.9.59",
+    version=APP_VERSION,
     license_info={
         "name": "MIT License",
         "url": "https://github.com/morzan1001/Dependency-Control/blob/main/LICENSE",
