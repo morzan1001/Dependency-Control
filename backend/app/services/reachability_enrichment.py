@@ -50,7 +50,7 @@ _ECOSYSTEM_TO_CALLGRAPH_LANGUAGES: dict[str, frozenset[str]] = {
     **dict.fromkeys(OS_PACKAGE_TYPES | APP_PACKAGE_TYPES, frozenset()),
     "pypi": frozenset({"python"}),
     "npm": frozenset({"javascript", "typescript"}),
-    # Some producers write the off-spec pkg:go/ purl, which the advisory broadcast also matches as golang.
+    # Some producers write the off-spec pkg:go/ purl.
     "go": frozenset({"go"}),
     "golang": frozenset({"go"}),
     "maven": JVM_LANGUAGES,
