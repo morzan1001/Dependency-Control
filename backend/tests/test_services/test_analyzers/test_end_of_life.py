@@ -192,17 +192,18 @@ class TestCheckVersion:
 
 class TestSeverity:
     @pytest.mark.parametrize(
-        ("eol", "expected"),
+        ("days_past_eol", "expected"),
         [
             pytest.param(True, Severity.HIGH.value, id="eol-without-date"),
-            pytest.param(_days_ago(365), Severity.HIGH.value, id="exactly-high-threshold"),
-            pytest.param(_days_ago(364), Severity.MEDIUM.value, id="just-below-high"),
-            pytest.param(_days_ago(180), Severity.MEDIUM.value, id="exactly-medium-threshold"),
-            pytest.param(_days_ago(179), Severity.LOW.value, id="just-below-medium"),
+            pytest.param(365, Severity.HIGH.value, id="exactly-high-threshold"),
+            pytest.param(364, Severity.MEDIUM.value, id="just-below-high"),
+            pytest.param(180, Severity.MEDIUM.value, id="exactly-medium-threshold"),
+            pytest.param(179, Severity.LOW.value, id="just-below-medium"),
         ],
     )
     @pytest.mark.asyncio
-    async def test_severity_grows_with_the_days_past_eol(self, serve, eol, expected):
+    async def test_severity_grows_with_the_days_past_eol(self, serve, days_past_eol, expected):
+        eol = True if days_past_eol is True else _days_ago(days_past_eol)
         serve({"python": [_cycle("3.13", False, "3.13.0"), _cycle("3.6", eol, "3.6.15")]})
 
         [issue] = await _issues([_component("python", "3.6.15", "pkg:generic/python@3.6.15")])
