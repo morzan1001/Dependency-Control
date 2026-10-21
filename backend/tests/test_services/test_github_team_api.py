@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import fakeredis.aioredis
 import httpx
 import pytest
 
@@ -106,14 +105,10 @@ def _service(instance_id: str = "test-github-instance-id") -> GitHubService:
 
 
 @pytest.fixture
-def fake_cache(monkeypatch):
-    svc = CacheService()
-    svc._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    svc._pool = object()
-    svc._available = True
-    monkeypatch.setattr("app.services.github.cache_service", svc)
-    monkeypatch.setattr("app.services.git_provider.cache_service", svc)
-    return svc
+def fake_cache(fake_cache, monkeypatch):
+    monkeypatch.setattr("app.services.github.cache_service", fake_cache)
+    monkeypatch.setattr("app.services.git_provider.cache_service", fake_cache)
+    return fake_cache
 
 
 def _response(status_code: int, payload: dict | None = None) -> MagicMock:
