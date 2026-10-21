@@ -4,7 +4,7 @@ import pytest
 
 from app.models.user import User
 from app.services.analytics import scopes
-from app.services.chat.tools import ChatToolRegistry, registry as registry_module
+from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.permission_presets import PRESET_USER
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -18,7 +18,6 @@ _SEARCH_TERM = "openssl"
 @pytest.fixture
 def small_ceiling(monkeypatch):
     monkeypatch.setattr(scopes, "ANALYTICS_MAX_SCOPE_PROJECTS", _CEILING)
-    monkeypatch.setattr(registry_module, "ANALYTICS_MAX_SCOPE_PROJECTS", _CEILING)
 
 
 def _seed_projects(db: FakeDatabase, count: int) -> None:

@@ -27,7 +27,6 @@ from app.api.v1.helpers.webhooks import (
 from app.core.cache import cache_service
 from app.core.config import settings
 from app.core.constants import (
-    ANALYTICS_MAX_SCOPE_PROJECTS,
     DEPENDENCIES_SCAN_PACKAGE_INDEX,
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
@@ -72,7 +71,12 @@ from app.schemas.webhook import WebhookResponse
 from app.services.aggregation.versions import aggregate_fixed_version, parse_version_key, split_fixed_versions
 from app.services.analytics.crypto_trends import auto_bucket
 from app.services.analytics.scan_delta import InvalidDeltaQuery, compute_scan_delta_dispatch
-from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError, read_scope_projects
+from app.services.analytics.scopes import (
+    ScopeResolutionError,
+    ScopeTooLargeError,
+    read_scope_project_ids,
+    read_scope_projects,
+)
 from app.services.compliance.visibility import report_visibility_filter
 from app.services.component_identity import artifact_segment, canonical_callgraph_language
 from app.services.recommendation.common import installed_copy_lookup, live_advisories, max_advisory_cvss
@@ -1709,14 +1713,7 @@ class ChatToolRegistry:
         return await _gated(check_team_access(ctx.args["team_id"], ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
 
     async def _get_authorized_project_ids(self, ctx: _ToolContext) -> list[str]:
-        rows = await ProjectRepository(ctx.db).find_many_raw(
-            ctx.user_project_query, limit=ANALYTICS_MAX_SCOPE_PROJECTS + 1, projection={"_id": 1}
-        )
-        if len(rows) > ANALYTICS_MAX_SCOPE_PROJECTS:
-            raise ScopeTooLargeError(
-                f"This scope holds more than {ANALYTICS_MAX_SCOPE_PROJECTS} projects; ask about a team or a single project."
-            )
-        return [row["_id"] for row in rows]
+        return await read_scope_project_ids(ctx.db, ctx.user_project_query)
 
     async def _in_scope(self, ctx: _ToolContext) -> dict[str, Any]:
         return {"project_id": {"$in": await self._get_authorized_project_ids(ctx)}} if ctx.user_project_query else {}

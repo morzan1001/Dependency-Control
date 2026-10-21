@@ -4,7 +4,7 @@ import pytest
 
 from app.core.permissions import Permissions
 from app.services.analytics import scopes
-from app.services.analytics.scopes import ScopeResolver, ScopeTooLargeError
+from app.services.analytics.scopes import ScopeResolver, ScopeTooLargeError, read_scope_project_ids
 
 _CEILING = 4
 _PAST_THE_CEILING = _CEILING + 1
@@ -68,6 +68,23 @@ async def test_a_super_user_scope_past_the_ceiling_is_refused(db, small_ceiling)
 
     with pytest.raises(ScopeTooLargeError):
         await _resolver(db, permissions=frozenset({Permissions.PROJECT_READ_ALL})).resolve(scope="user", scope_id=None)
+
+
+@pytest.mark.asyncio
+async def test_an_id_read_at_the_ceiling_returns_every_id(db, small_ceiling):
+    _seed_projects(db, _CEILING)
+
+    ids = await read_scope_project_ids(db, {})
+
+    assert sorted(ids) == [f"p{index}" for index in range(_CEILING)]
+
+
+@pytest.mark.asyncio
+async def test_an_id_read_past_the_ceiling_is_refused(db, small_ceiling):
+    _seed_projects(db, _PAST_THE_CEILING)
+
+    with pytest.raises(ScopeTooLargeError, match=str(_CEILING)):
+        await read_scope_project_ids(db, {})
 
 
 @pytest.mark.parametrize(

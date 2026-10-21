@@ -117,7 +117,7 @@ from app.schemas.project import (
     ScanReleaseRef,
     ScanWithReleases,
 )
-from app.services.analytics.scopes import read_scope_projects
+from app.services.analytics.scopes import read_scope_project_ids
 from app.services.audit.history import record_license_policy_change
 from app.services.branch_sync import sync_project_branches
 from app.services.component_identity import component_match_expr
@@ -394,7 +394,7 @@ async def read_all_scans(
     scans: dict[str, Any] = {"is_rescan": {"$ne": True}}
     visible = await build_user_project_query(current_user, TeamRepository(db))
     if visible:
-        project_ids = [project.id for project in await read_scope_projects(db, visible)]
+        project_ids = await read_scope_project_ids(db, visible)
         if not project_ids:
             return []
         scans["project_id"] = {"$in": project_ids}

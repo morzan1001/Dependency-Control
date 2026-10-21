@@ -30,11 +30,23 @@ class ScopeTooLargeError(Exception):
     """Raised when a scope holds more projects than analytics can materialise as one id list."""
 
 
-async def read_scope_projects(db: AsyncIOMotorDatabase, query: dict[str, Any]) -> list[ProjectWithScanId]:
-    projects = await ProjectRepository(db).find_many_with_scan_id(query, limit=ANALYTICS_MAX_SCOPE_PROJECTS + 1)
-    if len(projects) > ANALYTICS_MAX_SCOPE_PROJECTS:
+def _within_ceiling[T](rows: list[T]) -> list[T]:
+    if len(rows) > ANALYTICS_MAX_SCOPE_PROJECTS:
         raise ScopeTooLargeError(_SCOPE_TOO_LARGE.format(limit=ANALYTICS_MAX_SCOPE_PROJECTS))
-    return projects
+    return rows
+
+
+async def read_scope_projects(db: AsyncIOMotorDatabase, query: dict[str, Any]) -> list[ProjectWithScanId]:
+    return _within_ceiling(
+        await ProjectRepository(db).find_many_with_scan_id(query, limit=ANALYTICS_MAX_SCOPE_PROJECTS + 1)
+    )
+
+
+async def read_scope_project_ids(db: AsyncIOMotorDatabase, query: dict[str, Any]) -> list[str]:
+    rows = await ProjectRepository(db).find_many_raw(
+        query, limit=ANALYTICS_MAX_SCOPE_PROJECTS + 1, projection={"_id": 1}
+    )
+    return _within_ceiling([row["_id"] for row in rows])
 
 
 async def resolve_scope_names(db: AsyncIOMotorDatabase, rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:

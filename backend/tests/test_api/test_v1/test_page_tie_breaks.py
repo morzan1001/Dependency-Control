@@ -9,7 +9,6 @@ from app.api.v1.endpoints.projects import read_all_scans, read_project_scans
 from app.api.v1.endpoints.releases import list_releases
 from app.core.permissions import Permissions
 from app.models.user import User
-from app.repositories.projections import ProjectWithScanId
 from app.repositories.projects import ProjectRepository
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
@@ -101,9 +100,7 @@ async def test_the_recent_scans_list_covers_the_projects_analytics_resolves():
     aggregate = AsyncMock(return_value=[])
     reader = User(id="u1", username="u1", email="u1@test.com", permissions=[Permissions.PROJECT_READ])
     with (
-        patch(
-            "app.api.v1.endpoints.projects.read_scope_projects", AsyncMock(return_value=[ProjectWithScanId(_id="p2")])
-        ),
+        patch("app.api.v1.endpoints.projects.read_scope_project_ids", AsyncMock(return_value=["p2"])),
         patch.object(ScanRepository, "aggregate", aggregate),
     ):
         await read_all_scans(reader, FakeDatabase(), sort_by="created_at", sort_order="desc")

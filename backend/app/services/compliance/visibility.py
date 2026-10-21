@@ -7,7 +7,7 @@ from app.core.constants import ScopeName
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories.teams import TeamRepository
-from app.services.analytics.scopes import may_query_global, read_scope_projects, team_scope_filter
+from app.services.analytics.scopes import may_query_global, read_scope_project_ids, team_scope_filter
 
 
 async def report_visibility_filter(
@@ -22,7 +22,7 @@ async def report_visibility_filter(
         project_query = await build_user_project_query(user, team_repo)
         if not project_query:
             branches.append({"scope": "project"})
-        elif project_ids := [p.id for p in await read_scope_projects(db, project_query)]:
+        elif project_ids := await read_scope_project_ids(db, project_query):
             branches.append({"scope": "project", "scope_id": {"$in": project_ids}})
     teams = team_scope_filter(user) if scope in (None, "team") else None
     team_ids = [] if teams is None else await team_repo.find_ids(teams)

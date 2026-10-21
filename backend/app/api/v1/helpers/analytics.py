@@ -6,6 +6,7 @@ from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
+from app.api.v1.helpers.projects import build_user_project_query
 from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.core.constants import (
     BLAST_RADIUS_THRESHOLD,
@@ -42,9 +43,10 @@ from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.projections import ProjectWithScanId
 from app.repositories.scans import ScanRepository
+from app.repositories.teams import TeamRepository
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
-from app.services.analytics.scopes import ScopeResolver
+from app.services.analytics.scopes import ScopeResolver, read_scope_project_ids
 from app.services.enrichment.scoring import fold_enrichments
 from app.services.enrichment.service import advisory_enrichment
 from app.services.recommendation.common import live_advisories, live_cves
@@ -98,7 +100,7 @@ def require_analytics_permission(user: User, permission: str) -> None:
 
 
 async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> list[str]:
-    return [p.id for p in await get_user_projects(user, db)]
+    return await read_scope_project_ids(db, await build_user_project_query(user, TeamRepository(db)))
 
 
 async def get_user_projects(user: User, db: AsyncIOMotorDatabase) -> list[ProjectWithScanId]:
