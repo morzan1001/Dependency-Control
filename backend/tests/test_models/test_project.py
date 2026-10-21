@@ -46,6 +46,11 @@ class TestScanModel:
         doc = {"_id": "scan-1", "project_id": "proj-1", "branch": "main", "restored_at": restored_at}
         assert Scan(**doc).model_dump(by_alias=True)["restored_at"] == restored_at
 
+    def test_updated_at_survives_hydration_and_serialization(self):
+        updated_at = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
+        doc = {"_id": "scan-1", "project_id": "proj-1", "branch": "main", "updated_at": updated_at}
+        assert Scan(**doc).model_dump(by_alias=True)["updated_at"] == updated_at
+
 
 class TestAnalysisResultModel:
     def test_minimal_valid(self):

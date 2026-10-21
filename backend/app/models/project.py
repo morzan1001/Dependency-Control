@@ -122,6 +122,7 @@ class Scan(MongoDocument, CreatedAtModel):
     ignored_count: int = 0
     stats: Stats | None = None
     completed_at: datetime | None = None
+    updated_at: datetime | None = None
 
     reachability_pending: bool | None = None
 

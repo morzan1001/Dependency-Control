@@ -266,8 +266,6 @@ async def _save_archive_metadata(
         branch=scan_doc.get("branch"),
         commit_hash=scan_doc.get("commit_hash"),
         scan_created_at=scan_doc.get("created_at"),
-        scan_completed_at=scan_doc.get("completed_at"),
-        scan_status=scan_doc.get("status"),
         compressed_size_bytes=total,
         findings_count=stats.findings,
         critical_findings_count=stats.critical_findings,

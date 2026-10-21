@@ -24,8 +24,6 @@ class TestArchiveMetadata:
         assert metadata.branch is None
         assert metadata.commit_hash is None
         assert metadata.scan_created_at is None
-        assert metadata.scan_completed_at is None
-        assert metadata.scan_status is None
         assert metadata.compressed_size_bytes is None
 
     def test_full_metadata(self):
@@ -37,8 +35,6 @@ class TestArchiveMetadata:
             branch="main",
             commit_hash="abc123",
             scan_created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
-            scan_completed_at=datetime(2025, 1, 1, 1, 0, tzinfo=timezone.utc),
-            scan_status="completed",
             compressed_size_bytes=1000,
         )
         assert metadata.branch == "main"
