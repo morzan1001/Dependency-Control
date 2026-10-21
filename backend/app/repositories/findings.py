@@ -36,7 +36,7 @@ FIRST_DETECTION_INDEX = [
     ("scan_created_at", ASCENDING),
 ]
 
-# The newest copy per (type, finding_id) is one seek; a covering tail would quadruple the index for no persist gain.
+# The newest copy per (type, finding_id) is one seek.
 # The server skips ahead only for a single grouped field behind equalities, so each type is its own query.
 NEWEST_COPY_INDEX = [
     ("project_id", ASCENDING),
