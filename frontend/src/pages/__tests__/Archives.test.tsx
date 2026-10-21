@@ -22,6 +22,8 @@ vi.mock('@/hooks/queries/use-projects', async (importOriginal) => ({
   useProjectDetails: (ids: readonly string[]) => useProjectDetailsMock(ids),
 }))
 vi.mock('@/hooks/queries/use-instances', () => ({ useInstanceNames: () => new Map() }))
+const { useAppConfigMock } = vi.hoisted(() => ({ useAppConfigMock: vi.fn() }))
+vi.mock('@/hooks/queries/use-system', () => ({ useAppConfig: () => useAppConfigMock() }))
 
 function makeArchive(overrides: Partial<AdminArchiveListItem> = {}): AdminArchiveListItem {
   return {
@@ -58,6 +60,19 @@ function renderPage() {
 beforeEach(() => {
   mockUseAdminArchives.mockReset()
   mockUseAdminArchives.mockReturnValue({ data: makeResponse([]), isLoading: false })
+  useAppConfigMock.mockReturnValue({ data: { archive_enabled: true }, isPending: false })
+})
+
+describe('ArchivesPage without archive storage', () => {
+  it('asks for no archives and says the storage is not configured, as the hidden nav entry implies', () => {
+    useAppConfigMock.mockReturnValue({ data: { archive_enabled: false }, isPending: false })
+    mockUseAdminArchives.mockReturnValue({ data: undefined, isLoading: false })
+
+    renderPage()
+
+    expect(mockUseAdminArchives).toHaveBeenLastCalledWith(1, 20, undefined, false)
+    expect(screen.getByText('Archive storage is not configured.')).toBeInTheDocument()
+  })
 })
 
 describe('ArchivesPage - formatBytes', () => {
@@ -120,7 +135,7 @@ describe('ArchivesPage pager', () => {
     expect(screen.getByText('Page 1 of 2 (40 total)')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /next/i }))
 
-    expect(mockUseAdminArchives).toHaveBeenLastCalledWith(2, 20, undefined)
+    expect(mockUseAdminArchives).toHaveBeenLastCalledWith(2, 20, undefined, true)
   })
 })
 
