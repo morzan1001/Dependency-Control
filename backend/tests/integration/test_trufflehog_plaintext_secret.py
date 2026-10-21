@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from app.models.finding import Finding
 from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _aggregate_external_results
@@ -17,27 +18,25 @@ _TRUFFLEHOG = "trufflehog"
 _INGEST_URL = "/api/v1/ingest/trufflehog"
 
 
-def _payload(raw: object = _SECRET) -> dict:
-    return {
-        "pipeline_id": 515151,
-        "commit_hash": "c" * 40,
-        "branch": "main",
-        "findings": [
-            {
-                "DetectorType": 2,
-                "Raw": raw,
-                "RawV2": f"{_SECRET}wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-                "Verified": True,
-                "SourceMetadata": {"Data": {"Filesystem": {"file": "config/aws.env"}}},
-            }
-        ],
+def _payload(raw: object = _SECRET, *, detector_name: str | None = None) -> dict:
+    location: dict = {"file": "config/aws.env"}
+    finding = {
+        "DetectorType": 2,
+        "Raw": raw,
+        "RawV2": f"{_SECRET}wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        "Verified": True,
+        "SourceMetadata": {"Data": {"Filesystem": location}},
     }
+    if detector_name is not None:
+        finding["DetectorName"] = detector_name
+        location["line"] = 3
+    return {"pipeline_id": 515151, "commit_hash": "c" * 40, "branch": "main", "findings": [finding]}
 
 
-async def _aggregated_ids(db, scan_id: str) -> list[str]:
+async def _aggregated(db, scan_id: str) -> list[Finding]:
     aggregator = ResultAggregator()
     await _aggregate_external_results(aggregator, AnalysisResultRepository(db), scan_id)
-    return [f.id for f in aggregator.get_findings()]
+    return aggregator.get_findings()
 
 
 @pytest.mark.asyncio
@@ -67,7 +66,7 @@ async def test_ingested_secret_keeps_its_finding_id(client, db, api_key_headers)
     resp = await client.post(_INGEST_URL, json=_payload(), headers=api_key_headers)
     assert resp.status_code == 200, resp.text
 
-    assert await _aggregated_ids(db, resp.json()["scan_id"]) == [_PINNED_FINDING_ID]
+    assert [f.id for f in await _aggregated(db, resp.json()["scan_id"])] == [_PINNED_FINDING_ID]
 
 
 @pytest.mark.asyncio
@@ -90,7 +89,7 @@ async def test_legacy_stored_raw_keeps_its_finding_id(db):
         }
     )
 
-    assert await _aggregated_ids(db, _LEGACY_SCAN) == [_PINNED_FINDING_ID]
+    assert [f.id for f in await _aggregated(db, _LEGACY_SCAN)] == [_PINNED_FINDING_ID]
 
 
 @pytest.mark.asyncio
@@ -104,11 +103,38 @@ async def test_a_row_migrated_to_the_digest_prefix_keeps_its_finding_id(db):
         }
     )
 
-    assert await _aggregated_ids(db, _LEGACY_SCAN) == [_PINNED_FINDING_ID]
+    assert [f.id for f in await _aggregated(db, _LEGACY_SCAN)] == [_PINNED_FINDING_ID]
 
 
 @pytest.mark.asyncio
 async def test_non_string_raw_is_rejected_as_invalid(client, api_key_headers):
     resp = await client.post(_INGEST_URL, json=_payload(raw=12345), headers=api_key_headers)
+
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_ingested_detector_name_is_stored_and_named(client, db, api_key_headers):
+    resp = await client.post(_INGEST_URL, json=_payload(detector_name="AWS"), headers=api_key_headers)
+    assert resp.status_code == 200, resp.text
+    scan_id = resp.json()["scan_id"]
+
+    row = await db.analysis_results.find_one({"scan_id": scan_id, "analyzer_name": _TRUFFLEHOG}, RESULT_PROJECTION)
+    assert (await AnalysisResultRepository(db).load_result(row))["findings"][0]["DetectorName"] == "AWS"
+
+    (finding,) = await _aggregated(db, scan_id)
+    details = finding.details
+    assert (finding.description, details["detector"], details["detector_name"], details["line"]) == (
+        "Secret detected: AWS",
+        "2",
+        "AWS",
+        3,
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_detector_name_is_rejected(client, api_key_headers):
+    resp = await client.post(_INGEST_URL, json=_payload(detector_name="A" * 129), headers=api_key_headers)
 
     assert resp.status_code == 422, resp.text
