@@ -160,24 +160,23 @@ class VulnerabilityEnrichmentService:
         self._kev_provider = KEVProvider()
         self._ghsa_provider = GHSAProvider()
 
-    async def _enrich_cves(self, cves: list[str]) -> tuple[dict[str, VulnerabilityEnrichment], str | None]:
+    async def _enrich_cves(self, cves: list[str]) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
         unique_cves = list({cve for cve in cves if cve and cve.startswith("CVE-")})
         if not unique_cves:
-            return {}, None
+            return {}, []
 
         kev_catalog, (epss_data, epss_complete) = await asyncio.gather(
             self._kev_provider.load_kev_catalog(), self._epss_provider.load_epss_scores(unique_cves)
         )
         missing = [name for name, gone in (("KEV", kev_catalog is None), ("EPSS", not epss_complete)) if gone]
-        unavailable = f"{' and '.join(missing)} unavailable" if missing else None
         kev_catalog = kev_catalog or {}
         results = {cve: _build_enrichment(cve, kev_catalog.get(cve), epss_data.get(cve)) for cve in unique_cves}
 
         kev_count = sum(1 for e in results.values() if e.in_kev)
         logger.info(
-            f"Enriched {len(results)} CVEs (KEV: {kev_count}, EPSS: {len(epss_data)}, {unavailable or 'complete'})"
+            f"Enriched {len(results)} CVEs (KEV: {kev_count}, EPSS: {len(epss_data)}, unavailable: {missing or 'none'})"
         )
-        return results, unavailable
+        return results, missing
 
     async def enrich_cves(self, cves: list[str]) -> dict[str, VulnerabilityEnrichment]:
         return (await self._enrich_cves(cves))[0]
@@ -192,10 +191,12 @@ class VulnerabilityEnrichmentService:
             resolutions, ghsa_complete = await self._ghsa_provider.resolve_ghsa_to_cve(ghsa_ids, github_token)
             _dedupe_finding_vulnerabilities(_apply_ghsa_resolutions(findings, resolutions))
 
-        enrichments, unavailable = await self._enrich_cves(_cves(findings))
+        enrichments, missing = await self._enrich_cves(_cves(findings))
         for finding in findings:
             apply_enrichments(finding.setdefault("details", {}), enrichments)
-        return enrichments, unavailable if ghsa_complete else [*unavailable, "GHSA"]
+        if not ghsa_complete:
+            missing.append("GHSA")
+        return enrichments, f"{' and '.join(missing)} unavailable" if missing else None
 
 
 vulnerability_enrichment_service = VulnerabilityEnrichmentService()
