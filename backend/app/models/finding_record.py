@@ -3,7 +3,7 @@ import uuid
 from pydantic import ConfigDict, Field
 
 from app.models.base import CreatedAtModel
-from app.models.finding import Finding
+from app.models.finding import FINDING_ID_DESCRIPTION, Finding
 from app.models.types import PyObjectId
 
 
@@ -16,10 +16,6 @@ class FindingRecord(Finding, CreatedAtModel):
     project_id: str = Field(..., description="Reference to the project")
     scan_id: str = Field(..., description="Reference to the scan")
 
-    finding_id: str = Field(
-        ...,
-        description="Analyzer-defined finding id (component:version for aggregated vulnerabilities); "
-        "not a CVE and not unique per scan",
-    )
+    finding_id: str = Field(..., description=FINDING_ID_DESCRIPTION)
 
     model_config = ConfigDict(populate_by_name=True)

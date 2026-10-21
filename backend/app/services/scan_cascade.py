@@ -5,7 +5,7 @@ from typing import Any
 
 import pymongo
 
-from app.core.constants import SCAN_KEYED_COLLECTIONS, SCAN_SCOPED_COLLECTIONS
+from app.core.constants import ARCHIVE_BATCH_SIZE, SCAN_KEYED_COLLECTIONS, SCAN_SCOPED_COLLECTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -30,3 +30,10 @@ async def delete_scans_and_related_data(db: Any, scan_ids: list[str], label: str
 
     count: int = result.deleted_count
     return count
+
+
+async def delete_scans_matching(db: Any, query: dict[str, Any], batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
+    deleted = 0
+    while scan_ids := [scan["_id"] async for scan in db.scans.find(query, {"_id": 1}).limit(batch_size)]:
+        deleted += await delete_scans_and_related_data(db, scan_ids)
+    return deleted

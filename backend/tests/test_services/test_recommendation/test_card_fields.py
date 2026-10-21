@@ -280,7 +280,7 @@ def _dependency_cards():
     ]
     duplicates = [_row(name, "1.0.0", direct=True) for name in ("axios", "got", "moment", "dayjs", "luxon")]
     return [
-        *dependencies.analyze_version_fragmentation(fragmented),
+        *dependencies.analyze_version_fragmentation(fragmented, []),
         *dependencies.analyze_dev_in_production(dev),
         *dependencies.analyze_end_of_life(_produced("end_of_life", {"eol_issues": eol})),
         *graph.analyze_duplicate_packages(duplicates),
@@ -352,6 +352,7 @@ def _cross_project_cards():
             "versions": ["1.0.0", "2.0.0"],
             "version_count": 2,
             "project_count": 3,
+            "vulnerable_versions": ["2.0.0", "1.0.0"][: i % 3],
         }
         for i in range(_CROWD)
     ]

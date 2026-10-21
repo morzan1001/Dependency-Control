@@ -50,7 +50,7 @@ from app.services.compliance.retention import sweep_expired_compliance_reports
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
 from app.services.releases import reconcile_release_flags, release_protected_scan_ids, released_scan_ids
 from app.services.rescan import RESCAN_SOURCE_PROJECTION, create_rescan
-from app.services.scan_cascade import delete_scans_and_related_data
+from app.services.scan_cascade import delete_scans_and_related_data, delete_scans_matching
 from app.services.stats import run_waiver_recalc
 from app.services.update_frequency_reconcile import run_update_frequency_reconcile
 
@@ -115,9 +115,7 @@ async def _reap_orphan_scans(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> i
     if not gone:
         return 0
     orphaned = {"project_id": {"$in": gone}, "created_at": {"$lt": cutoff}}
-    deleted = 0
-    while scan_ids := [scan["_id"] async for scan in db.scans.find(orphaned, {"_id": 1}).limit(batch_size)]:
-        deleted += await delete_scans_and_related_data(db, scan_ids)
+    deleted = await delete_scans_matching(db, orphaned, batch_size)
     if deleted:
         logger.info(f"Reaped {deleted} orphan scan(s) of {len(gone)} deleted project(s)")
     return deleted

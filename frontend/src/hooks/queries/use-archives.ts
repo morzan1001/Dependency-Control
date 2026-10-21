@@ -23,10 +23,11 @@ export function archiveFilters({ branch, from, to }: ArchiveFilterValue): Archiv
   return Object.keys(filters).length > 0 ? filters : undefined;
 }
 
-export const useAdminArchives = (page: number = 1, size: number = 20, filters?: ArchiveFilters) => {
+export const useAdminArchives = (page: number = 1, size: number = 20, filters?: ArchiveFilters, enabled: boolean = true) => {
   return useQuery({
     queryKey: archiveKeys.list(page, filters),
     queryFn: () => archivesApi.getAll(page, size, filters),
     placeholderData: keepPreviousData,
+    enabled,
   });
 };

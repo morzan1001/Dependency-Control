@@ -14,7 +14,7 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
     scope_resolution_counts,
 )
-from app.api.v1.helpers.pagination import page_facet, page_meta, unpack_page_facet
+from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.responses import RESP_413, RESP_AUTH
 from app.api.v1.helpers.sorting import (
     SortOrderQuery,
@@ -45,7 +45,7 @@ from app.schemas.analytics import (
     VulnerabilitySearchResponse,
     VulnerabilitySearchResult,
 )
-from app.services.aggregation.versions import normalize_version
+from app.services.aggregation.versions import normalize_version, version_covered
 from app.services.component_identity import build_component_index, lookup_component
 from app.services.inventory.components import NUMBERED_SORT_FIELDS, TEXT_SORT_FIELDS
 from app.services.recommendation.common import max_advisory_cvss
@@ -75,12 +75,11 @@ async def _page_ids(
     hint: dict[str, int],
 ) -> tuple[list[Any], int]:
     """The page carries ids alone: $facet returns one 16 MB document, and one finding can name thousands of advisories."""
-    result = await repo.aggregate(
-        [{"$match": query}, page_facet([*ordered, {"$skip": skip}, {"$limit": limit}, {"$project": {"_id": 1}}])],
-        hint=hint,
+    page = [*ordered, {"$skip": skip}, {"$limit": limit}, {"$project": {"_id": 1}}]
+    [bucket] = await repo.aggregate(
+        [{"$match": query}, {"$facet": {"total": [{"$count": "n"}], "ids": page}}], hint=hint
     )
-    page, total = unpack_page_facet(result)
-    return [row["_id"] for row in page], total
+    return [row["_id"] for row in bucket["ids"]], bucket["total"][0]["n"] if bucket["total"] else 0
 
 
 _PROJECT_RANK = "_project_rank"
@@ -126,8 +125,7 @@ async def _dependency_ids_by_vulnerability(
 
     def is_vulnerable(dep: dict[str, Any]) -> bool:
         versions = lookup_component(vuln_versions.get(dep["project_id"], {}), dep["name"]) or set()
-        # A finding without a version cannot tell the package's versions apart, so it covers them all.
-        return "unknown" in versions or normalize_version(dep["version"]) in versions
+        return version_covered(versions, dep["version"])
 
     return [dep["_id"] for dep in candidates if is_vulnerable(dep) == has_vulnerabilities]
 

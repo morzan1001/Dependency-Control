@@ -280,7 +280,8 @@ export interface RecommendationAction {
     name: string;
     type?: string;
     versions?: string[];
-    suggestion?: string;
+    // null when every version in use has a known vulnerability.
+    suggestion?: string | null;
     version_count?: number;
     project_count?: number;
     current_version?: string;
