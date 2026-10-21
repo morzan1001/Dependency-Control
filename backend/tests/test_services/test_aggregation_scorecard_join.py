@@ -5,7 +5,9 @@ from app.services.aggregation import ResultAggregator
 from app.services.analyzers.deps_dev import DepsDevAnalyzer
 
 
-def _scorecard_issue(name: str, version: str, failing: tuple[str, ...] = ("Maintained",)) -> dict:
+def _scorecard_issue(
+    name: str, version: str, failing: tuple[str, ...] = ("Maintained",), purl: str | None = None
+) -> dict:
     scorecard = {
         "overallScore": 2.4,
         "date": "2026-08-01",
@@ -13,7 +15,7 @@ def _scorecard_issue(name: str, version: str, failing: tuple[str, ...] = ("Maint
         "repository": f"github.com/example/{name}",
     }
     issue = DepsDevAnalyzer._create_scorecard_issue(f"https://github.com/example/{name}", scorecard)
-    return {**issue, "component": name, "version": version, "purl": f"pkg:npm/{name}@{version}"}
+    return {**issue, "component": name, "version": version, "purl": purl or f"pkg:npm/{name}@{version}"}
 
 
 def _trivy_vulnerability(package: str, version: str) -> dict:
@@ -62,7 +64,13 @@ class TestScorecardReachesThePackagesVulnerability:
     def test_a_bare_artifact_scorecard_reaches_a_group_qualified_vulnerability(self):
         [vuln] = _vulnerabilities(
             _findings(
-                [_scorecard_issue("jackson-databind", "2.20.2")],
+                [
+                    _scorecard_issue(
+                        "jackson-databind",
+                        "2.20.2",
+                        purl="pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.20.2",
+                    )
+                ],
                 [_trivy_vulnerability("com.fasterxml.jackson.core:jackson-databind", "2.20.2")],
             )
         )
@@ -84,7 +92,7 @@ class TestScorecardReachesThePackagesVulnerability:
 class TestScorecardIsNotGuessed:
     def test_an_artifact_name_two_groups_share_gets_no_scorecard(self):
         findings = _findings(
-            [_scorecard_issue("core", "1.0.0")],
+            [_scorecard_issue("core", "1.0.0", purl="pkg:maven/a.b/core@1.0.0")],
             [_trivy_vulnerability("a.b:core", "1.0.0"), _trivy_vulnerability("c.d:core", "1.0.0")],
         )
 
