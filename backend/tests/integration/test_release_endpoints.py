@@ -1,5 +1,6 @@
 """The hybrid dependency calls its auth functions directly, so the client fixture's overrides do not apply."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -409,6 +410,25 @@ async def test_unmark_names_the_release_it_uncovers(client, db, api_key_headers)
     assert uncovered["version"] == _VERSION
     assert uncovered["environment"] == DEFAULT_RELEASE_ENVIRONMENT
     assert await _released(db, DEFAULT_RELEASE_ENVIRONMENT) == uncovered["scan_id"]
+
+
+@pytest.mark.asyncio
+async def test_mark_and_unmark_log_the_scan_and_environment(client, db, api_key_headers, caplog):
+    await _seed_scan(db, "old", commit=_OTHER_COMMIT, created_delta=-2)
+    await _seed_scan(db, "new", commit=_COMMIT, created_delta=0)
+    await _mark(client, api_key_headers, commit_hash=_OTHER_COMMIT)
+
+    with caplog.at_level(logging.INFO, logger="app.api.v1.endpoints.releases"):
+        await _mark(client, api_key_headers, commit_hash=_COMMIT, environment=_STAGING)
+        await _unmark(client, api_key_headers, "new", environment=_STAGING)
+        await _unmark(client, api_key_headers, "old")
+
+    assert [record.getMessage() for record in caplog.records] == [
+        f"release.mark project_id={_PROJECT} scan_id=new environment={_STAGING}",
+        f"release.unmark project_id={_PROJECT} scan_id=new environment={_STAGING} environment_release_scan_id=None",
+        f"release.unmark project_id={_PROJECT} scan_id=old environment={DEFAULT_RELEASE_ENVIRONMENT} "
+        "environment_release_scan_id=None",
+    ]
 
 
 @pytest.mark.asyncio

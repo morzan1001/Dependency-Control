@@ -125,6 +125,14 @@ def _without_timestamps(result: dict[str, Any]) -> dict[str, Any]:
     return {**result, **{key: {**summary, "timestamp": None} for key, summary in stamped.items()}}
 
 
+async def test_the_result_route_documents_the_statuses_it_answers():
+    from app.main import app
+
+    responses = app.openapi()["paths"]["/api/v1/analyze/{job_id}"]["get"]["responses"]
+
+    assert set(responses) == {"200", "202", "401", "403", "404", "422", "500"}
+
+
 async def test_a_queued_analysis_answers_what_the_pipeline_computes(client, db, running_worker):
     _, token = await _issue_key(db)
 

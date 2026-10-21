@@ -5,7 +5,6 @@ from typing import Any
 import pytest
 
 from app.core import housekeeping
-from app.core.worker import AnalysisWorkerManager
 from app.core.config import settings
 from app.core.constants import HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC as QUIET_HOUR
 from tests.mocks.fake_mongo import FakeDatabase
@@ -75,23 +74,6 @@ class TestLoopWiring:
     def loop_at(self, monkeypatch: pytest.MonkeyPatch):
         calls: list[str] = []
 
-        async def _noop(*_args: Any, **_kwargs: Any) -> None:
-            return None
-
-        for name in (
-            "recover_stuck_scans",
-            "check_scheduled_rescans",
-            "update_db_stats",
-            "update_archive_stats",
-            "update_cache_stats",
-            "get_database",
-            "run_housekeeping",
-            "_run_retention",
-            "sync_branch_status",
-            "run_waiver_recalc",
-        ):
-            monkeypatch.setattr(housekeeping, name, _noop)
-
         async def _reconcile() -> None:
             calls.append("reconcile")
 
@@ -113,7 +95,7 @@ class TestLoopWiring:
                 SimpleNamespace(min=_NEVER, now=lambda _tz=None: now),
             )
             with pytest.raises(_StopLoop):
-                await housekeeping.housekeeping_loop(AnalysisWorkerManager(num_workers=1))
+                await housekeeping.update_frequency_reconcile_loop()
             return calls
 
         return _run
@@ -123,5 +105,5 @@ class TestLoopWiring:
         assert await loop_at(_at(1, _LOUD_HOUR)) == []
 
     @pytest.mark.asyncio
-    async def test_the_quiet_hour_does(self, loop_at: Any):
+    async def test_the_quiet_hour_does_once(self, loop_at: Any):
         assert await loop_at(_at(1, QUIET_HOUR)) == ["reconcile"]

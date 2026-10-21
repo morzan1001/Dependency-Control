@@ -104,6 +104,21 @@ class TestArchiveScansAndDelete:
 
         assert mock_archive.call_count == 100
 
+    @pytest.mark.asyncio
+    async def test_the_failure_warning_names_the_first_twenty_scans(self, caplog):
+        scan_ids = [f"scan-{i:02d}" for i in range(25)]
+
+        with (
+            patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=None),
+            caplog.at_level(logging.WARNING, logger=MODULE),
+        ):
+            await _archive_scans_and_delete(await _store_with(*scan_ids), scan_ids, "test")
+
+        (warning,) = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+        assert all(scan_id in warning for scan_id in scan_ids[:20])
+        assert not any(scan_id in warning for scan_id in scan_ids[20:])
+        assert "25 scan(s)" in warning
+
 
 class TestHandleRetentionAction:
     def test_delete_action_calls_delete(self):
@@ -180,13 +195,8 @@ class TestRunRetention:
         mock_repo = MagicMock()
         mock_repo.get = AsyncMock(return_value=mock_settings)
 
-        mock_scan_doc = {"_id": "scan-1"}
         mock_cursor = MagicMock()
-
-        async def async_iter():
-            yield mock_scan_doc
-
-        mock_cursor.__aiter__ = lambda self: async_iter()
+        mock_cursor.to_list = AsyncMock(return_value=[{"_id": "scan-1"}])
         mock_db = _mock_db()
         mock_db.scans.find = MagicMock(return_value=mock_cursor)
 
@@ -231,13 +241,8 @@ class TestRunRetention:
         mock_repo = MagicMock()
         mock_repo.get = AsyncMock(return_value=mock_settings)
 
-        mock_scan_doc = {"_id": "scan-1"}
         mock_cursor = MagicMock()
-
-        async def async_iter():
-            yield mock_scan_doc
-
-        mock_cursor.__aiter__ = lambda self: async_iter()
+        mock_cursor.to_list = AsyncMock(return_value=[{"_id": "scan-1"}])
         mock_db = _mock_db()
         mock_db.scans.find = MagicMock(return_value=mock_cursor)
 
@@ -361,272 +366,11 @@ async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_reap_orphan_s3_objects_deletes_only_old_unknown_keys(monkeypatch):
-    from datetime import datetime, timedelta, timezone
-
-    from app.core.housekeeping import _reap_orphan_s3_objects
-
-    now = datetime.now(timezone.utc)
-    old_time = now - timedelta(hours=48)
-    recent_time = now - timedelta(hours=2)
-
-    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
-    monkeypatch.setattr(
-        "app.core.housekeeping.list_objects",
-        AsyncMock(
-            return_value=[
-                {"Key": "p1/scan-orphan-old.bundle", "Size": 100, "LastModified": old_time},
-                {"Key": "p1/scan-orphan-recent.bundle", "Size": 100, "LastModified": recent_time},
-                {"Key": "p1/scan-known.bundle", "Size": 100, "LastModified": old_time},
-            ]
-        ),
-    )
-
-    delete_calls: list[str] = []
-
-    async def fake_delete(key, **kw):
-        delete_calls.append(key)
-
-    monkeypatch.setattr("app.core.housekeeping.delete_object", fake_delete)
-
-    db = MagicMock()
-
-    async def metadata_cursor(*_args, **_kwargs):
-        yield {"s3_key": "p1/scan-known.bundle"}
-
-    db.archive_metadata.find = lambda *a, **kw: metadata_cursor()
-
-    reaped = await _reap_orphan_s3_objects(db)
-
-    assert reaped == 1
-    assert delete_calls == ["p1/scan-orphan-old.bundle"]
-
-
-@pytest.mark.asyncio
-async def test_reap_orphan_skips_when_archive_disabled(monkeypatch):
-    from app.core.housekeeping import _reap_orphan_s3_objects
-
-    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
-    list_calls = []
-    monkeypatch.setattr(
-        "app.core.housekeeping.list_objects",
-        AsyncMock(side_effect=lambda *a, **kw: list_calls.append(1)),
-    )
-
-    db = MagicMock()
-    reaped = await _reap_orphan_s3_objects(db)
-    assert reaped == 0
-    assert list_calls == []
-
-
-@pytest.mark.asyncio
-async def test_reap_orphan_tolerates_list_failure(monkeypatch):
-    from app.core.housekeeping import _reap_orphan_s3_objects
-
-    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
-    monkeypatch.setattr(
-        "app.core.housekeeping.list_objects",
-        AsyncMock(side_effect=RuntimeError("S3 unavailable")),
-    )
-
-    db = MagicMock()
-    reaped = await _reap_orphan_s3_objects(db)
-    assert reaped == 0
-
-
-_ARCHIVED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
-
-
-async def _seed_metadata(db, scan_id: str) -> None:
-    metadata = _make_archive_metadata(scan_id).model_copy(update={"archived_at": _ARCHIVED_AT})
-    await db.archive_metadata.insert_one(metadata.model_dump(by_alias=True))
-
-
-async def _seed_archive(db, scan_id: str, *, restored_at=None) -> None:
-    scan: dict = {"_id": scan_id, "project_id": "proj-1", "branch": "main"}
-    if restored_at is not None:
-        scan["restored_at"] = restored_at
-    await db.scans.insert_one(scan)
-    await _seed_metadata(db, scan_id)
-
-
-async def _surviving_metadata(db) -> list[str]:
-    return sorted([meta["scan_id"] async for meta in db.archive_metadata.find({})])
-
-
-@pytest.mark.asyncio
-async def test_reap_stale_metadata_keeps_the_metadata_of_an_archive_in_flight():
-    """Archival writes metadata before deleting the scan, so a scan present without restore evidence is mid-archive."""
-    from app.core.housekeeping import _reap_stale_metadata
-    from tests.mocks.fake_mongo import FakeDatabase
-
-    db = FakeDatabase()
-    await _seed_archive(db, "scan-archiving")
-
-    reaped = await _reap_stale_metadata(db)
-
-    assert reaped == 0
-    assert await _surviving_metadata(db) == ["scan-archiving"]
-
-
-@pytest.mark.asyncio
-async def test_reap_stale_metadata_keeps_the_metadata_of_a_model_inserted_scan_in_flight():
-    """A scan inserted through the model stores an explicit restored_at of null, which is no restore evidence."""
-    from app.core.housekeeping import _reap_stale_metadata
-    from app.models.project import Scan
-    from tests.mocks.fake_mongo import FakeDatabase
-
-    db = FakeDatabase()
-    scan = Scan(project_id="proj-1", branch="main")
-    await db.scans.insert_one(scan.model_dump(by_alias=True))
-    await _seed_metadata(db, scan.id)
-
-    reaped = await _reap_stale_metadata(db)
-
-    assert reaped == 0
-    assert await _surviving_metadata(db) == [scan.id]
-
-
-@pytest.mark.asyncio
-async def test_reap_stale_metadata_keeps_the_metadata_of_a_restore_that_stopped_after_its_header():
-    """A pod that dies mid-restore never rolls back and its lock expires; the bundle is the only complete copy."""
-    from app.core.housekeeping import _reap_stale_metadata
-    from app.services.archive import _handle_header_event
-    from tests.mocks.fake_mongo import FakeDatabase
-
-    db = FakeDatabase()
-    await _seed_metadata(db, "scan-partial")
-    await _handle_header_event(db, {"scan": {"_id": "scan-partial", "project_id": "proj-1"}}, [])
-
-    reaped = await _reap_stale_metadata(db)
-
-    assert reaped == 0
-    assert await _surviving_metadata(db) == ["scan-partial"]
-
-
-@pytest.mark.asyncio
-async def test_reap_stale_metadata_keeps_the_metadata_of_a_scan_still_marked_restore_in_progress():
-    from app.core.housekeeping import _reap_stale_metadata
-    from tests.mocks.fake_mongo import FakeDatabase
-
-    db = FakeDatabase()
-    await _seed_archive(db, "scan-partial", restored_at=_ARCHIVED_AT + timedelta(hours=1))
-    await db.scans.update_one({"_id": "scan-partial"}, {"$set": {"restore_in_progress": True}})
-
-    reaped = await _reap_stale_metadata(db)
-
-    assert reaped == 0
-    assert await _surviving_metadata(db) == ["scan-partial"]
-
-
-@pytest.mark.asyncio
-async def test_reap_stale_metadata_keeps_the_metadata_while_the_restore_lock_is_held():
-    """A running restore can still fail and roll the scan back out, leaving the bundle as the only copy."""
-    from app.core.housekeeping import _reap_stale_metadata
-    from app.repositories.distributed_locks import DistributedLocksRepository
-    from tests.mocks.fake_mongo import FakeDatabase
-
-    db = FakeDatabase()
-    await _seed_archive(db, "scan-restoring", restored_at=_ARCHIVED_AT + timedelta(hours=1))
-    assert await DistributedLocksRepository(db).acquire_lock("restore:scan-restoring", "restore-pod", ttl_seconds=600)
-
-    reaped = await _reap_stale_metadata(db)
-
-    assert reaped == 0
-    assert await _surviving_metadata(db) == ["scan-restoring"]
-
-
-@pytest.mark.asyncio
-async def test_reap_stale_metadata_keeps_the_metadata_of_a_scan_re_archived_after_its_restore():
-    from app.core.housekeeping import _reap_stale_metadata
-    from tests.mocks.fake_mongo import FakeDatabase
-
-    db = FakeDatabase()
-    await _seed_archive(db, "scan-rearchiving", restored_at=_ARCHIVED_AT - timedelta(days=3))
-
-    reaped = await _reap_stale_metadata(db)
-
-    assert reaped == 0
-    assert await _surviving_metadata(db) == ["scan-rearchiving"]
-
-
-@pytest.mark.asyncio
-async def test_reap_stale_metadata_reads_scans_and_locks_once_per_batch():
-    from app.core.housekeeping import _reap_stale_metadata
-    from tests.mocks.fake_mongo import FakeDatabase
-
-    db = FakeDatabase()
-    for i in range(5):
-        await _seed_archive(db, f"scan-{i}", restored_at=_ARCHIVED_AT + timedelta(hours=1))
-
-    def spy(collection, calls: list):
-        find = collection.find
-
-        def recording_find(query, *args, **kwargs):
-            calls.append(query["_id"]["$in"])
-            return find(query, *args, **kwargs)
-
-        collection.find = recording_find
-        collection.find_one = AsyncMock(side_effect=AssertionError("find_one would make the reap N+1"))
-
-    scan_batches: list = []
-    lock_batches: list = []
-    spy(db.scans, scan_batches)
-    spy(db.distributed_locks, lock_batches)
-
-    reaped = await _reap_stale_metadata(db, batch_size=2)
-
-    assert reaped == 5
-    assert scan_batches == [["scan-0", "scan-1"], ["scan-2", "scan-3"], ["scan-4"]]
-    assert lock_batches == [
-        ["restore:scan-0", "restore:scan-1"],
-        ["restore:scan-2", "restore:scan-3"],
-        ["restore:scan-4"],
-    ]
-    assert await _surviving_metadata(db) == []
-
-
-@pytest.mark.asyncio
-async def test_reap_orphan_runs_stale_metadata_pass_first(monkeypatch):
-    from app.core.housekeeping import _reap_orphan_s3_objects
-
-    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
-
-    call_order: list[str] = []
-
-    async def fake_stale_reap(_db):
-        call_order.append("stale_metadata")
-        return 0
-
-    async def fake_list(*_a, **_kw):
-        call_order.append("list_objects")
-        return []
-
-    monkeypatch.setattr("app.core.housekeeping._reap_stale_metadata", fake_stale_reap)
-    monkeypatch.setattr("app.core.housekeeping.list_objects", fake_list)
-
-    db = MagicMock()
-
-    class _EmptyAsyncGen:
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            raise StopAsyncIteration
-
-    db.archive_metadata.find = lambda *a, **kw: _EmptyAsyncGen()
-
-    await _reap_orphan_s3_objects(db)
-
-    assert call_order == ["stale_metadata", "list_objects"]
-
-
-@pytest.mark.asyncio
 async def test_reap_orphan_callgraphs_deletes_only_orphans_past_the_age_window():
     """The window protects callgraphs uploaded before their scan row exists; an inverted cutoff destroys them."""
     from datetime import datetime, timedelta, timezone
 
-    from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
+    from app.core.constants import ORPHAN_MIN_AGE_HOURS
     from app.core.housekeeping import _reap_orphan_callgraphs
     from tests.mocks.fake_mongo import FakeDatabase
 
@@ -638,13 +382,13 @@ async def test_reap_orphan_callgraphs_deletes_only_orphans_past_the_age_window()
             {
                 "_id": "cg-orphan-old",
                 "scan_id": "scan-missing",
-                "created_at": now - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS * 2),
+                "created_at": now - timedelta(hours=ORPHAN_MIN_AGE_HOURS * 2),
             },
             {"_id": "cg-orphan-fresh", "scan_id": "scan-arriving", "created_at": now - timedelta(minutes=1)},
             {
                 "_id": "cg-known-old",
                 "scan_id": "scan-known",
-                "created_at": now - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS * 2),
+                "created_at": now - timedelta(hours=ORPHAN_MIN_AGE_HOURS * 2),
             },
         ]
     )
@@ -661,7 +405,7 @@ async def test_reap_orphan_callgraphs_spares_a_fresh_upload_reusing_an_orphaned_
     """A retry uploading under an abandoned scan_id right now is still in flight and must survive the sweep."""
     from datetime import datetime, timedelta, timezone
 
-    from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
+    from app.core.constants import ORPHAN_MIN_AGE_HOURS
     from app.core.housekeeping import _reap_orphan_callgraphs
     from tests.mocks.fake_mongo import FakeDatabase
 
@@ -672,7 +416,7 @@ async def test_reap_orphan_callgraphs_spares_a_fresh_upload_reusing_an_orphaned_
             {
                 "_id": "cg-stale",
                 "scan_id": "scan-retried",
-                "created_at": now - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS * 2),
+                "created_at": now - timedelta(hours=ORPHAN_MIN_AGE_HOURS * 2),
             },
             {"_id": "cg-retry", "scan_id": "scan-retried", "created_at": now - timedelta(minutes=1)},
         ]

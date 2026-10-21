@@ -390,7 +390,7 @@ async def test_a_rescan_shares_the_result_file_and_the_reaper_keeps_it_until_bot
     [original] = await _rows(db, scan_id)
     [copy] = await _rows(db, "rescan-1")
     file_id = ObjectId(original["result_gridfs_id"])
-    monkeypatch.setattr("app.services.gridfs_maintenance.ARCHIVE_ORPHAN_MIN_AGE_HOURS", -1)
+    monkeypatch.setattr("app.services.gridfs_maintenance.ORPHAN_MIN_AGE_HOURS", -1)
 
     await db.analysis_results.delete_one({"_id": original["_id"]})
     await reap_orphan_gridfs_files(db)

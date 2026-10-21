@@ -174,7 +174,6 @@ async def test_a_superseded_rescan_is_not_protected_by_the_release(monkeypatch):
 
 
 def _patch_archive_deps(monkeypatch, archive_module):
-    monkeypatch.setattr(archive_module, "is_archive_enabled", lambda: True)
     monkeypatch.setattr(
         archive_module, "ArchiveMetadataRepository", lambda _db: MagicMock(find_by_scan_id=AsyncMock(return_value=None))
     )

@@ -94,7 +94,7 @@ async def test_stop_returns_once_the_cancelled_housekeeping_cleaned_up():
             cleaned_up.set()
 
     manager = AnalysisWorkerManager(num_workers=1)
-    manager.housekeeping_task = asyncio.create_task(housekeeping())
+    manager.background_tasks = [asyncio.create_task(housekeeping())]
     await asyncio.sleep(0)
     await asyncio.wait_for(manager.stop(), timeout=5)
 

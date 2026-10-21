@@ -1,6 +1,9 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from botocore.exceptions import ClientError
+
 from app.core.s3 import (
     delete_object,
     ensure_bucket_exists,
@@ -41,6 +44,7 @@ class TestGetS3Client:
             mock_settings.S3_ENDPOINT_URL = "https://storage.googleapis.com"
             asyncio.run(run())
 
+        assert captured["endpoint_url"] == "https://storage.googleapis.com"
         config = captured.get("config")
         assert config is not None
         assert config.request_checksum_calculation == "when_required"
@@ -74,10 +78,6 @@ class TestIsArchiveEnabled:
 
 
 class TestEnsureBucketExists:
-    def test_skips_when_not_enabled(self):
-        with patch(f"{MODULE}.is_archive_enabled", return_value=False):
-            asyncio.run(ensure_bucket_exists())
-
     def test_does_not_create_if_bucket_exists(self):
         mock_s3 = AsyncMock()
         mock_s3.head_bucket = AsyncMock()  # no exception means the bucket exists
@@ -87,7 +87,6 @@ class TestEnsureBucketExists:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
             patch(f"{MODULE}.get_s3_client", return_value=mock_ctx),
             patch(f"{MODULE}.settings") as mock_settings,
         ):
@@ -97,9 +96,10 @@ class TestEnsureBucketExists:
         mock_s3.head_bucket.assert_called_once_with(Bucket="dc-archives")
         mock_s3.create_bucket.assert_not_called()
 
-    def test_creates_bucket_if_not_exists(self):
+    @staticmethod
+    def _run_with_head_bucket_error(error: Exception) -> AsyncMock:
         mock_s3 = AsyncMock()
-        mock_s3.head_bucket = AsyncMock(side_effect=Exception("Not found"))
+        mock_s3.head_bucket = AsyncMock(side_effect=error)
         mock_s3.create_bucket = AsyncMock()
 
         mock_ctx = AsyncMock()
@@ -107,14 +107,29 @@ class TestEnsureBucketExists:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
             patch(f"{MODULE}.get_s3_client", return_value=mock_ctx),
             patch(f"{MODULE}.settings") as mock_settings,
         ):
             mock_settings.S3_BUCKET_NAME = "dc-archives"
             asyncio.run(ensure_bucket_exists())
+        return mock_s3
+
+    @pytest.mark.parametrize("code", ["404", "NoSuchBucket", "NotFound"])
+    def test_creates_the_bucket_only_when_it_is_missing(self, code):
+        mock_s3 = self._run_with_head_bucket_error(ClientError({"Error": {"Code": code}}, "HeadBucket"))
 
         mock_s3.create_bucket.assert_called_once_with(Bucket="dc-archives")
+
+    @pytest.mark.parametrize(
+        "error",
+        [ClientError({"Error": {"Code": "403", "Message": "Forbidden"}}, "HeadBucket"), OSError("connection reset")],
+        ids=["refused", "unreachable"],
+    )
+    def test_a_bucket_that_cannot_be_checked_is_reported_rather_than_created(self, error):
+        with pytest.raises(type(error)) as raised:
+            self._run_with_head_bucket_error(error)
+
+        assert raised.value is error
 
 
 class TestDeleteObject:
@@ -137,3 +152,16 @@ class TestDeleteObject:
             Bucket="dc-archives",
             Key="proj-1/scan-1.json.gz",
         )
+
+
+class TestArchiveKeyPrefix:
+    @pytest.mark.parametrize(
+        ("configured", "prefix"),
+        [("", ""), ("dc-a", "dc-a/"), ("/dc-a/", "dc-a/"), ("shared/dc-a", "shared/dc-a/")],
+    )
+    def test_the_configured_prefix_becomes_one_leading_path(self, configured, prefix):
+        from app.core.s3 import archive_key_prefix
+
+        with patch(f"{MODULE}.settings") as mock_settings:
+            mock_settings.S3_KEY_PREFIX = configured
+            assert archive_key_prefix() == prefix

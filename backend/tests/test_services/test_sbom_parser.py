@@ -1168,6 +1168,30 @@ class TestDuplicateComponentMerge:
         assert dep.hashes == {"sha1": "aaa", "sha256": "bbb"}
         assert set(dep.parent_components) == {"pkg:generic/parent-x@1.0", "pkg:generic/parent-y@1.0"}
 
+    def test_a_hash_algorithm_that_is_not_a_plain_name_is_dropped(self):
+        """A key like $date would re-hydrate as Extended JSON on restore, so the archived scan could not come back."""
+        sbom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "components": [
+                {
+                    "type": "library",
+                    "name": "lib-h",
+                    "version": "1.0",
+                    "purl": "pkg:npm/lib-h@1.0",
+                    "hashes": [
+                        {"alg": "$date", "content": "not-a-date"},
+                        {"alg": "SHA3-256", "content": "ccc"},
+                        {"alg": "BLAKE2b-512", "content": "ddd"},
+                    ],
+                }
+            ],
+        }
+
+        [dep] = self.parser.parse(sbom).dependencies
+
+        assert dep.hashes == {"sha3256": "ccc", "blake2b512": "ddd"}
+
     def test_merge_fills_metadata_the_first_copy_lacks(self):
         bare = {"type": "library", "name": "lib-c", "version": "1.0", "purl": "pkg:pypi/lib-c@1.0", "bom-ref": "c-1"}
         described = {

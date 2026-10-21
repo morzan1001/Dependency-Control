@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     S3_BUCKET_NAME: str = "dc-archives"
     S3_REGION: str = "us-east-1"
     S3_USE_SSL: bool = False
+    S3_KEY_PREFIX: str = ""  # one per DC instance sharing a bucket, so no reaper deletes another's bundles
 
     # Empty leaves archives unencrypted.
     ARCHIVE_ENCRYPTION_KEY: str = ""

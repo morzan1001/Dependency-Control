@@ -76,4 +76,6 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
             date_from=date_from,
             date_to=date_to,
         )
+        if not query:
+            return await self.collection.estimated_document_count()
         return await self.count(query)

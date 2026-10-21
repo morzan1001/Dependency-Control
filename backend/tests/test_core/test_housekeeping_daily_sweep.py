@@ -10,7 +10,8 @@ _SWEEPS = {
     "reconcile_release_flags": "Housekeeping: release flag reconcile",
     "prune_old_audit_entries": "Housekeeping: policy audit retention",
     "sweep_expired_compliance_reports": "Housekeeping: compliance report sweep",
-    "_reap_orphan_s3_objects": "Orphan reaper",
+    "reap_stale_metadata": "Stale archive metadata reaper",
+    "reap_orphan_s3_objects": "Orphan reaper",
     "_reap_orphan_callgraphs": "Callgraph orphan reaper",
     "reap_orphan_gridfs_files": "GridFS orphan reaper",
 }
@@ -30,15 +31,11 @@ async def test_a_failing_sweep_is_logged_by_name_and_the_others_still_run(monkey
 
         return _run
 
-    async def _get_database() -> FakeDatabase:
-        return db
-
     for name in _SWEEPS:
         monkeypatch.setattr(housekeeping, name, _sweep(name))
-    monkeypatch.setattr(housekeeping, "get_database", _get_database)
 
     with caplog.at_level(logging.ERROR, logger="app.core.housekeeping"):
-        await housekeeping.run_housekeeping()
+        await housekeeping.run_housekeeping(db)
 
     assert ran == [(name, db) for name in _SWEEPS]
     assert [record.getMessage() for record in caplog.records] == [f"{_SWEEPS[failing]} failed: mongo unreachable"]

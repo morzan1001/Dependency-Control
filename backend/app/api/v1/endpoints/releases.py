@@ -18,6 +18,7 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
     SCANS_TIP_SORT,
 )
+from app.core.log_utils import sanitize_for_log
 from app.models.release import Release, release_identity
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import LineageAnalysis, ScanRepository
@@ -100,10 +101,7 @@ async def mark_release(
         )
     )
     await db.scans.update_one({"_id": scan_id}, {"$set": {"is_release": True}})
-    logger.info(
-        "release.mark",
-        extra={"project_id": project_id, "scan_id": scan_id, "environment": environment},
-    )
+    logger.info("release.mark project_id=%s scan_id=%s environment=%s", project_id, scan_id, environment)
 
     # The stored row, not an echo: an unversioned re-mark keeps the recorded version, a fallback the repository owns.
     if row is None:
@@ -136,13 +134,11 @@ async def unmark_release(
     environment_release = (await _to_items(db, [uncovered]))[0] if uncovered else None
 
     logger.info(
-        "release.unmark",
-        extra={
-            "project_id": project_id,
-            "scan_id": scan_id,
-            "environment": environment,
-            "environment_release_scan_id": environment_release.scan_id if environment_release else None,
-        },
+        "release.unmark project_id=%s scan_id=%s environment=%s environment_release_scan_id=%s",
+        project_id,
+        sanitize_for_log(scan_id),
+        environment,
+        environment_release.scan_id if environment_release else None,
     )
     return ReleaseUnmarkResponse(
         scan_id=scan_id,

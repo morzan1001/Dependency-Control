@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,7 +14,6 @@ from app.api.v1.endpoints import callgraph, cbom_ingest
 from app.core import housekeeping
 from app.core.constants import ARCHIVE_BATCH_SIZE, HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS, RESCAN_HISTORY_RUNS
 from app.core.housekeeping import _archive_scans_and_delete, _expire_group, _run_retention
-from app.core.worker import AnalysisWorkerManager
 from app.models.release import Release
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.archive_metadata import ArchiveMetadataRepository
@@ -25,7 +23,8 @@ from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
 from app.services import archive, stats
 from app.services.analysis.stats import _STATS_CURSOR_HINT
-from app.services.archive import restore_scan
+from app.services.archive import RestoreFailed, restore_scan
+from app.services.scan_manager import deterministic_scan_id
 
 _NOW = datetime.now(timezone.utc)
 _PROJECT_ID = "test-project-id"
@@ -45,6 +44,12 @@ _VULNERABILITY = {
     "details": {},
 }
 _CBOM = json.loads((Path(__file__).parents[1] / "fixtures/cbom/legacy_crypto_mixed.json").read_text())
+_SBOM = json.loads((Path(__file__).parents[1] / "fixtures/sbom/mono.syft.json").read_text())
+_UPLOADS = {
+    "opengrep": ("/api/v1/ingest/opengrep", {"findings": []}),
+    "sbom": ("/api/v1/ingest", {"sboms": [_SBOM]}),
+    "cbom": ("/api/v1/ingest/cbom", {"cbom": _CBOM}),
+}
 
 
 def _scan(scan_id: str, age_days: float, **fields) -> dict:
@@ -222,37 +227,13 @@ class _StopLoop(Exception):
 
 
 @pytest.mark.asyncio
-async def test_every_housekeeping_pass_bids_for_retention(monkeypatch):
-    async def noop(*_args, **_kwargs):
-        return None
+@pytest.mark.live_mongo
+async def test_an_expiry_whose_candidate_cursor_would_have_died_still_expires_every_old_scan(db, monkeypatch):
+    await db.scans.insert_many(_scan(f"old-{n}", 100 + n) for n in range(3 * ARCHIVE_BATCH_SIZE))
+    _interleave(monkeypatch, housekeeping, "_handle_retention_action", partial(_kill_idle_scan_cursors, db))
+    await _expire_group(db, 90, {}, "delete", "retention")
 
-    for task in (
-        "recover_stuck_scans",
-        "check_scheduled_rescans",
-        "get_database",
-        "update_db_stats",
-        "update_archive_stats",
-        "update_cache_stats",
-        "run_waiver_recalc",
-        "reconcile_release_flags",
-        "prune_old_audit_entries",
-        "sweep_expired_compliance_reports",
-        "_reap_orphan_s3_objects",
-        "_reap_orphan_callgraphs",
-        "reap_orphan_gridfs_files",
-        "sync_branch_status",
-        "reconcile_update_frequency_ledger",
-    ):
-        monkeypatch.setattr(housekeeping, task, noop)
-    bid = AsyncMock(side_effect=[AutoReconnect("primary stepped down"), None])
-    expire = AsyncMock()
-    monkeypatch.setattr(housekeeping, "_run_retention", bid)
-    monkeypatch.setattr(housekeeping, "_expire_scans", expire)
-    monkeypatch.setattr(housekeeping, "asyncio", SimpleNamespace(sleep=AsyncMock(side_effect=[None, _StopLoop])))
-    with pytest.raises(_StopLoop):
-        await housekeeping.housekeeping_loop(AnalysisWorkerManager(num_workers=1))
-
-    assert (bid.await_count, expire.await_count) == (2, 0)
+    assert await db.scans.count_documents({}) == 0
 
 
 @pytest.mark.asyncio
@@ -302,6 +283,18 @@ async def test_a_scan_pinned_or_reopened_after_retention_read_it_is_kept(
     await _expire_group(db, 90, {}, action, "retention")
 
     assert await _remaining(db) == {"x"}
+    assert await db.archive_metadata.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_scan_rescanned_after_retention_read_it_is_kept(db, retention_archives, monkeypatch):
+    await db.scans.insert_one(_scan("root", 200))
+    rescan = _scan("rescan", 0, is_rescan=True, original_scan_id="root")
+    _interleave(monkeypatch, archive, "archive_scan", lambda: db.scans.insert_one(rescan))
+    await _archive_scans_and_delete(db, ["root"], "retention")
+
+    assert await _remaining(db) == {"root", "rescan"}
     assert await db.archive_metadata.count_documents({}) == 0
 
 
@@ -506,7 +499,7 @@ async def test_a_restore_whose_metadata_delete_failed_leaves_the_archive_restora
 
     async def another_pod_reaps_stale_metadata_during_the_batch(db_, scan_id):
         if scan_id == "y":
-            await housekeeping._reap_stale_metadata(db_)
+            await archive.reap_stale_metadata(db_)
         return await real_archive_scan(db_, scan_id)
 
     monkeypatch.setattr(archive, "archive_scan", another_pod_reaps_stale_metadata_during_the_batch)
@@ -621,17 +614,47 @@ async def test_a_restore_beaten_to_the_scan_by_an_ingest_leaves_the_ingested_sca
     await _archive_scans_and_delete(db, [scan_id], "retention")
     real_header = archive._handle_header_event
 
-    async def retry_before_the_header_insert(db_, data, collections_restored):
+    async def retry_before_the_header_insert(db_, data):
         await _retried_job(client, db, api_key_headers)
         if not header_keys_scan:
             data.pop("scan")
-        return await real_header(db_, data, collections_restored)
+        return await real_header(db_, data)
 
     monkeypatch.setattr(archive, "_handle_header_event", retry_before_the_header_insert)
 
-    assert await restore_scan(db, scan_id) is None
+    with pytest.raises(RestoreFailed) as failure:
+        await restore_scan(db, scan_id)
     assert await _remaining(db) == {scan_id}
     assert await _analyzers(db, scan_id) == {"opengrep"}
+    if header_keys_scan:
+        assert failure.value.reason == "already_exists"
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("upload", sorted(_UPLOADS))
+async def test_an_upload_meeting_a_restore_is_told_to_retry_and_leaves_the_restoring_scan_alone(
+    client, db, api_key_headers, upload
+):
+    scan_id = deterministic_scan_id(_PROJECT_ID, _RUN["pipeline_id"], _RUN["commit_hash"])
+    await db.scans.insert_one(_scan(scan_id, 200, restore_in_progress=True, commit_message="archived"))
+    restoring = await db.scans.find_one({"_id": scan_id})
+    path, body = _UPLOADS[upload]
+
+    resp = await client.post(path, json={**_RUN, **body, "commit_message": "retried"}, headers=api_key_headers)
+
+    assert resp.status_code == 409, resp.text
+    assert await db.scans.find_one({"_id": scan_id}) == restoring
+    assert await db.analysis_results.count_documents({"scan_id": scan_id}) == 0
+    assert await db.crypto_assets.count_documents({"scan_id": scan_id}) == 0
+    assert await db["fs.files"].count_documents({"metadata.scan_id": scan_id}) == 0
+
+
+@pytest.mark.parametrize("scanner", ["", "/trufflehog", "/opengrep", "/kics", "/bearer", "/cbom"])
+def test_each_upload_route_documents_the_409_a_restore_answers(scanner):
+    from app.main import app
+
+    assert "409" in app.openapi()["paths"][f"/api/v1/ingest{scanner}"]["post"]["responses"]
 
 
 @pytest.mark.asyncio
@@ -770,6 +793,7 @@ async def test_a_restore_written_to_during_a_batch_that_reused_its_archive_keeps
     scan_id = await _analysed_run(client, db, api_key_headers)
     real_archive_scan = archive.archive_scan
     finish_the_restore: list[Callable[[], Awaitable[None]]] = []
+    retried_job_statuses: list[int] = []
 
     async def other_runner_archives_then_a_job_meets_a_restore(db_, scan_id_):
         monkeypatch.setattr(archive, "archive_scan", real_archive_scan)
@@ -777,7 +801,8 @@ async def test_a_restore_written_to_during_a_batch_that_reused_its_archive_keeps
         metadata = await real_archive_scan(db_, scan_id_)
         restore = restore_scan(db_, scan_id_)
         finish_the_restore.append(await _paused_before(monkeypatch, archive, "_handle_doc_event", restore))
-        await _retried_job(client, db, api_key_headers)
+        retried = await client.post("/api/v1/ingest/opengrep", json={**_RUN, "findings": []}, headers=api_key_headers)
+        retried_job_statuses.append(retried.status_code)
         return metadata
 
     monkeypatch.setattr(archive, "archive_scan", other_runner_archives_then_a_job_meets_a_restore)
@@ -785,6 +810,7 @@ async def test_a_restore_written_to_during_a_batch_that_reused_its_archive_keeps
     restoring_scan_kept_its_archive = await db.archive_metadata.count_documents({"scan_id": scan_id}) == 1
     await finish_the_restore[0]()
 
+    assert retried_job_statuses == [409]
     assert restoring_scan_kept_its_archive
 
 

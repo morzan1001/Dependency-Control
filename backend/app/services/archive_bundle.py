@@ -8,8 +8,14 @@ from dataclasses import asdict, dataclass
 from typing import Any, NamedTuple
 
 from bson import json_util
+from bson.errors import BSONError
 
 from app.core.constants import ARCHIVE_BUNDLE_VERSION
+from app.models.finding import FindingType
+
+
+class BundleVersionError(ValueError):
+    """A bundle or encryption format this release cannot read."""
 
 
 @dataclass
@@ -36,6 +42,7 @@ class BundleFrames:
         scan_doc: dict[str, Any],
         collections: dict[str, AsyncIterator[dict[str, Any]]],
         stats: BundleStats,
+        archived_at: dt.datetime,
     ) -> AsyncIterator[bytes]:
         sha = hashlib.sha256()
 
@@ -45,7 +52,7 @@ class BundleFrames:
 
         header = {
             "version": ARCHIVE_BUNDLE_VERSION,
-            "archived_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "archived_at": archived_at.isoformat(),
             "scan_id": scan_doc.get("_id"),
             "project_id": scan_doc.get("project_id"),
             "scan": scan_doc,
@@ -56,8 +63,11 @@ class BundleFrames:
             yield emit(json_line({"collection": coll_name}))
             async for doc in doc_iter:
                 yield emit(json_line(doc))
-                # severity is canonicalized uppercase by the scan pipeline; other cases miss the tallies.
                 if coll_name == "findings":
+                    # Counted as StatsAccumulator.add counts, so the archive list shows the scan's open findings.
+                    if doc.get("waived") is True or doc.get("type") == FindingType.SYSTEM_WARNING:
+                        continue
+                    # severity is canonicalized uppercase by the scan pipeline; other cases miss the tallies.
                     severity = doc.get("severity", "")
                     if severity == "CRITICAL":
                         stats.critical_findings += 1
@@ -82,11 +92,14 @@ class _Frame(NamedTuple):
     data: Any
 
 
-def _loads(line: bytes) -> Any:
+def load_json_line(line: bytes) -> dict[str, Any]:
     try:
-        return json_util.loads(line)
-    except json.JSONDecodeError as e:
+        obj = json_util.loads(line)
+    except (json.JSONDecodeError, BSONError) as e:
         raise ValueError(f"Malformed bundle line: {e}") from e
+    if not isinstance(obj, dict):
+        raise ValueError(f"Malformed bundle line: a {type(obj).__name__}, not an object")
+    return obj
 
 
 async def _bundle_lines(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
@@ -106,11 +119,11 @@ async def _bundle_lines(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
         yield bytes(buffer)
 
 
-def _parse_header(line: bytes) -> Any:
-    header = _loads(line)
+def _parse_header(line: bytes) -> dict[str, Any]:
+    header = load_json_line(line)
     version = header.get("version")
     if version != ARCHIVE_BUNDLE_VERSION:
-        raise ValueError(f"Unsupported bundle version: {version}")
+        raise BundleVersionError(f"Unsupported bundle version: {version}")
     return header
 
 
@@ -132,7 +145,7 @@ async def _read_frames(source: AsyncIterator[bytes], *, decode_docs: bool) -> As
     current_collection: str | None = None
     async for line in lines:
         decoded = decode_docs or line.startswith((_MARKER_PREFIX, _FOOTER_PREFIX))
-        obj: Any = _loads(line) if decoded else None
+        obj: Any = load_json_line(line) if decoded else None
         if decoded and obj.get("footer") is True:
             _verify_footer(obj, pre_footer_sha.hexdigest())
             yield _Frame("footer", line, "", obj)

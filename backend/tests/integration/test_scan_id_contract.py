@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pymongo.errors import DuplicateKeyError
 
 from app.services.scan_manager import deterministic_scan_id
 
@@ -41,3 +42,26 @@ async def test_one_ci_run_lands_on_one_scan(client, db, api_key_headers, _projec
     assert sbom.json()["scan_id"] == findings.json()["scan_id"] == expected
     assert (await db.callgraphs.find_one({"project_id": _project.id}))["scan_id"] == expected
     assert await db.scans.count_documents({}) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_upload_that_loses_the_race_to_create_its_scan_still_lands_on_it(
+    client, db, api_key_headers, _project, fake_gridfs
+):
+    scan_id = _uuid5(f"{_project.id}-{_PIPELINE_ID}-{_COMMIT}")
+    real_update_one = db.scans.update_one
+
+    async def a_concurrent_upload_creates_the_scan_first(query, update, upsert=False, **kwargs):
+        if not upsert:
+            return await real_update_one(query, update, **kwargs)
+        db.scans.update_one = real_update_one
+        await db.scans.insert_one({"_id": scan_id, "project_id": _project.id, "status": "pending"})
+        raise DuplicateKeyError("E11000 duplicate key error collection: scans index: _id_")
+
+    db.scans.update_one = a_concurrent_upload_creates_the_scan_first
+    resp = await client.post(
+        "/api/v1/ingest/opengrep", json={**_RUN, "findings": [], "commit_message": "the loser"}, headers=api_key_headers
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert (await db.scans.find_one({"_id": scan_id}))["commit_message"] == "the loser"

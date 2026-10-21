@@ -6,6 +6,8 @@ import pytest
 
 from tests.helpers.fake_s3 import FakeS3Client, fake_get_s3_client
 
+_CONTENT_TYPE = "application/x-ndjson"
+
 
 @pytest.fixture
 def fake_s3():
@@ -30,7 +32,7 @@ async def test_upload_stream_assembles_parts(fake_s3):
         for chunk in (b"A" * 1_000_000, b"B" * 6_000_000, b"C" * 100_000):
             yield chunk
 
-    total = await upload_stream("proj/scan.bundle", source())
+    total = await upload_stream("proj/scan.bundle", source(), content_type=_CONTENT_TYPE)
     assert total == 7_100_000
     assert fake_s3.objects["proj/scan.bundle"] == b"A" * 1_000_000 + b"B" * 6_000_000 + b"C" * 100_000
     assert fake_s3.aborted_uploads == []
@@ -46,7 +48,7 @@ async def test_upload_stream_aborts_on_part_failure(fake_s3):
         yield b"X" * 6_000_000
 
     with pytest.raises(RuntimeError, match="simulated"):
-        await upload_stream("proj/scan.bundle", source())
+        await upload_stream("proj/scan.bundle", source(), content_type=_CONTENT_TYPE)
 
     assert len(fake_s3.aborted_uploads) == 1
     assert "proj/scan.bundle" not in fake_s3.objects
@@ -63,7 +65,7 @@ async def test_upload_stream_aborts_when_cancelled(fake_s3):
         first_part_sent.set()
         await asyncio.Event().wait()
 
-    upload = asyncio.create_task(upload_stream("proj/scan.bundle", source()))
+    upload = asyncio.create_task(upload_stream("proj/scan.bundle", source(), content_type=_CONTENT_TYPE))
     await first_part_sent.wait()
     upload.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -84,17 +86,6 @@ async def test_download_stream_chunks_body(fake_s3):
 
 
 @pytest.mark.asyncio
-async def test_upload_stream_with_bucket_override(fake_s3):
-    from app.core.s3 import upload_stream
-
-    async def source() -> AsyncIterator[bytes]:
-        yield b"Z" * 100
-
-    await upload_stream("k", source(), bucket="alt-bucket")
-    assert "k" in fake_s3.objects
-
-
-@pytest.mark.asyncio
 async def test_delete_object_with_bucket_override(fake_s3):
     from app.core.s3 import delete_object
 
@@ -110,9 +101,8 @@ async def test_list_objects_returns_under_prefix(fake_s3):
     fake_s3.objects["a/1"] = b"a"
     fake_s3.objects["a/2"] = b"b"
     fake_s3.objects["b/1"] = b"c"
-    result = await list_objects(prefix="a/")
-    keys = sorted([item["Key"] for item in result])
-    assert keys == ["a/1", "a/2"]
+    pages = [page async for page in list_objects(prefix="a/")]
+    assert [sorted(item["Key"] for item in page) for page in pages] == [["a/1", "a/2"]]
 
 
 class _PaginatingS3Client:
@@ -148,12 +138,10 @@ async def test_list_objects_follows_pagination_past_first_page():
     with patch("app.core.s3.get_s3_client", lambda: fake_get_s3_client(fake)):
         with patch("app.core.s3.settings") as mock_settings:
             mock_settings.S3_BUCKET_NAME = "test-bucket"
-            result = await list_objects(prefix="archive/")
+            pages = [[item["Key"] for item in page] async for page in list_objects(prefix="archive/")]
 
-    keys = [item["Key"] for item in result]
-    assert len(keys) == 2500
-    assert keys[-1] == "archive/02499"
-    # 3 pages: 1000 + 1000 + 500, so three underlying calls were made.
+    assert [len(page) for page in pages] == [1000, 1000, 500]
+    assert pages[-1][-1] == "archive/02499"
     assert len(fake.calls) == 3
     assert fake.calls[0]["ContinuationToken"] is None
     assert fake.calls[1]["ContinuationToken"] == "1000"

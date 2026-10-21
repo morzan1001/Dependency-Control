@@ -20,6 +20,8 @@ def _build_manager() -> AnalysisWorkerManager:
 
 def _build_db(project: dict | None = None) -> MagicMock:
     db = MagicMock()
+    db.scans = MagicMock()
+    db.scans.find_one = AsyncMock(return_value=None)
     db.projects = MagicMock()
     db.projects.find_one = AsyncMock(return_value=project)
     return db
@@ -134,3 +136,50 @@ class TestNotifyAnalysisFailed:
             asyncio.run(notify_analysis_failed(db, "scan-1", "proj-1", "boom"))
 
         assert notify.await_args.kwargs["event_type"] == "analysis_failed"
+
+
+class TestRepeatedRescanFailures:
+    """The scheduler reruns a rescan whose input fails the same way every interval."""
+
+    @staticmethod
+    def _announced_errors(failures: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        db = FakeDatabase()
+        asyncio.run(db.projects.insert_one({"_id": "proj-1", "name": "My Project"}))
+        asyncio.run(db.scans.insert_one({"_id": "build", "project_id": "proj-1"}))
+        for scan_id, _ in failures:
+            if scan_id != "build":
+                asyncio.run(db.scans.insert_one({"_id": scan_id, "is_rescan": True, "original_scan_id": "build"}))
+
+        with (
+            patch(
+                "app.services.analysis.notifications.webhook_service.trigger_analysis_failed", AsyncMock()
+            ) as trigger,
+            patch("app.services.analysis.notifications.safe_notify_project_event", AsyncMock()) as notify,
+        ):
+            for scan_id, error in failures:
+                asyncio.run(notify_analysis_failed(db, scan_id, "proj-1", error))
+
+        assert notify.await_count == trigger.await_count
+        return [(call.kwargs["scan_id"], call.kwargs["error_message"]) for call in trigger.await_args_list]
+
+    def test_a_build_whose_rescans_keep_failing_the_same_way_is_announced_once(self):
+        announced = self._announced_errors([("rescan-1", "SBOM unparsable"), ("rescan-2", "SBOM unparsable")])
+
+        assert announced == [("rescan-1", "SBOM unparsable")]
+
+    def test_a_new_error_of_the_same_build_is_announced_again(self):
+        announced = self._announced_errors([("rescan-1", "SBOM unparsable"), ("rescan-2", "analyzer crashed")])
+
+        assert announced == [("rescan-1", "SBOM unparsable"), ("rescan-2", "analyzer crashed")]
+
+    def test_an_error_announced_before_another_one_is_not_announced_again(self):
+        announced = self._announced_errors(
+            [("rescan-0", "SBOM unparsable"), ("rescan-1", "analyzer crashed"), ("rescan-2", "SBOM unparsable")]
+        )
+
+        assert announced == [("rescan-0", "SBOM unparsable"), ("rescan-1", "analyzer crashed")]
+
+    def test_every_failure_of_a_build_itself_is_announced(self):
+        announced = self._announced_errors([("build", "SBOM unparsable"), ("build", "SBOM unparsable")])
+
+        assert announced == [("build", "SBOM unparsable"), ("build", "SBOM unparsable")]

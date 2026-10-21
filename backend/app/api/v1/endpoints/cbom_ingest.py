@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.api.deps import DatabaseDep, ProjectIngestDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.request_body import read_json_body
+from app.api.v1.helpers.responses import RESP_AUTH_400_409_500
 from app.core.constants import (
     NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED,
     SCAN_TYPE_CBOM,
@@ -41,6 +42,7 @@ class CBOMIngestResponse(BaseModel):
     "/ingest/cbom",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Ingest CBOM",
+    responses=RESP_AUTH_400_409_500,
 )
 async def ingest_cbom(
     request: Request,
@@ -65,6 +67,7 @@ async def ingest_cbom(
     serial = payload.cbom.get("serialNumber")
     source = str(serial) if serial else sbom_name(payload.cbom)
 
+    await manager.refuse_while_restoring(scan_id)
     try:
         await ScanRepository(db).touch(scan_id)
         summary = await _store_crypto_assets(db, project_id, scan_id, assets, source)

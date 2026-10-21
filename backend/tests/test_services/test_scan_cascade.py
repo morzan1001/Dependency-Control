@@ -1,5 +1,6 @@
 """Every delete path must remove the same scan-owned collections, so the paths are compared, not trusted."""
 
+import dataclasses
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -121,5 +122,8 @@ async def test_project_deletion_and_retention_remove_the_same_scan_scoped_collec
 def test_the_archive_bundle_carries_exactly_what_the_cascade_removes() -> None:
     """An archive that snapshots less than deletion removes loses the difference for good."""
     from app.services.archive import _RESTORABLE_COLLECTIONS
+    from app.services.archive_bundle import BundleStats
 
     assert {*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FRAME, ARCHIVE_GRIDFS_CHUNK_FRAME} == _RESTORABLE_COLLECTIONS
+    # The bundle writer counts a collection only if BundleStats names it.
+    assert set(SCAN_SCOPED_COLLECTIONS) <= {field.name for field in dataclasses.fields(BundleStats)}

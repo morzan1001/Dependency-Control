@@ -188,7 +188,7 @@ async def test_w14_reingest_replaces_sbom_refs_and_the_reaper_frees_the_supersed
     assert len(scan["sbom_refs"]) == 1, f"re-ingest must replace sbom_refs, got {len(scan['sbom_refs'])}"
     assert scan["sbom_refs"][0]["gridfs_id"] != first_refs[0]["gridfs_id"]
 
-    monkeypatch.setattr("app.services.gridfs_maintenance.ARCHIVE_ORPHAN_MIN_AGE_HOURS", -1)
+    monkeypatch.setattr("app.services.gridfs_maintenance.ORPHAN_MIN_AGE_HOURS", -1)
     assert await reap_orphan_gridfs_files(db) == 1
     assert [str(doc["_id"]) async for doc in db["fs.files"].find()] == [scan["sbom_refs"][0]["gridfs_id"]]
 

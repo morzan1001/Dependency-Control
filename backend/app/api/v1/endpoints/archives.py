@@ -12,14 +12,15 @@ from app.api.deps import DatabaseDep, PermissionChecker
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.projects import check_project_access
-from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500
+from app.api.v1.helpers.responses import RESP_500, RESP_501, RESP_AUTH, RESP_AUTH_404, RESP_AUTH_404_409
 from app.api.v1.helpers.sorting import case_insensitive_key
 from app.core.constants import PROJECT_ROLE_ADMIN
+from app.core.log_utils import sanitize_for_log
 from app.core.metrics import (
     ArchiveFailureReason,
-    archive_failures_total,
     archive_operation_duration_seconds,
     archive_operations_total,
+    count_archive_failure,
 )
 from app.core.permissions import Permissions
 from app.core.s3 import is_archive_enabled
@@ -34,7 +35,7 @@ from app.schemas.archive import (
     ScanPinResponse,
 )
 from app.schemas.pagination import Page
-from app.services.archive import restore_scan, stream_bundle_for_download
+from app.services.archive import RestoreFailed, bundle_failure_reason, restore_scan, stream_bundle_for_download
 from app.services.inventory.csv_stream import export_filename
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,12 @@ router = CustomAPIRouter()
 admin_router = CustomAPIRouter()
 
 _MSG_ARCHIVE_NOT_CONFIGURED = "Archive storage is not configured"
+_MSG_ARCHIVE_NOT_FOUND = "Archive not found for this project"
+_RESTORE_FAILURE_RESPONSES = {
+    ArchiveFailureReason.NOT_FOUND: (404, _MSG_ARCHIVE_NOT_FOUND),
+    ArchiveFailureReason.LOCK_HELD: (409, "Restore already in progress"),
+    ArchiveFailureReason.ALREADY_EXISTS: (409, "Scan already exists in MongoDB"),
+}
 
 
 ArchiveReaderDep = Annotated[User, Depends(PermissionChecker(Permissions.ARCHIVE_READ))]
@@ -55,7 +62,7 @@ async def _archive_for_project(db: AsyncIOMotorDatabase, project_id: str, scan_i
     """The scan's archive, 404 unless it belongs to ``project_id``: access to one project opens no other's bundle."""
     metadata = await ArchiveMetadataRepository(db).find_by_scan_id(scan_id)
     if not metadata or metadata.project_id != project_id:
-        raise HTTPException(status_code=404, detail="Archive not found for this project")
+        raise HTTPException(status_code=404, detail=_MSG_ARCHIVE_NOT_FOUND)
     return metadata
 
 
@@ -67,7 +74,7 @@ def _require_archive_enabled() -> None:
 @router.get(
     "/{project_id}/archives",
     summary="List archived scans for a project",
-    responses=RESP_AUTH_404,
+    responses={**RESP_AUTH_404, **RESP_501},
 )
 async def list_archives(
     project_id: str,
@@ -103,7 +110,7 @@ async def list_archives(
 @router.get(
     "/{project_id}/archives/branches",
     summary="Get distinct branch names in project archives",
-    responses=RESP_AUTH_404,
+    responses={**RESP_AUTH_404, **RESP_501},
 )
 async def list_archive_branches(
     project_id: str,
@@ -122,7 +129,7 @@ async def list_archive_branches(
 @router.post(
     "/{project_id}/archives/{scan_id}/restore",
     summary="Restore an archived scan back to MongoDB",
-    responses=RESP_AUTH_404_500,
+    responses={**RESP_AUTH_404_409, **RESP_500, **RESP_501},
 )
 async def restore_archive(
     project_id: str,
@@ -130,29 +137,25 @@ async def restore_archive(
     current_user: ArchiveRestorerDep,
     db: DatabaseDep,
 ) -> ArchiveRestoreResponse:
-    """Restore an archived scan from S3 back into MongoDB (404 if absent, 409 if already present, 500 otherwise)."""
+    """Restore an archived scan from S3 back into MongoDB (404 if absent, 409 if present or restoring, else 500)."""
     await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
 
     _require_archive_enabled()
 
     await _archive_for_project(db, project_id, scan_id)
 
-    result = await restore_scan(db, scan_id)
-    if not result:
-        # restore_scan returns None for several failures; a scan that exists now was a concurrent restore (best-effort).
-        existing_scan = await db.scans.find_one({"_id": scan_id})
-        if existing_scan:
-            raise HTTPException(status_code=409, detail="Scan already exists in MongoDB")
-        raise HTTPException(status_code=500, detail="Failed to restore archive")
+    try:
+        result = await restore_scan(db, scan_id)
+    except RestoreFailed as failure:
+        status_code, detail = _RESTORE_FAILURE_RESPONSES.get(failure.reason, (500, "Failed to restore archive"))
+        raise HTTPException(status_code=status_code, detail=detail) from None
 
     logger.info(
-        "archive.restore",
-        extra={
-            "user_id": current_user.id,
-            "scan_id": scan_id,
-            "project_id": project_id,
-            "collections_restored": result.collections_restored,
-        },
+        "archive.restore user_id=%s scan_id=%s project_id=%s collections_restored=%s",
+        current_user.id,
+        sanitize_for_log(scan_id),
+        sanitize_for_log(project_id),
+        ",".join(result.collections_restored),
     )
     return result
 
@@ -160,7 +163,7 @@ async def restore_archive(
 @router.get(
     "/{project_id}/archives/{scan_id}/download",
     summary="Download an archived scan bundle",
-    responses=RESP_AUTH_404_500,
+    responses={**RESP_AUTH_404, **RESP_501},
 )
 async def download_archive(
     project_id: str,
@@ -175,13 +178,11 @@ async def download_archive(
     metadata = await _archive_for_project(db, project_id, scan_id)
 
     logger.info(
-        "archive.download.initiated",
-        extra={
-            "user_id": current_user.id,
-            "scan_id": scan_id,
-            "project_id": project_id,
-            "s3_key": metadata.s3_key,
-        },
+        "archive.download.initiated user_id=%s scan_id=%s project_id=%s s3_key=%s",
+        current_user.id,
+        sanitize_for_log(scan_id),
+        sanitize_for_log(project_id),
+        sanitize_for_log(metadata.s3_key),
     )
 
     start_time = time.monotonic()
@@ -191,19 +192,16 @@ async def download_archive(
             async for chunk in stream_bundle_for_download(metadata):
                 yield chunk
             logger.info(
-                "archive.download.completed",
-                extra={
-                    "scan_id": scan_id,
-                    "project_id": project_id,
-                    "s3_key": metadata.s3_key,
-                },
+                "archive.download.completed scan_id=%s project_id=%s s3_key=%s",
+                sanitize_for_log(scan_id),
+                sanitize_for_log(project_id),
+                sanitize_for_log(metadata.s3_key),
             )
             duration = time.monotonic() - start_time
             archive_operations_total.labels(operation="download", status="success").inc()
             archive_operation_duration_seconds.labels(operation="download").observe(duration)
-        except Exception:
-            archive_failures_total.labels(operation="download", reason=ArchiveFailureReason.S3_ERROR).inc()
-            archive_operations_total.labels(operation="download", status="failure").inc()
+        except Exception as e:
+            count_archive_failure("download", bundle_failure_reason(e))
             raise
 
     return StreamingResponse(
@@ -226,8 +224,11 @@ async def _set_pinned(
     if not result.matched_count:
         raise HTTPException(status_code=404, detail="Scan not found")
     logger.info(
+        "%s user_id=%s scan_id=%s project_id=%s",
         "archive.pin" if pinned else "archive.unpin",
-        extra={"user_id": current_user.id, "scan_id": scan_id, "project_id": project_id},
+        current_user.id,
+        sanitize_for_log(scan_id),
+        sanitize_for_log(project_id),
     )
     return ScanPinResponse(scan_id=scan_id, pinned=pinned)
 
@@ -235,7 +236,7 @@ async def _set_pinned(
 @router.post(
     "/{project_id}/scans/{scan_id}/pin",
     summary="Pin a scan to prevent archival by housekeeping",
-    responses=RESP_AUTH_404_500,
+    responses=RESP_AUTH_404,
 )
 async def pin_scan(
     project_id: str,
@@ -250,7 +251,7 @@ async def pin_scan(
 @router.post(
     "/{project_id}/scans/{scan_id}/unpin",
     summary="Unpin a scan to allow archival by housekeeping",
-    responses=RESP_AUTH_404_500,
+    responses=RESP_AUTH_404,
 )
 async def unpin_scan(
     project_id: str,
@@ -265,7 +266,7 @@ async def unpin_scan(
 @admin_router.get(
     "/all",
     summary="List all archives across all projects (admin)",
-    responses=RESP_AUTH_404,
+    responses={**RESP_AUTH, **RESP_501},
 )
 async def list_all_archives(
     current_user: ArchiveAdminDep,

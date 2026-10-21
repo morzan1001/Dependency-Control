@@ -1,11 +1,13 @@
 import asyncio
 import contextlib
 import json
+import logging
 import tracemalloc
 import zlib
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -22,7 +24,7 @@ from app.models.project import Project, Scan
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.services import archive, gridfs_maintenance
-from app.services.archive import archive_scan, restore_scan, stream_bundle_for_download
+from app.services.archive import RestoreFailed, archive_scan, restore_scan, stream_bundle_for_download
 from app.services.archive_bundle import BundleFrames, BundleStats, json_line, read_bundle_frames
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
 from app.services.rescan import build_rescan
@@ -129,7 +131,10 @@ async def _archive_without_chunk_frames(db, archive_env, sbom: dict[str, Any]) -
         [
             line
             async for line in BundleFrames.write(
-                scan_doc=scan, collections={"gridfs_sboms": _aiter(entries)}, stats=BundleStats()
+                scan_doc=scan,
+                collections={"gridfs_sboms": _aiter(entries)},
+                stats=BundleStats(),
+                archived_at=datetime.now(timezone.utc),
             )
         ]
     )
@@ -164,6 +169,28 @@ def _replay_with(monkeypatch, before_event) -> None:
             yield event
 
     monkeypatch.setattr(archive, "read_bundle_frames", intercepted)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_scan_whose_sbom_file_is_already_gone_archives_and_restores_without_it(
+    db, archive_env, caplog, monkeypatch
+):
+    monkeypatch.setattr("app.db.mongodb.asyncio", SimpleNamespace(sleep=AsyncMock()))
+    scan = await _seed_scan(db, _sbom_fixture())
+    gone = ObjectId(scan.sbom_refs[0]["gridfs_id"])
+    await AsyncIOMotorGridFSBucket(db).delete(gone)
+
+    with caplog.at_level(logging.WARNING, logger="app.services.archive"):
+        metadata = await archive_scan(db, _SCAN_ID)
+
+    assert metadata is not None
+    assert [record.getMessage() for record in caplog.records] == [
+        f"GridFS file {gone} of scan {_SCAN_ID} is already gone, archiving the scan without it"
+    ]
+    await delete_scans_and_related_data(db, [_SCAN_ID])
+    assert await restore_scan(db, _SCAN_ID) is not None
+    assert (await db.scans.find_one({"_id": _SCAN_ID}))["sbom_refs"] == scan.sbom_refs
 
 
 @pytest.mark.asyncio
@@ -228,11 +255,12 @@ async def test_a_legacy_gridfs_sboms_bundle_still_restores(db, archive_env):
 async def test_a_rescan_shared_file_present_at_restore_is_left_untouched(db, archive_env, chunk_frames):
     sbom = _sbom_fixture()
     scan = await _seed_scan(db, sbom)
-    await db.scans.insert_one(build_rescan(scan.model_dump(by_alias=True)).model_dump(by_alias=True))
     if chunk_frames:
         await _archive(db)
     else:
         await _archive_without_chunk_frames(db, archive_env, sbom)
+    # Rescanned only now: archive_scan refuses a scan a rescan still points at.
+    await db.scans.insert_one(build_rescan(scan.model_dump(by_alias=True)).model_dump(by_alias=True))
     await _expire(db)
     (shared,) = await db["fs.files"].find({}).to_list(None)
     chunk_ids = await db["fs.chunks"].distinct("_id")
@@ -253,9 +281,10 @@ async def test_concurrent_restores_of_scans_sharing_an_absent_file_both_finish_w
     scan = await _seed_scan(db, _sbom_of(sbom_size))
     rescan = await _seed_finished_rescan(db, scan)
     before = await _stored_files(db)
-    for scan_id in (_SCAN_ID, rescan.id):
+    # The rescan goes first: archive_scan refuses a scan a rescan still points at.
+    for scan_id in (rescan.id, _SCAN_ID):
         assert await archive_scan(db, scan_id) is not None
-    await _expire(db, (_SCAN_ID, rescan.id))
+        await _expire(db, (scan_id,))
     assert await db["fs.files"].count_documents({}) == 0
     both_reached_the_file = asyncio.Barrier(2)
 
@@ -339,7 +368,8 @@ async def test_a_restore_that_lost_its_file_lock_fails_and_leaves_the_new_holder
 
     _replay_with(monkeypatch, take_the_file_over_after_its_first_chunk)
 
-    assert await restore_scan(db, _SCAN_ID) is None
+    with pytest.raises(RestoreFailed):
+        await restore_scan(db, _SCAN_ID)
     assert await db["fs.chunks"].find({}, {"_id": 0, "files_id": 0}).to_list(None) == [peer_chunk]
 
 
@@ -357,7 +387,8 @@ async def test_a_restore_whose_abort_fails_still_releases_its_file_lock(db, arch
     _replay_with(monkeypatch, fail_mid_file)
     monkeypatch.setattr(AsyncIOMotorGridIn, "abort", AsyncMock(side_effect=AutoReconnect("primary stepped down")))
 
-    assert await restore_scan(db, _SCAN_ID) is None
+    with pytest.raises(RestoreFailed):
+        await restore_scan(db, _SCAN_ID)
     assert await db.distributed_locks.find({}).to_list(None) == []
 
 
@@ -426,7 +457,8 @@ async def test_a_restore_failing_mid_file_leaves_no_chunks_and_a_retry_succeeds(
             yield chunk
 
     monkeypatch.setattr(archive, "_open_bundle_stream", reset_once_chunks_are_stored)
-    assert await restore_scan(db, _SCAN_ID) is None
+    with pytest.raises(RestoreFailed):
+        await restore_scan(db, _SCAN_ID)
     assert await db["fs.chunks"].count_documents({}) == 0
     assert await db["fs.files"].count_documents({}) == 0
     assert await db.scans.find_one({"_id": _SCAN_ID}) is None

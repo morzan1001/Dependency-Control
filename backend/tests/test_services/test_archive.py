@@ -1,6 +1,8 @@
 import hashlib
 import json
+import logging
 import zlib
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -11,7 +13,7 @@ from pymongo.errors import AutoReconnect
 
 from app.core.constants import ENCRYPTION_MAGIC, SCAN_SCOPED_COLLECTIONS
 from app.models.archive import ArchiveMetadata
-from app.services.archive import archive_scan, restore_scan
+from app.services.archive import RestoreFailed, _gzip_decompress_stream, archive_scan, restore_scan
 
 MODULE = "app.services.archive"
 _NO_IDS: list[str] = []
@@ -76,7 +78,8 @@ def _make_mock_db(
     db = MagicMock()
     # Repositories reach collections by name, the fixtures below by attribute.
     db.__getitem__.side_effect = lambda name: getattr(db, name)
-    db.scans.find_one = AsyncMock(return_value=scan_doc)
+    # Only the scan itself; a lookup of its rescans finds none.
+    db.scans.find_one = AsyncMock(side_effect=lambda query, *_: scan_doc if "_id" in query else None)
     db.scans.find = MagicMock(return_value=_AsyncCursorMock([scan_doc] if scan_doc else []))
     db.scans.insert_one = AsyncMock()
     db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
@@ -172,6 +175,24 @@ async def test_archive_metadata_keeps_critical_and_high_counts_apart(archive_env
 
 
 @pytest.mark.asyncio
+async def test_archive_metadata_counts_the_findings_the_scan_stats_count(archive_env):
+    """A waived finding or a scanner error is no open finding, as StatsAccumulator counts them."""
+    findings = [
+        {"_id": "f1", "scan_id": "scan-1", "type": "vulnerability", "severity": "CRITICAL"},
+        {"_id": "f2", "scan_id": "scan-1", "type": "vulnerability", "severity": "HIGH"},
+        {"_id": "f3", "scan_id": "scan-1", "type": "vulnerability", "severity": "CRITICAL", "waived": True},
+        {"_id": "f4", "scan_id": "scan-1", "type": "license", "severity": "HIGH", "waived": True},
+        {"_id": "f5", "scan_id": "scan-1", "type": "system_warning", "severity": "HIGH"},
+    ]
+    db = _make_mock_db(scan_doc=_make_scan_doc(), findings=findings)
+
+    with _patch_repos()():
+        result = await archive_scan(db, "scan-1")
+
+    assert (result.findings_count, result.critical_findings_count, result.high_findings_count) == (2, 1, 1)
+
+
+@pytest.mark.asyncio
 async def test_archive_key_carries_the_archive_time(archive_env):
     """Two archives of one scan would otherwise collide on the same key."""
     db = _make_mock_db(scan_doc=_make_scan_doc())
@@ -184,6 +205,34 @@ async def test_archive_key_carries_the_archive_time(archive_env):
     assert result.s3_key == key
     archived_at_unix = int(key.removeprefix("proj-1/scan-1-").removesuffix(".bundle"))
     assert abs(archived_at_unix - int(datetime.now(timezone.utc).timestamp())) < 300
+
+
+@pytest.mark.asyncio
+async def test_the_bundle_header_key_and_metadata_carry_one_archive_time(archive_env):
+    from app.services.archive_bundle import read_bundle_frames
+
+    db = _make_mock_db(scan_doc=_make_scan_doc())
+
+    with _patch_repos()():
+        result = await archive_scan(db, "scan-1")
+
+    bundle = zlib.decompress(archive_env.objects[result.s3_key], wbits=31)
+    header = await anext(read_bundle_frames(_aiter([bundle])))
+    assert datetime.fromisoformat(header["data"]["archived_at"]) == result.archived_at
+    assert result.s3_key.endswith(f"-{int(result.archived_at.timestamp())}.bundle")
+
+
+@pytest.mark.asyncio
+async def test_archive_key_starts_with_the_configured_prefix(archive_env, monkeypatch):
+    monkeypatch.setattr("app.core.s3.settings.S3_KEY_PREFIX", "dc-a")
+    db = _make_mock_db(scan_doc=_make_scan_doc())
+
+    with _patch_repos()():
+        result = await archive_scan(db, "scan-1")
+
+    assert result is not None
+    assert result.s3_key.startswith("dc-a/proj-1/scan-1-")
+    assert set(archive_env.objects) == {result.s3_key}
 
 
 @pytest.mark.asyncio
@@ -231,6 +280,47 @@ async def test_archive_scan_returns_existing_metadata_if_already_archived(archiv
     RepoCls.return_value.create.assert_not_awaited()
 
 
+def _archive_outcomes() -> dict[str, float]:
+    from prometheus_client import REGISTRY
+
+    return {
+        status: REGISTRY.get_sample_value("archive_operations_total", {"operation": "archive", "status": status}) or 0.0
+        for status in ("success", "skipped", "failure")
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_archive_that_already_exists_is_counted_as_skipped(archive_env):
+    db = _make_mock_db(scan_doc=_make_scan_doc())
+    before = _archive_outcomes()
+
+    with _patch_repos(existing_metadata=_make_archive_metadata())():
+        await archive_scan(db, "scan-1")
+
+    after = _archive_outcomes()
+    assert {status: after[status] - before[status] for status in after} == {
+        "success": 0.0,
+        "skipped": 1.0,
+        "failure": 0.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_archive_that_raises_is_counted_as_an_unknown_failure(archive_env):
+    from prometheus_client import REGISTRY
+
+    unknown = {"operation": "archive", "reason": "unknown"}
+    db = _make_mock_db(scan_doc=_make_scan_doc())
+    db.scans.find_one = AsyncMock(side_effect=AutoReconnect("primary stepped down"))
+    before = _archive_outcomes()["failure"], REGISTRY.get_sample_value("archive_failures_total", unknown) or 0.0
+
+    with _patch_repos()(), pytest.raises(AutoReconnect):
+        await archive_scan(db, "scan-1")
+
+    after = _archive_outcomes()["failure"], REGISTRY.get_sample_value("archive_failures_total", unknown) or 0.0
+    assert (after[0] - before[0], after[1] - before[1]) == (1.0, 1.0)
+
+
 @pytest.mark.asyncio
 async def test_archive_scan_returns_none_when_scan_not_found(archive_env):
     db = _make_mock_db(scan_doc=None)
@@ -257,6 +347,42 @@ async def test_archive_scan_aborts_s3_on_failure(archive_env):
     assert result is None
     assert len(archive_env.aborted_uploads) >= 1
     RepoCls.return_value.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_archive_logs_its_scan_and_the_error(archive_env, caplog):
+    archive_env.fail_next_upload_part = True
+    big_findings = [{"_id": f"f{i}", "scan_id": "scan-1", "severity": "LOW", "blob": "x" * 1000} for i in range(20000)]
+    db = _make_mock_db(scan_doc=_make_scan_doc(), findings=big_findings)
+
+    with _patch_repos()(), caplog.at_level(logging.ERROR, logger=MODULE):
+        assert await archive_scan(db, "scan-1") is None
+
+    (record,) = caplog.records
+    assert "scan-1" in record.getMessage()
+    assert "simulated S3 error on upload_part" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cleanup_of_a_dropped_upload_logs_its_key(monkeypatch, caplog):
+    from app.services.archive import _drop_upload
+
+    monkeypatch.setattr(f"{MODULE}.delete_object", AsyncMock(side_effect=RuntimeError("S3 down")))
+
+    with caplog.at_level(logging.ERROR, logger=MODULE):
+        await _drop_upload("proj-1/scan-1-1700000000.bundle", "lock_held")
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "Cleanup delete of the dropped S3 upload proj-1/scan-1-1700000000.bundle failed"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_restore_without_metadata_logs_its_scan(archive_env, caplog):
+    with _patch_repos()(), caplog.at_level(logging.ERROR, logger=MODULE), pytest.raises(RestoreFailed):
+        await restore_scan(_make_mock_db(), "scan-1")
+
+    assert [record.getMessage() for record in caplog.records] == ["No archive metadata for scan scan-1"]
 
 
 @pytest.mark.asyncio
@@ -308,9 +434,10 @@ async def test_restore_scan_aborts_when_lock_held(archive_env):
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=False)
 
-        result = await restore_scan(db, "scan-1")
+        with pytest.raises(RestoreFailed) as failure:
+            await restore_scan(db, "scan-1")
 
-    assert result is None
+    assert failure.value.reason == "lock_held"
     db.scans.insert_one.assert_not_awaited()
 
 
@@ -328,14 +455,15 @@ async def test_restore_scan_aborts_when_scan_already_exists(archive_env):
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
 
-        result = await restore_scan(db, "scan-1")
+        with pytest.raises(RestoreFailed) as failure:
+            await restore_scan(db, "scan-1")
 
-    assert result is None
+    assert failure.value.reason == "already_exists"
     db.scans.insert_one.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_restore_scan_returns_none_when_no_metadata(archive_env):
+async def test_restore_scan_fails_as_not_found_without_metadata(archive_env):
     db = _make_mock_db()
 
     with (
@@ -346,9 +474,10 @@ async def test_restore_scan_returns_none_when_no_metadata(archive_env):
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
 
-        result = await restore_scan(db, "scan-1")
+        with pytest.raises(RestoreFailed) as failure:
+            await restore_scan(db, "scan-1")
 
-    assert result is None
+    assert failure.value.reason == "not_found"
 
 
 @pytest.mark.asyncio
@@ -357,7 +486,10 @@ async def test_replay_labels_mongo_error_not_as_s3_error():
 
     from app.services.archive import _replay_bundle
 
-    header = json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x"}}).encode() + b"\n"
+    header = (
+        json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x", "project_id": "y"}}).encode()
+        + b"\n"
+    )
 
     async def src():
         yield header
@@ -369,7 +501,7 @@ async def test_replay_labels_mongo_error_not_as_s3_error():
 
     db.scans.insert_one = fail_insert
 
-    reason, _ = await _replay_bundle(db, "x", src())
+    reason, _ = await _replay_bundle(db, "x", "y", src())
     assert reason == "unknown"
     assert reason != "s3_error"
 
@@ -390,7 +522,7 @@ async def test_replay_labels_invalid_tag_as_encryption():
     src = _RaisingStream()
 
     db = MagicMock()
-    reason, _ = await _replay_bundle(db, "x", src)
+    reason, _ = await _replay_bundle(db, "x", "y", src)
     assert reason == "encryption"
 
 
@@ -402,7 +534,7 @@ async def test_replay_labels_a_broken_download_as_s3_error():
         raise OSError("connection reset by peer")
         yield b""
 
-    reason, _ = await _replay_bundle(MagicMock(), "x", src())
+    reason, _ = await _replay_bundle(MagicMock(), "x", "y", src())
     assert reason == "s3_error"
 
 
@@ -465,9 +597,10 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
         LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
-        result = await restore_scan(db, "scan-1")
+        with pytest.raises(RestoreFailed) as failure:
+            await restore_scan(db, "scan-1")
 
-    assert result is None
+    assert failure.value.reason == "integrity"
     db.scans.delete_one.assert_awaited_once_with({"_id": "scan-1"})
     db.findings.delete_many.assert_awaited()
     db.dependencies.delete_many.assert_awaited()
@@ -519,7 +652,7 @@ async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, 
 )
 async def test_a_failed_replay_rolls_back_only_while_holding_its_lock(archive_env, monkeypatch, renewal, reason):
     count_failure = MagicMock()
-    monkeypatch.setattr(f"{MODULE}._count_failure", count_failure)
+    monkeypatch.setattr(f"{MODULE}.count_archive_failure", count_failure)
     db = _make_mock_db()
     db.scans.find_one = AsyncMock(return_value=None)
     # An unguarded rollback stops at the first delete that is not awaitable, so every target must be one.
@@ -538,9 +671,10 @@ async def test_a_failed_replay_rolls_back_only_while_holding_its_lock(archive_en
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
         LockCls.return_value.renew_lock = AsyncMock(**renewal)
 
-        result = await restore_scan(db, "scan-1")
+        with pytest.raises(RestoreFailed) as failure:
+            await restore_scan(db, "scan-1")
 
-    assert result is None
+    assert failure.value.reason == reason
     assert [coll for coll in SCAN_SCOPED_COLLECTIONS if getattr(db, coll).delete_many.await_count] == []
     db.scans.delete_one.assert_not_awaited()
     count_failure.assert_called_once_with("restore", reason)
@@ -603,6 +737,7 @@ async def test_archive_aborts_when_gridfs_read_fails(archive_env, monkeypatch):
             raise RuntimeError("missing chunk / transient GridFS error")
 
     monkeypatch.setattr(f"{MODULE}.AsyncIOMotorGridFSBucket", _BrokenGridFS)
+    monkeypatch.setattr("app.db.mongodb.asyncio", SimpleNamespace(sleep=AsyncMock()))
 
     with _patch_repos()() as (RepoCls, _):
         result = await archive_scan(db, "scan-1")
@@ -611,6 +746,51 @@ async def test_archive_aborts_when_gridfs_read_fails(archive_env, monkeypatch):
     # No metadata written -> housekeeping will NOT delete the source scan.
     RepoCls.return_value.create.assert_not_awaited()
     assert archive_env.objects == {}
+
+
+@pytest.mark.asyncio
+async def test_archive_retries_a_gridfs_file_that_is_not_readable_yet(archive_env, monkeypatch):
+    scan_doc = _make_scan_doc(
+        sbom_refs=[{"type": "gridfs_reference", "gridfs_id": "507f1f77bcf86cd799439011", "filename": "sbom.json"}]
+    )
+    db = _make_mock_db(scan_doc=scan_doc)
+    opens: list[object] = []
+
+    class _Stream:
+        filename = "sbom.json"
+
+        def __init__(self) -> None:
+            self._chunks = [b'{"components": []}']
+
+        async def readchunk(self) -> bytes:
+            return self._chunks.pop() if self._chunks else b""
+
+        def close(self) -> None:
+            return None
+
+    class _GridFSReadableOnSecondTry:
+        def __init__(self, _db):
+            pass
+
+        async def open_download_stream(self, oid):
+            opens.append(oid)
+            if len(opens) == 1:
+                raise RuntimeError("just-committed file not visible yet")
+            return _Stream()
+
+    monkeypatch.setattr(f"{MODULE}.AsyncIOMotorGridFSBucket", _GridFSReadableOnSecondTry)
+    monkeypatch.setattr("app.db.mongodb.asyncio", SimpleNamespace(sleep=AsyncMock()))
+
+    with _patch_repos()():
+        result = await archive_scan(db, "scan-1")
+
+    from app.services.archive_bundle import read_bundle_frames
+
+    assert result is not None
+    assert len(opens) == 2
+    bundle = zlib.decompress(archive_env.objects[result.s3_key], wbits=31)
+    events = [event async for event in read_bundle_frames(_aiter([bundle]))]
+    assert [e["data"]["data"] for e in events if e.get("collection") == "gridfs_chunks"] == [b'{"components": []}']
 
 
 @pytest.mark.asyncio
@@ -675,12 +855,13 @@ async def test_replay_rejects_unknown_collection_marker():
             scan_doc={"_id": "scan-1", "project_id": "p"},
             collections={"users": _aiter([{"_id": "u1", "username": "attacker"}])},
             stats=BundleStats(),
+            archived_at=datetime.now(timezone.utc),
         ):
             yield chunk
 
     db = _make_mock_db(scan_doc={"_id": "scan-1"})
 
-    reason, _ = await _replay_bundle(db, "scan-1", bundle())
+    reason, _ = await _replay_bundle(db, "scan-1", "p", bundle())
 
     assert reason == "integrity"
     db.users.insert_many.assert_not_called()
@@ -697,8 +878,68 @@ async def test_replay_maps_bad_version_to_version_mismatch():
 
     db = _make_mock_db()
 
-    reason, _ = await _replay_bundle(db, "x", src())
+    reason, _ = await _replay_bundle(db, "x", "y", src())
     assert reason == "version_mismatch"
+
+
+def _bundle_with_collection(name: str) -> AsyncIterator[bytes]:
+    from app.services.archive_bundle import BundleFrames, BundleStats
+
+    return BundleFrames.write(
+        scan_doc={"_id": "scan-1", "project_id": "p"},
+        collections={name: _aiter([{"_id": "a1"}])},
+        stats=BundleStats(),
+        archived_at=datetime.now(timezone.utc),
+    )
+
+
+def _bundle_with_a_list_line() -> AsyncIterator[bytes]:
+    header = json.dumps({"version": 2, "scan": {"_id": "scan-1", "project_id": "p"}}).encode() + b"\n"
+    return _aiter([header + b'{"collection":"findings"}\n' + b"[1, 2]\n"])
+
+
+def _bundle_with_a_bad_object_id() -> AsyncIterator[bytes]:
+    header = json.dumps({"version": 2, "scan": {"_id": "scan-1", "project_id": "p"}}).encode() + b"\n"
+    return _aiter([header + b'{"collection":"findings"}\n' + b'{"_id":{"$oid":"not-an-object-id"}}\n'])
+
+
+def _unknown_encryption_version() -> AsyncIterator[bytes]:
+    from app.core.encryption import decrypt_stream
+
+    return decrypt_stream(_aiter([ENCRYPTION_MAGIC + b"\x99" + b"\x00\x80\x00\x00" + b"\x00\x00\x00\x00"]))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source", "reason"),
+    [
+        (lambda: _bundle_with_collection("version_audit"), "integrity"),
+        (lambda: _gzip_decompress_stream(_aiter([b"not a gzip stream"])), "integrity"),
+        (_bundle_with_a_list_line, "integrity"),
+        (_bundle_with_a_bad_object_id, "integrity"),
+        (_unknown_encryption_version, "version_mismatch"),
+    ],
+    ids=["collection-named-version", "not-gzip", "line-not-an-object", "bad-object-id", "unknown-encryption-version"],
+)
+async def test_replay_labels_a_broken_bundle_by_its_cause(monkeypatch, source, reason):
+    from app.services.archive import _replay_bundle
+
+    monkeypatch.setattr("app.core.encryption.settings", SimpleNamespace(ARCHIVE_ENCRYPTION_KEY="0" * 64))
+
+    failure, _ = await _replay_bundle(_make_mock_db(), "scan-1", "p", source())
+
+    assert failure == reason
+
+
+def test_download_labels_a_bad_object_id_in_a_trufflehog_line_as_integrity():
+    from app.services.archive import _hash_plaintext_secrets_in_line, bundle_failure_reason
+
+    line = b'{"_id":{"$oid":"not-an-object-id"},"analyzer_name":"trufflehog"}\n'
+
+    with pytest.raises(Exception) as failure:
+        _hash_plaintext_secrets_in_line("analysis_results", line)
+
+    assert bundle_failure_reason(failure.value) == "integrity"
 
 
 @pytest.mark.asyncio
@@ -720,17 +961,45 @@ async def test_replay_hashes_the_plaintext_secret_of_a_legacy_trufflehog_result(
             scan_doc={"_id": "scan-1", "project_id": "p"},
             collections={"analysis_results": _aiter([legacy_result])},
             stats=BundleStats(),
+            archived_at=datetime.now(timezone.utc),
         ):
             yield chunk
 
     db = _make_mock_db()
 
-    reason, _ = await _replay_bundle(db, "scan-1", bundle())
+    reason, _ = await _replay_bundle(db, "scan-1", "p", bundle())
 
     assert reason is None
     (restored,) = db.analysis_results.insert_many.await_args.args[0]
     assert secret not in json.dumps(restored)
     assert restored["result"]["findings"][0]["RawHash"] == hashlib.md5(secret.encode()).hexdigest()[:8]
+
+
+@pytest.mark.asyncio
+async def test_replay_inserts_each_legacy_inline_analysis_result_on_its_own():
+    """A legacy row inlines a whole scanner report, so a batch of them would hold many reports in memory."""
+    from app.services.archive import _replay_bundle
+    from app.services.archive_bundle import BundleFrames, BundleStats
+
+    rows = [
+        {"_id": f"r{i}", "scan_id": "scan-1", "analyzer_name": "grype", "result": {"matches": []}} for i in range(3)
+    ]
+
+    async def bundle():
+        async for chunk in BundleFrames.write(
+            scan_doc={"_id": "scan-1", "project_id": "p"},
+            collections={"analysis_results": _aiter(rows)},
+            stats=BundleStats(),
+            archived_at=datetime.now(timezone.utc),
+        ):
+            yield chunk
+
+    db = _make_mock_db()
+
+    reason, _ = await _replay_bundle(db, "scan-1", "p", bundle())
+
+    assert reason is None
+    assert [call.args[0] for call in db.analysis_results.insert_many.await_args_list] == [[row] for row in rows]
 
 
 @pytest.mark.asyncio
@@ -764,12 +1033,13 @@ async def test_replay_strips_the_bundle_license_parameters_an_old_bundle_stored(
             scan_doc={"_id": "scan-1", "project_id": "p"},
             collections={"dependencies": _aiter(dependencies)},
             stats=BundleStats(),
+            archived_at=datetime.now(timezone.utc),
         ):
             yield chunk
 
     db = _make_mock_db()
 
-    reason, _ = await _replay_bundle(db, "scan-1", bundle())
+    reason, _ = await _replay_bundle(db, "scan-1", "p", bundle())
 
     assert reason is None
     restored = db.dependencies.insert_many.await_args.args[0]
@@ -820,12 +1090,13 @@ async def test_replay_inserts_the_scan_as_a_restore_in_progress():
             scan_doc={"_id": "scan-1", "project_id": "p", "restored_at": earlier_restore, "retention_deleting": True},
             collections={},
             stats=BundleStats(),
+            archived_at=datetime.now(timezone.utc),
         ):
             yield chunk
 
     db = _make_mock_db()
 
-    reason, _ = await _replay_bundle(db, "scan-1", bundle())
+    reason, _ = await _replay_bundle(db, "scan-1", "p", bundle())
 
     assert reason is None
     inserted = db.scans.insert_one.await_args.args[0]
@@ -903,6 +1174,7 @@ async def test_download_hashes_trufflehog_secrets_and_passes_sbom_lines_through_
                     ),
                 },
                 stats=BundleStats(),
+                archived_at=datetime.now(timezone.utc),
             )
         ]
     )
@@ -959,3 +1231,45 @@ async def test_gzip_compression_of_a_large_chunk_leaves_the_event_loop_running()
 
     assert ticks > 0
     assert zlib.decompress(compressed, wbits=31) == chunk
+
+
+@pytest.mark.asyncio
+async def test_decompress_hands_out_a_highly_compressed_chunk_in_pieces_of_at_most_one_mib():
+    plaintext = b"\0" * (8 << 20) + b"tail"
+    compressor = zlib.compressobj(wbits=31)
+    gzipped = compressor.compress(plaintext) + compressor.flush()
+
+    pieces = [piece async for piece in _gzip_decompress_stream(_aiter([gzipped[:10], gzipped[10:]]))]
+
+    assert b"".join(pieces) == plaintext
+    assert max(map(len, pieces)) <= 1 << 20
+
+
+class _CursorDyingAfterOneDoc(_AsyncCursorMock):
+    def __aiter__(self):
+        async def _gen():
+            yield self._docs[0]
+            raise AutoReconnect("primary stepped down")
+
+        return _gen()
+
+
+def _findings_cursor_dies(db: MagicMock) -> None:
+    db.findings.find = MagicMock(return_value=_CursorDyingAfterOneDoc([{"_id": "f1", "scan_id": "scan-1"}]))
+
+
+def _gridfs_id_lookup_dies(db: MagicMock) -> None:
+    db.analysis_results.distinct = AsyncMock(side_effect=AutoReconnect("primary stepped down"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("break_source", [_findings_cursor_dies, _gridfs_id_lookup_dies], ids=["cursor", "distinct"])
+async def test_an_archive_whose_source_read_fails_counts_as_integrity_not_s3(archive_env, break_source):
+    db = _make_mock_db(scan_doc=_make_scan_doc())
+    break_source(db)
+
+    with _patch_repos()(), patch(f"{MODULE}.count_archive_failure") as count_failure:
+        assert await archive_scan(db, "scan-1") is None
+
+    count_failure.assert_called_once_with("archive", "integrity")
+    assert archive_env.objects == {}

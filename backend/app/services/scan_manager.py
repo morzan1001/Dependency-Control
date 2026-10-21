@@ -4,7 +4,9 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
+from fastapi import HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import DuplicateKeyError
 
 from app.core.constants import SCAN_STATUS_PENDING, SCAN_USABLE_STATUSES
 from app.core.worker import worker_manager
@@ -20,6 +22,12 @@ from app.schemas.ingest import IngestEnvelope
 from app.services.waivers.matching import record_matches, route_waiver, waiver_criteria, waiver_strong_match
 
 logger = logging.getLogger(__name__)
+
+
+def _restoring_conflict() -> HTTPException:
+    return HTTPException(
+        status.HTTP_409_CONFLICT, "The scan is being restored from its archive; retry once the restore is done"
+    )
 
 
 def deterministic_scan_id(project_id: str, pipeline_id: int | None, commit_hash: str | None) -> str | None:
@@ -114,13 +122,24 @@ class ScanManager:
         # pipeline_id 0 derives nothing and still needs a scan of its own.
         return deterministic_scan_id(str(self.project.id), data.pipeline_id, data.commit_hash) or str(uuid.uuid4())
 
+    async def refuse_while_restoring(self, scan_id: str) -> None:
+        """Called before an upload's first scan-scoped write, since a rollback of the restore would delete it."""
+        if await self.db.scans.find_one({"_id": scan_id, "restore_in_progress": True}, {"_id": 1}):
+            raise _restoring_conflict()
+
+    async def upsert_scan(self, scan_id: str, update: dict[str, Any]) -> None:
+        try:
+            await ScanRepository(self.db).upsert_unless_restoring(scan_id, update)
+        except DuplicateKeyError:
+            raise _restoring_conflict() from None
+
     async def find_or_create_scan(self, data: IngestEnvelope, scan_id: str, scan_type: str | None = None) -> None:
         """scan_type is only set, never cleared, since the run's other scanners pass none."""
         update = await self.record_release_and_build_scan_upsert(data, scan_id, datetime.now(timezone.utc))
         update["$setOnInsert"]["sbom_refs"] = []
         if scan_type is not None:
             update["$set"]["scan_type"] = scan_type
-        await ScanRepository(self.db).upsert({"_id": scan_id}, update)
+        await self.upsert_scan(scan_id, update)
 
     async def register_result(self, scan_id: str, analyzer_name: str, trigger_analysis: bool = False) -> None:
         now = datetime.now(timezone.utc)

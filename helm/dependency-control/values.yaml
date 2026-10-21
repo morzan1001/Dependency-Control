@@ -460,6 +460,9 @@ archiving:
     bucket: "dc-archives"
     region: "us-east-1"
     useSSL: true
+    # Key prefix (e.g. "dc-prod") for a bucket shared with other writers or DC instances; the orphan
+    # reaper only touches bundles under it. Changing it later leaves existing bundles where they are.
+    keyPrefix: ""
     # Credentials - leave empty if using an existing secret or external-secrets
     accessKey: ""
     secretKey: ""

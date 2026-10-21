@@ -117,8 +117,7 @@ async def test_the_active_worker_gauge_counts_the_workers_busy_with_a_job(monkey
         await release.wait()
         return SCAN_STATUS_COMPLETED
 
-    monkeypatch.setattr("app.core.worker.housekeeping_loop", AsyncMock())
-    monkeypatch.setattr("app.core.worker.stale_scan_loop", AsyncMock())
+    monkeypatch.setattr("app.core.worker.background_loops", lambda _manager: [])
     monkeypatch.setattr("app.core.worker.get_database", AsyncMock(return_value=db))
     monkeypatch.setattr("app.core.worker.run_analysis", _held_analysis)
     manager = AnalysisWorkerManager(num_workers=3)

@@ -252,6 +252,15 @@ def test_a_malformed_property_entry_drops_only_that_entry():
     assert asset.properties == {"key_size": "2048"}
 
 
+def test_a_property_name_starting_with_a_dollar_is_dropped():
+    """A key like $regex would re-hydrate as Extended JSON on restore, so the archived scan could not come back."""
+    comp = _rsa_component(properties=[{"name": "$regex", "value": "x"}, {"name": "key_size", "value": "2048"}])
+
+    [asset] = parse_crypto_components([comp])
+
+    assert asset.properties == {"key_size": "2048"}
+
+
 def test_repeated_occurrence_locations_are_kept_once_in_order():
     occurrences = [{"location": "b.py"}, {"location": "a.py"}, "bad", {"location": "b.py"}, {"line": 3}]
 

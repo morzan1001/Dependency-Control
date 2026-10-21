@@ -47,7 +47,7 @@ from app.repositories.releases import (
     RELEASES_UPSERT_KEY_NAME,
     ReleaseRepository,
 )
-from app.repositories.scans import TAG_BUILD_MATCH
+from app.repositories.scans import RESTORED_SCAN_MATCH, TAG_BUILD_MATCH
 from app.repositories.update_frequency import ScanUpdateDeltaRepository
 from app.repositories.users import UserRepository
 from app.repositories.waivers import WaiverRepository
@@ -283,6 +283,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         name="scans_tag_builds",
         partialFilterExpression=TAG_BUILD_MATCH,
     )
+    await scans.create_index("restored_at", name="scans_restored", partialFilterExpression=RESTORED_SCAN_MATCH)
 
     await releases.create_index(
         RELEASES_LATEST_LOOKUP_KEY,
@@ -370,6 +371,10 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     await archive_metadata.create_index("scan_id", unique=True)
     await archive_metadata.create_index([("project_id", pymongo.ASCENDING), ("archived_at", pymongo.DESCENDING)])
+    await archive_metadata.create_index(
+        [("project_id", pymongo.ASCENDING), ("branch", pymongo.ASCENDING), ("archived_at", pymongo.DESCENDING)]
+    )
+    await archive_metadata.create_index([("archived_at", pymongo.DESCENDING)])
 
     await chat_conversations.create_index(
         [("user_id", pymongo.ASCENDING), ("updated_at", pymongo.DESCENDING)],

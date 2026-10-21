@@ -1,8 +1,11 @@
 import json
 import tracemalloc
+from datetime import datetime, timezone
 
 import pytest
 from bson import Binary, ObjectId
+
+_ARCHIVED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 
 
 async def _async_iter(items):
@@ -33,6 +36,7 @@ async def test_write_then_read_roundtrip():
                 ),
             },
             stats=stats,
+            archived_at=_ARCHIVED_AT,
         ):
             yield chunk
 
@@ -88,6 +92,7 @@ async def test_write_includes_crypto_assets_in_bundle_and_stats():
                 ),
             },
             stats=stats,
+            archived_at=_ARCHIVED_AT,
         ):
             yield chunk
 
@@ -138,6 +143,7 @@ async def test_roundtrip_preserves_datetime_and_objectid_bson_types():
                 "findings": _async_iter([{"_id": finding_oid, "severity": "HIGH", "detected_at": created}]),
             },
             stats=stats,
+            archived_at=_ARCHIVED_AT,
         ):
             yield chunk
 
@@ -171,14 +177,14 @@ async def test_roundtrip_preserves_datetime_and_objectid_bson_types():
 
 @pytest.mark.asyncio
 async def test_read_rejects_unknown_version():
-    from app.services.archive_bundle import read_bundle_frames
+    from app.services.archive_bundle import BundleVersionError, read_bundle_frames
 
     bad_header = json.dumps({"version": 99, "scan_id": "x", "project_id": "y"}).encode() + b"\n"
 
     async def source():
         yield bad_header
 
-    with pytest.raises(ValueError, match="version"):
+    with pytest.raises(BundleVersionError):
         async for _ in read_bundle_frames(source()):
             pass
 
@@ -197,6 +203,21 @@ async def test_read_detects_integrity_failure():
         yield payload
 
     with pytest.raises(ValueError, match=r"checksum|integrity"):
+        async for _ in read_bundle_frames(source()):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_a_line_that_is_not_an_object_is_malformed():
+    from app.services.archive_bundle import read_bundle_frames
+
+    header = json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {}}).encode() + b"\n"
+    marker = json.dumps({"collection": "findings"}).encode() + b"\n"
+
+    async def source():
+        yield header + marker + b"[1, 2]\n"
+
+    with pytest.raises(ValueError, match="Malformed bundle line"):
         async for _ in read_bundle_frames(source()):
             pass
 
@@ -255,6 +276,7 @@ async def test_rewrite_keeps_header_and_stats_and_redigests_an_edited_doc():
             scan_doc={"_id": "scan-1", "project_id": "p1"},
             collections={"findings": _async_iter([{"_id": "f1", "severity": "HIGH", "note": "before"}])},
             stats=BundleStats(),
+            archived_at=_ARCHIVED_AT,
         )
     )
     original_events = [event async for event in read_bundle_frames(_async_iter([original]))]
@@ -305,6 +327,7 @@ async def test_rewrite_that_changes_no_line_reproduces_a_bundle_read_in_tiny_chu
                 "callgraphs": _async_iter([]),
             },
             stats=BundleStats(),
+            archived_at=_ARCHIVED_AT,
         )
     )
     chunks = [original[i : i + 3] for i in range(0, len(original), 3)]

@@ -904,7 +904,7 @@ HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS: int = 6
 # Night in europe-west1, so the reconcile's repair writes stay out of the working day.
 HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC: int = 2
 
-# Usable rescans each build keeps; older runs are near-identical full copies of the same SBOM.
+# Rescans each build keeps, failed ones included; older runs are near-identical full copies of the same SBOM.
 RESCAN_HISTORY_RUNS: int = 7
 
 # Only the insert runs under this lock.
@@ -929,6 +929,8 @@ SETTINGS_MODE_GLOBAL: SettingsMode = "global"
 
 ARCHIVE_BUNDLE_VERSION = 2
 ARCHIVE_PATH_TEMPLATE = "{project_id}/{scan_id}-{archived_at_unix}.bundle"
+# ARCHIVE_PATH_TEMPLATE's shape: the orphan reaper deletes no other key, so a shared bucket keeps foreign objects.
+ARCHIVE_KEY_PATTERN = r"[^/]+/(?P<scan_id>[^/]+)-\d+\.bundle"
 ARCHIVE_RESTORE_LOCK_TEMPLATE = "restore:{scan_id}"
 REACHABILITY_LOCK_TEMPLATE = "reachability:{scan_id}"
 
@@ -965,7 +967,8 @@ RETENTION_PROTECTED_FLAG_VALUES: list[object] = [True, 1]
 # Scan ids per round trip of the release-flag reconcile; both directions splice one into an $in.
 RELEASE_FLAG_RECONCILE_BATCH_SIZE = 1000
 
-ARCHIVE_ORPHAN_MIN_AGE_HOURS = 24
+# Uploads precede the document that references them, so the S3, callgraph and GridFS reapers spare younger ones.
+ORPHAN_MIN_AGE_HOURS = 24
 
 ADHOC_JOB_TTL_SECONDS: int = 24 * 3600
 

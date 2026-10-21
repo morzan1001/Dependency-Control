@@ -21,7 +21,7 @@ from app.core.constants import (
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
 )
-from app.core.housekeeping import housekeeping_loop, stale_scan_loop
+from app.core.housekeeping import background_loops
 from app.core.metrics import (
     worker_active_count,
     worker_job_duration_seconds,
@@ -112,8 +112,7 @@ class AnalysisWorkerManager:
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.num_workers = num_workers
         self.workers: list[asyncio.Task[None]] = []
-        self.housekeeping_task: asyncio.Task[None] | None = None
-        self.stale_scan_task: asyncio.Task[None] | None = None
+        self.background_tasks: list[asyncio.Task[None]] = []
         self._shutting_down: bool = False
         self._active_scans: set[str] = set()
         self._no_active_scans = asyncio.Event()
@@ -131,19 +130,15 @@ class AnalysisWorkerManager:
             task = asyncio.create_task(self.worker(f"worker-{i}"))
             self.workers.append(task)
 
-        self.housekeeping_task = asyncio.create_task(housekeeping_loop(self))
-        logger.info("Housekeeping task started.")
-
-        self.stale_scan_task = asyncio.create_task(stale_scan_loop(self))
-        logger.info("Stale scan loop started.")
+        self.background_tasks = [asyncio.create_task(loop) for loop in background_loops(self)]
+        logger.info("Housekeeping loops started.")
 
     async def _stop_background_tasks(self) -> None:
-        background = [task for task in (self.housekeeping_task, self.stale_scan_task) if task]
-        for task in background:
+        for task in self.background_tasks:
             task.cancel()
-        if background:
+        if self.background_tasks:
             # Lets their cleanup (lock release, multipart abort) run before shutdown closes the Mongo client.
-            await asyncio.wait(background, timeout=3)
+            await asyncio.wait(self.background_tasks, timeout=3)
             logger.info("Background tasks cancelled.")
 
     def _track_scan(self, scan_id: str) -> None:

@@ -6,11 +6,16 @@ from typing import Any
 
 from aiobotocore.session import AioSession, get_session
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 
 from app.core.config import settings
 from app.core.constants import S3_MULTIPART_PART_SIZE
 
 logger = logging.getLogger(__name__)
+
+# HEAD carries no error body, so S3 names a missing bucket by status alone; S3-compatible stores spell it out.
+_MISSING_BUCKET_CODES = frozenset({"404", "NoSuchBucket", "NotFound"})
+_DOWNLOAD_CHUNK_BYTES = 65536
 
 
 @functools.cache
@@ -35,9 +40,8 @@ async def get_s3_client() -> AsyncGenerator[Any, None]:
             request_checksum_calculation="when_required",
             response_checksum_validation="when_required",
         ),
+        "endpoint_url": settings.S3_ENDPOINT_URL,
     }
-    if settings.S3_ENDPOINT_URL:
-        kwargs["endpoint_url"] = settings.S3_ENDPOINT_URL
     async with session.create_client("s3", **kwargs) as client:
         yield client
 
@@ -46,27 +50,25 @@ def _bucket(bucket: str | None) -> str:
     return bucket or settings.S3_BUCKET_NAME
 
 
+def archive_key_prefix() -> str:
+    prefix = settings.S3_KEY_PREFIX.strip("/")
+    return f"{prefix}/" if prefix else ""
+
+
 async def ensure_bucket_exists() -> None:
-    if not is_archive_enabled():
-        return
     async with get_s3_client() as s3:
         try:
             await s3.head_bucket(Bucket=settings.S3_BUCKET_NAME)
             logger.info(f"S3 bucket '{settings.S3_BUCKET_NAME}' exists.")
-        except Exception:
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") not in _MISSING_BUCKET_CODES:
+                raise
             logger.info(f"Creating S3 bucket '{settings.S3_BUCKET_NAME}'...")
             await s3.create_bucket(Bucket=settings.S3_BUCKET_NAME)
 
 
-async def upload_stream(
-    key: str,
-    source: AsyncIterator[bytes],
-    *,
-    content_type: str = "application/octet-stream",
-    bucket: str | None = None,
-    part_size: int = S3_MULTIPART_PART_SIZE,
-) -> int:
-    b = _bucket(bucket)
+async def upload_stream(key: str, source: AsyncIterator[bytes], *, content_type: str) -> int:
+    b = settings.S3_BUCKET_NAME
     async with get_s3_client() as s3:
         init = await s3.create_multipart_upload(Bucket=b, Key=key, ContentType=content_type)
         upload_id = init["UploadId"]
@@ -80,9 +82,9 @@ async def upload_stream(
                 if not chunk:
                     continue
                 buffer.extend(chunk)
-                while len(buffer) >= part_size:
-                    part = bytes(buffer[:part_size])
-                    del buffer[:part_size]
+                while len(buffer) >= S3_MULTIPART_PART_SIZE:
+                    part = bytes(buffer[:S3_MULTIPART_PART_SIZE])
+                    del buffer[:S3_MULTIPART_PART_SIZE]
                     resp = await s3.upload_part(
                         Bucket=b, Key=key, UploadId=upload_id, PartNumber=part_number, Body=part
                     )
@@ -114,11 +116,11 @@ async def upload_stream(
             raise
 
 
-async def download_stream(key: str, *, bucket: str | None = None, chunk_size: int = 65536) -> AsyncIterator[bytes]:
+async def download_stream(key: str, *, bucket: str | None = None) -> AsyncIterator[bytes]:
     async with get_s3_client() as s3:
         response = await s3.get_object(Bucket=_bucket(bucket), Key=key)
         async with response["Body"] as stream:
-            async for chunk in stream.iter_chunks(chunk_size):
+            async for chunk in stream.iter_chunks(_DOWNLOAD_CHUNK_BYTES):
                 yield chunk
 
 
@@ -127,20 +129,14 @@ async def delete_object(key: str, *, bucket: str | None = None) -> None:
         await s3.delete_object(Bucket=_bucket(bucket), Key=key)
 
 
-async def list_objects(prefix: str = "", *, bucket: str | None = None) -> list[dict[str, Any]]:
-    b = _bucket(bucket)
-    objects: list[dict[str, Any]] = []
-    token: str | None = None
+async def list_objects(prefix: str) -> AsyncIterator[list[dict[str, Any]]]:
+    """One listing page, at most 1000 objects, at a time."""
+    kwargs: dict[str, Any] = {"Bucket": settings.S3_BUCKET_NAME, "Prefix": prefix}
     async with get_s3_client() as s3:
         while True:
-            kwargs: dict[str, Any] = {"Bucket": b, "Prefix": prefix}
-            if token is not None:
-                kwargs["ContinuationToken"] = token
             response = await s3.list_objects_v2(**kwargs)
-            objects.extend(response.get("Contents", []))
-            if not response.get("IsTruncated"):
-                break
+            yield response.get("Contents", [])
             token = response.get("NextContinuationToken")
-            if not token:
-                break
-    return objects
+            if not response.get("IsTruncated") or not token:
+                return
+            kwargs["ContinuationToken"] = token

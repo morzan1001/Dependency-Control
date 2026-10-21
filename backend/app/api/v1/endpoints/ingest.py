@@ -9,7 +9,7 @@ from app.api.deps import DatabaseDep, ProjectIngestDep, get_system_settings
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.request_body import read_json_body
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_409, RESP_AUTH_400_409_500
 from app.core.constants import (
     NOTIFICATION_EVENT_SBOM_INGESTED,
     RETENTION_ACTION_NONE,
@@ -49,7 +49,7 @@ router = CustomAPIRouter()
     "/ingest/trufflehog",
     summary="Ingest TruffleHog Results",
     status_code=200,
-    responses=RESP_AUTH,
+    responses=RESP_AUTH_409,
 )
 async def ingest_trufflehog(
     request: Request,
@@ -78,7 +78,7 @@ def _route_findings_ingest(analyzer: str, label: str, model: type[PipelineIngest
         summary=f"Ingest {label} Results",
         description=description,
         status_code=200,
-        responses=RESP_AUTH,
+        responses=RESP_AUTH_409,
         name=f"ingest_{analyzer}",
     )(ingest)
 
@@ -114,7 +114,7 @@ async def _upload_recognized_sboms(sboms: list[Any], db: Any, scan_id: str) -> l
     "/ingest",
     summary="Ingest SBOM",
     status_code=202,
-    responses=RESP_AUTH_400_500,
+    responses=RESP_AUTH_400_409_500,
 )
 async def ingest_sbom(
     request: Request,
@@ -130,6 +130,7 @@ async def ingest_sbom(
         raise HTTPException(status_code=400, detail="No SBOM provided")
 
     scan_id = manager.run_scan_id(data)
+    await manager.refuse_while_restoring(scan_id)
     sbom_refs = await _upload_recognized_sboms(data.sboms, db, scan_id)
     if not sbom_refs:
         raise HTTPException(
@@ -143,7 +144,7 @@ async def ingest_sbom(
     # Replaced, never appended, so CI retries cannot pile up SBOMs; the orphan reaper frees the superseded uploads.
     scan_update["$set"]["sbom_refs"] = sbom_refs
     scan_update["$inc"] = {"sbom_generation": 1}
-    await db.scans.update_one({"_id": scan_id}, scan_update, upsert=True)
+    await manager.upsert_scan(scan_id, scan_update)
     await ScanRepository(db).reopen_finished(scan_id, statuses=[*SCAN_USABLE_STATUSES, SCAN_STATUS_FAILED])
     await manager.register_result(scan_id, "sbom", trigger_analysis=True)
 

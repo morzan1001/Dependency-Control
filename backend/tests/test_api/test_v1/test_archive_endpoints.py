@@ -330,34 +330,54 @@ class TestRestoreArchive:
             db=MagicMock(),
         )
 
-    def test_raises_500_when_restore_fails(self, admin_user):
+    @pytest.mark.parametrize(
+        ("reason", "status_code", "detail"),
+        [
+            ("lock_held", 409, "Restore already in progress"),
+            ("already_exists", 409, "Scan already exists in MongoDB"),
+            ("not_found", 404, "Archive not found for this project"),
+            ("integrity", 500, "Failed to restore archive"),
+            ("s3_error", 500, "Failed to restore archive"),
+        ],
+    )
+    def test_a_failed_restore_answers_by_its_reason(self, admin_user, reason, status_code, detail):
         from app.api.v1.endpoints.archives import restore_archive
+        from app.services.archive import RestoreFailed
 
-        metadata = _make_archive_metadata()
         mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-
-        # find_one None so the endpoint maps to 500, not 409
-        mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value=None)
+        mock_repo.find_by_scan_id = AsyncMock(return_value=_make_archive_metadata())
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
             patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.restore_scan", new_callable=AsyncMock, return_value=None),
+            patch(f"{MODULE}.restore_scan", new_callable=AsyncMock, side_effect=RestoreFailed(reason)),
             pytest.raises(HTTPException) as exc_info,
         ):
-            asyncio.run(
-                restore_archive(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=admin_user,
-                    db=mock_db,
-                )
-            )
+            asyncio.run(restore_archive(project_id="proj-1", scan_id="scan-1", current_user=admin_user, db=MagicMock()))
 
-        assert exc_info.value.status_code == 500
+        assert (exc_info.value.status_code, exc_info.value.detail) == (status_code, detail)
+
+    def test_a_restore_while_another_one_runs_is_409(self, admin_user, archive_env):
+        from app.api.v1.endpoints.archives import restore_archive
+        from app.repositories.distributed_locks import DistributedLocksRepository
+
+        db = FakeDatabase()
+
+        async def restore_during_another() -> HTTPException:
+            await db.archive_metadata.insert_one(_make_archive_metadata().model_dump(by_alias=True))
+            assert await DistributedLocksRepository(db).acquire_lock("restore:scan-1", "other-pod", ttl_seconds=600)
+            with pytest.raises(HTTPException) as exc_info:
+                await restore_archive(project_id="proj-1", scan_id="scan-1", current_user=admin_user, db=db)
+            return exc_info.value
+
+        with (
+            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
+        ):
+            error = asyncio.run(restore_during_another())
+
+        assert (error.status_code, error.detail) == (409, "Restore already in progress")
 
 
 class TestDownloadArchive:
@@ -729,6 +749,7 @@ async def _legacy_bundle(*, encrypted: bool) -> bytes:
             ),
         },
         stats=BundleStats(),
+        archived_at=datetime.now(timezone.utc),
     )
     gzipped = _gzip_compress_stream(frames)
     return b"".join([chunk async for chunk in (encrypt_stream(gzipped) if encrypted else gzipped)])
@@ -769,7 +790,7 @@ class TestDownloadStripsPlaintextSecrets:
             db.scans.insert_one = AsyncMock()
             db.findings.insert_many = AsyncMock()
             db.analysis_results.insert_many = AsyncMock()
-            reason, _ = await _replay_bundle(db, "scan-1", _aiter([bundle]))
+            reason, _ = await _replay_bundle(db, "scan-1", "proj-1", _aiter([bundle]))
             return response, bundle, reason, db
 
         with (
@@ -795,35 +816,37 @@ class TestDownloadStripsPlaintextSecrets:
         assert restored_result["result"]["findings"][0]["RawHash"] == _LEGACY_RAW_HASH
 
 
-class TestRestoreReturns409WhenScanAlreadyExists:
-    def test_returns_409_when_scan_already_exists_in_mongo(self, admin_user):
-        from app.api.v1.endpoints.archives import restore_archive
+class TestDownloadFailureMetric:
+    def test_a_bundle_that_is_not_gzip_counts_as_an_integrity_failure(self, admin_user):
+        from prometheus_client import REGISTRY
 
-        metadata = _make_archive_metadata()
+        from app.api.v1.endpoints.archives import download_archive
+
+        metadata = _make_archive_metadata(s3_key="proj-1/scan-1-1.bundle")
         mock_repo = MagicMock()
         mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
+        s3 = FakeS3Client()
+        s3.objects[metadata.s3_key] = b"not a gzip stream"
+        labels = {"operation": "download", "reason": "integrity"}
+        before = REGISTRY.get_sample_value("archive_failures_total", labels) or 0.0
 
-        mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value={"_id": "scan-1"})
+        async def download() -> None:
+            response = await download_archive(
+                project_id="proj-1", scan_id="scan-1", current_user=admin_user, db=MagicMock()
+            )
+            with pytest.raises(zlib.error):
+                async for _ in response.body_iterator:
+                    pass
 
         with (
-            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
+            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock, return_value=_SHOP),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
             patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.restore_scan", new_callable=AsyncMock, return_value=None),
-            pytest.raises(HTTPException) as exc_info,
+            patch("app.core.s3.get_s3_client", lambda: fake_get_s3_client(s3)),
         ):
-            asyncio.run(
-                restore_archive(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=admin_user,
-                    db=mock_db,
-                )
-            )
+            asyncio.run(download())
 
-        assert exc_info.value.status_code == 409
-        assert "already exists" in exc_info.value.detail
+        assert REGISTRY.get_sample_value("archive_failures_total", labels) == before + 1
 
 
 class TestPinEmitsAuditLog:
@@ -850,8 +873,32 @@ class TestPinEmitsAuditLog:
 
         assert result.pinned is True
 
-        audit_records = [r for r in caplog.records if r.message == "archive.pin"]
-        assert len(audit_records) == 1
-        rec = audit_records[0]
-        assert getattr(rec, "scan_id", None) == "scan-1"
-        assert getattr(rec, "project_id", None) == "proj-1"
+        (audit,) = [r.getMessage() for r in caplog.records if r.getMessage().startswith("archive.pin ")]
+        assert "scan_id=scan-1" in audit
+        assert "project_id=proj-1" in audit
+        assert f"user_id={admin_user.id}" in audit
+
+
+_ROUTE_STATUSES = {"401", "403", "404", "422"}
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "statuses"),
+    [
+        ("get", "/api/v1/projects/{project_id}/archives", {"200", "501", *_ROUTE_STATUSES}),
+        ("get", "/api/v1/projects/{project_id}/archives/branches", {"200", "501", *_ROUTE_STATUSES}),
+        (
+            "post",
+            "/api/v1/projects/{project_id}/archives/{scan_id}/restore",
+            {"200", "409", "500", "501", *_ROUTE_STATUSES},
+        ),
+        ("get", "/api/v1/projects/{project_id}/archives/{scan_id}/download", {"200", "501", *_ROUTE_STATUSES}),
+        ("post", "/api/v1/projects/{project_id}/scans/{scan_id}/pin", {"200", *_ROUTE_STATUSES}),
+        ("post", "/api/v1/projects/{project_id}/scans/{scan_id}/unpin", {"200", *_ROUTE_STATUSES}),
+        ("get", "/api/v1/archives/all", {"200", "401", "403", "422", "501"}),
+    ],
+)
+def test_each_archive_route_documents_the_statuses_it_answers(method, path, statuses):
+    from app.main import app
+
+    assert set(app.openapi()["paths"][path][method]["responses"]) == statuses

@@ -115,7 +115,7 @@ _WRITERS: dict[tuple[str, str], _Writer] = {
 
 
 def _every_file_outlived_the_window(monkeypatch) -> None:
-    monkeypatch.setattr("app.services.gridfs_maintenance.ARCHIVE_ORPHAN_MIN_AGE_HOURS", -1)
+    monkeypatch.setattr("app.services.gridfs_maintenance.ORPHAN_MIN_AGE_HOURS", -1)
 
 
 async def _file_ids(db) -> set[str]:

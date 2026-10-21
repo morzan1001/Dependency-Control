@@ -21,6 +21,7 @@ async def process_findings_ingest(
     """Triggers no analysis, so a fast scanner cannot complete the scan before slower ones such as the SBOM finish."""
     scan_id = manager.run_scan_id(data)
     result_dict = data.model_dump(exclude=set(IngestEnvelope.model_fields))
+    await manager.refuse_while_restoring(scan_id)
     await ScanRepository(manager.db).touch(scan_id)
     await AnalysisResultRepository(manager.db).save_result(scan_id, analyzer_name, result_dict, source=data.job_name)
     await manager.find_or_create_scan(data, scan_id)

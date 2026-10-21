@@ -9,6 +9,7 @@ from typing import Any, Literal, NamedTuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from app.core import UNDATED
 from app.core.constants import (
@@ -35,6 +36,8 @@ BRANCH_SCAN_FILTER: dict[str, Any] = {"$expr": {"$ne": ["$branch", "$commit_tag"
 HAS_SBOM_MATCH: dict[str, Any] = {"sbom_refs": {"$exists": True, "$ne": []}}
 # Builds with a non-empty tag; the scans_tag_builds index filters on this exact predicate, which a query must repeat.
 TAG_BUILD_MATCH: dict[str, Any] = {"commit_tag": {"$gt": ""}}
+# Every scan stores restored_at, null until a restore; the scans_restored index filters on this exact predicate.
+RESTORED_SCAN_MATCH: dict[str, Any] = {"restored_at": {"$type": "date"}}
 # Best first: a rescan, dated today over an older commit, ranks last, yet still heads a project with nothing else.
 _TIP_TIERS: tuple[dict[str, Any], ...] = tuple(
     {**sbom, **tier}
@@ -159,8 +162,14 @@ class ScanRepository:
         await self.collection.insert_one(scan.model_dump(by_alias=True))
         return scan
 
-    async def upsert(self, query: dict[str, Any], update: dict[str, Any]) -> None:
-        await self.collection.update_one(query, update, upsert=True)
+    async def upsert_unless_restoring(self, scan_id: str, update: dict[str, Any]) -> None:
+        """Raises DuplicateKeyError while a restore writes the scan, as its rollback would delete this write."""
+        guarded = {"_id": scan_id, "restore_in_progress": {"$ne": True}}
+        try:
+            await self.collection.update_one(guarded, update, upsert=True)
+        except DuplicateKeyError:
+            # The non-_id term opts out of the server's upsert retry, so losing a race to create the scan lands here too.
+            await self.collection.update_one(guarded, update, upsert=True)
 
     async def touch(self, scan_id: str) -> None:
         await self.collection.update_one({"_id": scan_id}, {"$set": {"updated_at": datetime.now(timezone.utc)}})
@@ -200,9 +209,11 @@ class ScanRepository:
         )
         return claimed
 
-    async def mark_failed(self, scan_id: str, error: str, *, worker_id: str | None = None) -> bool:
+    async def mark_failed(
+        self, scan_id: str, error: str, *, worker_id: str | None = None, guard: dict[str, Any] | None = None
+    ) -> bool:
         """Guarded on status and worker, so a stale writer cannot fail a run that another worker has since claimed."""
-        query: dict[str, Any] = {"_id": scan_id, "status": SCAN_STATUS_PROCESSING}
+        query: dict[str, Any] = {"_id": scan_id, "status": SCAN_STATUS_PROCESSING, **(guard or {})}
         if worker_id:
             query["worker_id"] = worker_id
         now = datetime.now(timezone.utc)
@@ -221,10 +232,15 @@ class ScanRepository:
         await self.collection.update_one({"_id": root_id, "sbom_generation": sbom_generation}, {"$set": fields})
 
     async def requeue(
-        self, scan_id: str, worker_id: str | None, *, counter: Literal["retry_count", "stuck_retry_count"]
+        self,
+        scan_id: str,
+        worker_id: str | None,
+        *,
+        counter: Literal["retry_count", "stuck_retry_count"],
+        guard: dict[str, Any] | None = None,
     ) -> bool:
         result = await self.collection.update_one(
-            {"_id": scan_id, "status": SCAN_STATUS_PROCESSING, "worker_id": worker_id},
+            {"_id": scan_id, "status": SCAN_STATUS_PROCESSING, "worker_id": worker_id, **(guard or {})},
             {
                 "$set": {"status": SCAN_STATUS_PENDING, "worker_id": None, "analysis_started_at": None},
                 "$inc": {counter: 1},

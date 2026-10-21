@@ -2,26 +2,31 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 import zlib
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import partial
 from typing import Any
 
-from bson import Binary, ObjectId, json_util
+from bson import Binary, ObjectId
 from cryptography.exceptions import InvalidTag
 from gridfs.errors import FileExists, NoFile
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket, AsyncIOMotorGridIn
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
+from app.core import abatched
 from app.core.config import settings
 from app.core.constants import (
+    ARCHIVE_BATCH_SIZE,
     ARCHIVE_GRIDFS_CHUNK_FRAME,
     ARCHIVE_GRIDFS_FRAME,
+    ARCHIVE_KEY_PATTERN,
     ARCHIVE_PATH_TEMPLATE,
     ARCHIVE_RESTORE_LOCK_TEMPLATE,
     ENCRYPTION_MAGIC,
+    ORPHAN_MIN_AGE_HOURS,
     REACHABILITY_LOCK_TEMPLATE,
     RESTORE_INSERT_BATCH_SIZE,
     RETENTION_PROTECTED_FLAG_VALUES,
@@ -33,16 +38,20 @@ from app.core.log_utils import sanitize_for_log
 from app.core.metrics import (
     ArchiveFailureReason,
     archive_bundle_compressed_bytes,
-    archive_failures_total,
     archive_operation_duration_seconds,
     archive_operations_total,
+    archive_orphan_objects_reaped_total,
+    count_archive_failure,
 )
 from app.core.s3 import (
+    archive_key_prefix,
     delete_object,
     download_stream,
     is_archive_enabled,
+    list_objects,
     upload_stream,
 )
+from app.db.mongodb import open_gridfs_download_with_retry
 from app.models.archive import ArchiveMetadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import (
@@ -52,13 +61,16 @@ from app.repositories.distributed_locks import (
     new_lock_holder,
     run_holding_lock,
 )
+from app.repositories.scans import RESTORED_SCAN_MATCH
 from app.schemas.archive import ArchiveRestoreResponse
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.analyzers.license_compliance.normalizer import BUNDLE_LICENSE_PARAMETER, strip_license_parameters
 from app.services.archive_bundle import (
     BundleFrames,
     BundleStats,
+    BundleVersionError,
     json_line,
+    load_json_line,
     read_bundle_frames,
     rewrite_bundle_frames,
 )
@@ -77,13 +89,25 @@ _ARCHIVE_LOCK_TTL_SECONDS = 600
 _GRIDFS_RESTORE_LOCK_POLL_SECONDS = 1
 # zlib releases the GIL, so a chunk this large (a whole SBOM line) compresses in a thread instead of stalling the loop.
 _COMPRESS_IN_THREAD_MIN_BYTES = 1 << 20
+_DECOMPRESS_PIECE_BYTES = 1 << 20
 
 # Marker names are attacker-influenceable (the footer is a plain sha256, not an HMAC), so others abort the restore.
 _RESTORABLE_COLLECTIONS = frozenset({*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FRAME, ARCHIVE_GRIDFS_CHUNK_FRAME})
 
 
 class _ArchiveSourceReadError(Exception):
-    """Aborts the upload so housekeeping, which deletes only archived scans, cannot lose an unread document."""
+    """A source read failed; counted as INTEGRITY, not S3_ERROR."""
+
+
+class RestoreFailed(Exception):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _restore_failed(reason: str) -> RestoreFailed:
+    count_archive_failure("restore", reason)
+    return RestoreFailed(reason)
 
 
 def _hash_plaintext_secrets(collection: str, doc: dict[str, Any]) -> None:
@@ -110,36 +134,51 @@ def _strip_license_parameters(collection: str, doc: dict[str, Any]) -> None:
 async def _hash_plaintext_secrets_in(
     collection: str, docs: AsyncIterator[dict[str, Any]]
 ) -> AsyncIterator[dict[str, Any]]:
-    async for doc in docs:
-        _hash_plaintext_secrets(collection, doc)
-        yield doc
+    try:
+        async for doc in docs:
+            _hash_plaintext_secrets(collection, doc)
+            yield doc
+    except PyMongoError as e:
+        raise _ArchiveSourceReadError(str(e)) from e
 
 
 async def _stream_gridfs_chunks(db: Any, scan_doc: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
     """Each file opens with an n=0 frame, even when empty."""
     scan_id = scan_doc["_id"]
-    file_ids = dict.fromkeys(
-        [
-            *extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", [])),
-            *await db.analysis_results.distinct("result_gridfs_id", {"scan_id": scan_id}),
-            *await db.callgraphs.distinct("graph_gridfs_id", {"scan_id": scan_id}),
-        ]
-    )
+    try:
+        file_ids = dict.fromkeys(
+            [
+                *extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", [])),
+                *await db.analysis_results.distinct("result_gridfs_id", {"scan_id": scan_id}),
+                *await db.callgraphs.distinct("graph_gridfs_id", {"scan_id": scan_id}),
+            ]
+        )
+    except PyMongoError as e:
+        raise _ArchiveSourceReadError(str(e)) from e
     for gid in file_ids:
         try:
             file_id = ObjectId(gid)
-            stream = await AsyncIOMotorGridFSBucket(db).open_download_stream(file_id)
+            stream = await open_gridfs_download_with_retry(AsyncIOMotorGridFSBucket(db), file_id)
             n = 0
             async for chunk in iter_gridfs_chunks(stream):
                 yield {"_id": file_id, "n": n, "filename": stream.filename, "data": Binary(chunk)}
                 n += 1
             if n == 0:
                 yield {"_id": file_id, "n": 0, "filename": stream.filename, "data": Binary(b"")}
+        except NoFile:
+            # Gone for good, so the bundle loses nothing; aborting would keep retention from the scan forever.
+            logger.warning(
+                "GridFS file %s of scan %s is already gone, archiving the scan without it",
+                sanitize_for_log(gid),
+                sanitize_for_log(scan_id),
+            )
         except Exception as e:
             # Re-raised: a skipped file would archive as success and housekeeping would then delete the only copy.
             logger.error(
-                "Failed to load GridFS file; aborting archive to avoid data loss",
-                extra={"gridfs_id": sanitize_for_log(gid), "error": sanitize_for_log(e)},
+                "Failed to load GridFS file %s of scan %s, aborting its archive to avoid data loss: %s",
+                sanitize_for_log(gid),
+                sanitize_for_log(scan_id),
+                sanitize_for_log(e),
             )
             raise _ArchiveSourceReadError(str(e)) from e
 
@@ -163,11 +202,13 @@ async def _gzip_compress_stream(source: AsyncIterator[bytes]) -> AsyncIterator[b
 async def _gzip_decompress_stream(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
     decompressor = zlib.decompressobj(wbits=31)
     async for chunk in source:
-        if not chunk:
-            continue
-        out = decompressor.decompress(chunk)
-        if out:
-            yield out
+        data = chunk
+        # A highly compressed chunk would otherwise inflate in one piece many times its size.
+        while data:
+            out = decompressor.decompress(data, _DECOMPRESS_PIECE_BYTES)
+            if out:
+                yield out
+            data = decompressor.unconsumed_tail
     tail = decompressor.flush()
     if tail:
         yield tail
@@ -178,6 +219,7 @@ def _build_archive_payload(
     scan_doc: dict[str, Any],
     scan_id: str,
     stats: BundleStats,
+    archived_at: datetime,
 ) -> tuple[AsyncIterator[bytes], str]:
     frames = BundleFrames.write(
         scan_doc=scan_doc,
@@ -189,6 +231,7 @@ def _build_archive_payload(
             ARCHIVE_GRIDFS_CHUNK_FRAME: _stream_gridfs_chunks(db, scan_doc),
         },
         stats=stats,
+        archived_at=archived_at,
     )
     gzipped = _gzip_compress_stream(frames)
     if is_encryption_enabled():
@@ -196,17 +239,12 @@ def _build_archive_payload(
     return gzipped, "application/gzip"
 
 
-def _count_failure(operation: str, reason: str) -> None:
-    archive_failures_total.labels(operation=operation, reason=reason).inc()
-    archive_operations_total.labels(operation=operation, status="failure").inc()
-
-
 async def _drop_upload(s3_key: str, reason: str) -> None:
     try:
         await delete_object(s3_key)
     except Exception:
-        logger.exception("Cleanup delete failed for orphan S3 upload")
-    _count_failure("archive", reason)
+        logger.exception("Cleanup delete of the dropped S3 upload %s failed", sanitize_for_log(s3_key))
+    count_archive_failure("archive", reason)
 
 
 async def _save_archive_metadata(
@@ -245,18 +283,16 @@ async def _save_archive_metadata(
     except DuplicateKeyError as e:
         # Another worker won the metadata insert; its upload is authoritative, clean up ours.
         logger.info(
-            "Lost archive race, cleaning up our S3 orphan",
-            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
+            "Lost the archive race for scan %s, cleaning up our S3 orphan: %s",
+            sanitize_for_log(scan_id),
+            sanitize_for_log(e),
         )
         await _drop_upload(s3_key, ArchiveFailureReason.ALREADY_EXISTS)
         return None
     except Exception as e:
         # The insert may still have landed, so the upload stays; the orphan reaper takes it if nothing points at it.
-        logger.warning(
-            "Metadata create failed",
-            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
-        )
-        _count_failure("archive", ArchiveFailureReason.UNKNOWN)
+        logger.warning("Metadata create failed for scan %s: %s", sanitize_for_log(scan_id), sanitize_for_log(e))
+        count_archive_failure("archive", ArchiveFailureReason.UNKNOWN)
         return None
 
 
@@ -270,28 +306,20 @@ async def _load_scan_for_archive(
     scan_doc = await db.scans.find_one({"_id": scan_id})
     if not scan_doc:
         if existing:
-            logger.info(
-                "Scan already archived, returning existing metadata",
-                extra={"scan_id": sanitize_for_log(scan_id)},
-            )
+            logger.info("Scan %s already archived, returning existing metadata", sanitize_for_log(scan_id))
             return existing, None
-        logger.error(
-            "Scan not found for archiving",
-            extra={"scan_id": sanitize_for_log(scan_id)},
-        )
-        _count_failure("archive", ArchiveFailureReason.NOT_FOUND)
+        logger.error("Scan %s not found for archiving", sanitize_for_log(scan_id))
+        count_archive_failure("archive", ArchiveFailureReason.NOT_FOUND)
         return None, None
     # Checked after the scan read: a reachability pass locking later claims later, so the bundle keeps its flag.
     if (
         scan_doc.get("pinned") in RETENTION_PROTECTED_FLAG_VALUES
         or scan_doc.get("status") in SCAN_ACTIVE_STATUSES
         or await DistributedLocksRepository(db).held_locks([REACHABILITY_LOCK_TEMPLATE.format(scan_id=scan_id)])
+        or await db.scans.find_one({"is_rescan": True, "original_scan_id": scan_id}, {"_id": 1})
     ):
-        logger.info(
-            "Scan pinned or under analysis, not archiving it",
-            extra={"scan_id": sanitize_for_log(scan_id)},
-        )
-        _count_failure("archive", ArchiveFailureReason.PROTECTED)
+        logger.info("Scan %s pinned, under analysis or rescanned, not archiving it", sanitize_for_log(scan_id))
+        count_archive_failure("archive", ArchiveFailureReason.PROTECTED)
         return None, None
     if existing is None:
         return None, scan_doc
@@ -299,11 +327,8 @@ async def _load_scan_for_archive(
     if all(scan_doc[field] <= existing.archived_at for field in ("updated_at", "restored_at") if scan_doc.get(field)):
         return existing, None
     # Its bundle lacks what ingest wrote since, and a recreated scan lacks what only the bundle holds.
-    logger.warning(
-        "Scan written to or restored since it was archived, keeping both",
-        extra={"scan_id": sanitize_for_log(scan_id)},
-    )
-    _count_failure("archive", ArchiveFailureReason.WRITTEN_SINCE_ARCHIVE)
+    logger.warning("Scan %s written to or restored since it was archived, keeping both", sanitize_for_log(scan_id))
+    count_archive_failure("archive", ArchiveFailureReason.WRITTEN_SINCE_ARCHIVE)
     return None, None
 
 
@@ -312,24 +337,23 @@ async def _upload_archive_bundle(
     scan_doc: dict[str, Any],
     scan_id: str,
     s3_key: str,
+    archived_at: datetime,
 ) -> tuple[int, BundleStats] | None:
     stats = BundleStats()
-    payload, content_type = _build_archive_payload(db, scan_doc, scan_id, stats)
+    payload, content_type = _build_archive_payload(db, scan_doc, scan_id, stats, archived_at)
     try:
         total = await upload_stream(s3_key, payload, content_type=content_type)
     except _ArchiveSourceReadError as e:
         logger.error(
-            "Aborting archive: source data could not be read intact",
-            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
+            "Aborting the archive of scan %s: source data could not be read intact: %s",
+            sanitize_for_log(scan_id),
+            sanitize_for_log(e),
         )
-        _count_failure("archive", ArchiveFailureReason.INTEGRITY)
+        count_archive_failure("archive", ArchiveFailureReason.INTEGRITY)
         return None
     except Exception as e:
-        logger.exception(
-            "Failed to upload archive",
-            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
-        )
-        _count_failure("archive", ArchiveFailureReason.S3_ERROR)
+        logger.exception("Failed to upload the archive of scan %s: %s", sanitize_for_log(scan_id), sanitize_for_log(e))
+        count_archive_failure("archive", ArchiveFailureReason.S3_ERROR)
         return None
     archive_bundle_compressed_bytes.observe(total)
     return total, stats
@@ -339,21 +363,14 @@ async def archive_scan(
     db: AsyncIOMotorDatabase,
     scan_id: str,
 ) -> ArchiveMetadata | None:
-    if not is_archive_enabled():
-        logger.warning("Archive requested but S3 is not configured.")
-        return None
-
     repo = ArchiveMetadataRepository(db)
     lock_repo = DistributedLocksRepository(db)
     lock_name = f"archive:{scan_id}"
     holder = new_lock_holder()
 
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
-        logger.info(
-            "Archive of scan skipped, lock held by another worker",
-            extra={"scan_id": sanitize_for_log(scan_id)},
-        )
-        _count_failure("archive", ArchiveFailureReason.LOCK_HELD)
+        logger.info("Archive of scan %s skipped, lock held by another worker", sanitize_for_log(scan_id))
+        count_archive_failure("archive", ArchiveFailureReason.LOCK_HELD)
         return None
 
     try:
@@ -361,41 +378,40 @@ async def archive_scan(
         archived_at = datetime.now(timezone.utc)
         existing, scan_doc = await _load_scan_for_archive(db, repo, scan_id)
         if existing is not None:
+            archive_operations_total.labels(operation="archive", status="skipped").inc()
             return existing
         if scan_doc is None:
             return None
 
         # Archival removes the scan document, which would orphan release resolution.
         if await release_protected_scan_ids(db, [scan_id]):
-            logger.info(
-                "Archive of release scan refused",
-                extra={"scan_id": sanitize_for_log(scan_id)},
-            )
-            _count_failure("archive", ArchiveFailureReason.RELEASE_PROTECTED)
+            logger.info("Archive of release scan %s refused", sanitize_for_log(scan_id))
+            count_archive_failure("archive", ArchiveFailureReason.RELEASE_PROTECTED)
             return None
 
         project_id = scan_doc["project_id"]
         archived_at_unix = int(archived_at.timestamp())
-        s3_key = ARCHIVE_PATH_TEMPLATE.format(project_id=project_id, scan_id=scan_id, archived_at_unix=archived_at_unix)
+        s3_key = archive_key_prefix() + ARCHIVE_PATH_TEMPLATE.format(
+            project_id=project_id, scan_id=scan_id, archived_at_unix=archived_at_unix
+        )
 
         renew_lock = partial(lock_repo.renew_lock, lock_name, holder, _ARCHIVE_LOCK_TTL_SECONDS)
         start_time = time.monotonic()
         try:
-            upload = _upload_archive_bundle(db, scan_doc, scan_id, s3_key)
+            upload = _upload_archive_bundle(db, scan_doc, scan_id, s3_key, archived_at)
             upload_result = await run_holding_lock(renew_lock, _ARCHIVE_LOCK_TTL_SECONDS, upload)
             # A pod that took the lock over archives on its own, possibly while this archive's delete runs.
             if upload_result is not None and not await renew_lock():
                 raise LockLost
         except LockLost:
             logger.error(
-                "Archive lost its lock to another worker, dropping its upload",
-                extra={"scan_id": sanitize_for_log(scan_id)},
+                "Archive of scan %s lost its lock to another worker, dropping its upload", sanitize_for_log(scan_id)
             )
             await _drop_upload(s3_key, ArchiveFailureReason.LOCK_HELD)
             return None
         except PyMongoError:
             logger.exception(
-                "Archive could not confirm its lock, dropping its upload", extra={"scan_id": sanitize_for_log(scan_id)}
+                "Archive of scan %s could not confirm its lock, dropping its upload", sanitize_for_log(scan_id)
             )
             await _drop_upload(s3_key, ArchiveFailureReason.UNKNOWN)
             return None
@@ -411,17 +427,18 @@ async def archive_scan(
         archive_operations_total.labels(operation="archive", status="success").inc()
         archive_operation_duration_seconds.labels(operation="archive").observe(duration)
         logger.info(
-            "archive.success",
-            extra={
-                "scan_id": scan_id,
-                "project_id": project_id,
-                "s3_key": s3_key,
-                "compressed_bytes": total,
-                "findings": stats.findings,
-                "dependencies": stats.dependencies,
-            },
+            "archive.success scan_id=%s project_id=%s s3_key=%s compressed_bytes=%d findings=%d dependencies=%d",
+            sanitize_for_log(scan_id),
+            sanitize_for_log(project_id),
+            sanitize_for_log(s3_key),
+            total,
+            stats.findings,
+            stats.dependencies,
         )
         return metadata
+    except Exception:
+        count_archive_failure("archive", ArchiveFailureReason.UNKNOWN)
+        raise
     finally:
         await lock_repo.release_lock(lock_name, holder)
 
@@ -456,7 +473,7 @@ def _hash_plaintext_secrets_in_line(collection: str, line: bytes) -> bytes:
     # json_util never escapes ASCII, so every serialized trufflehog result spells out its analyzer name.
     if collection != "analysis_results" or b"trufflehog" not in line:
         return line
-    doc = json_util.loads(line)
+    doc = load_json_line(line)
     _hash_plaintext_secrets(collection, doc)
     return json_line(doc)
 
@@ -477,11 +494,7 @@ async def _flush_batches(
     batch_by_collection.clear()
 
 
-async def _handle_header_event(
-    db: Any,
-    data: dict[str, Any],
-    collections_restored: list[str],
-) -> None:
+async def _handle_header_event(db: Any, data: dict[str, Any]) -> None:
     """read_bundle_frames already rejected a header of another version."""
     scan_data = data["scan"]
     scan_data["pinned"] = True
@@ -490,7 +503,6 @@ async def _handle_header_event(
     scan_data.pop("retention_deleting", None)
     scan_data["restore_in_progress"] = True
     await db.scans.insert_one(scan_data)
-    collections_restored.append("scans")
 
 
 async def _handle_doc_event(
@@ -504,7 +516,8 @@ async def _handle_doc_event(
     _hash_plaintext_secrets(coll, doc)
     _strip_license_parameters(coll, doc)
     batch_by_collection.setdefault(coll, []).append(doc)
-    if len(batch_by_collection[coll]) >= RESTORE_INSERT_BATCH_SIZE:
+    # A legacy analysis_results row inlines a whole scanner report, so a batch of them has no memory bound.
+    if coll == "analysis_results" or len(batch_by_collection[coll]) >= RESTORE_INSERT_BATCH_SIZE:
         await _flush_batches(db, batch_by_collection, collections_restored)
 
 
@@ -580,9 +593,31 @@ def _whole_file_frame(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def bundle_failure_reason(e: Exception) -> str:
+    if isinstance(e, BundleVersionError):
+        return ArchiveFailureReason.VERSION_MISMATCH
+    if isinstance(e, ValueError | zlib.error):
+        return ArchiveFailureReason.INTEGRITY
+    # Only the header insert raises it: an ingest created the scan since the restore checked for it.
+    if isinstance(e, DuplicateKeyError):
+        return ArchiveFailureReason.ALREADY_EXISTS
+    if isinstance(e, PyMongoError):
+        return ArchiveFailureReason.UNKNOWN
+    if isinstance(e, InvalidTag):
+        return ArchiveFailureReason.ENCRYPTION
+    return ArchiveFailureReason.S3_ERROR
+
+
+def _require_owner(kind: str, row_scan_id: Any, row_project_id: Any, scan_id: str, project_id: str) -> None:
+    # The footer is a plain sha256, so a swapped bundle must not write what the scan_id rollback cannot remove.
+    if (row_scan_id, row_project_id) != (scan_id, project_id):
+        raise ValueError(f"Bundle {kind} belongs to scan {row_scan_id!r} of project {row_project_id!r}")
+
+
 async def _replay_bundle(
     db: Any,
     scan_id: str,
+    project_id: str,
     decompressed: AsyncIterator[bytes],
 ) -> tuple[str | None, list[str]]:
     collections_restored: list[str] = []
@@ -593,7 +628,10 @@ async def _replay_bundle(
         async for event in read_bundle_frames(decompressed):
             etype = event["type"]
             if etype == "header":
-                await _handle_header_event(db, event["data"], collections_restored)
+                scan = event["data"].get("scan") or {}
+                _require_owner("header", scan.get("_id"), scan.get("project_id"), scan_id, project_id)
+                await _handle_header_event(db, event["data"])
+                collections_restored.append("scans")
             elif etype == "doc":
                 coll = event["collection"]
                 if coll not in _RESTORABLE_COLLECTIONS:
@@ -607,26 +645,16 @@ async def _replay_bundle(
                     if coll not in collections_restored:
                         collections_restored.append(coll)
                 else:
+                    doc = event["data"]
+                    _require_owner(coll, doc.get("scan_id"), doc.get("project_id", project_id), scan_id, project_id)
                     await _handle_doc_event(db, event, batch_by_collection, collections_restored)
             elif etype == "footer":
                 await gridfs.close()
                 await _flush_batches(db, batch_by_collection, collections_restored)
                 break
     except Exception as e:
-        if isinstance(e, ValueError):
-            reason = (
-                ArchiveFailureReason.VERSION_MISMATCH if "version" in str(e).lower() else ArchiveFailureReason.INTEGRITY
-            )
-        elif isinstance(e, PyMongoError):
-            reason = ArchiveFailureReason.UNKNOWN
-        elif isinstance(e, InvalidTag):
-            reason = ArchiveFailureReason.ENCRYPTION
-        else:
-            reason = ArchiveFailureReason.S3_ERROR
-        logger.exception(
-            "Restore failed",
-            extra={"scan_id": sanitize_for_log(scan_id), "reason": reason, "error": sanitize_for_log(e)},
-        )
+        reason = bundle_failure_reason(e)
+        logger.exception("Restore of scan %s failed (%s): %s", sanitize_for_log(scan_id), reason, sanitize_for_log(e))
         return reason, collections_restored
     finally:
         with contextlib.suppress(PyMongoError):
@@ -642,42 +670,31 @@ async def _rollback_partial_restore(db: Any, scan_id: str) -> None:
             await getattr(db, coll).delete_many({"scan_id": scan_id})
         await db.scans.delete_one({"_id": scan_id})
     except Exception as e:
-        logger.warning(
-            "Partial-restore rollback failed",
-            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
-        )
+        logger.warning("Partial-restore rollback of scan %s failed: %s", sanitize_for_log(scan_id), sanitize_for_log(e))
 
 
 async def _load_restore_metadata(
     db: Any,
     repo: ArchiveMetadataRepository,
     scan_id: str,
-) -> ArchiveMetadata | None:
+) -> ArchiveMetadata:
+    # Checked first: a restore that finished while this one waited for the lock has removed the metadata.
+    existing = await db.scans.find_one({"_id": scan_id}, {"restore_in_progress": 1})
+    if existing and not existing.get("restore_in_progress"):
+        logger.warning("Scan %s already exists in MongoDB, aborting its restore", sanitize_for_log(scan_id))
+        raise _restore_failed(ArchiveFailureReason.ALREADY_EXISTS)
+
     metadata = await repo.find_by_scan_id(scan_id)
     if not metadata:
-        logger.error(
-            "No archive metadata for scan",
-            extra={"scan_id": sanitize_for_log(scan_id)},
-        )
-        _count_failure("restore", ArchiveFailureReason.NOT_FOUND)
-        return None
+        logger.error("No archive metadata for scan %s", sanitize_for_log(scan_id))
+        raise _restore_failed(ArchiveFailureReason.NOT_FOUND)
 
-    existing = await db.scans.find_one({"_id": scan_id}, {"restore_in_progress": 1})
-    if existing and existing.get("restore_in_progress"):
+    if existing:
         # A running restore keeps renewing its lock, so while we hold it nobody still writes this leftover.
         logger.warning(
-            "Rolling back an unfinished restore before restoring again",
-            extra={"scan_id": sanitize_for_log(scan_id)},
+            "Rolling back an unfinished restore of scan %s before restoring it again", sanitize_for_log(scan_id)
         )
         await _rollback_partial_restore(db, scan_id)
-    elif existing:
-        logger.warning(
-            "Scan already exists in MongoDB, aborting restore",
-            extra={"scan_id": sanitize_for_log(scan_id)},
-        )
-        _count_failure("restore", ArchiveFailureReason.ALREADY_EXISTS)
-        return None
-
     return metadata
 
 
@@ -691,20 +708,19 @@ async def _finalize_restore_cleanup(
         await repo.delete_by_scan_id(scan_id)
     except Exception as e:
         logger.warning(
-            "Metadata delete failed after restore; the stale-metadata reaper will retry",
-            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
+            "Metadata delete failed after the restore of scan %s; the stale-metadata reaper will retry: %s",
+            sanitize_for_log(scan_id),
+            sanitize_for_log(e),
         )
         return
     try:
         await delete_object(metadata.s3_key, bucket=metadata.s3_bucket)
     except Exception as e:
         logger.warning(
-            "S3 delete failed after restore; orphan reaper will retry",
-            extra={
-                "scan_id": sanitize_for_log(scan_id),
-                "s3_key": sanitize_for_log(metadata.s3_key),
-                "error": sanitize_for_log(e),
-            },
+            "S3 delete of %s failed after the restore of scan %s; the orphan reaper will retry: %s",
+            sanitize_for_log(metadata.s3_key),
+            sanitize_for_log(scan_id),
+            sanitize_for_log(e),
         )
 
 
@@ -721,10 +737,7 @@ async def _mark_restore_complete(
         {"$set": {"restored_at": datetime.now(timezone.utc)}, "$unset": {"restore_in_progress": ""}},
     )
     if completed.matched_count == 0:
-        logger.error(
-            "Restored scan disappeared before the restore completed",
-            extra={"scan_id": sanitize_for_log(scan_id)},
-        )
+        logger.error("Restored scan %s disappeared before the restore completed", sanitize_for_log(scan_id))
         await _rollback_partial_restore(db, scan_id)
         return ArchiveFailureReason.UNKNOWN
     return None
@@ -740,8 +753,9 @@ async def _abandon_restore(
     except PyMongoError as e:
         # The leftover keeps its restore_in_progress flag, so the next restore rolls it back.
         logger.warning(
-            "Restore could not confirm it still holds its lock, leaving the rollback to the next restore",
-            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
+            "Restore of scan %s could not confirm it still holds its lock, leaving the rollback to the next restore: %s",
+            sanitize_for_log(scan_id),
+            sanitize_for_log(e),
         )
         return
     if not still_held:
@@ -755,18 +769,17 @@ async def _run_restore_pipeline(
     metadata: ArchiveMetadata,
     scan_id: str,
     renew_lock: Callable[[], Awaitable[bool]],
-) -> ArchiveRestoreResponse | None:
+) -> ArchiveRestoreResponse:
     start_time = time.monotonic()
     decompressed = _open_bundle_stream(metadata)
-    failure_reason, collections_restored = await _replay_bundle(db, scan_id, decompressed)
+    failure_reason, collections_restored = await _replay_bundle(db, scan_id, metadata.project_id, decompressed)
     if failure_reason is None:
         failure_reason = await _mark_restore_complete(db, scan_id, renew_lock)
     elif "scans" in collections_restored:
         # Before its header insert the restore wrote nothing, and a scan already there belongs to an ingest.
         await _abandon_restore(db, scan_id, renew_lock)
     if failure_reason is not None:
-        _count_failure("restore", failure_reason)
-        return None
+        raise _restore_failed(failure_reason)
 
     # The restored scan re-enters its branch timeline, so the rollup also re-points the successor.
     await record_scan_update_delta(db, scan_id)
@@ -777,12 +790,10 @@ async def _run_restore_pipeline(
     archive_operations_total.labels(operation="restore", status="success").inc()
     archive_operation_duration_seconds.labels(operation="restore").observe(duration)
     logger.info(
-        "archive.restore.success",
-        extra={
-            "scan_id": scan_id,
-            "project_id": metadata.project_id,
-            "collections_restored": collections_restored,
-        },
+        "archive.restore.success scan_id=%s project_id=%s collections_restored=%s",
+        sanitize_for_log(scan_id),
+        sanitize_for_log(metadata.project_id),
+        ",".join(collections_restored),
     )
     return ArchiveRestoreResponse(
         scan_id=scan_id,
@@ -794,10 +805,8 @@ async def _run_restore_pipeline(
 async def restore_scan(
     db: AsyncIOMotorDatabase,
     scan_id: str,
-) -> ArchiveRestoreResponse | None:
-    if not is_archive_enabled():
-        return None
-
+) -> ArchiveRestoreResponse:
+    """Raises RestoreFailed with the reason it counted."""
     repo = ArchiveMetadataRepository(db)
     lock_repo = DistributedLocksRepository(db)
     lock_name = ARCHIVE_RESTORE_LOCK_TEMPLATE.format(scan_id=scan_id)
@@ -805,25 +814,95 @@ async def restore_scan(
     renew_lock = partial(lock_repo.renew_lock, lock_name, holder, _ARCHIVE_LOCK_TTL_SECONDS)
 
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
-        logger.info(
-            "Restore of scan blocked, lock held",
-            extra={"scan_id": sanitize_for_log(scan_id)},
-        )
-        _count_failure("restore", ArchiveFailureReason.LOCK_HELD)
-        return None
+        logger.info("Restore of scan %s blocked, lock held", sanitize_for_log(scan_id))
+        raise _restore_failed(ArchiveFailureReason.LOCK_HELD)
 
     try:
         metadata = await _load_restore_metadata(db, repo, scan_id)
-        if metadata is None:
-            return None
         pipeline = _run_restore_pipeline(db, repo, metadata, scan_id, renew_lock)
         return await run_holding_lock(renew_lock, _ARCHIVE_LOCK_TTL_SECONDS, pipeline)
     except LockLost:
-        logger.error(
-            "Restore lost its lock to another restore, aborting",
-            extra={"scan_id": sanitize_for_log(scan_id)},
-        )
-        _count_failure("restore", ArchiveFailureReason.LOCK_HELD)
-        return None
+        logger.error("Restore of scan %s lost its lock to another restore, aborting", sanitize_for_log(scan_id))
+        raise _restore_failed(ArchiveFailureReason.LOCK_HELD) from None
     finally:
         await lock_repo.release_lock(lock_name, holder)
+
+
+async def reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
+    """Drops the metadata of scans restored since archiving, which leaves their S3 object to the orphan reaper."""
+    lock_repo = DistributedLocksRepository(db)
+
+    async def _reap_batch(scans: list[dict[str, Any]]) -> int:
+        restored_at_by_scan = {scan["_id"]: scan["restored_at"] for scan in scans}
+        restored = [
+            meta
+            async for meta in db.archive_metadata.find(
+                {"scan_id": {"$in": list(restored_at_by_scan)}}, {"_id": 1, "scan_id": 1, "archived_at": 1}
+            )
+            if restored_at_by_scan[meta["scan_id"]] > meta["archived_at"]
+        ]
+        if not restored:
+            return 0
+        # Scans first: a restore holds its lock from before it inserts the scan until after a rollback removes it.
+        lock_names = {
+            meta["scan_id"]: ARCHIVE_RESTORE_LOCK_TEMPLATE.format(scan_id=meta["scan_id"]) for meta in restored
+        }
+        held = await lock_repo.held_locks(list(lock_names.values()))
+        stale = [meta for meta in restored if lock_names[meta["scan_id"]] not in held]
+        if not stale:
+            return 0
+        stale_scan_ids = [meta["scan_id"] for meta in stale]
+        try:
+            result = await db.archive_metadata.delete_many({"_id": {"$in": [meta["_id"] for meta in stale]}})
+            count: int = result.deleted_count
+            if count:
+                logger.info(f"Reaped {count} stale archive_metadata entries for restored scans {stale_scan_ids}")
+            return count
+        except Exception as e:
+            logger.warning(f"Failed to delete stale metadata for scans {stale_scan_ids}: {e}")
+            return 0
+
+    restored_scans = db.scans.find({**RESTORED_SCAN_MATCH, "restore_in_progress": {"$ne": True}}, {"restored_at": 1})
+    return sum([await _reap_batch(batch) async for batch in abatched(restored_scans, batch_size)])
+
+
+async def _reap_orphan_page(db: Any, page: list[dict[str, Any]], bundle_key: re.Pattern[str], cutoff: datetime) -> int:
+    scan_id_by_key = {
+        obj["Key"]: match["scan_id"]
+        for obj in page
+        if (match := bundle_key.fullmatch(obj.get("Key") or "")) and obj.get("LastModified", cutoff) <= cutoff
+    }
+    if not scan_id_by_key:
+        return 0
+    known = {
+        meta.get("s3_key")
+        async for meta in db.archive_metadata.find(
+            {"scan_id": {"$in": sorted(set(scan_id_by_key.values()))}}, {"s3_key": 1}
+        )
+    }
+    deleted = 0
+    for key in sorted(scan_id_by_key.keys() - known):
+        try:
+            await delete_object(key)
+            deleted += 1
+            archive_orphan_objects_reaped_total.inc()
+            logger.info("Reaped orphan S3 object: %s", key)
+        except Exception as e:
+            logger.warning("Failed to delete orphan %s: %s", key, e)
+    return deleted
+
+
+async def reap_orphan_s3_objects(db: Any) -> int:
+    if not is_archive_enabled():
+        return 0
+
+    prefix = archive_key_prefix()
+    bundle_key = re.compile(re.escape(prefix) + ARCHIVE_KEY_PATTERN)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ORPHAN_MIN_AGE_HOURS)
+    deleted = 0
+    try:
+        async for page in list_objects(prefix):
+            deleted += await _reap_orphan_page(db, page, bundle_key, cutoff)
+    except Exception as e:
+        logger.warning("Orphan reaper stopped: %s", e)
+    return deleted
