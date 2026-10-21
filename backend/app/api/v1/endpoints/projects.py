@@ -1227,7 +1227,7 @@ async def read_scan_findings(
     )
 
     finding_repo = FindingRepository(db)
-    # A page of rows streams off a cursor; a $facet would have to fit them all into one 16 MB document.
+    # One result document is capped at 16 MB, so the page and the total are read apart.
     data, total = await asyncio.gather(
         finding_repo.aggregate(pipeline), _count_scan_findings(finding_repo, query, bool(direct_only))
     )
