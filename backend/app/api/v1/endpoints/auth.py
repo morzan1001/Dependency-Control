@@ -59,13 +59,7 @@ from app.models.system import SystemSettings
 from app.models.user import User, is_local_account
 from app.repositories.token_blacklist import TokenBlacklistRepository
 from app.repositories.users import UserRepository
-from app.schemas.auth import (
-    EmailVerifyResponse,
-    ForgotPasswordResponse,
-    LogoutResponse,
-    PasswordResetResponse,
-    VerificationEmailResponse,
-)
+from app.schemas.auth import StatusMessage
 from app.schemas.token import Token
 from app.schemas.user import UserPasswordReset, UserResponse, UserSignup
 
@@ -291,10 +285,10 @@ async def create_user(
 
 
 @router.post("/logout", summary="Logout user", responses=RESP_AUTH)
-async def logout(current_user: Annotated[User, Depends(deps.get_current_user)], db: DatabaseDep) -> LogoutResponse:
+async def logout(current_user: Annotated[User, Depends(deps.get_current_user)], db: DatabaseDep) -> StatusMessage:
     """Logout the current user by bumping last_logout_at, which revokes every token issued before it."""
     await UserRepository(db).update(current_user.id, {"last_logout_at": datetime.now(timezone.utc)})
-    return LogoutResponse(message="Successfully logged out")
+    return StatusMessage(message="Successfully logged out")
 
 
 @router.post(
@@ -306,7 +300,7 @@ async def request_verification_email(
     background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(deps.get_current_active_user)],
     system_config: Annotated[SystemSettings, Depends(deps.get_system_settings)],
-) -> VerificationEmailResponse:
+) -> StatusMessage:
     """Send a new verification email to the current user."""
     if current_user.is_verified:
         raise HTTPException(
@@ -317,7 +311,7 @@ async def request_verification_email(
     require_email_configured(system_config)
     send_verification_email(background_tasks, current_user.email, system_config)
 
-    return VerificationEmailResponse(message="Verification email sent")
+    return StatusMessage(message="Verification email sent")
 
 
 @router.get(
@@ -325,7 +319,7 @@ async def request_verification_email(
     summary="Verify email address",
     responses=RESP_400_404,
 )
-async def verify_email(token: str, db: DatabaseDep) -> EmailVerifyResponse:
+async def verify_email(token: str, db: DatabaseDep) -> StatusMessage:
     """Verify email address using the token sent via email."""
     email = security.verify_email_verification_token(token)
     if not email:
@@ -349,11 +343,11 @@ async def verify_email(token: str, db: DatabaseDep) -> EmailVerifyResponse:
         )
 
     if user.get("is_verified"):
-        return EmailVerifyResponse(message="Email already verified")
+        return StatusMessage(message="Email already verified")
 
     await user_repo.update(user["_id"], {"is_verified": True})
 
-    return EmailVerifyResponse(message="Email successfully verified")
+    return StatusMessage(message="Email successfully verified")
 
 
 @router.post(
@@ -361,7 +355,7 @@ async def verify_email(token: str, db: DatabaseDep) -> EmailVerifyResponse:
     summary="Confirm a pending email change",
     responses=RESP_400,
 )
-async def confirm_email_change(token: Annotated[str, Body(embed=True)], db: DatabaseDep) -> EmailVerifyResponse:
+async def confirm_email_change(token: Annotated[str, Body(embed=True)], db: DatabaseDep) -> StatusMessage:
     """Swap in the pending email the token was mailed to; the address is verified by the click."""
     change = security.verify_email_change_token(token)
     if not change:
@@ -376,7 +370,7 @@ async def confirm_email_change(token: Annotated[str, Body(embed=True)], db: Data
 
     await user_repo.update(user_id, {"email": new_email, "pending_email": None, "is_verified": True})
 
-    return EmailVerifyResponse(message="Your email address has been changed")
+    return StatusMessage(message="Your email address has been changed")
 
 
 @router.post(
@@ -390,10 +384,10 @@ async def resend_verification_email_public(
     email: Annotated[str, Body(embed=True)],
     db: DatabaseDep,
     system_config: Annotated[SystemSettings, Depends(deps.get_system_settings)],
-) -> VerificationEmailResponse:
+) -> StatusMessage:
     """Resend a verification email; public so unverified users can request a new token."""
     await _check_rate_limit(f"resend_verif:{_client_host(request)}", max_attempts=10, window_seconds=600)
-    generic_response = VerificationEmailResponse(
+    generic_response = StatusMessage(
         message="If an account with this email exists, a verification email has been sent."
     )
 
@@ -655,12 +649,12 @@ async def forgot_password(
     background_tasks: BackgroundTasks,
     email: Annotated[str, Body(embed=True)],
     db: DatabaseDep,
-) -> ForgotPasswordResponse:
+) -> StatusMessage:
     """Request a password reset email; every address gets one constant-time answer, so none can be enumerated."""
     await _check_rate_limit(f"forgot_pw:{_client_host(request)}", max_attempts=3, window_seconds=600)
     start_time = time.monotonic()
 
-    generic_response = ForgotPasswordResponse(
+    generic_response = StatusMessage(
         message="If an account with this email exists, a password reset email has been sent."
     )
 
@@ -688,7 +682,7 @@ async def forgot_password(
     summary="Reset password with token",
     responses=RESP_400_404,
 )
-async def reset_password(request: Request, reset_in: UserPasswordReset, db: DatabaseDep) -> PasswordResetResponse:
+async def reset_password(request: Request, reset_in: UserPasswordReset, db: DatabaseDep) -> StatusMessage:
     """Reset password using the token from email; a reset voids that link and every other one issued before it."""
     await _check_rate_limit(f"reset_pw:{_client_host(request)}", max_attempts=5, window_seconds=600)
     verified = security.verify_password_reset_token(reset_in.token)
@@ -734,4 +728,4 @@ async def reset_password(request: Request, reset_in: UserPasswordReset, db: Data
 
     auth_password_resets_total.labels(status="success").inc()
 
-    return PasswordResetResponse(message="Password successfully reset")
+    return StatusMessage(message="Password successfully reset")
