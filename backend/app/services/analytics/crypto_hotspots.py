@@ -12,6 +12,7 @@ from app.models.finding import CRYPTO_FINDING_TYPES
 from app.schemas.analytics import GroupBy, HotspotEntry, HotspotResponse
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ResolvedScope
+from app.services.releases import resolve_scan_ids
 
 # Names group bare because findings carry details.asset_name without the variant.
 _ASSET_GROUPINGS = {
@@ -102,8 +103,6 @@ class CryptoHotspotService:
     ) -> list[str]:
         if override:
             return [override]
-        from app.services.releases import resolve_scan_ids
-
         return list((await resolve_scan_ids(self.db, resolved.project_ids, projects=resolved.projects)).values())
 
     async def _aggregate(

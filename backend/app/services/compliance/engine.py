@@ -34,6 +34,7 @@ from app.services.compliance.frameworks.license_audit import LICENSE_AUDIT_CATEG
 from app.services.compliance.renderers import RENDERER_REGISTRY
 from app.services.compliance.renderers.base import build_filename
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
+from app.services.releases import resolve_scan_ids
 
 logger = logging.getLogger(__name__)
 
@@ -198,8 +199,6 @@ class ComplianceReportEngine:
         resolved: ResolvedScope,
         producers: frozenset[str],
     ) -> tuple[dict[str, str], list[str], list[ProjectWithScanId]]:
-        from app.services.releases import resolve_scan_ids
-
         projects = resolved.projects
         if projects is None:
             query = {} if resolved.project_ids is None else {"_id": {"$in": resolved.project_ids}}

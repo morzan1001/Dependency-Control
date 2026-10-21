@@ -21,6 +21,7 @@ from app.services.pqc_migration.mappings_loader import (
     resolve_family,
 )
 from app.services.pqc_migration.scoring import priority_score, referenced_exposure, status_from_score
+from app.services.releases import resolve_scan_ids
 
 _GroupKey = tuple[str, str | None, int | None, str]
 _LINKING_TYPES = (CryptoAssetType.CERTIFICATE, CryptoAssetType.RELATED_CRYPTO_MATERIAL)
@@ -133,8 +134,6 @@ class PQCMigrationPlanGenerator:
 
     async def _list_assets(self, resolved: ResolvedScope) -> tuple[list[CryptoAsset], list[CryptoAsset]]:
         """The scope's migratable algorithms, and the certificates and key material that may name them."""
-        from app.services.releases import resolve_scan_ids
-
         scan_ids = await resolve_scan_ids(self.db, resolved.project_ids, projects=resolved.projects)
         query = {
             "project_id": {"$in": list(scan_ids)},
