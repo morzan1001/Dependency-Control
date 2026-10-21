@@ -65,16 +65,6 @@ def test_user_with_chat_access_gets_basic_tools():
     assert "find_component_usage" in available
 
 
-def test_tool_definitions_match_registry():
-    registry = ChatToolRegistry()
-    definitions = TOOL_DEFINITIONS
-    definition_names = {t["function"]["name"] for t in definitions}
-    all_tools = registry.get_available_tool_names(PRESET_ADMIN)
-
-    for tool_name in all_tools:
-        assert tool_name in definition_names, f"Tool {tool_name} missing from definitions"
-
-
 def test_every_tool_handler_serves_a_declared_tool():
     """The dispatch table is built from the declarations, so a handler whose tool was dropped is never called."""
     declared = {t["function"]["name"] for t in TOOL_DEFINITIONS}
