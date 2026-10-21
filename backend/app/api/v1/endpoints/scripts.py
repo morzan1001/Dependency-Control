@@ -58,8 +58,12 @@ def _resolve_script_path(script_name: str, version: str | None) -> Path:
             detail="Invalid version. Expected semver-shape X.Y.Z (digits only).",
         )
 
+    return (VERSIONS_DIR / _versioned_filename(script_name, version)).resolve()
+
+
+def _versioned_filename(script_name: str, version: str) -> str:
     stem, _, ext = script_name.partition(".")
-    return (VERSIONS_DIR / f"{stem}-{version}.{ext}").resolve()
+    return f"{stem}-{version}.{ext}"
 
 
 def _read_and_describe(script_path: Path) -> tuple[str, str, str]:
@@ -81,23 +85,30 @@ def get_script_content(script_name: str, version: str | None = None) -> tuple[st
 
 
 def list_available_versions(script_name: str) -> list[str]:
-    if not VERSIONS_DIR.is_dir():
-        return []
-    stem, _, ext = script_name.partition(".")
-    pattern = re.compile(
-        rf"^{re.escape(stem)}-(\d+\.\d+\.\d+)\.{re.escape(ext)}$",
-        re.ASCII,
-    )
-    versions: list[str] = []
-    for entry in VERSIONS_DIR.iterdir():
-        match = pattern.match(entry.name)
-        if match:
-            versions.append(match.group(1))
+    pattern = _versioned_filename(script_name, "*")
+    prefix, suffix = pattern.split("*")
+    versions = [
+        version
+        for entry in VERSIONS_DIR.glob(pattern)
+        if _VERSION_RE.fullmatch(version := entry.name.removeprefix(prefix).removesuffix(suffix))
+    ]
     return sorted(versions, key=lambda v: tuple(int(p) for p in v.split(".")))
 
 
+def _script_content_or_404(script_name: str, version: str | None) -> tuple[str, str, str]:
+    validate_script_name(script_name)
+    try:
+        return get_script_content(script_name, version)
+    except FileNotFoundError as exc:
+        logger.info("Script file not found: %s (version=%s)", script_name, sanitize_for_log(version or "latest"))
+        raise HTTPException(
+            status_code=404,
+            detail=f"Script '{script_name}' (version={version or 'latest'}) not found on server",
+        ) from exc
+
+
 def build_script_info(script_name: str, version: str | None = None) -> ScriptInfo:
-    _, detected_version, sha256_hash = get_script_content(script_name, version)
+    _, detected_version, sha256_hash = _script_content_or_404(script_name, version)
     base_url = f"/api/v1/scripts/{script_name}"
     url = f"{base_url}?v={version}" if version else base_url
     return ScriptInfo(
@@ -105,7 +116,7 @@ def build_script_info(script_name: str, version: str | None = None) -> ScriptInf
         version=detected_version,
         sha256=sha256_hash,
         url=url,
-        description=SCRIPT_CONFIG.get(script_name, "CI/CD script"),
+        description=SCRIPT_CONFIG[script_name],
     )
 
 
@@ -127,15 +138,7 @@ async def get_script_hash(
     ] = None,
 ) -> ScriptInfo:
     """Get the SHA256 hash and version of a script for verification; pass ?v=X.Y.Z for a frozen release."""
-    validate_script_name(script_name)
-
-    try:
-        return build_script_info(script_name, version=v)
-    except FileNotFoundError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Script '{script_name}' (version={v or 'latest'}) not found on server",
-        ) from exc
+    return build_script_info(script_name, version=v)
 
 
 @router.get(
@@ -160,16 +163,7 @@ async def get_script(
     ] = None,
 ) -> PlainTextResponse:
     """Download a CI/CD script; pass ?v=X.Y.Z for a frozen release, omit it for the latest pointer."""
-    validate_script_name(script_name)
-
-    try:
-        content, version, sha256_hash = get_script_content(script_name, version=v)
-    except FileNotFoundError as exc:
-        logger.exception("Script file not found: %s (version=%s)", script_name, sanitize_for_log(v or "latest"))
-        raise HTTPException(
-            status_code=404,
-            detail=f"Script '{script_name}' (version={v or 'latest'}) not found on server",
-        ) from exc
+    content, version, sha256_hash = _script_content_or_404(script_name, v)
 
     return PlainTextResponse(
         content=content,

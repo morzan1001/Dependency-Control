@@ -138,6 +138,20 @@ class TestListAvailableVersions:
             out = scripts_module.list_available_versions("scanner.sh")
         assert out == ["1.0.0", "1.0.2", "1.0.10", "1.10.0", "2.0.0"]
 
+    def test_only_this_scripts_semver_copies_are_listed(self, tmp_path: Path):
+        versions_dir = tmp_path / "versions"
+        versions_dir.mkdir()
+        for name in [
+            "scanner-1.0.0.sh",
+            "scanner-1.0.0-rc1.sh",
+            "scanner-latest.sh",
+            "scanner-1.0.sh",
+            "other-2.0.0.sh",
+        ]:
+            (versions_dir / name).write_text("")
+        with patch.object(scripts_module, "VERSIONS_DIR", versions_dir):
+            assert scripts_module.list_available_versions("scanner.sh") == ["1.0.0"]
+
 
 class TestFrozenCacheBehaviour:
     """Frozen reads are lru_cached (released bytes are immutable); latest-pointer reads must not be cached."""
@@ -186,12 +200,21 @@ class TestHandlers:
     def test_a_missing_script_is_logged_on_one_line_whatever_version_was_asked(self, scripts_layout, caplog):
         with (
             patch.object(scripts_module, "get_script_content", side_effect=FileNotFoundError("gone")),
-            caplog.at_level(logging.ERROR, logger=MODULE),
+            caplog.at_level(logging.INFO, logger=MODULE),
             pytest.raises(HTTPException),
         ):
             asyncio.run(scripts_module.get_script("scanner.sh", v="1.0.0\nforged entry"))
 
         assert "\n" not in caplog.records[-1].getMessage()
+
+    @pytest.mark.parametrize("handler", ["get_script", "get_script_hash"])
+    def test_an_unknown_version_is_a_404_logged_below_error_without_a_traceback(self, scripts_layout, caplog, handler):
+        with caplog.at_level(logging.DEBUG, logger=MODULE), pytest.raises(HTTPException) as exc:
+            asyncio.run(getattr(scripts_module, handler)("scanner.sh", v="9.9.9"))
+
+        assert exc.value.status_code == 404
+        assert exc.value.detail == "Script 'scanner.sh' (version=9.9.9) not found on server"
+        assert all(r.levelno < logging.ERROR and r.exc_info is None for r in caplog.records)
 
     def test_list_scripts_enumerates_latest_plus_frozen(self, scripts_layout):
         manifest = asyncio.run(scripts_module.list_scripts())
