@@ -180,7 +180,7 @@ async def test_a_weakness_tag_lookup_counts_only_the_findings_carrying_that_tag(
 
 
 @pytest.mark.asyncio
-async def test_an_entry_counts_every_project_but_names_only_the_heatmap_columns(db):
+async def test_an_entry_names_every_project_and_the_response_names_the_heatmap_columns(db):
     projects = [f"p{i:02d}" for i in range(_HEATMAP_COLUMNS + 5)]
     for index, project_id in enumerate(projects):
         assets = [_asset("md5", "MD5", project_id=project_id, scan_id="s")]
@@ -193,9 +193,10 @@ async def test_an_entry_counts_every_project_but_names_only_the_heatmap_columns(
 
     by_key = {e.key: e for e in result.items}
     shared_by_both = projects[-3:]
-    assert (by_key["MD5"].project_count, len(by_key["MD5"].project_ids)) == (len(projects), _HEATMAP_COLUMNS)
-    assert by_key["MD5"].project_ids[:3] == shared_by_both
-    assert (by_key["AES"].project_count, by_key["AES"].project_ids) == (3, shared_by_both)
+    assert (by_key["MD5"].project_count, sorted(by_key["MD5"].project_ids)) == (len(projects), projects)
+    assert (by_key["AES"].project_count, sorted(by_key["AES"].project_ids)) == (3, shared_by_both)
+    assert len(result.heatmap_project_ids) == _HEATMAP_COLUMNS
+    assert result.heatmap_project_ids[:3] == shared_by_both
     assert result.projects_total == len(projects)
 
 

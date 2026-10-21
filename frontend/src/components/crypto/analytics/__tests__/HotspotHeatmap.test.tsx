@@ -8,8 +8,10 @@ import { HotspotHeatmap } from "../HotspotHeatmap";
 const OID_A = "0123456789abcdef01234567"; // resolvable -> "Payments API"
 const OID_B = "aaaaaaaaaaaaaaaaaaaaaaaa"; // unresolved -> truncated
 
-// An org-scope response names the 30 column projects of keys spread over 42.
+// An org-scope response names the 30 column projects of keys spread over 42; each entry lists all of its own.
 const manyProjectIds = Array.from({ length: 28 }, (_, i) => `proj${String(i).padStart(3, "0")}`);
+const heatmapColumns = [OID_A, OID_B, ...manyProjectIds];
+const projectsOffTheColumns = Array.from({ length: 12 }, (_, i) => `rare${String(i).padStart(3, "0")}`);
 
 vi.mock("@/api/cryptoAnalytics", () => ({
   getCryptoHotspots: vi.fn().mockImplementation(({ scope }: { scope: string }) => {
@@ -35,6 +37,7 @@ vi.mock("@/api/cryptoAnalytics", () => ({
         ],
         total: 1,
         projects_total: 1,
+        heatmap_project_ids: ["p"],
         generated_at: "",
       });
     }
@@ -51,7 +54,7 @@ vi.mock("@/api/cryptoAnalytics", () => ({
           severity_mix: {},
           locations: [],
           locations_complete: false,
-          project_ids: [OID_A, OID_B, ...manyProjectIds],
+          project_ids: [...projectsOffTheColumns, ...heatmapColumns],
           project_count: 42,
           first_seen: "",
           last_seen: "",
@@ -59,6 +62,7 @@ vi.mock("@/api/cryptoAnalytics", () => ({
       ],
       total: 12,
       projects_total: 42,
+      heatmap_project_ids: heatmapColumns,
       generated_at: "",
     });
   }),
@@ -80,12 +84,15 @@ function renderWithClient(ui: React.ReactElement) {
 }
 
 describe("HotspotHeatmap (org scope columns)", () => {
-  it("renders the 30 project columns the API names", async () => {
+  it("renders the 30 project columns the API names, in its order", async () => {
     renderWithClient(<HotspotHeatmap scope="global" groupBy="name" />);
     await screen.findByText("RSA-2048");
     const headerRow = screen.getAllByRole("row")[0];
-    const headerCells = within(headerRow).getAllByRole("columnheader");
-    expect(headerCells).toHaveLength(1 + 30);
+    const columnTitles = within(headerRow)
+      .getAllByRole("columnheader")
+      .slice(1)
+      .map((cell) => cell.getAttribute("title"));
+    expect(columnTitles).toEqual(["Payments API", ...heatmapColumns.slice(1)]);
   });
 
   it("says how many of the columns it is showing", async () => {

@@ -36,6 +36,7 @@ const page = {
   items: [entry("RSA", { MEDIUM: 4, HIGH: 2 }), entry("SHA-224", { LOW: 1 }), entry("AES", {})],
   total: 3,
   projects_total: 1,
+  heatmap_project_ids: [],
   generated_at: "2026-10-14T00:00:00Z",
 };
 

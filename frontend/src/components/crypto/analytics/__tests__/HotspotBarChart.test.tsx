@@ -37,6 +37,7 @@ const page: HotspotResponse = {
   items: [entry(LONG_KEY), entry("RSA")],
   total: 2,
   projects_total: 1,
+  heatmap_project_ids: [],
   generated_at: "2026-10-14T00:00:00Z",
 };
 

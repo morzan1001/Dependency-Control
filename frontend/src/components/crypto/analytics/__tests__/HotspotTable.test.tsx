@@ -27,6 +27,7 @@ vi.mock("@/api/cryptoAnalytics", () => ({
     ],
     total: 1,
     projects_total: 1,
+    heatmap_project_ids: [],
     generated_at: "2026-04-20",
   }),
 }));
@@ -68,6 +69,7 @@ describe("HotspotTable", () => {
       }],
       total: 1,
       projects_total: 1,
+      heatmap_project_ids: [],
       generated_at: "2026-04-20",
     });
     renderWithClient(<HotspotTable scope="project" scopeId="p" groupBy="name" />);
@@ -90,6 +92,7 @@ describe("HotspotTable", () => {
       }],
       total: 150,
       projects_total: 1,
+      heatmap_project_ids: [],
       generated_at: "2026-04-20",
     });
     renderWithClient(<HotspotTable scope="user" groupBy="name" />);
@@ -115,6 +118,7 @@ describe("HotspotTable", () => {
       }],
       total: 1,
       projects_total: 57,
+      heatmap_project_ids: [],
       generated_at: "2026-04-20",
     });
     renderWithClient(<HotspotTable scope="user" groupBy="name" />);
@@ -153,6 +157,7 @@ describe("HotspotTable", () => {
       }],
       total: 1,
       projects_total: 1,
+      heatmap_project_ids: [],
       generated_at: "2026-04-20",
     });
     renderWithClient(<HotspotTable scope="project" scopeId="p" groupBy="name" />);

@@ -80,12 +80,8 @@ class CryptoHotspotService:
             key=key,
         )
         frequency = Counter(project_id for item in items for project_id in item.project_ids)
-        if key is None:
-            # One shared column set: cutting each entry to its own first projects would show held cells as absent.
-            columns = sorted(frequency, key=lambda project_id: (-frequency[project_id], project_id))[:_HEATMAP_COLUMNS]
-            for item in items:
-                held = set(item.project_ids)
-                item.project_ids = [project_id for project_id in columns if project_id in held]
+        # One shared column set: each entry's own first projects would show held cells as absent.
+        columns = sorted(frequency, key=lambda project_id: (-frequency[project_id], project_id))[:_HEATMAP_COLUMNS]
         return HotspotResponse(
             scope=resolved.scope,
             scope_id=resolved.scope_id,
@@ -93,6 +89,7 @@ class CryptoHotspotService:
             items=items,
             total=total,
             projects_total=len(frequency),
+            heatmap_project_ids=columns,
             generated_at=datetime.now(timezone.utc),
         )
 

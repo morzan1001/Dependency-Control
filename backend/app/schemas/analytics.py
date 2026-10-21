@@ -431,13 +431,7 @@ class HotspotEntry(BaseModel):
         description="Every location this key occurs in is listed; when false a location absent "
         "from the list is unknown rather than known not to hold the key",
     )
-    project_ids: list[str] = Field(
-        default_factory=list,
-        description=(
-            "The entry's projects among the response's heatmap columns, the projects most entries share; "
-            "a single-key lookup names every project holding the key"
-        ),
-    )
+    project_ids: list[str] = Field(default_factory=list, description="Every project holding the key")
     project_count: int = Field(..., ge=0, description="Every project holding the key")
     first_seen: datetime
     last_seen: datetime
@@ -450,6 +444,9 @@ class HotspotResponse(BaseModel):
     items: list[HotspotEntry] = Field(default_factory=list)
     total: int = Field(..., ge=0)
     projects_total: int = Field(..., ge=0, description="Distinct projects across the items")
+    heatmap_project_ids: list[str] = Field(
+        default_factory=list, description="The heatmap's columns: up to 30 projects, those most items share first"
+    )
     generated_at: datetime
 
 

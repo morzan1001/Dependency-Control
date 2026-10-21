@@ -23,9 +23,8 @@ export function HotspotHeatmap({ scope, scopeId, groupBy }: Readonly<Props>) {
   if (isError || !data) return <div className="p-4 text-sm text-destructive">Failed to load heatmap data.</div>;
 
   const axis = scope === "project" ? "locations" : "projects";
-  const everyColumn = Array.from(
-    new Set(data.items.flatMap((e) => (scope === "project" ? e.locations : e.project_ids))),
-  );
+  const everyColumn =
+    scope === "project" ? Array.from(new Set(data.items.flatMap((e) => e.locations))) : data.heatmap_project_ids;
   // Capped so a project with many locations never renders an unbounded grid; the API caps project columns itself.
   const columns = everyColumn.slice(0, MAX_COLUMNS);
   const columnTotal = scope === "project" ? everyColumn.length : data.projects_total;
