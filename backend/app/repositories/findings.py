@@ -85,7 +85,7 @@ _ADVISORY_WAIVER_FIELDS = (
 
 
 def finding_identity(doc: Mapping[str, Any]) -> FindingIdentity:
-    """What makes the findings of two scans of one project the same finding."""
+    """Raw, so FIRST_DETECTION_INDEX matches it; findings_delta.finding_identity_key folds artifacts and bom-refs."""
     return doc.get("type"), doc.get("component"), doc.get("version"), doc.get("finding_id")
 
 
