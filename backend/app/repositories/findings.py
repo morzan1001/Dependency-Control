@@ -1,5 +1,5 @@
 from collections import defaultdict
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -36,16 +36,13 @@ FIRST_DETECTION_INDEX = [
     ("scan_created_at", ASCENDING),
 ]
 
-# The newest copy per (type, finding_id) is one seek, covered for the fields earliest_detections reads.
+# The newest copy per (type, finding_id) is one seek.
 # The server skips ahead only for a single grouped field behind equalities, so each type is its own query.
 NEWEST_COPY_INDEX = [
     ("project_id", ASCENDING),
     ("type", ASCENDING),
     ("finding_id", ASCENDING),
     ("created_at", DESCENDING),
-    ("component", ASCENDING),
-    ("version", ASCENDING),
-    ("first_seen_at", ASCENDING),
 ]
 VULNERABILITIES_ONLY = {"type": FindingType.VULNERABILITY.value}
 
@@ -91,6 +88,16 @@ def finding_identity(doc: Mapping[str, Any]) -> FindingIdentity:
 
 def _same_copy(copy: Mapping[str, Any], record: Mapping[str, Any]) -> bool:
     return copy.get("component") == record.get("component") and copy.get("version") == record.get("version")
+
+
+def _newest_copy_stages(
+    project_id: str, finding_type: str, finding_ids: Iterable[str], firsts: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    return [
+        {"$match": {"project_id": project_id, "type": finding_type, "finding_id": {"$in": list(finding_ids)}}},
+        {"$sort": dict(NEWEST_COPY_INDEX)},
+        {"$group": {"_id": "$finding_id", **{key: {"$first": value} for key, value in firsts.items()}}},
+    ]
 
 
 class FindingRepository(BaseRepository[FindingRecord]):
@@ -166,16 +173,8 @@ class FindingRepository(BaseRepository[FindingRecord]):
         return earliest
 
     async def _newest_copies(self, project_id: str, finding_type: str, finding_ids: set[str]) -> dict[str, Any]:
-        pipeline: list[dict[str, Any]] = [
-            {"$match": {"project_id": project_id, "type": finding_type, "finding_id": {"$in": list(finding_ids)}}},
-            {"$sort": dict(NEWEST_COPY_INDEX)},
-            {
-                "$group": {
-                    "_id": "$finding_id",
-                    **{field: {"$first": f"${field}"} for field in ("component", "version", "first_seen_at")},
-                }
-            },
-        ]
+        firsts = {field: f"${field}" for field in ("component", "version", "first_seen_at")}
+        pipeline = _newest_copy_stages(project_id, finding_type, finding_ids, firsts)
         return {row["_id"]: row async for row in self.collection.aggregate(pipeline, hint=dict(NEWEST_COPY_INDEX))}
 
     async def _earliest_over_every_copy(
@@ -233,11 +232,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
             versions = await self.collection.distinct(
                 "finding_id", {"project_id": project_id, "component": {"$in": chunk}, **VULNERABILITIES_ONLY}
             )
-            newest: list[dict[str, Any]] = [
-                {"$match": {"project_id": project_id, "finding_id": {"$in": versions}, **VULNERABILITIES_ONLY}},
-                {"$sort": dict(NEWEST_COPY_INDEX)},
-                {"$group": {"_id": "$finding_id", **{key: {"$first": value} for key, value in _COPY_DATES.items()}}},
-            ]
+            newest = _newest_copy_stages(project_id, FindingType.VULNERABILITY.value, versions, _COPY_DATES)
             await self._fold_advisory_dates(earliest, newest, NEWEST_COPY_INDEX)
             # A scan whose analyzer failed or came back partial stores a newest copy that misses advisories.
             if undated := {(c, i) for c in chunk for i in asked[c] if (c, i) not in earliest}:

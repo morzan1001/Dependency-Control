@@ -33,7 +33,6 @@ def test_findings_declare_only_the_indexes_a_read_needs():
             ("severity", ASCENDING),
             ("type", ASCENDING),
             ("finding_id", ASCENDING),
-            ("waived", ASCENDING),
         ): {},
         (("scan_id", ASCENDING), ("waived", ASCENDING)): {},
         (("scan_id", ASCENDING), ("type", ASCENDING)): {},
@@ -52,9 +51,6 @@ def test_findings_declare_only_the_indexes_a_read_needs():
             ("type", ASCENDING),
             ("finding_id", ASCENDING),
             ("created_at", DESCENDING),
-            ("component", ASCENDING),
-            ("version", ASCENDING),
-            ("first_seen_at", ASCENDING),
         ): {},
         (("scan_id", ASCENDING), ("severity", ASCENDING)): {
             "name": "findings_kev_scan_severity",
