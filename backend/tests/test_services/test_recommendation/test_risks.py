@@ -469,21 +469,25 @@ class TestDetectToxicDependenciesVulnRiskSeverityLabel:
         vuln_factor = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "vulnerabilities"]
         assert vuln_factor[0]["severity"] == "CRITICAL"
 
-    def test_medium_and_low_vulnerabilities_are_no_risk_factor(self):
-        findings = [
-            _vuln("pkg", "LOW", finding_id="CVE-2024-001"),
-            _vuln("pkg", "MEDIUM", finding_id="CVE-2024-002"),
-            _eol("pkg"),
-        ]
-
-        assert _toxic(findings) == []
-
-    def test_medium_and_low_vulnerabilities_stay_out_of_a_card_the_other_factors_raise(self):
-        findings = [_vuln("pkg", "LOW", finding_id="CVE-2024-001"), _eol("pkg"), _quality("pkg", overall_score=1.0)]
+    def test_an_eol_package_with_medium_cves_gets_the_card_with_a_medium_factor(self):
+        findings = [*(_vuln("pkg", "MEDIUM", finding_id=f"CVE-2024-00{i}") for i in range(4)), _eol("pkg")]
 
         [rec] = _toxic(findings)
 
-        assert [rf["type"] for rf in rec.action["risk_factors"]] == ["eol", "low_scorecard"]
+        assert [(rf["type"], rf["severity"]) for rf in rec.action["risk_factors"]] == [
+            ("eol", "HIGH"),
+            ("vulnerabilities", "MEDIUM"),
+        ]
+
+    def test_an_eol_package_with_one_low_cve_labels_the_factor_low(self):
+        [rec] = _toxic([_vuln("pkg", "LOW", finding_id="CVE-2024-001"), _eol("pkg")])
+
+        [vuln_factor] = [rf for rf in rec.action["risk_factors"] if rf["type"] == "vulnerabilities"]
+        assert vuln_factor == {
+            "type": "vulnerabilities",
+            "severity": "LOW",
+            "description": "1 vulnerabilities (0 critical, 0 high, 0 KEV)",
+        }
 
 
 class TestToxicEolNamesTheSupportedRelease:

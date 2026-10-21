@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
@@ -244,8 +244,10 @@ def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, r
     )
 
 
-def _vuln_risk_severity(critical: int, kev: int) -> str:
-    return "CRITICAL" if critical > 0 or kev > 0 else "HIGH"
+def _vuln_risk_severity(severity: Counter[str], kev: int) -> str:
+    if severity["CRITICAL"] or kev:
+        return "CRITICAL"
+    return next((level for level in ("HIGH", "MEDIUM") if severity[level]), "LOW")
 
 
 def _toxic_risk_factors(pkg: _PackageRisks) -> tuple[list[dict[str, str]], int]:
@@ -272,12 +274,11 @@ def _toxic_risk_factors(pkg: _PackageRisks) -> tuple[list[dict[str, str]], int]:
 
     stats = pkg.stats
     critical, high = stats.severity["CRITICAL"], stats.severity["HIGH"]
-    # The same floor as the license factor: medium and low advisories alone make no independent risk.
-    if critical + high + stats.kev:
+    if stats.total:
         factors.append(
             {
                 "type": "vulnerabilities",
-                "severity": _vuln_risk_severity(critical, stats.kev),
+                "severity": _vuln_risk_severity(stats.severity, stats.kev),
                 "description": f"{stats.total} vulnerabilities ({critical} critical, {high} high, {stats.kev} KEV)",
             }
         )
