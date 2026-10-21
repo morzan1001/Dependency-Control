@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
 
@@ -46,6 +49,8 @@ _SBOM_A = _cyclonedx_sbom(
 _SBOM_B = _cyclonedx_sbom([("flask", "3.0.0", "pkg:pypi/flask@3.0.0")])
 # The parser rejects a non-object metadata.
 _MALFORMED_SBOM = {**_SBOM_B, "metadata": []}
+# trufflehog v3 --json, one filesystem hit.
+_SECRET = json.loads((Path(__file__).parents[1] / "fixtures/secrets/trufflehog_v3_line.json").read_text())
 
 
 async def _store_sboms(db, sbom_a: dict, sbom_b: dict) -> None:
@@ -205,18 +210,47 @@ class _MatchesRequests:
         return {"matches": [{"vulnerability": {"id": "CVE-2024-35195", "severity": "Medium"}, "artifact": artifact}]}
 
 
+async def _post_secret(db, scan_id: str) -> None:
+    await db.analysis_results.insert_one(
+        {"scan_id": scan_id, "analyzer_name": "trufflehog", "result": {"findings": [_SECRET]}}
+    )
+
+
+async def _finding_types(db, scan_id: str) -> list[str]:
+    return sorted([f["type"] async for f in db.findings.find({"scan_id": scan_id})])
+
+
 @pytest.mark.asyncio
-async def test_a_failed_rescan_persists_none_of_the_findings_of_its_readable_sbom(
-    db, _stored_sboms, _second_file_unreadable, monkeypatch
-):
+async def test_a_failed_rescan_keeps_the_findings_of_its_readable_sbom_and_the_carried_scanner_results(db, monkeypatch):
+    await _store_sboms(db, _SBOM_A, _MALFORMED_SBOM)
     serve_analyzer(monkeypatch, "grype", _MatchesRequests())
     refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
     await db.scans.insert_one({"_id": _ORIGINAL_SCAN_ID, "project_id": _PROJECT_ID, "status": "completed"})
+    await _post_secret(db, _ORIGINAL_SCAN_ID)
     scan_id = await _seed_rescan(db, refs)
 
     assert await analyse_scan(db, scan_id, refs, ["grype"], worker_id=_WORKER) == SCAN_STATUS_FAILED
 
-    assert await db.findings.count_documents({"scan_id": scan_id}) == 0
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert (scan["error"], scan["findings_count"]) == ("SBOM could not be loaded or parsed for analysis", 2)
+    assert await _finding_types(db, scan_id) == ["secret", "vulnerability"]
+    assert await _dependency_docs(db, scan_id) == []
+
+
+@pytest.mark.asyncio
+async def test_a_first_analysis_whose_sboms_all_fail_to_load_keeps_the_ci_scanner_findings(
+    db, _stored_sboms, monkeypatch
+):
+    unreadable_downloads(monkeypatch, {_FILE_ID_A, _FILE_ID_B})
+    refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
+    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing", worker_id=_WORKER)
+    await db.scans.insert_one(scan.model_dump(by_alias=True))
+    await _post_secret(db, scan.id)
+
+    assert await analyse_scan(db, scan.id, refs, [], worker_id=_WORKER) == SCAN_STATUS_FAILED
+
+    assert await _finding_types(db, scan.id) == ["secret", "system_warning"]
+    assert (await db.scans.find_one({"_id": scan.id}))["error"] == "SBOM could not be loaded or parsed for analysis"
 
 
 @pytest.mark.asyncio

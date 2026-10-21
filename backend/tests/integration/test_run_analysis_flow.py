@@ -179,14 +179,14 @@ def _gridfs_outage(monkeypatch, while_listing=lambda: asyncio.sleep(0)) -> dict:
 async def test_a_result_that_arrives_during_a_failing_run_reschedules_it_instead_of_failing_it(
     db, notified, monkeypatch
 ):
-    scan = Scan(project_id=_PROJECT_ID, branch="main", status="processing", worker_id=_WORKER)
+    ref = _gridfs_outage(monkeypatch)
+    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER)
+    await db.scans.insert_one(scan.model_dump(by_alias=True))
 
-    async def _late_result():
+    async def _late_result(*_args):
         await db.scans.update_one({"_id": scan.id}, {"$set": {"last_result_at": datetime.now(timezone.utc)}})
-        await asyncio.sleep(0.01)
 
-    ref = _gridfs_outage(monkeypatch, _late_result)
-    await db.scans.insert_one(scan.model_dump(by_alias=True) | {"sbom_refs": [ref]})
+    monkeypatch.setattr(engine, "_run_vuln_enrichments", _late_result)
 
     assert await analyse_scan(db, scan.id, [ref], [], worker_id=_WORKER) == SCAN_STATUS_PENDING
 

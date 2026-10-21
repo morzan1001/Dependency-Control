@@ -821,7 +821,9 @@ def _partial_run_reasons(
     return reasons
 
 
-def _final_scan_status(scan_id: str, partial_reasons: list[str]) -> tuple[ScanStatus, str | None]:
+def _final_scan_status(scan_id: str, sboms_unusable: bool, partial_reasons: list[str]) -> tuple[ScanStatus, str | None]:
+    if sboms_unusable:
+        return SCAN_STATUS_FAILED, "SBOM could not be loaded or parsed for analysis"
     if partial_reasons:
         error = "; ".join(partial_reasons)
         logger.warning("Scan %s completed with errors: %s", scan_id, error)
@@ -931,30 +933,20 @@ async def run_analysis(
     sbom_parse_failures = payload.count(None) - sbom_load_failures
 
     # A rescan has no stored inventory to fall back on, so a partial payload would leave it without one.
-    if (scan_doc.is_rescan and sbom_load_failures + sbom_parse_failures > 0) or (
+    sboms_unusable = (scan_doc.is_rescan and sbom_load_failures + sbom_parse_failures > 0) or (
         sbom_load_failures > 0 and sbom_load_failures == len(stored_ids)
-    ):
-        del payload, aggregator
+    )
+    if sboms_unusable:
         logger.error(
-            "Scan %s: %d/%d SBOMs failed to load and %d failed to parse; storing no findings or dependencies",
+            "Scan %s: %d/%d SBOMs failed to load and %d failed to parse; marking failed",
             scan_id,
             sbom_load_failures,
             len(stored_ids),
             sbom_parse_failures,
         )
         if scan_doc.completed_at is not None:
+            del payload, aggregator
             return await _keep_previous_analysis(ctx, load_start)
-        analyzer_outcomes = _worst_outcomes(outcomes)
-        verdict = _Verdict(
-            SCAN_STATUS_FAILED,
-            "SBOM could not be loaded or parsed for analysis",
-            Stats(),
-            0,
-            0,
-            analyzer_outcomes,
-            *_failed_analyzer_names(analyzer_outcomes),
-        )
-        return await _conclude(ctx, verdict, load_start, aggregation_start_time)
 
     result_repo = AnalysisResultRepository(db)
     # Deferred past the unusable check so a kept analysis keeps its rows; this run's rows postdate load_start.
@@ -1007,7 +999,7 @@ async def run_analysis(
         persisted_findings_count,
         total_findings_count,
     )
-    final_status, final_error = _final_scan_status(scan_id, partial_reasons)
+    final_status, final_error = _final_scan_status(scan_id, sboms_unusable, partial_reasons)
     verdict = _Verdict(
         final_status,
         final_error,
