@@ -253,8 +253,6 @@ def calculate_impact_score(
     severity_counts: dict[str, int],
     affected_projects: int,
     enrichment_data: ThreatIntelFields,
-    has_fix: bool,
-    days_known: int | None,
 ) -> float:
     base_impact = impact_pre_score(severity_counts, affected_projects)
 
@@ -262,10 +260,10 @@ def calculate_impact_score(
     base_impact *= _calculate_epss_boost(enrichment_data.max_epss_score)
     base_impact *= EXPLOIT_MATURITY_BOOST[enrichment_data.exploit_maturity]
 
-    if has_fix:
+    if enrichment_data.has_fix:
         base_impact *= IMPACT_FIX_AVAILABLE_BOOST
 
-    if _missed_sla(severity_counts, days_known):
+    if _missed_sla(severity_counts, enrichment_data.days_known):
         base_impact *= IMPACT_AGE_BOOST
 
     return base_impact

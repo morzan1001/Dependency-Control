@@ -241,9 +241,7 @@ async def _impact(
                 affected_projects=affected_projects,
                 total_findings=sum(severity_counts.values()),
                 findings_by_severity=SeverityBreakdown.from_counts(severity_counts),
-                fix_impact_score=calculate_impact_score(
-                    severity_counts, affected_projects, intel, intel.has_fix, intel.days_known
-                ),
+                fix_impact_score=calculate_impact_score(severity_counts, affected_projects, intel),
                 affected_project_names=[
                     project_name_map.get(pid, "Unknown") for pid in r["project_ids"][:_AFFECTED_PROJECTS_SHOWN]
                 ],

@@ -695,7 +695,7 @@ class TestImpactPreScoreIsScoreBase:
         counts = {"critical": 2, "high": 3, "medium": 1, "low": 4}
         for ap in (0, 1, 5, 10, 50):
             assert impact_pre_score(counts, ap) == calculate_impact_score(
-                counts, ap, ThreatIntelFields(), has_fix=False, days_known=None
+                counts, ap, ThreatIntelFields(has_fix=False, days_known=None)
             ), f"pre-score must equal the un-boosted impact score (ap={ap})"
 
     def test_the_boost_ceiling_is_the_highest_boost_any_enrichment_reaches(self):
@@ -712,9 +712,9 @@ class TestImpactPreScoreIsScoreBase:
             calculate_impact_score(
                 counts,
                 1,
-                ThreatIntelFields(**kev, max_epss_score=epss, exploit_maturity=maturity),
-                has_fix=has_fix,
-                days_known=days_known,
+                ThreatIntelFields(
+                    **kev, max_epss_score=epss, exploit_maturity=maturity, has_fix=has_fix, days_known=days_known
+                ),
             )
             / impact_pre_score(counts, 1)
             for kev in kev_states
@@ -838,7 +838,7 @@ class TestPriorityReasons:
 
     def test_the_age_boost_starts_where_the_sla_ends(self):
         def score(days_known: int | None) -> float:
-            return calculate_impact_score({"critical": 1}, 1, ThreatIntelFields(), False, days_known)
+            return calculate_impact_score({"critical": 1}, 1, ThreatIntelFields(has_fix=False, days_known=days_known))
 
         assert (score(6), score(7)) == (score(None), score(None) * IMPACT_AGE_BOOST)
 
