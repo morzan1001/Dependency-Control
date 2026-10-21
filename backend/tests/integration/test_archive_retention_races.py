@@ -12,7 +12,12 @@ from pymongo.errors import AutoReconnect, NetworkTimeout
 
 from app.api.v1.endpoints import callgraph, cbom_ingest
 from app.core import housekeeping
-from app.core.constants import ARCHIVE_BATCH_SIZE, HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS, RESCAN_HISTORY_RUNS
+from app.core.constants import (
+    ARCHIVE_BATCH_SIZE,
+    ARCHIVE_RESTORE_LOCK_TEMPLATE,
+    HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS,
+    RESCAN_HISTORY_RUNS,
+)
 from app.core.housekeeping import _archive_scans_and_delete, _expire_group, _run_retention
 from app.models.release import Release
 from app.repositories.analysis_results import AnalysisResultRepository
@@ -21,7 +26,7 @@ from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
-from app.services import archive, stats
+from app.services import archive, scan_manager, stats
 from app.services.analysis.stats import _STATS_CURSOR_HINT
 from app.services.archive import RestoreFailed, restore_scan
 from app.services.scan_manager import deterministic_scan_id
@@ -630,18 +635,69 @@ async def test_a_restore_beaten_to_the_scan_by_an_ingest_leaves_the_ingested_sca
         assert failure.value.reason == "already_exists"
 
 
+async def _restoring_scan(db, *, restore_running: bool) -> str:
+    scan_id = deterministic_scan_id(_PROJECT_ID, _RUN["pipeline_id"], _RUN["commit_hash"])
+    await db.scans.insert_one(_scan(scan_id, 200, restore_in_progress=True, commit_message="archived"))
+    await db.findings.insert_one({**_VULNERABILITY, "scan_id": scan_id})
+    if restore_running:
+        lock = ARCHIVE_RESTORE_LOCK_TEMPLATE.format(scan_id=scan_id)
+        assert await DistributedLocksRepository(db).acquire_lock(lock, "restoring-pod", ttl_seconds=600)
+    return scan_id
+
+
+async def _post_retried_upload(client, headers, upload: str):
+    path, body = _UPLOADS[upload]
+    return await client.post(path, json={**_RUN, **body, "commit_message": "retried"}, headers=headers)
+
+
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 @pytest.mark.parametrize("upload", sorted(_UPLOADS))
-async def test_an_upload_meeting_a_restore_is_told_to_retry_and_leaves_the_restoring_scan_alone(
+async def test_an_upload_to_the_leftover_of_a_dead_restore_rolls_it_back_and_is_stored(
     client, db, api_key_headers, upload
 ):
-    scan_id = deterministic_scan_id(_PROJECT_ID, _RUN["pipeline_id"], _RUN["commit_hash"])
-    await db.scans.insert_one(_scan(scan_id, 200, restore_in_progress=True, commit_message="archived"))
-    restoring = await db.scans.find_one({"_id": scan_id})
-    path, body = _UPLOADS[upload]
+    scan_id = await _restoring_scan(db, restore_running=False)
 
-    resp = await client.post(path, json={**_RUN, **body, "commit_message": "retried"}, headers=api_key_headers)
+    resp = await _post_retried_upload(client, api_key_headers, upload)
+
+    assert resp.status_code < 300, resp.text
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert (scan["commit_message"], scan.get("restore_in_progress")) == ("retried", None)
+    assert await db.findings.count_documents({"scan_id": scan_id}) == 0
+    assert await db.distributed_locks.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("upload", sorted(_UPLOADS))
+async def test_an_upload_waits_for_a_restore_that_finishes_meanwhile(client, db, api_key_headers, upload):
+    scan_id = await _restoring_scan(db, restore_running=True)
+
+    async def finish_the_restore() -> None:
+        await asyncio.sleep(0.3)
+        await db.scans.update_one({"_id": scan_id}, {"$unset": {"restore_in_progress": ""}})
+        await db.distributed_locks.delete_many({})
+
+    finished = asyncio.create_task(finish_the_restore())
+    resp = await _post_retried_upload(client, api_key_headers, upload)
+    await finished
+
+    assert resp.status_code < 300, resp.text
+    assert (await db.scans.find_one({"_id": scan_id}))["commit_message"] == "retried"
+    assert await db.findings.count_documents({"scan_id": scan_id}) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("upload", sorted(_UPLOADS))
+async def test_an_upload_meeting_a_restore_that_keeps_running_is_told_to_retry_and_leaves_the_scan_alone(
+    client, db, api_key_headers, upload, monkeypatch
+):
+    monkeypatch.setattr(scan_manager, "_RESTORE_WAIT_SECONDS", 0.3)
+    scan_id = await _restoring_scan(db, restore_running=True)
+    restoring = await db.scans.find_one({"_id": scan_id})
+
+    resp = await _post_retried_upload(client, api_key_headers, upload)
 
     assert resp.status_code == 409, resp.text
     assert await db.scans.find_one({"_id": scan_id}) == restoring

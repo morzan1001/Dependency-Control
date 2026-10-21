@@ -670,6 +670,22 @@ async def _rollback_partial_restore(db: Any, scan_id: str) -> None:
         logger.warning("Partial-restore rollback of scan %s failed: %s", sanitize_for_log(scan_id), sanitize_for_log(e))
 
 
+async def roll_back_dead_restore(db: Any, scan_id: str) -> bool:
+    """False while a restore holds the scan's lock; otherwise rolls back what a dead restore left flagged."""
+    lock_repo = DistributedLocksRepository(db)
+    lock_name = ARCHIVE_RESTORE_LOCK_TEMPLATE.format(scan_id=scan_id)
+    holder = new_lock_holder()
+    if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
+        return False
+    try:
+        if await db.scans.find_one({"_id": scan_id, "restore_in_progress": True}, {"_id": 1}):
+            logger.warning("Rolling back the leftover of a dead restore of scan %s", sanitize_for_log(scan_id))
+            await _rollback_partial_restore(db, scan_id)
+    finally:
+        await lock_repo.release_lock(lock_name, holder)
+    return True
+
+
 async def _load_restore_metadata(
     db: Any,
     repo: ArchiveMetadataRepository,

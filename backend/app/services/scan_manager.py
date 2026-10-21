@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import time
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -19,9 +21,14 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.ingest import IngestEnvelope
+from app.services.archive import roll_back_dead_restore
 from app.services.waivers.matching import record_matches, route_waiver, waiver_criteria, waiver_strong_match
 
 logger = logging.getLogger(__name__)
+
+# Well below the CI client's and the ingress's timeouts; scanner.sh does not retry a 409.
+_RESTORE_WAIT_SECONDS = 10.0
+_RESTORE_POLL_SECONDS = 0.5
 
 
 def _restoring_conflict() -> HTTPException:
@@ -124,8 +131,13 @@ class ScanManager:
 
     async def refuse_while_restoring(self, scan_id: str) -> None:
         """Called before an upload's first scan-scoped write, since a rollback of the restore would delete it."""
-        if await self.db.scans.find_one({"_id": scan_id, "restore_in_progress": True}, {"_id": 1}):
-            raise _restoring_conflict()
+        deadline = time.monotonic() + _RESTORE_WAIT_SECONDS
+        while await self.db.scans.find_one(
+            {"_id": scan_id, "restore_in_progress": True}, {"_id": 1}
+        ) and not await roll_back_dead_restore(self.db, scan_id):
+            if time.monotonic() >= deadline:
+                raise _restoring_conflict()
+            await asyncio.sleep(_RESTORE_POLL_SECONDS)
 
     async def upsert_scan(self, scan_id: str, update: dict[str, Any]) -> None:
         try:
