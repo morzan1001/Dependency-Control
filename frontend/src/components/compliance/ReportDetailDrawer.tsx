@@ -15,6 +15,7 @@ import { REPORT_FRAMEWORK_LABELS } from "@/lib/constants";
 import { formatDateTime, type Named } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import { ReportScope } from "./ReportScope";
+import { Notice } from "@/components/analytics/ThreatIntelNote";
 import type { ComplianceReportMeta, ControlStatus } from "@/types/compliance";
 
 interface Props { report: ComplianceReportMeta | null; namesakes?: readonly Named[]; onClose: () => void; }
@@ -23,11 +24,8 @@ function CoverageNotice({ report }: { readonly report: ComplianceReportMeta }) {
   const plan = report.coverage?.plan_items;
   const gaps = report.coverage?.gaps ?? [];
   if (!report.coverage_statement || (!plan && gaps.length === 0)) return null;
-  const tone =
-    gaps.length > 0 || (plan && plan.evaluated < plan.in_scope)
-      ? "rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200"
-      : "text-xs text-muted-foreground";
-  return <div className={tone}>{report.coverage_statement}</div>;
+  if (gaps.length > 0 || (plan && plan.evaluated < plan.in_scope)) return <Notice>{report.coverage_statement}</Notice>;
+  return <div className="text-xs text-muted-foreground">{report.coverage_statement}</div>;
 }
 
 const WITHHELD_KEY: ControlStatus = "not_evaluated";

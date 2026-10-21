@@ -95,7 +95,9 @@ describe("ImpactAnalysis live threat intel", () => {
     ]);
     renderImpact();
 
-    expect(await screen.findByText(/Live KEV and EPSS data could not be read in full/)).toBeInTheDocument();
+    expect(await screen.findByText(/Live KEV and EPSS data could not be read in full/)).toHaveTextContent(
+      /exploit signals and the scores they raise may be incomplete\./,
+    );
   });
 
   it("stays quiet when every live source answered", async () => {

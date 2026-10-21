@@ -1,7 +1,7 @@
 import { RecommendationsResponse } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { AlertTriangle, Lightbulb, ShieldAlert, type LucideIcon } from 'lucide-react'
-import { ThreatIntelNote } from '../ThreatIntelNote'
+import { Notice, ThreatIntelNote } from '../ThreatIntelNote'
 
 interface Tile {
   label: string
@@ -58,17 +58,17 @@ export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }
       </CardHeader>
       <CardContent className="space-y-4">
         {data.total_findings < data.findings_total && (
-          <div className="rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <Notice>
             Reasoned over {data.total_findings.toLocaleString()} of {data.findings_total.toLocaleString()} findings
             in this scan. Every count and card here covers those findings and under-reports the rest.
-          </div>
+          </Notice>
         )}
         {data.dependencies_read < data.dependencies_total && (
-          <div className="rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <Notice>
             Reasoned over {data.dependencies_read.toLocaleString()} of {data.dependencies_total.toLocaleString()}{" "}
             dependency rows in this scan. Advice that counts components — fragmentation, license drift — is
             scoped to those rows and under-reports the rest.
-          </div>
+          </Notice>
         )}
         <ThreatIntelNote
           sources={data.threat_intel_unavailable ?? []}

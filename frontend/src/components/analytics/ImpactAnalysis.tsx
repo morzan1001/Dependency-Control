@@ -97,10 +97,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
         {error && <AnalyticsErrorCard title="Failed to load impact analysis" error={error} onRetry={() => refetch()} />}
         {!isLoading && results && results.length > 0 && (
           <div className="space-y-4">
-            <ThreatIntelNote
-              sources={results.flatMap((r) => r.threat_intel_unavailable ?? [])}
-              consequence="exploit signals and the scores they raise may be incomplete."
-            />
+            <ThreatIntelNote sources={results.flatMap((r) => r.threat_intel_unavailable ?? [])} />
             <div className="grid gap-4 md:grid-cols-3">
               {results.slice(0, 3).map((r, index) => {
                 let borderClass = 'border-yellow-500 border-2'
