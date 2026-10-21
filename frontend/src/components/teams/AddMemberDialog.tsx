@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAddTeamMember } from '@/hooks/queries/use-teams';
-import { refusesEmail } from '@/hooks/queries/use-users';
+import { emailRefusalMessage, refusesEmail } from '@/hooks/queries/use-users';
 import { getErrorMessage } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,11 +35,7 @@ export function AddMemberDialog({ teamId, isOpen, onClose }: Readonly<AddMemberD
   const [blankEmail, setBlankEmail] = useState(false);
   const [role, setRole] = useState('member');
   const addMemberMutation = useAddTeamMember();
-  const emailRefusal =
-    addMemberMutation.isError && refusesEmail(addMemberMutation.error)
-      ? getErrorMessage(addMemberMutation.error, { withField: false })
-      : null;
-  const emailError = blankEmail ? 'Enter an email address' : emailRefusal;
+  const emailError = blankEmail ? 'Enter an email address' : emailRefusalMessage(addMemberMutation);
 
   const handleClose = () => {
     setEmail('');
