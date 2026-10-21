@@ -99,8 +99,8 @@ async def test_only_packages_the_viewed_project_holds_are_compared(db):
     assert [(p["name"], p["project_count"]) for p in data["shared_packages"]] == [("flask", 2)]
 
 
-async def test_a_shared_package_names_the_versions_a_compared_project_holds_a_vulnerability_on(db):
-    """A finding without a version cannot tell the versions apart, so it marks every one of them."""
+async def test_a_shared_package_suggests_the_newest_version_no_compared_project_holds_a_vulnerability_on(db):
+    """A finding without a version cannot tell the versions apart, so it rules out every one of them."""
     await _projects(db, "current", "p1", "p2")
     await db.dependencies.insert_many(
         [
@@ -125,7 +125,7 @@ async def test_a_shared_package_names_the_versions_a_compared_project_holds_a_vu
     await db.findings.insert_many(
         [
             {**_finding("f1", "p2", [{"id": _LODASH_CVE}]), "version": "v4.17.21"},
-            {**_finding("f2", "p1", [{"id": "CVE-2026-0001"}], waived=True), "version": "4.17.15"},
+            {**_finding("f2", "current", [{"id": "CVE-2026-0001"}], waived=True), "version": "4.17.20"},
             {**_finding("f3", "current", [{"id": "CVE-2026-0002"}]), "component": "flask"},
             # Trivy names a Maven package group:artifact, grype only its artifact.
             {
@@ -140,11 +140,11 @@ async def test_a_shared_package_names_the_versions_a_compared_project_holds_a_vu
     data = await gather_cross_project_data(await read_scope_projects(db, {}), "current", db)
 
     assert data is not None
-    assert {p["name"]: sorted(p["vulnerable_versions"]) for p in data["shared_packages"]} == {
-        "com.fasterxml.jackson.core/jackson-databind": ["2.17.1"],
-        "flask": ["2.0.0", "3.0.0"],
-        "lodash": ["4.17.21"],
-        "org.apache.logging.log4j/log4j-core": ["2.14.1"],
+    assert {p["name"]: p["suggestion"] for p in data["shared_packages"]} == {
+        "com.fasterxml.jackson.core/jackson-databind": "2.14.1",
+        "flask": None,
+        "lodash": "4.17.20",
+        "org.apache.logging.log4j/log4j-core": "2.17.1",
     }
 
 

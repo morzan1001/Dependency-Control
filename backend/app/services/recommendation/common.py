@@ -21,13 +21,15 @@ from app.core.epss import bucket_epss
 from app.core.risk_scoring import is_actionable_vulnerability
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
+from app.schemas.sbom import has_known_version
 from app.services.aggregation.versions import (
     aggregate_fixed_version,
     newest_first,
     normalize_version,
     split_fixed_versions,
+    version_covered,
 )
-from app.services.component_identity import build_component_index, lookup_component
+from app.services.component_identity import build_component_index, finding_component_name, lookup_component
 
 ModelOrDict = BaseModel | dict[str, Any]
 
@@ -156,6 +158,23 @@ MALWARE_REMEDIATION_STEPS = (
     "Audit your systems for signs of compromise",
     "Report to your security team and follow your incident response procedures",
 )
+
+
+def newest_clean_version_finder(
+    vulnerable_component_versions: Iterable[tuple[str, str | None]],
+) -> Callable[[str, str, Iterable[str]], str | None]:
+    vulnerable_by_component: dict[str, set[str]] = defaultdict(set)
+    for component, version in vulnerable_component_versions:
+        vulnerable_by_component[component].add(normalize_version(version))
+    index = build_component_index(vulnerable_by_component)
+
+    def newest_clean(package_type: str, name: str, versions: Iterable[str]) -> str | None:
+        covered = lookup_component(index, finding_component_name(package_type, name)) or set()
+        return next(
+            (v for v in newest_first(versions) if has_known_version(v) and not version_covered(covered, v)), None
+        )
+
+    return newest_clean
 
 
 def malware_kind(finding: ModelOrDict) -> str:

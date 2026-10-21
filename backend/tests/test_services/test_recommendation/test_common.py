@@ -18,6 +18,7 @@ from app.services.recommendation.common import (
     label_by_keywords,
     live_cves,
     name_some,
+    newest_clean_version_finder,
     recommend,
     severity_impact,
     sort_key,
@@ -207,6 +208,22 @@ class TestVersionOrdering:
 
     def test_debian_revisions_are_ordered_numerically(self):
         assert _best_fix(["1.2.3-2", "1.2.3-10"]) == "1.2.3-10"
+
+
+class TestNewestCleanVersionFinder:
+    @pytest.mark.parametrize(
+        ("vulnerable_versions", "newest_clean"),
+        [
+            pytest.param((), "4.17.21", id="all-clean"),
+            pytest.param(("v4.17.21",), "4.17.20", id="newest-vulnerable"),
+            pytest.param(("4.17.21", "4.17.20", "4.17.15"), None, id="unknown-only-clean"),
+            pytest.param((None,), None, id="versionless-finding"),
+        ],
+    )
+    def test_the_newest_version_in_use_without_a_known_vulnerability(self, vulnerable_versions, newest_clean):
+        find = newest_clean_version_finder(("lodash", v) for v in vulnerable_versions)
+
+        assert find("npm", "lodash", ["4.17.15", "4.17.21", "unknown", "4.17.20"]) == newest_clean
 
 
 def _best_fix(fixed_versions):

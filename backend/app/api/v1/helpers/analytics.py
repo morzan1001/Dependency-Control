@@ -45,17 +45,11 @@ from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
 from app.schemas.analytics import ThreatIntelFields
 from app.schemas.enrichment import VulnerabilityEnrichment
-from app.services.aggregation.versions import (
-    aggregate_fixed_version,
-    normalize_version,
-    split_fixed_versions,
-    version_covered,
-)
+from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
 from app.services.analytics.scopes import ScopeResolver, read_scope_project_ids
-from app.services.component_identity import build_component_index, finding_component_name, lookup_component
 from app.services.enrichment.scoring import fold_enrichments
 from app.services.enrichment.service import advisory_enrichment
-from app.services.recommendation.common import live_advisories, live_cves
+from app.services.recommendation.common import live_advisories, live_cves, newest_clean_version_finder
 from app.services.releases import resolve_scan_ids
 
 MONGO_MATCH = "$match"
@@ -463,21 +457,17 @@ async def gather_cross_project_data(
         finding_repo, {"scan_id": {"$in": scan_ids}}, "scan_id", "component", "version"
     )
     details_by_scan: dict[str, list[Any]] = defaultdict(list)
-    vulnerable_by_component: dict[str, set[str]] = defaultdict(set)
-    for (scan_id, component, version), details in details_by_finding.items():
+    for (scan_id, _, _), details in details_by_finding.items():
         details_by_scan[scan_id] += details
-        vulnerable_by_component[component].add(normalize_version(version))
     scan_cves_map = {scan_id: live_cves(details) for scan_id, details in details_by_scan.items()}
 
     if viewed_scan_id := head_scan_ids.get(current_project_id):
         shared_packages = await dep_repo.aggregate(
             cross_project_package_pipeline(scan_ids, CROSS_PROJECT_MIN_OCCURRENCES, viewed_scan_id)
         )
-        vulnerable_index = build_component_index(vulnerable_by_component)
+        newest_clean = newest_clean_version_finder((component, version) for _, component, version in details_by_finding)
         for package in shared_packages:
-            name = finding_component_name(package["type"], package["name"])
-            vulnerable = lookup_component(vulnerable_index, name) or set()
-            package["vulnerable_versions"] = [v for v in package["versions"] if version_covered(vulnerable, v)]
+            package["suggestion"] = newest_clean(package["type"], package["name"], package["versions"])
         cross_project_data["shared_packages"] = shared_packages
 
     for project in compared:

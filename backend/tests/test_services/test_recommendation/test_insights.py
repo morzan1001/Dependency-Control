@@ -70,7 +70,7 @@ def _cross_project_data(projects, total_projects=None, shared_packages=None, cur
 
 
 def _shared_package(
-    name="requests", versions=("2.28.0", "2.31.0"), project_count=2, package_type="pypi", vulnerable_versions=()
+    name="requests", versions=("2.28.0", "2.31.0"), project_count=2, package_type="pypi", suggestion=None
 ):
     """A row of the cross-project aggregation, which counts every dependency row in Mongo instead of sampling."""
     return {
@@ -79,7 +79,7 @@ def _shared_package(
         "versions": list(versions),
         "version_count": len(versions),
         "project_count": project_count,
-        "vulnerable_versions": list(vulnerable_versions),
+        "suggestion": suggestion,
     }
 
 
@@ -322,26 +322,13 @@ class TestAnalyzeCrossProjectPatternsInconsistentVersions:
             "foo (pypi): 2 versions across 2 projects",
         ]
 
-    @pytest.mark.parametrize(
-        ("vulnerable_versions", "suggestion"),
-        [
-            pytest.param((), "4.17.21", id="all-clean"),
-            pytest.param(("4.17.21",), "4.17.20", id="newest-vulnerable"),
-            pytest.param(("4.17.21", "4.17.20", "4.17.15", "unknown"), None, id="none-clean"),
-            pytest.param(("4.17.21", "4.17.20", "4.17.15"), None, id="unknown-only-clean"),
-        ],
-    )
-    def test_the_suggestion_is_the_newest_version_in_use_without_a_known_vulnerability(
-        self, vulnerable_versions, suggestion
-    ):
-        package = _shared_package(
-            "lodash", versions=("4.17.15", "4.17.21", "unknown", "4.17.20"), vulnerable_versions=vulnerable_versions
-        )
+    def test_the_card_recommends_the_package_suggestion(self):
+        package = _shared_package("lodash", versions=("4.17.15", "4.17.21", "4.17.20"), suggestion="4.17.20")
         data = _cross_project_data([_project(project_id="p1"), _project(project_id="p2")], shared_packages=[package])
 
         [card] = [r for r in analyze_cross_project_patterns(data) if r.type == RecommendationType.CROSS_PROJECT_PATTERN]
 
-        assert card.action["packages"][0]["suggestion"] == suggestion
+        assert card.action["packages"][0]["suggestion"] == "4.17.20"
 
     def test_the_text_says_the_packages_are_the_viewed_projects(self):
         data = _cross_project_data(

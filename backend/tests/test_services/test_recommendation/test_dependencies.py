@@ -330,35 +330,19 @@ class TestAnalyzeVersionFragmentationPackageIdentity:
 
 
 class TestAnalyzeVersionFragmentationSuggestion:
-    @pytest.mark.parametrize(
-        ("vulnerable_versions", "suggestion"),
-        [
-            pytest.param((), "Pin to 4.17.21", id="all-clean"),
-            pytest.param(("v4.17.21",), "Pin to 4.17.20", id="newest-vulnerable"),
-            pytest.param(("4.17.21", "4.17.20", "4.17.15"), None, id="unknown-only-clean"),
-            pytest.param((None,), None, id="versionless-finding"),
-        ],
-    )
-    def test_the_suggestion_pins_the_newest_version_in_use_without_a_known_vulnerability(
-        self, vulnerable_versions, suggestion
-    ):
-        deps = [_dep(name="lodash", version=v) for v in ("4.17.15", "4.17.21", "unknown", "4.17.20")]
-        vulns = [{"type": "vulnerability", "component": "lodash", "version": v} for v in vulnerable_versions]
-
-        [rec] = analyze_version_fragmentation(deps, vulns)
-
-        assert rec.action["packages"][0]["suggestion"] == suggestion
-
-    def test_a_maven_package_meets_the_findings_naming_it_group_colon_artifact(self):
+    @pytest.mark.parametrize(("vulnerable_version", "suggestion"), [("2.17.1", "Pin to 2.16.0"), (None, None)])
+    def test_a_maven_package_meets_the_findings_naming_it_group_colon_artifact(self, vulnerable_version, suggestion):
         deps = [
             {**_dep(name="log4j-core", version=v), "purl": f"pkg:maven/org.apache.logging.log4j/log4j-core@{v}"}
             for v in ("2.14.1", "2.16.0", "2.17.1")
         ]
-        vulns = [{"type": "vulnerability", "component": "org.apache.logging.log4j:log4j-core", "version": "2.17.1"}]
+        vulns = [
+            {"type": "vulnerability", "component": "org.apache.logging.log4j:log4j-core", "version": vulnerable_version}
+        ]
 
         [rec] = analyze_version_fragmentation(deps, vulns)
 
-        assert rec.action["packages"][0]["suggestion"] == "Pin to 2.16.0"
+        assert rec.action["packages"][0]["suggestion"] == suggestion
 
 
 class TestHygieneCardsMatchTheQualifiedName:

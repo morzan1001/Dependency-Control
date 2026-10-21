@@ -9,7 +9,6 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.schemas.sbom import has_known_version
 from app.services.aggregation.versions import newest_first
 from app.services.component_identity import build_component_index, lookup_component
 from app.services.recommendation.common import (
@@ -268,14 +267,7 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
                         # $addToSet is unordered; rank first so the sample shows the newest versions.
                         "versions": newest_first(p["versions"])[:ACTION_VERSION_SAMPLE],
                         "version_count": p["version_count"],
-                        "suggestion": next(
-                            (
-                                v
-                                for v in newest_first(p["versions"])
-                                if has_known_version(v) and v not in p["vulnerable_versions"]
-                            ),
-                            None,
-                        ),
+                        "suggestion": p["suggestion"],
                         "project_count": p["project_count"],
                     }
                     for p in inconsistent_packages
