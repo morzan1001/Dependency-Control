@@ -904,6 +904,25 @@ class TestGetFindings:
         assert out_f.id in vuln_f.related_findings
         assert vuln_f.id in out_f.related_findings
 
+    def test_vulnerabilities_of_one_package_at_two_versions_link_to_each_other(self):
+        """refresh_vulnerability_info reads a version's siblings through these links."""
+        for cve, version in (("CVE-1", "4.17.0"), ("CVE-2", "4.17.20")):
+            self.agg.add_finding(
+                Finding(
+                    id=cve,
+                    type=FindingType.VULNERABILITY,
+                    severity=Severity.HIGH,
+                    component="lodash",
+                    version=version,
+                    description="vuln",
+                    scanners=["trivy"],
+                )
+            )
+
+        older, newer = sorted(self.agg.get_findings(), key=lambda f: f.version)
+
+        assert (older.related_findings, newer.related_findings) == ([newer.id], [older.id])
+
     def test_cross_format_related_findings_linked(self):
         self.agg.add_finding(
             Finding(
