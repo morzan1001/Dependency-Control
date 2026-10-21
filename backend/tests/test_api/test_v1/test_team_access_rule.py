@@ -173,6 +173,7 @@ class TestTeamReportVisibility:
         [
             (_user(), set()),
             (_user(Permissions.TEAM_READ), set()),
+            (_user(Permissions.PROJECT_READ), set()),
             (_user(Permissions.TEAM_READ, Permissions.PROJECT_READ), {"t-1"}),
             (_user(Permissions.TEAM_READ_ALL, Permissions.PROJECT_READ), {"t-1"}),
             (_user(Permissions.TEAM_READ_ALL, Permissions.PROJECT_READ, user_id="u-out"), set()),
