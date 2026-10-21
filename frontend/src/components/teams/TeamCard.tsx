@@ -46,7 +46,7 @@ export function TeamCard({
       onClick={() => onManageMembers(team)}
     >
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">
+        <CardTitle className="text-sm font-medium truncate pr-2" title={team.name}>
           {team.name}
         </CardTitle>
         <div className="flex items-center gap-1">
@@ -110,7 +110,7 @@ export function TeamCard({
       </CardHeader>
       <CardContent className="flex-1">
         <div className="text-2xl font-bold">{team.members.length} Member{team.members.length === 1 ? '' : 's'}</div>
-        <p className="text-xs text-muted-foreground mt-1">
+        <p className="text-xs text-muted-foreground mt-1 wrap-anywhere">
           {team.description || "No description"}
         </p>
         <div className="mt-4 space-y-1">
