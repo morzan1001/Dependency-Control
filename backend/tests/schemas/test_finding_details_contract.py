@@ -4,9 +4,12 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
 from pydantic import BaseModel
 
-from app.schemas import finding as finding_typed_dicts, finding_details
+from app.models.finding import Finding, FindingType, Severity
+from app.schemas import finding_details
+from app.services.aggregation import ResultAggregator
 
 APP_ROOT = Path(finding_details.__file__).resolve().parents[1]
 
@@ -275,17 +278,58 @@ def test_details_key_constants_point_at_declared_fields():
     assert not bad, f"DETAILS_KEY_* constants whose value is not a declared details field: {bad}"
 
 
-def test_aggregator_typed_dicts_match_details_models():
-    pairs = {
-        "VulnerabilityEntry": "VulnerabilityEntryDetails",
-        "VulnerabilityAggregatedDetails": "VulnerabilityDetails",
-        "QualityEntry": "QualityIssueEntry",
-        "QualityAggregatedDetails": "QualityDetails",
-    }
-    for typed_dict_name, model_name in pairs.items():
-        typed_dict = getattr(finding_typed_dicts, typed_dict_name)
-        missing = set(typed_dict.__annotations__) - _model_fields(model_name)
-        assert not missing, f"{typed_dict_name} declares keys missing on {model_name}: {sorted(missing)}"
+_SCANNER_DETAILS = {
+    "fixed_version": "4.17.21",
+    "cvss_score": 7.5,
+    "cvss_vector": "CVSS:3.1/AV:N",
+    "references": ["https://example.test/advisory"],
+    "ecosystem_specific": {"imports": [{"path": "lodash"}]},
+    "overall_score": 4.0,
+    "critical_issues": ["Maintained"],
+}
+
+
+@pytest.mark.parametrize(
+    ("finding_type", "ids", "entries_key", "model_name", "entry_model_name"),
+    [
+        pytest.param(
+            FindingType.VULNERABILITY,
+            ["CVE-2024-0001", "CVE-2024-0001", "GHSA-aaaa-bbbb-cccc"],
+            "vulnerabilities",
+            "VulnerabilityDetails",
+            "VulnerabilityEntryDetails",
+            id="vulnerability",
+        ),
+        pytest.param(
+            FindingType.QUALITY,
+            ["SCORECARD-lodash", "MAINT-lodash"],
+            "quality_issues",
+            "QualityDetails",
+            "QualityIssueEntry",
+            id="quality",
+        ),
+    ],
+)
+def test_the_aggregator_writes_only_declared_details_keys(finding_type, ids, entries_key, model_name, entry_model_name):
+    aggregator = ResultAggregator()
+    for index, finding_id in enumerate(ids):
+        finding = Finding(
+            id=finding_id,
+            type=finding_type,
+            severity=Severity.HIGH,
+            component="lodash",
+            version="4.17.0",
+            description=f"issue {index}",
+            scanners=[f"scanner-{index}"],
+            details=_SCANNER_DETAILS,
+        )
+        aggregator.add_finding(finding, source=f"sbom-{index}.json")
+    [aggregated] = aggregator.get_findings()
+
+    assert set(aggregated.details) - _model_fields(model_name) == set()
+    assert len(aggregated.details[entries_key]) == len(set(ids))
+    for entry in aggregated.details[entries_key]:
+        assert set(entry) - _model_fields(entry_model_name) == set()
 
 
 def test_writer_construction_kwargs_are_declared_fields():

@@ -13,12 +13,6 @@ from app.core.purl import CopyKey, dependency_copy_key
 from app.models.finding import LOCATION_FINDING_TYPES, PACKAGE_FINDING_TYPES, Finding, FindingType, Severity
 from app.models.license import CATEGORY_RESTRICTIVENESS
 from app.schemas.enrichment import DependencyEnrichment
-from app.schemas.finding import (
-    QualityAggregatedDetails,
-    QualityEntry,
-    VulnerabilityAggregatedDetails,
-    VulnerabilityEntry,
-)
 from app.schemas.finding_details import FindingLocation, SystemWarningDetails
 from app.services.aggregation.cross_link import cross_link_pair, record_additional_types
 from app.services.aggregation.merging import (
@@ -436,10 +430,10 @@ class ResultAggregator:
             self._add_generic_finding(finding, source)
 
     @staticmethod
-    def _build_vuln_entry(finding: Finding) -> VulnerabilityEntry:
+    def _build_vuln_entry(finding: Finding) -> dict[str, Any]:
         refs_from_details = finding.details.get("references", []) or []
 
-        entry: VulnerabilityEntry = {
+        entry: dict[str, Any] = {
             "id": finding.id,
             "severity": finding.severity,
             "description": finding.description,
@@ -460,7 +454,7 @@ class ResultAggregator:
         return entry
 
     def _merge_vuln_into_existing(
-        self, existing: Finding, finding: Finding, vuln_entry: VulnerabilityEntry, source: str | None
+        self, existing: Finding, finding: Finding, vuln_entry: dict[str, Any], source: str | None
     ) -> None:
         absorb_header(existing, finding, source)
         _adopt_smallest_spelling(existing, finding, "")
@@ -477,8 +471,6 @@ class ResultAggregator:
             self._merge_vuln_into_existing(self.findings[agg_key], finding, vuln_entry, source)
             self._unfolded.add(agg_key)
         else:
-            agg_details: VulnerabilityAggregatedDetails = {"vulnerabilities": [vuln_entry]}
-
             self.findings[agg_key] = Finding(
                 id=f"{finding.component}:{finding.version}",
                 type=FindingType.VULNERABILITY,
@@ -487,7 +479,7 @@ class ResultAggregator:
                 version=finding.version,
                 description="",
                 scanners=finding.scanners,
-                details=agg_details,
+                details={"vulnerabilities": [vuln_entry]},
                 found_in=[source] if source else [],
             )
 
@@ -506,14 +498,14 @@ class ResultAggregator:
         self,
         existing: Finding,
         finding: Finding,
-        quality_entry: QualityEntry,
+        quality_entry: dict[str, Any],
         issue_type: str,
         has_maintenance: bool,
         source: str | None,
     ) -> None:
         absorb_header(existing, finding, source)
         _adopt_smallest_spelling(existing, finding, "QUALITY:")
-        quality_list: list[QualityEntry] = existing.details.get("quality_issues", [])
+        quality_list: list[dict[str, Any]] = existing.details.get("quality_issues", [])
         existing_ids = {q.get("id") for q in quality_list}
         if finding.id not in existing_ids:
             quality_list.append(quality_entry)
@@ -535,7 +527,7 @@ class ResultAggregator:
         issue_type = self._quality_issue_type(finding)
         has_maintenance = self._has_maintenance_issue(finding, issue_type)
 
-        quality_entry: QualityEntry = {
+        quality_entry: dict[str, Any] = {
             "id": finding.id,
             "type": issue_type,
             "severity": finding.severity,
@@ -550,12 +542,6 @@ class ResultAggregator:
             )
             return
 
-        agg_details: QualityAggregatedDetails = {
-            "quality_issues": [quality_entry],
-            "overall_score": (finding.details.get("overall_score") if issue_type == "scorecard" else None),
-            "has_maintenance_issues": has_maintenance,
-            "issue_count": 1,
-        }
         self.findings[agg_key] = Finding(
             id=f"QUALITY:{finding.component}:{finding.version}",
             type=FindingType.QUALITY,
@@ -564,7 +550,12 @@ class ResultAggregator:
             version=finding.version,
             description=finding.description,
             scanners=finding.scanners,
-            details=agg_details,
+            details={
+                "quality_issues": [quality_entry],
+                "overall_score": (finding.details.get("overall_score") if issue_type == "scorecard" else None),
+                "has_maintenance_issues": has_maintenance,
+                "issue_count": 1,
+            },
             found_in=[source] if source else [],
         )
 

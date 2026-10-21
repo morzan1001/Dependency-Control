@@ -6,7 +6,6 @@ from typing import Any
 from app.core.constants import max_severity
 from app.core.cve import advisory_ids, entry_cves
 from app.models.finding import Finding
-from app.schemas.finding import VulnerabilityEntry
 from app.services.aggregation.versions import VersionKey, parse_version_key, split_fixed_versions
 from app.services.normalizers.utils import UNKNOWN_RULE_ID
 
@@ -35,7 +34,7 @@ def _canonical_id(a: str, b: str) -> str:
     return min(a, b, key=lambda vuln_id: (not vuln_id.startswith("CVE-"), vuln_id))
 
 
-def _merge_vuln_ids_and_severity(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
+def _merge_vuln_ids_and_severity(tv: dict[str, Any], source_entry: dict[str, Any]) -> None:
     tv["scanners"] = sorted(set(tv.get("scanners", []) + source_entry.get("scanners", [])))
 
     all_ids = set(tv.get("aliases", [])) | set(source_entry.get("aliases", [])) | {tv["id"], source_entry["id"]}
@@ -47,7 +46,7 @@ def _merge_vuln_ids_and_severity(tv: dict[str, Any], source_entry: Vulnerability
         tv["severity"] = merged
 
 
-def _merge_vuln_description(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
+def _merge_vuln_description(tv: dict[str, Any], source_entry: dict[str, Any]) -> None:
     """Prefer the longer description; equal lengths fall back to sort order to stay commutative."""
     theirs, ours = source_entry.get("description", ""), tv.get("description", "")
     if (len(theirs), ours) > (len(ours), theirs):
@@ -68,7 +67,7 @@ def _merged_fixed_version(a: Any, b: Any) -> str | None:
     return ", ".join(v for key, v in sorted(sides[0] | sides[1]) if key >= floor[key[:2]]) or None
 
 
-def _merge_vuln_fix_and_cvss(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
+def _merge_vuln_fix_and_cvss(tv: dict[str, Any], source_entry: dict[str, Any]) -> None:
     merged_fix = _merged_fixed_version(tv.get("fixed_version"), source_entry.get("fixed_version"))
     if merged_fix is not None:
         tv["fixed_version"] = merged_fix
@@ -79,13 +78,13 @@ def _merge_vuln_fix_and_cvss(tv: dict[str, Any], source_entry: VulnerabilityEntr
         tv["cvss_vector"] = source_entry.get("cvss_vector")
 
 
-def _merge_vuln_references(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
+def _merge_vuln_references(tv: dict[str, Any], source_entry: dict[str, Any]) -> None:
     tv_refs = set(tv.get("references", []) or [])
     sv_refs = set(source_entry.get("references", []) or [])
     tv["references"] = sorted(tv_refs | sv_refs)
 
 
-def _merge_vuln_detail_fields(tv: dict[str, Any], source_entry: VulnerabilityEntry, source_first: bool) -> None:
+def _merge_vuln_detail_fields(tv: dict[str, Any], source_entry: dict[str, Any], source_first: bool) -> None:
     source_details = source_entry.get("details") or {}
     if not source_details:
         return
@@ -119,7 +118,7 @@ _EXPLICITLY_MERGED_KEYS = frozenset(
 )
 
 
-def _fill_missing_fields(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
+def _fill_missing_fields(tv: dict[str, Any], source_entry: dict[str, Any]) -> None:
     for key, value in source_entry.items():
         if key in _EXPLICITLY_MERGED_KEYS or value is None:
             continue
@@ -132,7 +131,7 @@ def _detail_precedence(entry: Any) -> tuple[str, str]:
     return min(str(s) for s in (entry.get("scanners") or ["~"])), str(entry.get("id"))
 
 
-def _absorb_entry(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
+def _absorb_entry(tv: dict[str, Any], source_entry: dict[str, Any]) -> None:
     source_first = _detail_precedence(source_entry) < _detail_precedence(tv)
     _merge_vuln_ids_and_severity(tv, source_entry)
     _merge_vuln_description(tv, source_entry)
