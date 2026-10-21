@@ -34,6 +34,7 @@ _INVENTORY = {
     ],
     "netty": [_dependency("netty", "netty-codec-http", "4.1.100.Final", None, "java-archive")],
     "js": [_dependency("js", "lodash", "4.17.15", "pkg:npm/lodash@4.17.15", "npm")],
+    "types": [_dependency("types", "@types/lodash", "4.14.0", "pkg:npm/%40types/lodash@4.14.0", "npm")],
     "gomod": [
         _dependency("gomod", "github.com/gin-gonic/gin", "v1.6.0", "pkg:go/github.com/gin-gonic/gin@v1.6.0", "go")
     ],
@@ -78,6 +79,11 @@ async def headers(db, client):
         await db.dependencies.insert_many(dependencies)
     superseded = _dependency("js", "left-pad", "1.0.0", "pkg:npm/left-pad@1.0.0", "npm", scan_id="old-js")
     await db.dependencies.insert_one({**superseded, "_id": "old-left-pad"})
+    feature_scan = {"_id": "feature-js", "project_id": "js", "branch": "feature/x", "status": "completed"}
+    await db.scans.insert_one({**feature_scan, "created_at": _NOW + timedelta(days=1)})
+    await db.dependencies.insert_one(
+        _dependency("js", "only-on-feature", "1.0.0", "pkg:npm/only-on-feature@1.0.0", "npm", scan_id="feature-js")
+    )
     return bearer_headers("broadcaster", [Permissions.NOTIFICATIONS_BROADCAST])
 
 
@@ -173,6 +179,31 @@ async def test_a_superseded_scan_is_neither_suggested_nor_notified(client, heade
     assert resp.status_code == 200, resp.text
     assert resp.json()["names"] == []
     assert await _affected(client, headers, {"name": "left-pad"}) == 0
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_feature_branch_scan_is_neither_suggested_nor_notified(client, headers):
+    resp = await client.get("/api/v1/notifications/packages/suggest", params={"q": "only-on"}, headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["names"] == []
+    assert await _affected(client, headers, {"name": "only-on-feature"}) == 0
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_bare_name_skips_the_scoped_package_of_that_name(client, headers, monkeypatch):
+    sent = AsyncMock()
+    monkeypatch.setattr(notification_service, "notify_users", sent)
+
+    counts = [
+        (await _broadcast(client, headers, {"name": name}, dry_run=False))["project_count"]
+        for name in ("lodash", "@types/lodash")
+    ]
+
+    assert counts == [1, 1]
+    assert [call.args[0][0].username for call in sent.await_args_list] == ["admin-js", "admin-types"]
 
 
 @pytest.mark.live_mongo
