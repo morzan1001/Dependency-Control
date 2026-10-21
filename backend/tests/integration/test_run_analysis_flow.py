@@ -781,3 +781,32 @@ async def test_sboms_sharing_a_base_image_retain_one_entry_per_advisory(
     await analyse_scan(db, await _seed_scan(db), sboms, ["grype", "trivy"], worker_id=_WORKER)
 
     assert retained == [0, len(_BASE_IMAGE_CVES), len(_BASE_IMAGE_CVES)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_outdated_sibling_counts_the_advisories_left_after_the_engines_enrichment(
+    db, notified, monkeypatch, fake_cache, stored_sbom
+):
+    lodash = {"name": "lodash", "version": "4.17.0", "purl": "pkg:npm/lodash@4.17.0"}
+    grype = {
+        "matches": [
+            {"vulnerability": {"id": advisory, "severity": "High"}, "artifact": dict(lodash)}
+            for advisory in ("GHSA-aaaa-bbbb-cccc", "CVE-2020-1")
+        ]
+    }
+    outdated = {
+        "outdated_dependencies": [{"component": "lodash", "current_version": "4.17.0", "latest_version": "4.17.21"}]
+    }
+    serve_analyzer(monkeypatch, "grype", _CannedReport(grype))
+    serve_analyzer(monkeypatch, "outdated_packages", _CannedReport(outdated))
+    serve_enrichment(monkeypatch, fake_cache, Upstreams(advisories={"GHSA-aaaa-bbbb-cccc": "CVE-2020-1"}))
+    scan_id = await _seed_scan(db)
+
+    await analyse_scan(db, scan_id, [stored_sbom], ["grype", "outdated_packages", "epss_kev"], worker_id=_WORKER)
+
+    vulnerability = await db.findings.find_one({"scan_id": scan_id, "type": "vulnerability"})
+    sibling = await db.findings.find_one({"scan_id": scan_id, "type": "outdated"})
+    assert [entry["id"] for entry in vulnerability["details"]["vulnerabilities"]] == ["CVE-2020-1"]
+    info = sibling["details"]["vulnerability_info"]
+    assert (info["vuln_count"], info["high_count"]) == (1, 1)
