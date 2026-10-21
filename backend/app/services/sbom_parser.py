@@ -64,6 +64,7 @@ _SKIP_NON_DEPENDENCY = "non-dependency"
 _SKIP_ROOT = "root-component"
 # Skips of entries that are no dependencies; every other skip reason counts a lost component.
 DELIBERATE_SKIP_REASONS = frozenset({SKIP_CRYPTO_ASSET, _SKIP_FILE, _SKIP_NON_DEPENDENCY, _SKIP_ROOT})
+SKIPPED_RELATIONSHIPS = "{count} dependency relationship(s) skipped: an endpoint is not a string"
 
 
 def _join_licenses(entries: list[str], purl: str | None) -> str:
@@ -149,9 +150,11 @@ def _graph_entries(value: Any, field: str) -> list[dict[str, Any]]:
     return value
 
 
-def _check_endpoints(field: str, *endpoints: Any) -> None:
-    if not all(isinstance(endpoint, str) for endpoint in endpoints):
-        raise ValueError(f"{field} entries need string endpoints")
+def _string_endpoints(result: ParsedSBOM, *endpoints: Any) -> bool:
+    if all(isinstance(endpoint, str) for endpoint in endpoints):
+        return True
+    result.skipped_relationships += 1
+    return False
 
 
 def _graph_id(value: Any) -> str | None:
@@ -465,7 +468,8 @@ class SBOMParser:
             ref, depends_on = entry.get("ref"), entry.get("dependsOn") or []
             if not isinstance(depends_on, list):
                 raise ValueError("dependencies entries need a list dependsOn")
-            _check_endpoints("dependencies", ref, *depends_on)
+            if not all(isinstance(endpoint, str) for endpoint in (ref, *depends_on)):
+                raise ValueError("dependencies entries need string endpoints")
             forward.setdefault(ref, []).extend(depends_on)
         return forward
 
@@ -863,7 +867,7 @@ class SBOMParser:
 
     @staticmethod
     def _build_syft_dependency_graph(
-        relationships: Any, node_ids: set[Any]
+        relationships: Any, node_ids: set[Any], result: ParsedSBOM
     ) -> tuple[dict[Any, list[Any]], dict[Any, list[Any]]]:
         """Syft's 'dependency-of' reads 'parent IS A DEPENDENCY OF child'."""
         forward: dict[Any, list[Any]] = {}
@@ -872,8 +876,7 @@ class SBOMParser:
             parent, child, rel_type = rel.get("parent"), rel.get("child"), rel.get("type")
             if rel_type not in ("depends-on", "dependency-of", "contains"):
                 continue
-            _check_endpoints("artifactRelationships", parent, child)
-            if parent not in node_ids or child not in node_ids:
+            if not _string_endpoints(result, parent, child) or parent not in node_ids or child not in node_ids:
                 continue
             if rel_type == "depends-on":
                 forward.setdefault(parent, []).append(child)
@@ -897,7 +900,7 @@ class SBOMParser:
         self._count_skipped(result, _SKIP_FILE, len(sbom.get("files") or []))
 
         node_ids = {source_id, *(_graph_id(artifact.get("id")) for artifact in artifacts)} - {None}
-        forward, contains = self._build_syft_dependency_graph(sbom.get("artifactRelationships") or [], node_ids)
+        forward, contains = self._build_syft_dependency_graph(sbom.get("artifactRelationships") or [], node_ids, result)
         project = {
             _graph_id(artifact.get("id")) for artifact in artifacts if _has_local_origin(artifact.get("metadata"))
         }
@@ -1041,7 +1044,7 @@ class SBOMParser:
 
     @staticmethod
     def _build_spdx_dependency_graph(
-        relationships: Any, doc_spdx_id: str
+        relationships: Any, doc_spdx_id: str, result: ParsedSBOM
     ) -> tuple[dict[Any, list[Any]], set[Any], set[Any]]:
         forward: dict[Any, list[Any]] = {}
         described: set[Any] = set()
@@ -1051,7 +1054,8 @@ class SBOMParser:
             if rel_type not in ("DEPENDS_ON", "DEPENDENCY_OF", "DESCRIBES", "DOCUMENT_DESCRIBES", "CONTAINS"):
                 continue
             element, related = rel.get("spdxElementId"), rel.get("relatedSpdxElement")
-            _check_endpoints("relationships", element, related)
+            if not _string_endpoints(result, element, related):
+                continue
             if rel_type == "DEPENDS_ON":
                 forward.setdefault(element, []).append(related)
             elif rel_type == "DEPENDENCY_OF":
@@ -1076,7 +1080,9 @@ class SBOMParser:
         )
 
         doc_spdx_id = _graph_id(sbom.get("SPDXID")) or "SPDXRef-DOCUMENT"
-        forward, described, containers = self._build_spdx_dependency_graph(sbom.get("relationships") or [], doc_spdx_id)
+        forward, described, containers = self._build_spdx_dependency_graph(
+            sbom.get("relationships") or [], doc_spdx_id, result
+        )
         # SPDX 2.2 names the described packages in documentDescribes instead of DESCRIBES relationships.
         described.update(ref for ref in sbom.get("documentDescribes") or [] if isinstance(ref, str))
         directness, subjects = _resolve_directness(forward, {doc_spdx_id, *described}, set(), set())

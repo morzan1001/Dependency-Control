@@ -103,7 +103,7 @@ from app.services.reachability_enrichment import (
     apply_reachability,
     fetch_callgraphs,
 )
-from app.services.sbom_parser import parse_sbom, sbom_parser
+from app.services.sbom_parser import SKIPPED_RELATIONSHIPS, parse_sbom, sbom_parser
 from app.services.stats import run_pending_reachability_for_scan
 from app.services.update_frequency_rollup import record_scan_update_delta
 from app.services.waivers.apply import restamp_waivers, waiver_fingerprint
@@ -385,6 +385,9 @@ async def _process_sbom(
     ctx: _RunContext, aggregator: ResultAggregator, parsed_sbom: ParsedSBOM | None, sbom: AnalyzerInput
 ) -> list[AnalyzerOutcome]:
     outcomes: list[AnalyzerOutcome] = []
+    if parsed_sbom is not None and parsed_sbom.skipped_relationships:
+        skipped = SKIPPED_RELATIONSHIPS.format(count=parsed_sbom.skipped_relationships)
+        aggregator.add_scan_error("system", f"{sbom.label}: {skipped}", partial=True, source=sbom.source)
     if parsed_sbom is not None and parsed_sbom.crypto_assets:
         try:
             await _persist_embedded_crypto_assets(parsed_sbom, ctx.project_id, ctx.scan_id, ctx.db)

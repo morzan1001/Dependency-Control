@@ -1,6 +1,8 @@
 import asyncio
 import inspect
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -24,6 +26,7 @@ from app.services.analysis import engine
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.gridfs_maintenance import gridfs_ref_id
 from app.services.notifications import notification_service
+from app.services.sbom_parser import parse_sbom
 from app.services.webhooks import webhook_service
 from tests.helpers.analyzers import analyse_scan, serve_analyzer
 from tests.helpers.enrichment import Upstreams, serve_enrichment
@@ -125,6 +128,28 @@ async def test_a_re_analysis_keeps_the_rows_its_analyzers_wrote_and_purges_the_d
     await analyse_scan(db, scan_id, [stored_sbom], ["maintainer_risk"], worker_id=_WORKER)
 
     assert await db.analysis_results.distinct("analyzer_name", {"scan_id": scan_id}) == ["maintainer_risk"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_an_sbom_with_one_malformed_relationship_is_analysed_and_reports_the_skip(db, notified, monkeypatch):
+    monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", AsyncIOMotorGridFSBucket)
+    await create_indexes(db)
+    sbom = json.loads((Path(__file__).parents[1] / "fixtures/sbom/mono.syft.json").read_text())
+    readable = len(parse_sbom(sbom).dependencies)
+    sbom["artifactRelationships"].append({"parent": None, "child": "4370e91781766145", "type": "depends-on"})
+    ref = await store_sbom(db, sbom)
+    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER)
+    await db.scans.insert_one(scan.model_dump(by_alias=True))
+
+    assert await analyse_scan(db, scan.id, [ref], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+
+    assert await db.dependencies.count_documents({"scan_id": scan.id}) == readable
+    [warning] = [f async for f in db.findings.find({"scan_id": scan.id, "type": "system_warning"})]
+    assert warning["description"] == (
+        "Scanner 'system' returned partial results: SBOM #1: 1 dependency relationship(s) skipped: "
+        "an endpoint is not a string"
+    )
 
 
 @pytest.mark.asyncio

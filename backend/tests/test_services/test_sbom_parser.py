@@ -404,7 +404,7 @@ class TestDirectnessOfRealGraphs:
 
 
 class TestMalformedDependencyGraph:
-    """A graph entry of the wrong shape fails the document in every format instead of silently dropping an edge."""
+    """A graph list of the wrong shape fails the document; a syft or SPDX edge without string endpoints is skipped."""
 
     @pytest.mark.parametrize(
         ("sbom", "message"),
@@ -438,42 +438,58 @@ class TestMalformedDependencyGraph:
                 "dependencies entries need string endpoints",
                 id="cyclonedx-ref-missing",
             ),
-            pytest.param(
-                _fixture_with(
-                    "mono.syft.json",
-                    "artifactRelationships",
-                    {"parent": None, "child": "4370e91781766145", "type": "depends-on"},
-                ),
-                "artifactRelationships entries need string endpoints",
-                id="syft-parent-missing",
-            ),
-            pytest.param(
-                _fixture_with(
-                    "mono.syft.json",
-                    "artifactRelationships",
-                    {"parent": "4370e91781766145", "child": {"id": "b929298c0a8dba24"}, "type": "dependency-of"},
-                ),
-                "artifactRelationships entries need string endpoints",
-                id="syft-child-object",
-            ),
-            pytest.param(
-                _fixture_with(
-                    "mono.syft.spdx.json",
-                    "relationships",
-                    {
-                        "spdxElementId": "SPDXRef-Package-npm-debug-ce803f0c77037950",
-                        "relationshipType": "DEPENDS_ON",
-                        "relatedSpdxElement": ["SPDXRef-Package-python-anyio-4370e91781766145"],
-                    },
-                ),
-                "relationships entries need string endpoints",
-                id="spdx-related-list",
-            ),
         ],
     )
     def test_malformed_edge_fails_the_document(self, sbom, message):
         with pytest.raises(ValueError, match=message):
             parse_sbom(sbom)
+
+    @pytest.mark.parametrize(
+        ("fixture", "field", "edge"),
+        [
+            pytest.param(
+                "mono.syft.json",
+                "artifactRelationships",
+                {"parent": None, "child": "4370e91781766145", "type": "depends-on"},
+                id="syft-parent-missing",
+            ),
+            pytest.param(
+                "mono.syft.json",
+                "artifactRelationships",
+                {"parent": "4370e91781766145", "child": {"id": "b929298c0a8dba24"}, "type": "dependency-of"},
+                id="syft-child-object",
+            ),
+            pytest.param(
+                "mono.syft.spdx.json",
+                "relationships",
+                {
+                    "spdxElementId": "SPDXRef-Package-npm-debug-ce803f0c77037950",
+                    "relationshipType": "DEPENDS_ON",
+                    "relatedSpdxElement": ["SPDXRef-Package-python-anyio-4370e91781766145"],
+                },
+                id="spdx-related-list",
+            ),
+            pytest.param(
+                "mono.syft.spdx.json",
+                "relationships",
+                {
+                    "spdxElementId": None,
+                    "relationshipType": "DEPENDENCY_OF",
+                    "relatedSpdxElement": "SPDXRef-Package-python-httpx-68836da4d6175af3",
+                },
+                id="spdx-element-missing",
+            ),
+        ],
+    )
+    def test_a_malformed_syft_or_spdx_edge_is_skipped_and_counted(self, fixture, field, edge):
+        intact = parse_sbom(_fixture(fixture))
+
+        result = parse_sbom(_fixture_with(fixture, field, edge))
+
+        assert result.skipped_relationships == 1
+        assert result.model_dump(exclude={"skipped_relationships"}) == intact.model_dump(
+            exclude={"skipped_relationships"}
+        )
 
     def test_a_syft_artifact_with_an_object_id_is_kept_off_the_graph(self):
         odd = {"id": {"x": 1}, "name": "odd", "version": "1.0", "type": "python", "purl": "pkg:pypi/odd@1.0"}

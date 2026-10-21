@@ -63,6 +63,7 @@ from app.services.recommendations import generate_recommendations
 from app.services.sbom_parser import (
     DELIBERATE_SKIP_REASONS,
     SKIP_CRYPTO_ASSET,
+    SKIPPED_RELATIONSHIPS,
     merge_duplicate_dependencies,
     parse_sbom,
 )
@@ -313,6 +314,8 @@ def _input_defects(parsed: ParsedSBOM) -> list[str]:
     if lost:
         reasons = ", ".join(f"{reason}={count}" for reason, count in sorted(lost.items()))
         defects.append(_DROPPED_COMPONENTS.format(count=sum(lost.values()), reasons=reasons))
+    if parsed.skipped_relationships:
+        defects.append(SKIPPED_RELATIONSHIPS.format(count=parsed.skipped_relationships))
     return defects
 
 

@@ -1,4 +1,6 @@
 import asyncio
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -728,6 +730,20 @@ async def test_components_the_parser_dropped_are_reported():
     assert _DROPPED_COMPONENTS in response.analyzers.skipped_inputs[_SBOM_LABEL]
     assert "license_compliance" in response.analyzers.ran
     assert [f["id"] for f in _findings_of_type(response, _TYPE_LICENSE)] == [_LICENSE_FINDING_ID]
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_dependency_relationship_is_reported_and_the_input_analysed():
+    sbom = json.loads((Path(__file__).parents[1] / "fixtures/sbom/mono.syft.json").read_text())
+    sbom["artifactRelationships"].append({"parent": None, "child": "4370e91781766145", "type": "depends-on"})
+    request = AdhocAnalyzeRequest(sboms=[sbom], analyzers=["license_compliance"], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.skipped_inputs == {
+        _SBOM_LABEL: "1 dependency relationship(s) skipped: an endpoint is not a string"
+    }
+    assert "license_compliance" in response.analyzers.ran
 
 
 @pytest.mark.asyncio

@@ -35,6 +35,7 @@ class ParsedSBOM(BaseModel):
     skipped_components: int = 0
     merged_components: int = 0
     skipped_reasons: dict[str, int] = Field(default_factory=dict)
+    skipped_relationships: int = 0
 
     # Filled only when the SBOM holds cryptographic-asset components.
     crypto_assets: list["ParsedCryptoAsset"] = Field(default_factory=list)
