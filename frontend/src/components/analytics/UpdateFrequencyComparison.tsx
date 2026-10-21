@@ -482,7 +482,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                       NO_VALUE
                     )}
                   </TableCell>
-                  <TableCell className="text-muted-foreground"><OwningTeamsCell teams={project.teams} /></TableCell>
+                  <TableCell className="max-w-[150px] text-muted-foreground"><OwningTeamsCell teams={project.teams} /></TableCell>
                   {project.data_status === 'ready' || project.data_status === 'partial' ? (
                     <MeasuredCells project={project} />
                   ) : (

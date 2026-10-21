@@ -267,6 +267,20 @@ describe("UpdateFrequencyComparison", () => {
     expect(within(rowFor("project-2")).getByText("Unassigned")).toBeInTheDocument();
   });
 
+  it("cuts a long team name to the dashboard's team column width, so the metrics stay in view", async () => {
+    const longName = "T".repeat(300);
+    mockedComparison.mockResolvedValue(
+      makeComparison(1, { projects: [{ ...makeProject(1), teams: [{ id: "t1", name: longName }] }] }),
+    );
+    renderComparison();
+    clickLoad();
+
+    await screen.findByText("Project Ranking");
+    const name = within(rowFor("project-1")).getByText(longName);
+    expect(name).toHaveClass("truncate");
+    expect(name.closest("td")).toHaveClass("max-w-[150px]");
+  });
+
   it("shows a partially covered project's numbers with the caveat, not as a failure", async () => {
     mockedComparison.mockResolvedValue(
       makeComparison(1, {
