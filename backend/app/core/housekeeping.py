@@ -7,7 +7,7 @@ from functools import partial
 from itertools import batched
 from typing import TYPE_CHECKING, Any
 
-from app.core import abatched
+from app.core import UNDATED, abatched
 from app.core.cache import update_cache_stats
 from app.core.config import settings
 from app.core.constants import (
@@ -588,7 +588,7 @@ async def reconcile_update_frequency_ledger() -> None:
 
 
 async def update_frequency_reconcile_loop() -> None:
-    last_run = datetime.min.replace(tzinfo=timezone.utc)
+    last_run = UNDATED
     while True:
         # Stamped whatever the reconcile did, so the pods that lost the lock do not retry it every five minutes.
         now = datetime.now(timezone.utc)
@@ -606,7 +606,7 @@ async def _every_main_interval(label: str, job: Callable[[Any], Awaitable[object
 
 async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
     archives_summed_at: int | None = None
-    last_archive_resum = datetime.min.replace(tzinfo=timezone.utc)
+    last_archive_resum = UNDATED
     while True:
         await _best_effort("Stuck scan recovery", recover_stuck_scans, worker_manager)
         await _best_effort("Scheduled re-scan check", check_scheduled_rescans, worker_manager)
