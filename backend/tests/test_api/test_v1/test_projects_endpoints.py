@@ -1,4 +1,6 @@
 import asyncio
+import re
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +11,7 @@ from app.models.user import User
 from app.schemas.project import ProjectNotificationSettings
 
 MODULE = "app.api.v1.endpoints.projects"
+FRONTEND_CONSTANTS = Path(__file__).parents[4] / "frontend/src/lib/constants.ts"
 
 
 def _make_admin_user(user_id="admin-member-1"):
@@ -632,14 +635,11 @@ class TestAnalyzerNamesAreCheckedWhereTheyEnter:
         assert config.active_analyzers == ["osv", "cbomkit"]
 
     def test_every_name_the_project_settings_offer_is_selectable(self):
-        """Mirrors AVAILABLE_ANALYZERS in frontend/src/lib/constants.ts."""
         from app.services.analysis.registry import SELECTABLE_ANALYZERS
 
-        assert {
-            "trivy", "grype", "osv", "deps_dev", "epss_kev", "reachability", "end_of_life", "license_compliance",
-            "os_malware", "typosquatting", "hash_verification", "maintainer_risk", "outdated_packages",
-            "opengrep", "kics", "bearer", "trufflehog", "cbomkit",
-        } == SELECTABLE_ANALYZERS  # fmt: skip
+        source = FRONTEND_CONSTANTS.read_text()
+        offered = re.search(r"^export const AVAILABLE_ANALYZERS = \[(.*?)^\];", source, re.DOTALL | re.MULTILINE)
+        assert set(re.findall(r"\bid: '(\w+)'", offered[1])) == SELECTABLE_ANALYZERS
 
 
 def test_the_scan_findings_table_ranks_severity_like_every_other_surface():
