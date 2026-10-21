@@ -1,4 +1,3 @@
-import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Literal
@@ -7,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.crypto_asset import CryptoPrimitive
 from app.models.finding import FindingType, Severity
-from app.models.types import MongoDocument, PyObjectId
+from app.models.types import MongoDocument
 
 
 class CryptoPolicySource(str, Enum):
@@ -94,12 +93,6 @@ class CryptoRule(BaseModel):
 
 
 class CryptoPolicy(MongoDocument):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-        description="Unique identifier for the policy document",
-    )
     scope: Literal["system", "project"] = Field(
         ..., description="Policy scope: 'system' for the seed policy, 'project' for per-project overrides"
     )

@@ -1,8 +1,9 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.models.base import CreatedAtModel
 from app.models.types import MongoDocument
 
 
@@ -87,7 +88,7 @@ class CryptoAssetFields(BaseModel):
     )
 
 
-class CryptoAsset(MongoDocument, CryptoAssetFields):
+class CryptoAsset(MongoDocument, CreatedAtModel, CryptoAssetFields):
     project_id: str = Field(..., description="Reference to the project")
     scan_id: str = Field(..., description="Reference to the scan where this was found")
 
@@ -96,8 +97,4 @@ class CryptoAsset(MongoDocument, CryptoAssetFields):
     )
     cbom_source: str | None = Field(
         None, description="The uploaded CBOM's serialNumber, else its metadata.component name"
-    )
-
-    created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc), description="Persistence timestamp (UTC)"
     )

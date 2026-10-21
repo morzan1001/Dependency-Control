@@ -1,7 +1,6 @@
-from datetime import datetime, timezone
-
 from pydantic import BaseModel, Field
 
+from app.models.base import CreatedAtModel
 from app.models.types import MongoDocument
 
 
@@ -53,7 +52,7 @@ class DependencyFields(BaseModel):
     )
 
 
-class Dependency(MongoDocument, DependencyFields):
+class Dependency(MongoDocument, CreatedAtModel, DependencyFields):
     project_id: str = Field(..., description="Reference to the project")
     scan_id: str = Field(..., description="Reference to the scan where this was found")
 
@@ -62,5 +61,3 @@ class Dependency(MongoDocument, DependencyFields):
         None, description="SPDX expression the analysis copies from the license scan"
     )
     license_risks: list[str] | None = Field(None, description="License risks the analysis copies from the license scan")
-
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

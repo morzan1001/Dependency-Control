@@ -1,13 +1,13 @@
 import uuid
-from datetime import datetime, timezone
 
 from pydantic import ConfigDict, Field
 
+from app.models.base import CreatedAtModel
 from app.models.finding import Finding
 from app.models.types import PyObjectId
 
 
-class FindingRecord(Finding):
+class FindingRecord(Finding, CreatedAtModel):
     mongo_id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",
@@ -17,7 +17,5 @@ class FindingRecord(Finding):
     scan_id: str = Field(..., description="Reference to the scan")
 
     finding_id: str = Field(..., description="Logical ID of the finding (e.g. CVE-2021-44228)")
-
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = ConfigDict(populate_by_name=True)
