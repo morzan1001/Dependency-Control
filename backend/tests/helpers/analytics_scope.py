@@ -1,4 +1,4 @@
-from app.schemas.projections import ProjectWithScanId
+from app.repositories.projections import ProjectWithScanId
 
 
 def projections(project_ids: list[str]) -> list[ProjectWithScanId]:

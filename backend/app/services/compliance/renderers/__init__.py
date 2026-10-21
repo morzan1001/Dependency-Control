@@ -1,4 +1,4 @@
-from app.schemas.compliance import ReportFormat
+from app.models.compliance_report import ReportFormat
 from app.services.compliance.renderers.base import Renderer
 from app.services.compliance.renderers.csv_renderer import CsvRenderer
 from app.services.compliance.renderers.json_renderer import JsonRenderer

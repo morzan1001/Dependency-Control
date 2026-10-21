@@ -9,8 +9,8 @@ import pytest_asyncio
 from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import Finding, FindingType, Severity
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _prepare_finding_records
 from app.services.analytics.findings_delta import (

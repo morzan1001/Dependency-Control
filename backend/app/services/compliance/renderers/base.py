@@ -1,7 +1,8 @@
 from typing import Protocol
 
 from app.models.compliance_report import ComplianceReport
-from app.schemas.compliance import EvaluationCoverage, FrameworkEvaluation, InputCoverage
+from app.models.compliance_report import EvaluationCoverage, InputCoverage
+from app.schemas.compliance import FrameworkEvaluation
 from app.services.compliance.frameworks.base import NAMES_SHOWN
 from app.services.inventory.csv_stream import filename_part
 from app.services.recommendation.common import name_some

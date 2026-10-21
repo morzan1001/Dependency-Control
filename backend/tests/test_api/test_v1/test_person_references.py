@@ -9,8 +9,8 @@ from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.compliance_report import ComplianceReport
 from app.models.crypto_policy import CryptoPolicy
 from app.models.policy_audit_entry import PolicyAuditEntry
-from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
-from app.schemas.policy_audit import PolicyAuditAction
+from app.models.compliance_report import ReportFormat, ReportFramework, ReportStatus
+from app.models.policy_audit_entry import PolicyAuditAction
 from app.schemas.waiver import WaiverCreate, WaiverUpdate
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.auth import make_admin

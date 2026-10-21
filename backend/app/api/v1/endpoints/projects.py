@@ -116,7 +116,7 @@ from app.schemas.project import (
     ScanReleaseRef,
     ScanWithReleases,
 )
-from app.schemas.projections import ScanMinimal
+from app.repositories.projections import ScanMinimal
 from app.services.analytics.scopes import read_scope_projects
 from app.services.audit.history import record_license_policy_change
 from app.services.branch_sync import sync_project_branches

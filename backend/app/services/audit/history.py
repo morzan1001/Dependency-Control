@@ -19,7 +19,7 @@ from app.models.policy_audit_entry import PolicyAuditEntry, PolicyType
 from app.models.user import User
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.repositories.projects import ProjectRepository
-from app.schemas.policy_audit import PolicyAuditAction
+from app.models.policy_audit_entry import PolicyAuditAction
 from app.schemas.project import LicensePolicySchema, license_policy_from_settings
 from app.services.notifications.service import notification_service
 from app.services.webhooks import webhook_service

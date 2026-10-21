@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from app.models.compliance_report import ComplianceReport
-from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
+from app.models.compliance_report import ReportFormat, ReportFramework, ReportStatus
 
 
 def test_minimal_instance():

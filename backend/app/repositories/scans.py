@@ -24,7 +24,7 @@ from app.core.constants import (
 from app.db.mongodb import DEFAULT_MAX_TIME_MS
 from app.models.project import Scan
 from app.models.stats import Stats
-from app.schemas.projections import ScanMinimal, ScanWithStats
+from app.repositories.projections import ScanMinimal, ScanWithStats
 
 logger = logging.getLogger(__name__)
 

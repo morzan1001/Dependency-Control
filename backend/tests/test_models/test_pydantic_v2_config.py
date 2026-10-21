@@ -133,28 +133,28 @@ class TestFromAttributes:
 
 class TestProjectionSchemas:
     def test_project_with_scan_id(self):
-        from app.schemas.projections import ProjectWithScanId
+        from app.repositories.projections import ProjectWithScanId
 
         p = ProjectWithScanId(_id="p-1", name="Test", latest_scan_id="s-1")
         assert p.id == "p-1"
         assert p.latest_scan_id == "s-1"
 
     def test_scan_with_stats(self):
-        from app.schemas.projections import ScanWithStats
+        from app.repositories.projections import ScanWithStats
 
         s = ScanWithStats(_id="s-1", stats=None)
         assert s.id == "s-1"
         assert s.stats is None
 
     def test_scan_minimal(self):
-        from app.schemas.projections import ScanMinimal
+        from app.repositories.projections import ScanMinimal
 
         s = ScanMinimal(_id="s-1", pipeline_id=42)
         assert s.id == "s-1"
         assert s.pipeline_id == 42
 
     def test_callgraph_minimal(self):
-        from app.schemas.projections import CallgraphMinimal
+        from app.repositories.projections import CallgraphMinimal
 
         cg = CallgraphMinimal(_id="cg-1", language="javascript")
         assert cg.id == "cg-1"

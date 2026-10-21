@@ -29,7 +29,7 @@ from app.schemas.analytics import (
     DependencyUsage,
     SeverityBreakdown,
 )
-from app.schemas.projections import ProjectWithScanId
+from app.repositories.projections import ProjectWithScanId
 from app.services.analytics.cache import get_analytics_cache
 from app.services.component_identity import (
     artifact_name_expr,

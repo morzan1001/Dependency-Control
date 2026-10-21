@@ -10,7 +10,7 @@ from app.core import abatched
 from app.core.constants import RELEASE_FLAG_RECONCILE_BATCH_SIZE
 from app.repositories.releases import RELEASES_ENVIRONMENT_SORT, RELEASES_LATEST_LOOKUP_KEY, ReleaseRepository
 from app.repositories.scans import ScanRepository
-from app.schemas.projections import ProjectWithScanId
+from app.repositories.projections import ProjectWithScanId
 from app.services.analytics.scopes import read_scope_projects
 
 logger = logging.getLogger(__name__)

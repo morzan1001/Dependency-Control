@@ -9,7 +9,7 @@ from app.api.v1.helpers.callgraph import ParsedCallgraph, parse_generic_format, 
 from app.core.risk_scoring import reachability_display_tier
 from app.schemas.finding_details import ReachabilityInfo
 from app.services.component_identity import canonical_module_key
-from app.schemas.projections import CallgraphMinimal
+from app.repositories.projections import CallgraphMinimal
 from app.services.reachability_enrichment import (
     _enrich_finding_from_callgraphs,
     _lists_package,

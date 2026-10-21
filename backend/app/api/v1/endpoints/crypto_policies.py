@@ -10,7 +10,7 @@ from app.api.v1.helpers.users import resolve_usernames
 from app.core.constants import PROJECT_ROLE_ADMIN
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.crypto_policy import CryptoPolicyPutRequest
-from app.schemas.policy_audit import PolicyAuditAction
+from app.models.policy_audit_entry import PolicyAuditAction
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
 from app.services.crypto_policy.seeder import write_policy
 

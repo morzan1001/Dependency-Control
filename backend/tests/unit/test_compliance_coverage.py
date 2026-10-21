@@ -12,16 +12,11 @@ from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
 from app.models.project import Project, Scan
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.schemas.compliance import (
-    ControlDefinition,
-    ControlResult,
-    ControlStatus,
-    EvaluationCoverage,
-    InputCoverage,
-    ReportFramework,
-)
-from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.services.compliance.frameworks.base import ControlDefinition
+from app.schemas.compliance import ControlResult, ControlStatus
+from app.models.compliance_report import EvaluationCoverage, InputCoverage, ReportFramework
+from app.models.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.cbom_parser import parse_cbom
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine

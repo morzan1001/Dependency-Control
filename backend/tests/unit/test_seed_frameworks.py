@@ -1,8 +1,9 @@
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.schemas.compliance import ControlStatus, ReportFramework
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.schemas.compliance import ControlStatus
+from app.models.compliance_report import ReportFramework
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.crypto_policy.seeder import load_seed_file, load_seed_rules

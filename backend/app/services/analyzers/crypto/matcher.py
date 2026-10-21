@@ -2,8 +2,9 @@ import re
 from fnmatch import fnmatchcase
 
 from app.models.crypto_asset import CryptoAsset
-from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES, CryptoAssetType, ParsedCryptoAsset
-from app.schemas.crypto_policy import CryptoRule
+from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES, ParsedCryptoAsset
+from app.models.crypto_asset import CryptoAssetType
+from app.models.crypto_policy import CryptoRule
 
 AnyCryptoAsset = ParsedCryptoAsset | CryptoAsset
 

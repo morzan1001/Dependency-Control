@@ -4,7 +4,7 @@ import pytest
 
 from app.models.policy_audit_entry import PolicyAuditEntry
 from app.repositories.policy_audit_entry import PolicyAuditRepository
-from app.schemas.policy_audit import PolicyAuditAction
+from app.models.policy_audit_entry import PolicyAuditAction
 
 
 def _entry(version, ts):

@@ -11,7 +11,7 @@ from app.models.project import Project, ProjectMember
 from app.models.user import User
 from app.models.webhook import Webhook
 from app.repositories.compliance_report import ComplianceReportRepository
-from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
+from app.models.compliance_report import ReportFormat, ReportFramework, ReportStatus
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.notifications.service import notification_service

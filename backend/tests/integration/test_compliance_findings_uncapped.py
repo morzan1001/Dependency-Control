@@ -8,7 +8,8 @@ from app.core.init_db import create_indexes
 from app.models.compliance_report import ComplianceReport
 from app.models.project import Project, Scan
 from app.repositories.scans import ScanRepository
-from app.schemas.compliance import ControlStatus, ReportFormat, ReportFramework, ReportStatus
+from app.schemas.compliance import ControlStatus
+from app.models.compliance_report import ReportFormat, ReportFramework, ReportStatus
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY

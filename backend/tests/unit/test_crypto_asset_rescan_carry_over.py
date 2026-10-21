@@ -10,7 +10,7 @@ import pytest_asyncio
 from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
 from app.services.analysis.engine import _carry_over_crypto_assets
 from tests.helpers.cbom import store_assets
 from tests.mocks.fake_mongo import FakeDatabase

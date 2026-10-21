@@ -12,7 +12,7 @@ from app.models.user import User
 from app.repositories.base import and_filters
 from app.repositories.projects import ProjectRepository
 from app.repositories.teams import TeamRepository
-from app.schemas.projections import ProjectWithScanId
+from app.repositories.projections import ProjectWithScanId
 
 _SCOPE_TOO_LARGE = (
     "This scope holds more than {limit} projects. Analytics is answered over a materialised "

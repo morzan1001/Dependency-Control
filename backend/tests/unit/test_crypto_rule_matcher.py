@@ -2,8 +2,8 @@ import pytest
 
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.analyzers.crypto.matcher import asset_in_rule_scope, rule_matches
 from app.services.cbom_parser import parse_crypto_components
 from app.services.crypto_policy.seeder import load_seed_rules

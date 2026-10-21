@@ -7,7 +7,7 @@ from app.core.constants import SETTINGS_MODE_GLOBAL
 from app.models.system import SystemSettings
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.system_settings import SystemSettingsRepository
-from app.schemas.crypto_policy import CryptoRule
+from app.models.crypto_policy import CryptoRule
 
 
 @dataclass

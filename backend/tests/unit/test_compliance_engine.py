@@ -19,8 +19,9 @@ from app.models.project import Project, Scan
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.findings import FindingRepository
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.schemas.compliance import ControlStatus, ReportFormat, ReportFramework, ReportStatus
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.schemas.compliance import ControlStatus
+from app.models.compliance_report import ReportFormat, ReportFramework, ReportStatus
 from app.schemas.project import LicensePolicySchema
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _prepare_finding_records, _stamp_first_seen

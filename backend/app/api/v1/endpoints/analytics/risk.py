@@ -45,7 +45,7 @@ from app.schemas.analytics import (
     VulnerabilityHotspot,
 )
 from app.schemas.enrichment import VulnerabilityEnrichment
-from app.schemas.projections import ProjectWithScanId
+from app.repositories.projections import ProjectWithScanId
 from app.services.component_identity import (
     build_component_index,
     component_name_candidates,

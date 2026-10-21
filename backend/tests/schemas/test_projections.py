@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from app.schemas.projections import CallgraphMinimal
+from app.repositories.projections import CallgraphMinimal
 
 
 class TestCallgraphMinimalCoverageFields:

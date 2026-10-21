@@ -1,4 +1,4 @@
-from app.schemas.compliance import ReportFramework
+from app.models.compliance_report import ReportFramework
 from app.services.compliance.frameworks.base import ComplianceFramework, SeedFramework
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
 from app.services.compliance.frameworks.fips_140_3 import AlgorithmConformanceFramework

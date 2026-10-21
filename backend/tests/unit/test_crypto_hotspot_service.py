@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
 from app.services.analytics.crypto_hotspots import (
     _HEATMAP_COLUMNS,
     _LOCATION_SAMPLE_ASSETS,

@@ -1,7 +1,7 @@
 import pytest
 
 from app.repositories.crypto_asset import scan_query
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
 
 
 @pytest.mark.live_mongo

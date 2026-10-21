@@ -5,7 +5,7 @@ from pymongo import DESCENDING
 
 from app.models.compliance_report import ComplianceReport
 from app.repositories.base import BaseRepository, and_filters
-from app.schemas.compliance import EvaluationCoverage, ReportFramework, ReportStatus
+from app.models.compliance_report import EvaluationCoverage, ReportFramework, ReportStatus
 
 
 NEWEST_REPORT_FIRST = [("requested_at", DESCENDING)]

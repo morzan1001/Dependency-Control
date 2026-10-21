@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.schemas.compliance import EvaluationCoverage, ReportFramework
+from app.models.compliance_report import EvaluationCoverage, ReportFramework
 from app.schemas.pqc_migration import (
     MigrationItem,
     MigrationItemStatus,

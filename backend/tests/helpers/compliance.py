@@ -7,7 +7,7 @@ from app.core.permissions import Permissions
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
-from app.schemas.compliance import EvaluationCoverage, ReportFormat, ReportFramework, ReportStatus
+from app.models.compliance_report import EvaluationCoverage, ReportFormat, ReportFramework, ReportStatus
 from app.schemas.project import LicensePolicySchema
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.frameworks.base import EvaluationInput

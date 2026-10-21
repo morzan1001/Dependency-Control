@@ -24,7 +24,8 @@ from app.models.policy_audit_entry import PolicyAuditEntry, PolicyType
 from app.models.user import User
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.schemas.crypto_policy import CryptoPolicyPutRequest
-from app.schemas.policy_audit import PolicyAuditAction, PolicyRevertRequest
+from app.models.policy_audit_entry import PolicyAuditAction
+from app.schemas.policy_audit import PolicyRevertRequest
 from app.services.crypto_policy.seeder import write_policy
 
 

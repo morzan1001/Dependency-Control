@@ -6,7 +6,8 @@ from app.core.cache import scope_digest
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.projects import ProjectRepository
-from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES, CryptoAssetType
+from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES
+from app.models.crypto_asset import CryptoAssetType
 from app.schemas.pqc_migration import (
     MigrationItem,
     MigrationPlanResponse,

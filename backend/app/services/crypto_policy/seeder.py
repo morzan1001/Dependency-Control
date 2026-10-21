@@ -12,8 +12,8 @@ from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.repositories.policy_audit_entry import PolicyAuditRepository
-from app.schemas.crypto_policy import CryptoRule
-from app.schemas.policy_audit import PolicyAuditAction
+from app.models.crypto_policy import CryptoRule
+from app.models.policy_audit_entry import PolicyAuditAction
 from app.services.audit.history import record_policy_change
 
 logger = logging.getLogger(__name__)

@@ -1,13 +1,21 @@
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import Field
 
 from app.core.constants import POLICY_CHANGE_SUMMARY_MAX_LENGTH, POLICY_COMMENT_MAX_LENGTH
 from app.models.types import MongoDocument
-from app.schemas.policy_audit import PolicyAuditAction
 
 PolicyType = Literal["crypto", "license"]
+
+
+class PolicyAuditAction(str, Enum):
+    CREATE = "create"
+    UPDATE = "update"
+    DELETE = "delete"
+    REVERT = "revert"
+    SEED = "seed"
 
 
 class PolicyAuditEntry(MongoDocument):

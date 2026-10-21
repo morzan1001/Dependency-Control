@@ -1,7 +1,8 @@
 import csv
 import io
 
-from app.schemas.compliance import ControlStatus, ReportFormat
+from app.schemas.compliance import ControlStatus
+from app.models.compliance_report import ReportFormat
 from app.services.compliance.renderers.csv_renderer import CsvRenderer
 from tests.unit.test_renderer_json import _evaluation, _report
 

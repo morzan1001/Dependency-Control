@@ -1,9 +1,34 @@
 from datetime import datetime, timezone
+from enum import Enum
 
 from pydantic import Field
 
 from app.models.types import MongoDocument
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+
+
+class CryptoAssetType(str, Enum):
+    ALGORITHM = "algorithm"
+    CERTIFICATE = "certificate"
+    PROTOCOL = "protocol"
+    RELATED_CRYPTO_MATERIAL = "related-crypto-material"
+
+
+class CryptoPrimitive(str, Enum):
+    BLOCK_CIPHER = "block-cipher"
+    STREAM_CIPHER = "stream-cipher"
+    HASH = "hash"
+    MAC = "mac"
+    PKE = "pke"
+    SIGNATURE = "signature"
+    KEM = "kem"
+    KDF = "kdf"
+    DRBG = "drbg"
+    KEY_AGREE = "key-agree"
+    AE = "ae"
+    XOF = "xof"
+    COMBINER = "combiner"
+    UNKNOWN = "unknown"
+    OTHER = "other"
 
 
 class CryptoAsset(MongoDocument):

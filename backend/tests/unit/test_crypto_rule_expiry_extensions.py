@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.finding import FindingType, Severity
-from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
+from app.models.crypto_policy import CryptoPolicySource, CryptoRule
 
 
 def _base_rule_kwargs(**overrides):

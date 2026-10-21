@@ -12,8 +12,8 @@ from app.core.permissions import Permissions
 from app.models.finding import FindingType, Severity
 from app.models.policy_audit_entry import PolicyType
 from app.schemas.analytics import GroupBy, Metric
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.schemas.compliance import ReportFramework
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.models.compliance_report import ReportFramework
 
 from ._helpers import MAX_CRYPTO_ASSET_PAGE, MAX_DAY_WINDOW, MAX_FINDING_ROWS, MAX_PLAN_STEPS, MAX_SUMMARY_ROWS
 

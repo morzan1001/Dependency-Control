@@ -1,7 +1,7 @@
 import pytest
 from prometheus_client import REGISTRY
 
-from app.schemas.projections import CallgraphMinimal
+from app.repositories.projections import CallgraphMinimal
 from app.services.reachability_enrichment import apply_reachability, build_component_language_map
 from tests.mocks.fake_mongo import FakeDatabase
 

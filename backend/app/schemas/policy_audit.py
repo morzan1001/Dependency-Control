@@ -1,16 +1,6 @@
-from enum import Enum
-
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.constants import POLICY_COMMENT_MAX_LENGTH
-
-
-class PolicyAuditAction(str, Enum):
-    CREATE = "create"
-    UPDATE = "update"
-    DELETE = "delete"
-    REVERT = "revert"
-    SEED = "seed"
 
 
 class PolicyRevertRequest(BaseModel):

@@ -1,6 +1,6 @@
 from app.models.crypto_policy import CryptoPolicy
 from app.models.finding import FindingType, Severity
-from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
+from app.models.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.audit.history import compute_change_summary
 
 

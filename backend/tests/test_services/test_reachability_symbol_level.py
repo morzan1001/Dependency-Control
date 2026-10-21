@@ -2,7 +2,7 @@
 
 from app.api.v1.helpers.callgraph import parse_generic_format
 from app.core.constants import REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO, REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
-from app.schemas.projections import CallgraphMinimal
+from app.repositories.projections import CallgraphMinimal
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.stats import compute_stats
 from app.services.reachability_enrichment import enrich_findings_with_reachability, is_high_confidence_reachable

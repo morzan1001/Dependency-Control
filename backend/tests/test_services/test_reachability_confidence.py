@@ -6,7 +6,7 @@ from app.api.v1.helpers.callgraph import parse_generic_format
 from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD, REACHABILITY_LEVEL_IMPORT
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.schemas.finding_details import ReachabilityInfo
-from app.schemas.projections import CallgraphMinimal
+from app.repositories.projections import CallgraphMinimal
 from app.services.analysis.stats import build_reachability_summary
 from app.services.reachability_enrichment import (
     _enrich_finding_from_callgraphs,

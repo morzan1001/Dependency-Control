@@ -13,7 +13,8 @@ from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE, SCAN_TYPE_CBOM
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.base import BaseRepository
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive, ParsedCryptoAsset
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.schemas.cbom import ParsedCryptoAsset
 
 
 def scan_query(

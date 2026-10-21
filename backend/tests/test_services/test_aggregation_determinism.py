@@ -211,8 +211,8 @@ MAINTAINER_RISK = {
 
 def _crypto_result(locations: list[str]) -> dict:
     from app.models.crypto_asset import CryptoAsset
-    from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-    from app.schemas.crypto_policy import CryptoRule
+    from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+    from app.models.crypto_policy import CryptoRule
     from app.services.analyzers.crypto.base import _build_finding_dedup
 
     asset = CryptoAsset(

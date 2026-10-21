@@ -1,7 +1,7 @@
 import pytest
 
 from app.repositories.policy_audit_entry import PolicyAuditRepository
-from app.schemas.policy_audit import PolicyAuditAction
+from app.models.policy_audit_entry import PolicyAuditAction
 from app.schemas.project import LicensePolicySchema
 from app.services.audit.history import compute_license_policy_change_summary, record_license_policy_change
 from tests.helpers.auth import make_admin

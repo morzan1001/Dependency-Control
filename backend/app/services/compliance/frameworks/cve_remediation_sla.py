@@ -3,7 +3,8 @@ from typing import Any
 
 from app.core.constants import REMEDIATION_SLA_DAYS
 from app.models.finding import FindingType, Severity
-from app.schemas.compliance import ControlResult, FrameworkEvaluation, ReportFramework
+from app.schemas.compliance import ControlResult, FrameworkEvaluation
+from app.models.compliance_report import ReportFramework
 from app.services.compliance.frameworks.base import (
     EvaluationInput,
     _classify,

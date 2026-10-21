@@ -33,7 +33,7 @@ from app.models.stats import (
     ThreatIntelligenceStats,
 )
 from app.schemas.enrichment import VulnerabilityEnrichment
-from app.schemas.projections import CallgraphMinimal
+from app.repositories.projections import CallgraphMinimal
 from app.services.component_identity import lookup_component
 from app.services.analysis.types import (
     CallgraphInfo,

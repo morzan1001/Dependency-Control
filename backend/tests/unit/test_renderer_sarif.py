@@ -1,7 +1,8 @@
 import json
 
 from app.core.metrics import APP_VERSION
-from app.schemas.compliance import ControlStatus, EvaluationCoverage
+from app.schemas.compliance import ControlStatus
+from app.models.compliance_report import EvaluationCoverage
 from app.services.compliance.renderers.sarif_renderer import SarifRenderer
 from tests.unit.test_renderer_json import _evaluation, _report
 
@@ -51,12 +52,8 @@ def test_sarif_passed_control_emits_pass_result():
     from datetime import datetime, timezone
 
     from app.models.finding import Severity
-    from app.schemas.compliance import (
-        ControlResult,
-        ControlStatus,
-        FrameworkEvaluation,
-        ReportFramework,
-    )
+    from app.schemas.compliance import ControlResult, ControlStatus, FrameworkEvaluation
+    from app.models.compliance_report import ReportFramework
 
     eval_ = FrameworkEvaluation(
         framework_key=ReportFramework.BSI_TR_02102,

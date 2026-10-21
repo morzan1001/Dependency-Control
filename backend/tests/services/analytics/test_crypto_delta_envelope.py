@@ -1,7 +1,7 @@
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
 from app.services.analytics._delta_pagination import page_of
 from app.services.analytics.crypto_delta import compare_crypto
 from tests.helpers.cbom import store_assets

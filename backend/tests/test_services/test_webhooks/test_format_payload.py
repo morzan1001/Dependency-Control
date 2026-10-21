@@ -11,7 +11,7 @@ from app.core.constants import WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, WEBHOOK_EVEN
 from app.models.policy_audit_entry import PolicyAuditEntry
 from app.models.stats import Stats
 from app.models.webhook import Webhook
-from app.schemas.policy_audit import PolicyAuditAction
+from app.models.policy_audit_entry import PolicyAuditAction
 from app.services.audit import history
 from app.services.webhooks import webhook_service
 from app.services.webhooks.webhook_service import WebhookService

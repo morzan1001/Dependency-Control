@@ -12,7 +12,7 @@ from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
 from app.models.project import Project, Scan
 from app.repositories.crypto_asset import CryptoAssetRepository
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
 from app.schemas.trufflehog import TruffleHogIngest
 from app.services.analysis import engine
 from app.services.analysis.registry import CRYPTO_ANALYZERS

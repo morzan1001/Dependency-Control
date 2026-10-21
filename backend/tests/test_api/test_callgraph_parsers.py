@@ -11,7 +11,7 @@ from app.api.v1.helpers.callgraph import (
 )
 from app.services.component_identity import build_component_index, canonical_module_key, lookup_component
 from app.schemas.callgraph import CallgraphUploadRequest
-from app.schemas.projections import CallgraphMinimal
+from app.repositories.projections import CallgraphMinimal
 from app.services.reachability_enrichment import (
     _find_usage,
     _lists_package,

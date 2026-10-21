@@ -4,7 +4,7 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.models.callgraph import Callgraph
 from app.repositories.base import BaseRepository
-from app.schemas.projections import CallgraphMinimal
+from app.repositories.projections import CallgraphMinimal
 from app.services.gridfs_maintenance import load_gridfs_json
 
 _MINIMAL_PROJECTION = {

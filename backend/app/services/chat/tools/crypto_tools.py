@@ -14,9 +14,9 @@ from app.repositories.compliance_report import NEWEST_REPORT_FIRST, ComplianceRe
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.policy_audit_entry import NEWEST_ENTRY_FIRST, PolicyAuditRepository, history_query
 from app.schemas.analytics import GroupBy, Metric
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.schemas.compliance import ReportFramework
-from app.schemas.crypto_policy import CryptoRule
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.models.compliance_report import ReportFramework
+from app.models.crypto_policy import CryptoRule
 from app.schemas.finding_details import all_rule_ids
 from app.services.analytics.crypto_hotspots import CryptoHotspotService
 from app.services.analytics.crypto_trends import CryptoTrendService, auto_bucket

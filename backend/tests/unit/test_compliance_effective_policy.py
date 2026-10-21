@@ -5,8 +5,9 @@ import pytest
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.crypto_policy import CryptoPolicy
 from app.repositories.crypto_policy import CryptoPolicyRepository
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.schemas.compliance import ControlStatus, ReportFramework
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.schemas.compliance import ControlStatus
+from app.models.compliance_report import ReportFramework
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY

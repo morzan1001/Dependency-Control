@@ -2,9 +2,10 @@
 
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.schemas.compliance import ControlDefinition, ControlStatus
-from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.services.compliance.frameworks.base import ControlDefinition
+from app.schemas.compliance import ControlStatus
+from app.models.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.compliance.frameworks.base import (
     _Applicability,

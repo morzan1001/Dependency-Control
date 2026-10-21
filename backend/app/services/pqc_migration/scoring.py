@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from app.models.crypto_asset import CryptoAsset
-from app.schemas.cbom import CryptoAssetType
+from app.models.crypto_asset import CryptoAssetType
 from app.schemas.pqc_migration import MigrationItemStatus
 
 EXPOSURE_WEIGHT = 0.35

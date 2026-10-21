@@ -2,12 +2,8 @@ from typing import Any
 
 from app.models.finding import FindingType, Severity
 from app.models.license import DistributionModel, LicenseCategory
-from app.schemas.compliance import (
-    ControlResult,
-    ControlStatus,
-    FrameworkEvaluation,
-    ReportFramework,
-)
+from app.schemas.compliance import ControlResult, ControlStatus, FrameworkEvaluation
+from app.models.compliance_report import ReportFramework
 from app.services.analyzers.license_compliance.constants import LICENSE_INCOMPATIBILITY_CATEGORY
 from app.services.compliance.frameworks.base import (
     EvaluationInput,

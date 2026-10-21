@@ -7,7 +7,7 @@ from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_SOURCE_MANUAL
 from app.models.project import Project
 from app.repositories.base import BaseRepository, UpdateOps
 from app.repositories.scans import HEAD_SCOPE_FIELDS
-from app.schemas.projections import ProjectWithScanId
+from app.repositories.projections import ProjectWithScanId
 
 _MEMBERS_USER_ID = "members.user_id"
 

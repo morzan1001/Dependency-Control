@@ -1,35 +1,10 @@
 from datetime import datetime
-from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
 from app.schemas.ingest import IngestEnvelope
-
-
-class CryptoAssetType(str, Enum):
-    ALGORITHM = "algorithm"
-    CERTIFICATE = "certificate"
-    PROTOCOL = "protocol"
-    RELATED_CRYPTO_MATERIAL = "related-crypto-material"
-
-
-class CryptoPrimitive(str, Enum):
-    BLOCK_CIPHER = "block-cipher"
-    STREAM_CIPHER = "stream-cipher"
-    HASH = "hash"
-    MAC = "mac"
-    PKE = "pke"
-    SIGNATURE = "signature"
-    KEM = "kem"
-    KDF = "kdf"
-    DRBG = "drbg"
-    KEY_AGREE = "key-agree"
-    AE = "ae"
-    XOF = "xof"
-    COMBINER = "combiner"
-    UNKNOWN = "unknown"
-    OTHER = "other"
 
 
 QUANTUM_VULNERABLE_PRIMITIVES: frozenset[CryptoPrimitive] = frozenset(

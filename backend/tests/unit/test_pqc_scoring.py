@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from app.models.crypto_asset import CryptoAsset
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
 from app.services.pqc_migration.scoring import (
     COUNT_WEIGHT,
     DEADLINE_WEIGHT,

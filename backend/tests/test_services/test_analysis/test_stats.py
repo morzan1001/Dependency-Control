@@ -5,7 +5,7 @@ import pytest
 from app.api.v1.helpers.callgraph import parse_generic_format
 from app.core.constants import HIGH_RISK_SCORE_THRESHOLD
 from app.models.stats import Stats
-from app.schemas.projections import CallgraphMinimal
+from app.repositories.projections import CallgraphMinimal
 from app.schemas.enrichment import EPSSData, KEVEntry
 from app.services.analysis.stats import (
     _HIGH_RISK_SAMPLE_CAP,

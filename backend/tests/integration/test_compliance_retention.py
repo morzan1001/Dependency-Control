@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.core.constants import COMPLIANCE_REPORT_STUCK_AFTER_HOURS
 from app.models.compliance_report import ComplianceReport
 from app.repositories.compliance_report import ComplianceReportRepository
-from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
+from app.models.compliance_report import ReportFormat, ReportFramework, ReportStatus
 from app.services.compliance.retention import sweep_expired_compliance_reports
 
 

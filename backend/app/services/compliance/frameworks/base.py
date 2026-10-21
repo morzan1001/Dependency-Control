@@ -2,7 +2,8 @@ import functools
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum, auto
 from typing import Any, Protocol
@@ -11,16 +12,9 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
-from app.schemas.compliance import (
-    ControlDefinition,
-    ControlResult,
-    ControlStatus,
-    EvaluationCoverage,
-    FrameworkEvaluation,
-    ReportFramework,
-    ResidualRisk,
-)
-from app.schemas.crypto_policy import CryptoRule
+from app.schemas.compliance import ControlResult, ControlStatus, FrameworkEvaluation, ResidualRisk
+from app.models.compliance_report import EvaluationCoverage, ReportFramework
+from app.models.crypto_policy import CryptoRule
 from app.schemas.finding_details import all_rule_ids
 from app.schemas.project import LicensePolicySchema
 from app.services.analytics.scopes import ResolvedScope
@@ -33,6 +27,19 @@ logger = logging.getLogger(__name__)
 _GAPS_REASON = "Withheld: the {subject} this verdict rests on do not cover the whole scope: {gaps}."
 
 NAMES_SHOWN = 5
+
+
+@dataclass
+class ControlDefinition:
+    control_id: str
+    title: str
+    description: str
+    severity: Severity
+    remediation: str
+    maps_to_rule_ids: list[str] = field(default_factory=list)
+    maps_to_finding_types: list[FindingType] = field(default_factory=list)
+    # Called as (control, data) in place of the default evaluator.
+    custom_evaluator: Callable[..., "ControlResult"] | None = None
 
 
 class _Applicability(Enum):

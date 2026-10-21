@@ -6,7 +6,7 @@ import pytest
 from app.models.crypto_asset import CryptoAsset
 from app.models.release import Release
 from app.repositories.releases import ReleaseRepository
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
 from tests.helpers.cbom import store_assets
 
 _SCOPE_PATH = "/api/v1/analytics/scope"

@@ -1,5 +1,5 @@
 from app.models.finding import Severity
-from app.schemas.compliance import ControlDefinition
+from app.services.compliance.frameworks.base import ControlDefinition
 from app.services.compliance.frameworks.base import _finding_matches_control
 
 _RULE_ID = "bsi-02102-tls-min-12"

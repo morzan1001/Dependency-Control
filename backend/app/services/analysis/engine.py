@@ -67,7 +67,7 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.repositories.system_settings import SystemSettingsRepository
-from app.schemas.cbom import CryptoAssetType
+from app.models.crypto_asset import CryptoAssetType
 from app.schemas.sbom import ParsedSBOM, SBOMFormat
 from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info

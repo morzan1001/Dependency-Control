@@ -6,7 +6,7 @@ import pytest
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
-from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
+from app.models.compliance_report import ReportFormat, ReportFramework, ReportStatus
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools._arguments import checked_arguments
 from tests.helpers.permission_presets import PRESET_USER

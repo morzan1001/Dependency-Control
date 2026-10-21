@@ -6,7 +6,7 @@ import pytest_asyncio
 from app.api.v1.endpoints import compliance_reports
 from app.models.compliance_report import ComplianceReport
 from app.repositories.compliance_report import ComplianceReportRepository
-from app.schemas.compliance import EvaluationCoverage, ReportFormat, ReportFramework, ReportStatus
+from app.models.compliance_report import EvaluationCoverage, ReportFormat, ReportFramework, ReportStatus
 from app.services.chat.tools import ChatToolRegistry
 from app.services.compliance.renderers.base import coverage_statement
 from tests.helpers.auth import make_admin

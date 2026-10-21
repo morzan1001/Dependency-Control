@@ -42,7 +42,7 @@ from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.enrichment import VulnerabilityEnrichment
-from app.schemas.projections import ProjectWithScanId
+from app.repositories.projections import ProjectWithScanId
 from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
 from app.services.analytics.scopes import ScopeResolver
 from app.services.enrichment.scoring import fold_enrichments

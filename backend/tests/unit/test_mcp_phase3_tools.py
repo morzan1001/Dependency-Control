@@ -6,9 +6,9 @@ import pytest
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.compliance_report import ComplianceReport
 from app.models.policy_audit_entry import PolicyAuditEntry
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
-from app.schemas.policy_audit import PolicyAuditAction
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.models.compliance_report import ReportFormat, ReportFramework, ReportStatus
+from app.models.policy_audit_entry import PolicyAuditAction
 
 
 @pytest.mark.asyncio

@@ -4,8 +4,8 @@ import pytest
 
 from app.models.crypto_policy import CryptoPolicy
 from app.repositories.crypto_policy import CryptoPolicyRepository
-from app.schemas.crypto_policy import CryptoRule
-from app.schemas.policy_audit import PolicyAuditAction
+from app.models.crypto_policy import CryptoRule
+from app.models.policy_audit_entry import PolicyAuditAction
 from app.services.crypto_policy.seeder import (
     CURRENT_SEED_VERSION,
     load_seed_rules,

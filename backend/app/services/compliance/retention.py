@@ -6,7 +6,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.config import settings
 from app.core.constants import COMPLIANCE_REPORT_STUCK_AFTER_HOURS
 from app.repositories.compliance_report import ComplianceReportRepository
-from app.schemas.compliance import ReportStatus
+from app.models.compliance_report import ReportStatus
 
 logger = logging.getLogger(__name__)
 

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
 from app.services.cbom_parser import parse_cbom, parse_crypto_components
 from tests.helpers.analyzers import scan_cbom
 

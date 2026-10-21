@@ -6,7 +6,8 @@ from collections import Counter
 from typing import Any
 
 from app.core import parse_iso_utc
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive, ParsedCryptoAsset
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.schemas.cbom import ParsedCryptoAsset
 
 logger = logging.getLogger(__name__)
 

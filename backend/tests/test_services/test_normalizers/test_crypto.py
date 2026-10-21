@@ -3,8 +3,8 @@ from pydantic import ValidationError
 
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
-from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
+from app.models.crypto_asset import CryptoAssetType, CryptoPrimitive
+from app.models.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.aggregation import ResultAggregator
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 

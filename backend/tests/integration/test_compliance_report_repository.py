@@ -4,7 +4,7 @@ import pytest
 
 from app.models.compliance_report import ComplianceReport
 from app.repositories.compliance_report import ComplianceReportRepository
-from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
+from app.models.compliance_report import ReportFormat, ReportFramework, ReportStatus
 
 
 @pytest.mark.asyncio

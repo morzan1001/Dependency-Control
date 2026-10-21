@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.schemas.compliance import ReportFramework
+from app.models.compliance_report import ReportFramework
 from app.schemas.project import LicensePolicySchema
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from tests.helpers.compliance import evaluation_input
