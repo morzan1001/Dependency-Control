@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator, Awaitable, Iterable, Sequence
+from collections.abc import Awaitable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, NamedTuple
@@ -527,12 +527,6 @@ class ScanRepository:
             [doc["_id"] for doc in tips.values()], seeds={doc["_id"]: doc for doc in tips.values()}
         )
         return {pid: lineage[doc["_id"]].scan_id for pid, doc in tips.items() if doc["_id"] in lineage}
-
-    async def iterate_raw(
-        self, query: dict[str, Any], projection: dict[str, int] | None = None
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        async for doc in self.collection.find(query, projection):
-            yield doc
 
     async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
         return await self.collection.aggregate(pipeline).to_list(limit)
