@@ -183,8 +183,11 @@ async def restamp_single_scan(
     try:
         waivers = await WaiverRepository(db).find_active_for_project(project_id)
         fingerprint = waiver_fingerprint(waivers)
-        if not await ScanRepository(db).count({"_id": scan_id, "waiver_fingerprint": fingerprint}):
+        scan_repo = ScanRepository(db)
+        if not await scan_repo.count({"_id": scan_id, "waiver_fingerprint": fingerprint}):
             await _restamp_scan(scan_id, db, waivers, fingerprint, FindingRepository(db), waiver_repo)
+            # The queued recalc skips a head stamped current, so only this write can copy its stats to the project.
+            await scan_repo.sync_project_head(project_id)
     finally:
         await lock_repo.release_lock(lock_name, holder_id)
 

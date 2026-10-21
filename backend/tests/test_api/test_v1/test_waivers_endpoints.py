@@ -657,6 +657,25 @@ class TestWaiverEditsRestampTheHeadAtOnce:
         assert (stored.get("last_eval_scan_id"), stored.get("last_match_count")) == (_HEAD_SCAN, 1)
         assert [task.func for task in background.tasks] == [run_waiver_recalc]
 
+    def test_after_a_project_waiver_is_deleted_the_project_shows_its_heads_stats(self, admin_user):
+        """The dashboard and the project list read project.stats, which the queued recalc skips for a current head."""
+        from app.api.v1.endpoints.waivers import delete_waiver
+        from app.services.stats import recalculate_project_stats
+
+        db, waiver = self._seed(waived=False)
+        asyncio.run(recalculate_project_stats(_PROJECT, db))
+        assert asyncio.run(db.projects.find_one({"_id": _PROJECT}))["stats"]["high"] == 0
+
+        asyncio.run(
+            delete_waiver(waiver_id=waiver.id, background_tasks=BackgroundTasks(), current_user=admin_user, db=db)
+        )
+        asyncio.run(run_waiver_recalc(db))
+
+        head = asyncio.run(db.scans.find_one({"_id": _HEAD_SCAN}))
+        project = asyncio.run(db.projects.find_one({"_id": _PROJECT}))
+        assert head["stats"]["high"] == 1
+        assert project["stats"] == head["stats"]
+
 
 class TestListWaivers:
     def test_admin_sees_all_waivers(self, admin_user):
