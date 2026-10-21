@@ -25,11 +25,21 @@ async def test_the_window_carries_the_rows_and_the_total(stored, shown, total):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("stored", "total"), [(_LIMIT + 1, _LIMIT + 1), (_LIMIT + 5, _LIMIT + 2)])
+async def test_a_count_limit_caps_the_total_of_a_saturated_read(stored, total):
+    db = await _seeded(stored)
+
+    rows, counted = await find_window(db.webhooks, {"project_id": "p1"}, _LIMIT, count_limit=_LIMIT + 2)
+
+    assert (len(rows), counted) == (_LIMIT, total)
+
+
+@pytest.mark.asyncio
 async def test_a_read_that_exactly_fills_its_limit_carries_no_caveat():
     db = await _seeded(_LIMIT)
     begin_limit_ledger()
 
-    await bounded_read(db.webhooks, {"project_id": "p1"}, subject="webhooks", limit=_LIMIT)
+    await bounded_read(db.webhooks, {"project_id": "p1"}, subject="webhooks", limit=_LIMIT, sort=[("_id", 1)])
 
     assert bounded_read_note() is None
 
@@ -39,6 +49,6 @@ async def test_a_truncated_read_still_says_so():
     db = await _seeded(_LIMIT + 2)
     begin_limit_ledger()
 
-    await bounded_read(db.webhooks, {"project_id": "p1"}, subject="webhooks", limit=_LIMIT)
+    await bounded_read(db.webhooks, {"project_id": "p1"}, subject="webhooks", limit=_LIMIT, sort=[("_id", 1)])
 
     assert "3 of 5 webhooks" in (bounded_read_note() or "")

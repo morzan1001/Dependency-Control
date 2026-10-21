@@ -341,7 +341,7 @@ class TestFetchJwks:
         assert await oidc_cache.get("jwks-key") is None
 
     async def test_a_failed_refresh_leaves_the_cached_set_readable(self, monkeypatch, oidc_cache, jwks):
-        await oidc_cache.set("jwks-key", jwks)
+        await oidc_cache.set("jwks-key", jwks, JWKS_CACHE_TTL)
 
         async def handler(request):
             return httpx.Response(503)

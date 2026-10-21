@@ -9,6 +9,7 @@ from app.core.permissions import Permissions
 from app.repositories.api_keys import ApiKeyRepository
 from app.services.chat import rate_limiter
 from app.services.chat.tools import ChatToolRegistry
+from app.services.chat.tools._helpers import MAX_TOOL_RESULT_BYTES, _json_size
 
 _MCP = "/api/v1/mcp/"
 
@@ -345,3 +346,23 @@ async def test_spending_the_mcp_window_leaves_the_chat_window_untouched(client, 
     assert refused.json()["error"]["code"] == _RATE_LIMITED
 
     assert await rate_limiter.rate_limit_retry_after(_OWNER, per_minute=1, per_hour=1) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_tool_result_reaches_the_client_in_the_size_the_budget_measured(client, db, monkeypatch):
+    rows = {"rows": [{"name": f"pkg-{i}", "version": "1.0.0"} for i in range(160)]}
+    assert _json_size(rows) <= MAX_TOOL_RESULT_BYTES
+
+    async def _result(*_args):
+        return rows
+
+    monkeypatch.setattr(ChatToolRegistry, "execute_tool", _result)
+
+    resp = await _rpc(
+        client,
+        db,
+        {"jsonrpc": "2.0", "id": _REQUEST_ID, "method": "tools/call", "params": {"name": "list_projects"}},
+    )
+
+    (content,) = resp.json()["result"]["content"]
+    assert len(content["text"].encode()) == _json_size(rows)

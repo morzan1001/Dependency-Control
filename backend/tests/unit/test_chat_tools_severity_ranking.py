@@ -80,8 +80,38 @@ async def test_a_tier_larger_than_the_cap_says_its_order_is_a_sample(flooded, ad
         "get_scan_findings", {"project_id": _PROJECT, "limit": _LOW_COUNT}, admin_user, flooded
     )
 
-    assert _SEV_LOW in result["ranking_note"]
-    assert str(_LOW_COUNT) in result["ranking_note"]
+    assert f"the {_SEV_LOW} tier holds more than {_CAP} findings" in result["ranking_note"]
+
+
+@pytest.mark.asyncio
+async def test_a_tier_that_lands_on_the_cap_was_read_whole_and_carries_no_caveat(flooded, admin_user, monkeypatch):
+    monkeypatch.setattr(registry_module, "_FINDING_RANK_FETCH_CAP", _LOW_COUNT)
+
+    result = await ChatToolRegistry().execute_tool(
+        "get_scan_findings", {"project_id": _PROJECT, "limit": _TOTAL}, admin_user, flooded
+    )
+
+    assert result["count"] == _TOTAL
+    assert "ranking_note" not in result
+
+
+@pytest.mark.asyncio
+async def test_the_sampled_caveat_counts_no_tier(flooded, admin_user, monkeypatch):
+    monkeypatch.setattr(registry_module, "_FINDING_RANK_FETCH_CAP", _CAP)
+    counted: list[dict] = []
+
+    async def count_documents(query, **_options):
+        counted.append(query)
+        return 0
+
+    monkeypatch.setattr(flooded.findings, "count_documents", count_documents)
+    for doc in flooded.findings._docs.values():
+        doc["type"] = "license"
+
+    result = await ChatToolRegistry().execute_tool("get_license_violations", {"limit": 10}, admin_user, flooded)
+
+    assert "ranking_note" in result
+    assert counted == []
 
 
 @pytest.mark.asyncio
@@ -184,6 +214,39 @@ async def test_a_search_cut_short_names_how_many_matched(flooded, admin_user):
 
     assert (result["count"], result["findings_total"]) == (_ANSWER_LIMIT, _TOTAL)
     assert result["_bounded_read"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_search_cut_short_leads_with_the_worst_matches_of_every_project(flooded, admin_user):
+    """A project whose scan id sorts first must not fill the answer with its LOW matches."""
+    flooded.projects._docs["aaa-service"] = {"_id": "aaa-service", "name": "aaa-service"}
+    flooded.scans._docs["scan-aaa"] = {**flooded.scans._docs[_SCAN], "_id": "scan-aaa", "project_id": "aaa-service"}
+    for index in range(_LOW_COUNT):
+        doc = {
+            **_finding(index, _SEV_LOW),
+            "_id": f"scan-aaa:{index}",
+            "scan_id": "scan-aaa",
+            "project_id": "aaa-service",
+        }
+        flooded.findings._docs[doc["_id"]] = doc
+
+    result = await ChatToolRegistry().execute_tool(
+        "search_findings", {"query": "lib-", "limit": _CRITICAL_COUNT}, admin_user, flooded
+    )
+
+    assert [f["severity"] for f in result["findings"]] == [_SEV_CRITICAL] * _CRITICAL_COUNT
+    assert (result["count"], result["findings_total"]) == (_CRITICAL_COUNT, _TOTAL + _LOW_COUNT)
+
+
+@pytest.mark.asyncio
+async def test_a_search_tier_larger_than_the_cap_says_its_order_is_a_sample(flooded, admin_user, monkeypatch):
+    monkeypatch.setattr(registry_module, "_FINDING_RANK_FETCH_CAP", _CAP)
+
+    result = await ChatToolRegistry().execute_tool(
+        "search_findings", {"query": "lib-", "limit": _TOTAL}, admin_user, flooded
+    )
+
+    assert f"the {_SEV_LOW} tier holds more than {_CAP} findings" in result["ranking_note"]
 
 
 def _open_critical(index: int, finding_type: str) -> dict:

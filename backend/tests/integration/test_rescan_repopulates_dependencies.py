@@ -5,9 +5,8 @@ from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH
 from app.core.init_db import create_indexes
 from app.models.dependency import Dependency
 from app.models.project import Scan
-from app.services.analysis import engine
 from app.services.analysis.engine import run_analysis
-from tests.helpers.sboms import sbom_ref, store_sbom
+from tests.helpers.sboms import sbom_ref, store_sbom, unreadable_downloads
 
 pytestmark = pytest.mark.live_mongo
 
@@ -85,14 +84,7 @@ async def _stored_sboms(db):
 
 @pytest.fixture
 def _second_file_unreadable(monkeypatch):
-    real_open = engine.open_gridfs_download_with_retry
-
-    async def _fail_second_file(fs, file_id, **kwargs):
-        if str(file_id) == _FILE_ID_B:
-            raise OSError("transient gridfs outage")
-        return await real_open(fs, file_id, **kwargs)
-
-    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", _fail_second_file)
+    unreadable_downloads(monkeypatch, {_FILE_ID_B})
 
 
 @pytest.mark.asyncio

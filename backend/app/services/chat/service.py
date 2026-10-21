@@ -20,7 +20,7 @@ from app.core.metrics import (
     chat_tool_calls_per_message,
 )
 from app.models.user import User
-from app.repositories.chat import ChatRepository
+from app.repositories.chat import DEFAULT_CONVERSATION_TITLE, ChatRepository
 from app.services.chat.context import (
     build_messages,
     message_token_budget,
@@ -102,7 +102,7 @@ class ChatService:
         chat_conversations_created_total.inc()
         return await self.repo.create_conversation(
             user_id=str(user.id),
-            title=title or "New Conversation",
+            title=title or DEFAULT_CONVERSATION_TITLE,
         )
 
     async def send_message(
@@ -123,7 +123,7 @@ class ChatService:
             return
         if message_count == 1:
             title = content[:80] + ("..." if len(content) > 80 else "")
-            await self.repo.update_conversation_title(conversation_id, str(user.id), title)
+            await self.repo.replace_default_title(conversation_id, str(user.id), title)
 
         tools = self.tools.get_available_tool_definitions(user.permissions)
         budget = message_token_budget(tools)

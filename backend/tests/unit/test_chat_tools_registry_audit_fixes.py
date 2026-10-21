@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED
+from app.models.compliance_report import ComplianceReport
 from app.models.user import User
+from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools._arguments import checked_arguments
 from tests.helpers.permission_presets import PRESET_USER
@@ -138,19 +140,25 @@ class TestComplianceReportsVisibility:
             "members": [{"user_id": "u-1", "role": "member"}],
         }
         db.projects._docs["p-1"] = {"_id": "p-1", "name": "P1", "team_ids": ["t-1"]}
-
-        repo_instance = MagicMock()
-        repo_instance.list = AsyncMock(return_value=[])
-        with patch(
-            "app.services.chat.tools.crypto_tools.ComplianceReportRepository",
-            return_value=repo_instance,
+        for report_id, scope, scope_id, requested_by in (
+            ("own", "user", None, "u-1"),
+            ("their-project", "project", "p-1", "u-2"),
+            ("their-team", "team", "t-1", "u-2"),
+            ("global", "global", None, "u-2"),
+            ("someone-else-s", "user", None, "u-2"),
+            ("foreign-project", "project", "p-9", "u-2"),
         ):
-            await _dispatch("list_compliance_reports", {}, plain_user, db)
+            db.compliance_reports._docs[report_id] = ComplianceReport(
+                id=report_id,
+                scope=scope,
+                scope_id=scope_id,
+                framework=ReportFramework.LICENSE_AUDIT,
+                format=ReportFormat.PDF,
+                status=ReportStatus.COMPLETED,
+                requested_by=requested_by,
+                requested_at=_NOW,
+            ).model_dump(by_alias=True)
 
-        repo_instance.list.assert_awaited_once()
-        branches = repo_instance.list.await_args.kwargs["visibility"]["$or"]
+        result = await _dispatch("list_compliance_reports", {}, plain_user, db)
 
-        assert {"scope": "user", "requested_by": "u-1"} in branches
-        assert {"scope": "project", "scope_id": {"$in": ["p-1"]}} in branches
-        assert {"scope": "team", "scope_id": {"$in": ["t-1"]}} in branches
-        assert {"scope": "global"} not in branches
+        assert sorted(r["_id"] for r in result["reports"]) == ["own", "their-project", "their-team"]

@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.cache import CacheKeys
+from app.core.cache import CacheKeys, CacheTTL
 from app.services.enrichment.service import vulnerability_enrichment_service
 from tests.helpers.enrichment import CISA_HOST, Upstreams, serve_enrichment
 
@@ -38,7 +38,7 @@ async def test_a_catalog_that_could_not_be_read_is_unavailable_and_not_cached(fa
 @pytest.mark.asyncio
 async def test_a_leftover_negative_cache_entry_reads_as_unavailable(fake_cache, monkeypatch):
     seen = serve_enrichment(monkeypatch, fake_cache, Upstreams(kev=(_LOG4SHELL,)))
-    await fake_cache.set(CacheKeys.kev_catalog(), {})
+    await fake_cache.set(CacheKeys.kev_catalog(), {}, CacheTTL.NEGATIVE_RESULT)
 
     assert await _load() is None
     assert seen == []

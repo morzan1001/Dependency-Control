@@ -442,7 +442,8 @@ async def test_waiver_status_is_not_all_waived_when_the_read_left_an_unwaived_fi
     monkeypatch.setattr("app.services.chat.tools.registry._WAIVER_STATE_READ", 1)
     await _seed_head(db)
     waived = _jackson_with_one_advisory_waived()
-    live = _finding("f-jackson-live", "HIGH", "jackson-core", [{"id": "CVE-2020-0010", "severity": "CRITICAL"}])
+    # Its finding_id sorts after the waived one's, so the one-row read leaves it out.
+    live = _finding("f-jackson-live", "HIGH", "jackson-module", [{"id": "CVE-2020-0010", "severity": "CRITICAL"}])
     await db.findings.insert_many([waived, live])
 
     result = await _call(db, "get_waiver_status", project_id=_PROJECT, finding_id="CVE-2020-0010")

@@ -1103,7 +1103,7 @@ class TestMemberResolution:
     @pytest.mark.asyncio
     async def test_only_the_profiles_not_cached_are_read_and_the_users_are_found_in_one_query(self, fake_cache):
         service = _service()
-        await fake_cache.set(service._get_cache_key("user_email:ada"), "ada@acme.io")
+        await fake_cache.set(service._get_cache_key("user_email:ada"), "ada@acme.io", GITHUB_TEAM_SYNC_CACHE_TTL)
         api = self._api(
             {
                 "ada": (200, {"login": "ada", "email": "ada@acme.io"}),

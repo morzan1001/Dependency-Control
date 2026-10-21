@@ -8,6 +8,30 @@ from app.repositories.base import BaseRepository, and_filters
 from app.schemas.compliance import EvaluationCoverage, ReportFramework, ReportStatus
 
 
+NEWEST_REPORT_FIRST = [("requested_at", DESCENDING)]
+
+
+def report_list_query(
+    *,
+    visibility: dict[str, Any],
+    scope: str | None = None,
+    scope_id: str | None = None,
+    framework: ReportFramework | None = None,
+    status: ReportStatus | None = None,
+) -> dict[str, Any]:
+    """``visibility`` is required, so every caller has to say who sees what."""
+    query: dict[str, Any] = {}
+    if scope:
+        query["scope"] = scope
+    if scope_id:
+        query["scope_id"] = scope_id
+    if framework:
+        query["framework"] = framework
+    if status:
+        query["status"] = status
+    return and_filters(query, visibility)
+
+
 class ComplianceReportRepository(BaseRepository[ComplianceReport]):
     collection_name = "compliance_reports"
     model_class = ComplianceReport
@@ -23,18 +47,10 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
         skip: int = 0,
         limit: int = 50,
     ) -> list[ComplianceReport]:
-        """``visibility`` is required, so every caller has to say who sees what."""
-        query: dict[str, Any] = {}
-        if scope:
-            query["scope"] = scope
-        if scope_id:
-            query["scope_id"] = scope_id
-        if framework:
-            query["framework"] = framework
-        if status:
-            query["status"] = status
-        query = and_filters(query, visibility)
-        cursor = self.collection.find(query).sort("requested_at", DESCENDING).skip(skip).limit(limit)
+        query = report_list_query(
+            visibility=visibility, scope=scope, scope_id=scope_id, framework=framework, status=status
+        )
+        cursor = self.collection.find(query).sort(NEWEST_REPORT_FIRST).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [ComplianceReport.model_validate(d) for d in docs]
 

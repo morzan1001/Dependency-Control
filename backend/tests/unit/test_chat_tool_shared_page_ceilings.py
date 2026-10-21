@@ -75,14 +75,16 @@ async def test_pqc_migration_plan(seeded, admin_user):
 
 
 @pytest.mark.asyncio
-async def test_pqc_migration_plan_default_size(seeded, admin_user):
+@pytest.mark.parametrize(("tool", "chat_default"), [("generate_pqc_migration_plan", 20), ("list_crypto_assets", 15)])
+async def test_a_crypto_list_asked_without_a_limit_reads_what_the_result_cap_can_show(
+    seeded, admin_user, tool, chat_default
+):
+    """Hundreds of full rows by default reach the model as the 8 KB cap's first few."""
     spy = AsyncMock(return_value={})
-    with patch("app.services.chat.tools.registry.generate_pqc_migration_plan", new=spy):
-        await ChatToolRegistry().execute_tool(
-            "generate_pqc_migration_plan", {"project_id": _PROJECT}, admin_user, seeded
-        )
-    rest_default = inspect.signature(get_pqc_migration_plan).parameters["limit"].default.default
-    assert spy.await_args.kwargs["limit"] == rest_default
+    with patch(f"app.services.chat.tools.registry.{tool}", new=spy):
+        await ChatToolRegistry().execute_tool(tool, {"project_id": _PROJECT}, admin_user, seeded)
+
+    assert spy.await_args.kwargs["limit"] == chat_default
 
 
 @pytest.mark.asyncio

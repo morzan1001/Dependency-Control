@@ -2,7 +2,6 @@ from collections.abc import Sequence
 from typing import Any, get_args
 
 from app.core.constants import (
-    DEFAULT_PQC_PLAN_ITEMS,
     MAX_COMPLIANCE_REPORT_PAGE,
     MAX_CRYPTO_HOTSPOT_PAGE,
     MAX_POLICY_AUDIT_PAGE,
@@ -157,8 +156,8 @@ _tool(
 )
 _tool(
     "search_findings",
-    "Search the head-build findings of every project the user has access to. Use for cross-project "
-    "queries like 'find all log4j vulnerabilities'. findings_total says how many findings match.",
+    "Search the head-build findings of every project the user has access to, worst first. Use for "
+    "cross-project queries like 'find all log4j vulnerabilities'. findings_total says how many findings match.",
     required=["query"],
     permissions=_ANALYTICS_SEARCH,
     query=_string("Search term (CVE ID, package name, description keyword)"),
@@ -207,8 +206,8 @@ _tool(
 )
 _tool(
     "get_hotspots",
-    "The riskiest projects the user can access, worst first by their head build's critical "
-    "then high count, each with its head_scan_id and severity stats. For the riskiest "
+    "The riskiest projects the user can access, worst first by their head build's risk_score "
+    "as the dashboard ranks them, each with its head_scan_id and severity stats. For the riskiest "
     "libraries use search_findings or find_component_usage.",
     limit=_bounded(10, MAX_SUMMARY_ROWS, "Max hotspots"),
 )
@@ -388,7 +387,7 @@ _tool(
     "Use when the user asks 'what vulns have we been ignoring?', 'what's old?' or about SLA.",
     days_open=_bounded(30, MAX_DAY_WINDOW, "Minimum open age in days"),
     project_id=_ONE_PROJECT,
-    severity_min=_string("Min severity, one of CRITICAL/HIGH/MEDIUM/LOW (default HIGH)."),
+    severity_min={"type": "string", "enum": _SEVERITIES, "default": "HIGH", "description": "Min severity."},
     limit=_FINDING_LIMIT,
 )
 _tool(
@@ -410,7 +409,7 @@ _tool(
 _tool(
     "get_team_risk_overview",
     "Aggregate security posture for a single team: severity totals over its projects' head "
-    "builds plus the three riskiest projects (critical, then high). Use when the user asks "
+    "builds plus the three riskiest projects by risk_score. Use when the user asks "
     "'how is team X doing?' or 'team-level summary'.",
     required=["team_id"],
     permissions=_TEAM_READ,
@@ -489,7 +488,7 @@ _tool(
     },
     name_search=_string("Optional substring filter on asset name"),
     skip={"type": "integer", "description": "Number of items to skip (default 0)"},
-    limit=_bounded(100, MAX_CRYPTO_ASSET_PAGE, "Max assets"),
+    limit=_bounded(15, MAX_CRYPTO_ASSET_PAGE, "Max assets"),
 )
 _tool(
     "get_crypto_asset_details",
@@ -511,10 +510,13 @@ _tool(
 _tool(
     "get_project_crypto_policy",
     "Get the effective cryptographic policy rules for a project: the system rules with "
-    "the project's override merged in. override_locked=true means a global policy "
-    "disables project overrides, so suggest none for this project.",
+    "the project's override merged in, one compact row per rule; overridden=true marks a rule "
+    "the override changed or added. Pass rule_id for that rule's description, matchers and "
+    "references. override_locked=true means a global policy disables project overrides, so "
+    "suggest none for this project.",
     required=["project_id"],
     project_id=_PROJECT_ID,
+    rule_id=_string("Optional: one rule's full definition instead of the compact list."),
 )
 _tool(
     "suggest_crypto_policy_override",
@@ -550,7 +552,7 @@ _tool(
     "Generate a PQC migration plan for one project.",
     required=["project_id"],
     project_id=_PROJECT_ID,
-    limit=_bounded(DEFAULT_PQC_PLAN_ITEMS, MAX_PQC_PLAN_ITEMS, "Max plan items"),
+    limit=_bounded(20, MAX_PQC_PLAN_ITEMS, "Max plan items"),
 )
 _tool(
     "list_compliance_reports",

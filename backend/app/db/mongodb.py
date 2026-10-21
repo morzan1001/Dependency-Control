@@ -1,13 +1,11 @@
-import asyncio
 import logging
 from datetime import timezone
 from typing import Any
 
-from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from app.core.config import settings
-from app.core.metrics import DbCommandMetrics, DbHeartbeatFailures, db_connections_active
+from app.core.metrics import DbCommandMetrics, DbHeartbeatFailures, DbPoolConnections
 
 logger = logging.getLogger(__name__)
 
@@ -17,22 +15,8 @@ DEFAULT_MIN_POOL_SIZE = 5
 DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 30000
 DEFAULT_CONNECT_TIMEOUT_MS = 20000
 DEFAULT_SOCKET_TIMEOUT_MS = 30000
-
-
-async def open_gridfs_download_with_retry(
-    fs: AsyncIOMotorGridFSBucket, file_id: ObjectId, attempts: int = 4, base_delay: float = 0.25
-) -> Any:
-    """A just-committed GridFS file can momentarily be unreadable under load."""
-    last_err: Exception | None = None
-    for attempt in range(attempts):
-        try:
-            return await fs.open_download_stream(file_id)
-        except Exception as err:
-            last_err = err
-            if attempt < attempts - 1:
-                await asyncio.sleep(base_delay * (2**attempt))
-    assert last_err is not None
-    raise last_err
+# Below the socket timeout, so mongod aborts a runaway read, which is not retried, before the driver resends it.
+DEFAULT_MAX_TIME_MS = 25000
 
 
 class Database:
@@ -55,7 +39,7 @@ def create_client(url: str, **options: Any) -> AsyncIOMotorClient[Any]:
         readPreference="primary",
         tz_aware=True,
         tzinfo=timezone.utc,
-        event_listeners=[DbCommandMetrics(), DbHeartbeatFailures()],
+        event_listeners=[DbCommandMetrics(), DbHeartbeatFailures(), DbPoolConnections()],
         **options,
     )
 
@@ -76,7 +60,6 @@ async def connect_to_mongo() -> None:
     try:
         await db.client.admin.command("ping")
         logger.info("Connected to MongoDB")
-        db_connections_active.set(1)
     except Exception as e:
         logger.exception("Failed to connect to MongoDB: %s", e)
         db.client = None
@@ -88,4 +71,3 @@ async def close_mongo_connection() -> None:
         db.client.close()
         db.client = None
         logger.info("Closed MongoDB connection")
-        db_connections_active.set(0)

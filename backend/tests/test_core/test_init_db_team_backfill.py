@@ -1,7 +1,9 @@
 import asyncio
+from unittest.mock import AsyncMock
 
+from app.core import init_db as init_db_module
 from app.core.constants import TEAM_SOURCE_GITLAB, team_binding_key, team_source
-from app.core.init_db import _backfill_member_and_team_provenance
+from app.core.init_db import _backfill_gitlab_owner_provenance, create_indexes
 from tests.mocks.fake_mongo import FakeDatabase
 
 
@@ -43,7 +45,7 @@ class TestBackfillProvenance:
             members=[{"user_id": "u1", "role": "member"}, {"user_id": "u2", "role": "admin"}],
         )
 
-        asyncio.run(_backfill_member_and_team_provenance(db))
+        asyncio.run(_backfill_gitlab_owner_provenance(db))
 
         members = db.teams._docs["t-synced"]["members"]
         assert all(m.get("source") != "gitlab" for m in members), (
@@ -54,7 +56,7 @@ class TestBackfillProvenance:
         db = FakeDatabase()
         _seed_team(db, "t-manual", "Atlas", members=[{"user_id": "u1", "role": "admin"}])
 
-        asyncio.run(_backfill_member_and_team_provenance(db))
+        asyncio.run(_backfill_gitlab_owner_provenance(db))
 
         members = db.teams._docs["t-manual"]["members"]
         # No source stamped (defaults to manual at model level), never "gitlab".
@@ -73,7 +75,7 @@ class TestBackfillProvenance:
             ],
         )
 
-        asyncio.run(_backfill_member_and_team_provenance(db))
+        asyncio.run(_backfill_gitlab_owner_provenance(db))
 
         members = {m["user_id"]: m for m in db.teams._docs["t-mixed"]["members"]}
         assert members["manual-u"]["source"] == "manual"
@@ -85,7 +87,7 @@ class TestBackfillProvenance:
         _seed_team(db, "t-synced", "GitLab Group: acme", bindings=[_gitlab_binding("inst-a", 42)])
         _seed_project(db, "p1", "t-synced", gitlab_instance_id="inst-a", gitlab_project_id=1)
 
-        asyncio.run(_backfill_member_and_team_provenance(db))
+        asyncio.run(_backfill_gitlab_owner_provenance(db))
 
         assert db.projects._docs["p1"]["team_sources"] == {"t-synced": team_source(TEAM_SOURCE_GITLAB, "inst-a")}
 
@@ -96,7 +98,7 @@ class TestBackfillProvenance:
         db.projects._docs["p1"]["team_ids"].append("t-hand")
         db.projects._docs["p1"]["team_sources"]["t-hand"] = "manual"
 
-        asyncio.run(_backfill_member_and_team_provenance(db))
+        asyncio.run(_backfill_gitlab_owner_provenance(db))
 
         assert db.projects._docs["p1"]["team_sources"] == {
             "t-synced": team_source(TEAM_SOURCE_GITLAB, "inst-a"),
@@ -114,7 +116,7 @@ class TestBackfillProvenance:
         )
         _seed_project(db, "p1", "t-two")
 
-        asyncio.run(_backfill_member_and_team_provenance(db))
+        asyncio.run(_backfill_gitlab_owner_provenance(db))
 
         assert db.projects._docs["p1"]["team_sources"] == {}
 
@@ -128,7 +130,7 @@ class TestBackfillProvenance:
         )
         _seed_project(db, "p1", "t-github")
 
-        asyncio.run(_backfill_member_and_team_provenance(db))
+        asyncio.run(_backfill_gitlab_owner_provenance(db))
 
         assert db.projects._docs["p1"]["team_sources"] == {}
 
@@ -137,7 +139,7 @@ class TestBackfillProvenance:
         _seed_team(db, "t-manual", "Atlas")
         _seed_project(db, "p1", "t-manual")
 
-        asyncio.run(_backfill_member_and_team_provenance(db))
+        asyncio.run(_backfill_gitlab_owner_provenance(db))
 
         assert db.projects._docs["p1"].get("team_sources") == {}
 
@@ -146,7 +148,7 @@ class TestBackfillProvenance:
         _seed_team(db, "t-synced", "GitLab Group: acme", bindings=[_gitlab_binding("inst-a", 42)])
         _seed_project(db, "p1", "t-synced", provenance="manual")
 
-        asyncio.run(_backfill_member_and_team_provenance(db))
+        asyncio.run(_backfill_gitlab_owner_provenance(db))
 
         assert db.projects._docs["p1"]["team_sources"] == {"t-synced": "manual"}
 
@@ -156,7 +158,7 @@ class TestBackfillProvenance:
         _seed_team(db, "t-synced", "GitLab Group: acme", bindings=[_gitlab_binding("inst-a", 42)])
         _seed_project(db, "p1", "t-synced", provenance=team_source(TEAM_SOURCE_GITLAB, "inst-b"))
 
-        asyncio.run(_backfill_member_and_team_provenance(db))
+        asyncio.run(_backfill_gitlab_owner_provenance(db))
 
         assert db.projects._docs["p1"]["team_sources"] == {"t-synced": team_source(TEAM_SOURCE_GITLAB, "inst-b")}
 
@@ -171,10 +173,10 @@ class TestBackfillProvenance:
         )
         _seed_project(db, "p1", "t-synced", gitlab_instance_id="inst-a", gitlab_project_id=1)
 
-        asyncio.run(_backfill_member_and_team_provenance(db))
+        asyncio.run(_backfill_gitlab_owner_provenance(db))
         teams_first = dict(db.teams._docs["t-synced"])
         proj_first = dict(db.projects._docs["p1"])
-        asyncio.run(_backfill_member_and_team_provenance(db))
+        asyncio.run(_backfill_gitlab_owner_provenance(db))
 
         assert db.teams._docs["t-synced"] == teams_first
         assert db.projects._docs["p1"] == proj_first
@@ -208,7 +210,30 @@ class TestBackfillProvenance:
         db.projects.update_many = failing_update_many  # type: ignore[method-assign]
 
         with caplog.at_level("ERROR", logger="app.core.init_db"):
-            asyncio.run(_backfill_member_and_team_provenance(db))
+            asyncio.run(_backfill_gitlab_owner_provenance(db))
 
         assert db.projects._docs["p-good"]["team_sources"] == {"t-good": team_source(TEAM_SOURCE_GITLAB, "inst-a")}
         assert any("t-bad" in r.message for r in caplog.records)
+
+
+class TestBackfillRunsAtStartupBeforeTheIndexes:
+    def _synced_project(self) -> FakeDatabase:
+        db = FakeDatabase()
+        _seed_team(db, "t-synced", "GitLab Group: acme", bindings=[_gitlab_binding("inst-a", 42)])
+        _seed_project(db, "p1", "t-synced", gitlab_instance_id="inst-a", gitlab_project_id=1)
+        return db
+
+    def test_index_creation_leaves_the_projects_data_alone(self):
+        db = self._synced_project()
+
+        asyncio.run(create_indexes(db))
+
+        assert db.projects._docs["p1"]["team_sources"] == {}
+
+    def test_startup_stamps_the_owner_entry(self, monkeypatch):
+        db = self._synced_project()
+        monkeypatch.setattr(init_db_module, "get_database", AsyncMock(return_value=db))
+
+        asyncio.run(init_db_module.init_db())
+
+        assert db.projects._docs["p1"]["team_sources"] == {"t-synced": team_source(TEAM_SOURCE_GITLAB, "inst-a")}

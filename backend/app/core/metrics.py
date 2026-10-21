@@ -21,6 +21,9 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 logger = logging.getLogger(__name__)
 
 _UNMATCHED_ENDPOINT = "<unmatched>"
+# Any other method reaches a real path before auth, so its raw name would open a series per caller-chosen string.
+_LABELLED_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
+_OTHER_METHOD = "OTHER"
 
 
 class ArchiveFailureReason:
@@ -515,8 +518,12 @@ uptime_seconds = Gauge(
 startup_time = time.time()
 
 
+def process_uptime_seconds() -> float:
+    return time.time() - startup_time
+
+
 def update_uptime() -> None:
-    uptime_seconds.set(time.time() - startup_time)
+    uptime_seconds.set(process_uptime_seconds())
 
 
 async def metrics_endpoint(_request: Request) -> Response:
@@ -543,6 +550,8 @@ class PrometheusMiddleware:
             return
 
         method: str = scope.get("method", "")
+        if method not in _LABELLED_METHODS:
+            method = _OTHER_METHOD
         request_size = _content_length(scope.get("headers", []))
 
         http_requests_in_progress.labels(method=method).inc()
@@ -638,43 +647,49 @@ class DbHeartbeatFailures(monitoring.ServerHeartbeatListener):
         db_errors_total.labels(error_type=type(event.reply).__name__).inc()
 
 
+class DbPoolConnections(monitoring.ConnectionPoolListener):
+    """Counts the connections the driver's pools hold open; the other pool events leave that number alone."""
+
+    def connection_created(self, event: monitoring.ConnectionCreatedEvent) -> None:
+        db_connections_active.inc()
+
+    def connection_closed(self, event: monitoring.ConnectionClosedEvent) -> None:
+        db_connections_active.dec()
+
+    def _unchanged(self, event: Any) -> None:
+        pass
+
+    pool_created = pool_ready = pool_cleared = pool_closed = connection_ready = _unchanged
+    connection_check_out_started = connection_check_out_failed = _unchanged
+    connection_checked_out = connection_checked_in = _unchanged
+
+
 async def update_db_stats(database: Any) -> None:
-    try:
-        users_count = await database["users"].estimated_document_count()
-        projects_count = await database["projects"].estimated_document_count()
-        scans_count = await database["scans"].estimated_document_count()
-        findings_count = await database["findings"].estimated_document_count()
+    users_count = await database["users"].estimated_document_count()
+    projects_count = await database["projects"].estimated_document_count()
+    scans_count = await database["scans"].estimated_document_count()
+    findings_count = await database["findings"].estimated_document_count()
 
-        db_users_total.set(users_count)
-        db_projects_total.set(projects_count)
-        db_scans_total.set(scans_count)
-        db_findings_total.set(findings_count)
+    db_users_total.set(users_count)
+    db_projects_total.set(projects_count)
+    db_scans_total.set(scans_count)
+    db_findings_total.set(findings_count)
 
-        logger.debug(
-            f"Updated DB stats: users={users_count}, projects={projects_count}, "
-            f"scans={scans_count}, findings={findings_count}"
-        )
-    except Exception as e:
-        logger.warning(f"Failed to update database statistics metrics: {e}")
+    logger.debug(
+        f"Updated DB stats: users={users_count}, projects={projects_count}, "
+        f"scans={scans_count}, findings={findings_count}"
+    )
 
 
-async def update_archive_stats(database: Any) -> None:
-    try:
-        pipeline = [
-            {
-                "$group": {
-                    "_id": None,
-                    "count": {"$sum": 1},
-                    "total_bytes": {"$sum": {"$ifNull": ["$compressed_size_bytes", 0]}},
-                }
-            }
-        ]
-        result = await database["archive_metadata"].aggregate(pipeline).to_list(1)
-        if result:
-            archive_count_total.set(result[0]["count"])
-            archive_stored_bytes_total.set(result[0]["total_bytes"])
-        else:
-            archive_count_total.set(0)
-            archive_stored_bytes_total.set(0)
-    except Exception as e:
-        logger.warning(f"Failed to update archive statistics metrics: {e}")
+async def update_archive_stats(database: Any, summed_at_count: int | None) -> int:
+    """Returns the archive count the stored bytes were last summed at, which the next pass hands back."""
+    archives = database["archive_metadata"]
+    count: int = await archives.estimated_document_count()
+    archive_count_total.set(count)
+    # Re-summed when the count moves; the loop also forces a daily re-sum for inserts and deletes that cancel out.
+    if count == summed_at_count:
+        return count
+    pipeline = [{"$group": {"_id": None, "total_bytes": {"$sum": {"$ifNull": ["$compressed_size_bytes", 0]}}}}]
+    result = await archives.aggregate(pipeline).to_list(1)
+    archive_stored_bytes_total.set(result[0]["total_bytes"] if result else 0)
+    return count

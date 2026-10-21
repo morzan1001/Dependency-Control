@@ -747,6 +747,8 @@ SCAN_USABLE_STATUSES = [
 # BSON dates are milliseconds, so a date-ordered pick of scans tie-breaks on _id, lowest first.
 SCANS_TIP_SORT: list[tuple[str, int]] = [("created_at", -1), ("_id", 1)]
 
+FINDINGS_SCAN_SEVERITY_INDEX: dict[str, int] = {"scan_id": 1, "severity": 1, "type": 1, "finding_id": 1}
+
 # Hinted, as unhinted the planner trial-runs each scan_id index to the end; init_db must create them.
 FINDINGS_SCAN_TYPE_INDEX: dict[str, int] = {"scan_id": 1, "type": 1}
 FINDINGS_SCAN_COMPONENT_INDEX: dict[str, int] = {"scan_id": 1, "component": 1, "version": 1}

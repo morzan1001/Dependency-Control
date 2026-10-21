@@ -21,10 +21,9 @@ from app.core.constants import (
     SCAN_STATUS_PROCESSING,
 )
 from app.core.worker import worker_manager
-from app.db.mongodb import open_gridfs_download_with_retry
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AdhocJob
 from app.services.analysis.adhoc_report import render_adhoc_html
-from app.services.gridfs_maintenance import iter_gridfs_chunks
+from app.services.gridfs_maintenance import iter_gridfs_chunks, read_gridfs_file
 
 router = CustomAPIRouter()
 
@@ -104,10 +103,13 @@ async def analysis_result(
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=_WORKER_LOST)
         return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content={"job_id": job_id, "status": job["status"]})
 
-    stream = await open_gridfs_download_with_retry(AsyncIOMotorGridFSBucket(db), ObjectId(job["result_file_id"]))
+    fs = AsyncIOMotorGridFSBucket(db)
+    result_file_id = ObjectId(job["result_file_id"])
     if format == "html":
-        raw = await stream.read()
+        raw = await read_gridfs_file(fs, result_file_id)
         return HTMLResponse(
             await asyncio.to_thread(lambda: render_adhoc_html(AdhocAnalyzeResponse.model_validate_json(raw)))
         )
-    return StreamingResponse(iter_gridfs_chunks(stream), media_type="application/json")
+    return StreamingResponse(
+        iter_gridfs_chunks(await fs.open_download_stream(result_file_id)), media_type="application/json"
+    )

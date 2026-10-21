@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.cache import CacheKeys, CacheTTL
+from app.core.cache import STAMPEDE_LOCK_TTL_SECONDS, STAMPEDE_MAX_WAIT_SECONDS, CacheKeys, CacheTTL
 from app.core.constants import (
     ANALYZER_TIMEOUTS,
     TYPOSQUATTING_CRITICAL_SIMILARITY,
@@ -222,8 +222,8 @@ class _CorpusCache:
         key: str,
         fetch_fn,
         ttl_seconds: int | None = None,
-        lock_ttl_seconds: int = 30,
-        max_wait_seconds: float = 5.0,
+        lock_ttl_seconds: int = STAMPEDE_LOCK_TTL_SECONDS,
+        max_wait_seconds: float = STAMPEDE_MAX_WAIT_SECONDS,
     ) -> Any:
         self.lock_timing = (lock_ttl_seconds, max_wait_seconds)
         if self.entries.get(key) is not None:

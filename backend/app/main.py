@@ -4,9 +4,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
 
 from app.api import health
 from app.api.v1.endpoints import (
@@ -50,7 +50,7 @@ from app.repositories.users import IdentityTakenError
 from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=settings.LOG_LEVEL.upper(),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
@@ -122,7 +122,12 @@ Source Code: [GitHub Repository](https://github.com/morzan1001/Dependency-Contro
     lifespan=lifespan,
 )
 
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(
+    GZipMiddleware,
+    minimum_size=1000,
+    compresslevel=6,
+    exclude_content_types=(*DEFAULT_EXCLUDED_CONTENT_TYPES, "application/pdf"),
+)
 app.add_middleware(PrometheusMiddleware)
 app.add_middleware(RelativeLocationMiddleware)
 

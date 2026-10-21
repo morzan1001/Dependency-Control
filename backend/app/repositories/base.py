@@ -9,6 +9,7 @@ from pymongo import ReplaceOne
 from pymongo.collation import Collation
 from pymongo.errors import BulkWriteError
 
+from app.db.mongodb import DEFAULT_MAX_TIME_MS
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +24,13 @@ async def find_window(
     limit: int,
     *,
     stages: list[dict[str, Any]] | None = None,
+    count_limit: int | None = None,
     **find_kwargs: Any,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Counts only once the read saturates, the one case where the total can exceed what was read."""
+    """Counts only once the read saturates, the one case where the total can exceed what was read; at most count_limit."""
+    count_options: dict[str, Any] = {"limit": count_limit} if count_limit else {}
     if limit <= 0:
-        return [], await collection.count_documents(query)
+        return [], await collection.count_documents(query, **count_options)
     cursor = (
         collection.aggregate([{"$match": query}, *stages, {"$limit": limit}])
         if stages
@@ -36,7 +39,7 @@ async def find_window(
     rows: list[dict[str, Any]] = await cursor.to_list(length=limit)
     if len(rows) < limit:
         return rows, len(rows)
-    return rows, await collection.count_documents(query)
+    return rows, await collection.count_documents(query, **count_options)
 
 
 def and_filters(*filters: dict[str, Any]) -> dict[str, Any]:
@@ -206,7 +209,9 @@ class BaseRepository[T: BaseModel]:
             options["allowDiskUse"] = True
         if hint:
             options["hint"] = hint
-        return await self.collection.aggregate(pipeline, collation=collation, **options).to_list(limit)
+        return await self.collection.aggregate(
+            pipeline, collation=collation, maxTimeMS=DEFAULT_MAX_TIME_MS, **options
+        ).to_list(limit)
 
     async def iterate(self, query: dict[str, Any] | None = None) -> AsyncGenerator[T, None]:
         async for doc in self.collection.find(query or {}):

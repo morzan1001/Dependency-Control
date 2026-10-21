@@ -4,7 +4,7 @@ from typing import Any
 import httpx
 import pytest
 
-from app.core.cache import CacheService
+from app.core.cache import CacheService, CacheTTL
 from app.services.aggregation import ResultAggregator
 from app.services.analyzers.deps_dev import DepsDevAnalyzer
 
@@ -229,7 +229,7 @@ def _serve(monkeypatch: pytest.MonkeyPatch, cache: Any, routes: dict[str, Any]) 
 class TestDepsDevLookups:
     @pytest.mark.asyncio
     async def test_a_negative_cache_entry_counts_as_a_hit(self, fake_cache, monkeypatch):
-        await fake_cache.set(_CORE_KEY, {})
+        await fake_cache.set(_CORE_KEY, {}, CacheTTL.NEGATIVE_RESULT)
         api = _serve(monkeypatch, fake_cache, _babel_routes())
 
         result = await DepsDevAnalyzer().analyze({}, parsed_components=[_CORE])

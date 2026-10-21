@@ -82,6 +82,26 @@ async def test_a_lower_severity_threshold_admits_the_old_medium(history, databas
     assert {row["finding_id"] for row in result["findings"]} == {_LOG4J.id, _COMMONS_TEXT.id}
 
 
+async def test_a_negligible_threshold_admits_an_old_negligible_finding(db, database):
+    await _project(db)
+    negligible = _vulnerability("zlib", "1.2.11", "CVE-2018-25032", Severity.NEGLIGIBLE)
+    await _build(db, "scan-first", _LONG_AGO, negligible)
+    await _build(db, _HEAD, _NOW, negligible)
+
+    by_threshold = {
+        sev: (await _stale(db, days_open=30, severity_min=sev))["findings"] for sev in ("negligible", "LOW")
+    }
+
+    assert [row["finding_id"] for row in by_threshold["negligible"]] == [negligible.id]
+    assert by_threshold["LOW"] == []
+
+
+async def test_a_threshold_outside_the_severities_is_refused_instead_of_read_as_high(history, database):
+    result = await _stale(history, days_open=30, severity_min="SEVERE")
+
+    assert "severity_min" in result["error"]
+
+
 async def test_nothing_is_stale_when_the_window_reaches_past_first_detection(history, database):
     result = await _stale(history, days_open=365)
 

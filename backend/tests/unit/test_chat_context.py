@@ -177,6 +177,22 @@ def test_a_capped_result_fits_the_byte_cap_together_with_its_truncation_note():
     assert len(json.dumps(result, ensure_ascii=False).encode()) <= MAX_TOOL_RESULT_BYTES
 
 
+def test_a_result_wrapping_its_list_in_an_object_is_cut_inside_the_object():
+    result = _truncate_if_too_large({"plan": {"items": ["x" * 100 for _ in range(200)], "items_total": 500}})
+
+    assert result["_truncated"] is True
+    assert 0 < len(result["plan"]["items"]) < 200
+    assert "from 500 to" in result["_truncation_note"]
+    assert "'plan.items'" in result["_truncation_note"]
+    assert len(json.dumps(result, ensure_ascii=False).encode()) <= MAX_TOOL_RESULT_BYTES
+
+
+def test_an_oversized_result_without_a_list_is_not_flagged_as_cut():
+    oversized = {"finding": {"description": "x" * (MAX_TOOL_RESULT_BYTES + 1)}}
+
+    assert _truncate_if_too_large(dict(oversized)) == oversized
+
+
 def test_every_tool_the_system_prompt_names_is_a_declared_tool():
     declared = {t["function"]["name"] for t in TOOL_DEFINITIONS}
     verbs = {name.split("_")[0] for name in declared}

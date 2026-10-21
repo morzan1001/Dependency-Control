@@ -8,6 +8,13 @@ from pymongo import DESCENDING
 from app.models.policy_audit_entry import PolicyAuditEntry, PolicyType
 from app.repositories.base import BaseRepository
 
+# Two saves can share a millisecond timestamp, so version, which only grows within a scope, orders them.
+NEWEST_ENTRY_FIRST = [("timestamp", DESCENDING), ("version", DESCENDING)]
+
+
+def history_query(*, policy_scope: str, project_id: str | None, policy_type: PolicyType) -> dict[str, Any]:
+    return {"policy_scope": policy_scope, "project_id": project_id, "policy_type": policy_type}
+
 
 class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
     collection_name = "crypto_policy_history"
@@ -22,18 +29,8 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         skip: int = 0,
         limit: int = 50,
     ) -> list[PolicyAuditEntry]:
-        query: dict[str, Any] = {
-            "policy_scope": policy_scope,
-            "project_id": project_id,
-            "policy_type": policy_type,
-        }
-        # Two saves can share a millisecond timestamp, so version, which only grows within a scope, orders them.
-        cursor = (
-            self.collection.find(query)
-            .sort([("timestamp", DESCENDING), ("version", DESCENDING)])
-            .skip(skip)
-            .limit(limit)
-        )
+        query = history_query(policy_scope=policy_scope, project_id=project_id, policy_type=policy_type)
+        cursor = self.collection.find(query).sort(NEWEST_ENTRY_FIRST).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [PolicyAuditEntry.model_validate(d) for d in docs]
 
@@ -45,11 +42,9 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         version: int,
         policy_type: PolicyType,
     ) -> PolicyAuditEntry | None:
-        query: dict[str, Any] = {
-            "policy_scope": policy_scope,
-            "project_id": project_id,
+        query = {
+            **history_query(policy_scope=policy_scope, project_id=project_id, policy_type=policy_type),
             "version": version,
-            "policy_type": policy_type,
         }
         # Older histories hold duplicate versions; the newest entry is the revision a reader means.
         doc = await self.collection.find_one(query, sort=[("timestamp", DESCENDING)])
@@ -62,11 +57,7 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         project_id: str | None,
         policy_type: PolicyType,
     ) -> int:
-        query: dict[str, Any] = {
-            "policy_scope": policy_scope,
-            "project_id": project_id,
-            "policy_type": policy_type,
-        }
+        query = history_query(policy_scope=policy_scope, project_id=project_id, policy_type=policy_type)
         doc = await self.collection.find_one(query, {"version": 1}, sort=[("version", DESCENDING)])
         return doc["version"] if doc else 0
 
@@ -78,11 +69,9 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         cutoff: datetime,
         policy_type: PolicyType,
     ) -> int:
-        query: dict[str, Any] = {
-            "policy_scope": policy_scope,
-            "project_id": project_id,
+        query = {
+            **history_query(policy_scope=policy_scope, project_id=project_id, policy_type=policy_type),
             "timestamp": {"$lt": cutoff},
-            "policy_type": policy_type,
         }
         result = await self.collection.delete_many(query)
         return result.deleted_count

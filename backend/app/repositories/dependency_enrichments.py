@@ -3,13 +3,18 @@ from itertools import batched
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
-from pymongo import UpdateOne
+from pymongo import ASCENDING, DESCENDING, UpdateOne
 
+from app.api.v1.helpers.sorting import CASE_INSENSITIVE
 from app.core.purl import canonical_purl
 
 logger = logging.getLogger(__name__)
 
 _UPSERT_CHUNK_SIZE = 500
+
+# Built under CASE_INSENSITIVE, so a name asked for in any case seeks straight to its newest enrichment.
+NAME_INDEX = [("name", ASCENDING), ("_id", DESCENDING)]
+NAME_INDEX_NAME = "dependency_enrichments_name_ci"
 
 
 class DependencyEnrichmentRepository:
@@ -46,3 +51,6 @@ class DependencyEnrichmentRepository:
 
     async def get_by_purl(self, purl: str) -> dict[str, Any] | None:
         return await self.collection.find_one({"purl": canonical_purl(purl)})
+
+    async def get_newest_by_name(self, name: str) -> dict[str, Any] | None:
+        return await self.collection.find_one({"name": name}, collation=CASE_INSENSITIVE, sort=[("_id", DESCENDING)])

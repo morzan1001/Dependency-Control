@@ -72,6 +72,7 @@ async def test_scan_details_fit_the_result_cap_and_carry_the_scan_summary(db, da
     assert len(json.dumps(result, default=str).encode()) <= MAX_TOOL_RESULT_BYTES
     assert set(scan) == {
         "id",
+        "scan_id",
         "project_id",
         "branch",
         "commit_hash",

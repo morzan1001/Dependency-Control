@@ -546,9 +546,9 @@ async def test_an_analyzer_that_caches_publishes_nothing_through_this_path(
         name = _CACHING_ANALYZER
 
         async def analyze(self, sbom, settings=None, parsed_components=None):
-            await cache_service.set(_CALLER_DERIVED_CACHE_KEY, [_CALLER_ONLY_COMPONENT])
-            await cache_service.mset({_CALLER_DERIVED_CACHE_KEY: [_CALLER_ONLY_COMPONENT]})
-            await cache_service.get_or_fetch_with_lock(_CALLER_DERIVED_CACHE_KEY, _fetch)
+            await cache_service.set(_CALLER_DERIVED_CACHE_KEY, [_CALLER_ONLY_COMPONENT], 60)
+            await cache_service.mset({_CALLER_DERIVED_CACHE_KEY: [_CALLER_ONLY_COMPONENT]}, 60)
+            await cache_service.get_or_fetch_with_lock(_CALLER_DERIVED_CACHE_KEY, _fetch, 60)
             return {"findings": []}
 
     serve_analyzer(monkeypatch, _CACHING_ANALYZER, _Caching())
@@ -673,7 +673,7 @@ async def test_a_cancelled_cli_analyzer_leaves_no_scanner_running_and_no_file(
 async def test_cache_suppression_does_not_outlive_the_run(recording_cache):
     await run_adhoc_analysis(_full_request(), FakeDatabase())
 
-    assert await cache_service.set(_CALLER_DERIVED_CACHE_KEY, [_LEAK_ID]) is True
+    assert await cache_service.set(_CALLER_DERIVED_CACHE_KEY, [_LEAK_ID], 60) is True
     assert recording_cache.written_keys() == {_CALLER_DERIVED_CACHE_KEY}
 
 

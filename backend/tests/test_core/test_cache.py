@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import hashlib
+import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -8,7 +9,19 @@ import redis.asyncio as redis
 import fakeredis
 from prometheus_client import REGISTRY
 
-from app.core.cache import CacheKeys, CacheService, CacheTTL, scope_digest, suppress_cache_writes
+from app.core import cache as cache_module
+from app.core.cache import (
+    STAMPEDE_LOCK_TTL_SECONDS,
+    STAMPEDE_MAX_WAIT_SECONDS,
+    CacheKeys,
+    CacheService,
+    CacheTTL,
+    scope_digest,
+    suppress_cache_writes,
+)
+from app.core.constants import ANALYZER_TIMEOUTS
+
+_TTL = 60
 
 
 class TestCacheTTLValues:
@@ -263,6 +276,34 @@ class TestStampedeHolderVanishes:
         assert await waiter == {"value": 42}
 
 
+class TestStampedeWaitOutlastsTheFetch:
+    def test_by_default_a_waiter_outlasts_a_catalog_fetch_and_the_lock_outlasts_the_waiter(self):
+        slowest_fetch = max(ANALYZER_TIMEOUTS["kev"], ANALYZER_TIMEOUTS["ghsa"])
+
+        assert slowest_fetch < STAMPEDE_MAX_WAIT_SECONDS < STAMPEDE_LOCK_TTL_SECONDS
+
+    @pytest.mark.asyncio
+    async def test_a_value_a_peer_publishes_as_the_wait_ends_is_served_without_a_second_fetch(
+        self, fake_cache, monkeypatch
+    ):
+        key = "kev:catalog"
+        await fake_cache._client.set(fake_cache._make_key(f"lock:{key}"), "peer-token")
+        fetched = []
+
+        async def peer_publishes_after_the_last_poll(_client, cache_key, _lock_key, deadline):
+            await asyncio.sleep(max(0.0, deadline - time.monotonic()))
+            await fake_cache.set(cache_key, {"from": "peer"}, _TTL)
+
+        async def fetch():
+            fetched.append(key)
+            return {"from": "waiter"}
+
+        monkeypatch.setattr(fake_cache, "_wait_for_lock_holder", peer_publishes_after_the_last_poll)
+
+        assert await fake_cache.get_or_fetch_with_lock(key, fetch, _TTL, max_wait_seconds=0.2) == {"from": "peer"}
+        assert fetched == []
+
+
 class TestStampedeNegativeCaching:
     @pytest.mark.asyncio
     async def test_a_failed_fetch_expires_on_the_negative_ttl_not_the_callers(self, fake_cache):
@@ -300,7 +341,7 @@ class TestStampedeNegativeCaching:
 class TestGetManyOrFetch:
     @pytest.mark.asyncio
     async def test_hits_come_from_one_read_and_only_a_miss_is_fetched_and_cached(self, fake_cache, monkeypatch):
-        await fake_cache.set("k:hit", {"v": 1})
+        await fake_cache.set("k:hit", {"v": 1}, _TTL)
         reads: list[list[str]] = []
         read_many = fake_cache.mget
 
@@ -358,20 +399,20 @@ class TestSuppressCacheWrites:
     @pytest.mark.asyncio
     async def test_set_writes_nothing_and_reports_failure(self, fake_cache):
         with suppress_cache_writes():
-            assert await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE) is False
+            assert await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE, _TTL) is False
 
         assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0
 
     @pytest.mark.asyncio
     async def test_mset_writes_nothing(self, fake_cache):
         with suppress_cache_writes():
-            assert await fake_cache.mset({_SUPPRESSED_KEY: _SUPPRESSED_VALUE}) is False
+            assert await fake_cache.mset({_SUPPRESSED_KEY: _SUPPRESSED_VALUE}, _TTL) is False
 
         assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0
 
     @pytest.mark.asyncio
     async def test_reads_still_hit_the_shared_cache(self, fake_cache):
-        await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE)
+        await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE, _TTL)
 
         with suppress_cache_writes():
             assert await fake_cache.get(_SEEDED_KEY) == _SEEDED_VALUE
@@ -388,7 +429,7 @@ class TestSuppressCacheWrites:
             return _SUPPRESSED_VALUE
 
         with suppress_cache_writes():
-            result = await fake_cache.get_or_fetch_with_lock(_SUPPRESSED_KEY, fetch)
+            result = await fake_cache.get_or_fetch_with_lock(_SUPPRESSED_KEY, fetch, _TTL)
 
         assert result == _SUPPRESSED_VALUE
         assert fetched == [_SUPPRESSED_KEY]
@@ -396,7 +437,7 @@ class TestSuppressCacheWrites:
 
     @pytest.mark.asyncio
     async def test_a_cached_value_is_served_without_refetching(self, fake_cache):
-        await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE)
+        await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE, _TTL)
         fetched = []
 
         async def fetch():
@@ -404,7 +445,7 @@ class TestSuppressCacheWrites:
             return ["other"]
 
         with suppress_cache_writes():
-            result = await fake_cache.get_or_fetch_with_lock(_SEEDED_KEY, fetch)
+            result = await fake_cache.get_or_fetch_with_lock(_SEEDED_KEY, fetch, _TTL)
 
         assert result == _SEEDED_VALUE
         assert fetched == []
@@ -412,9 +453,9 @@ class TestSuppressCacheWrites:
     @pytest.mark.asyncio
     async def test_suppression_ends_with_the_block(self, fake_cache):
         with suppress_cache_writes():
-            await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE)
+            await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE, _TTL)
 
-        assert await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE) is True
+        assert await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE, _TTL) is True
         assert await fake_cache.get(_SUPPRESSED_KEY) == _SUPPRESSED_VALUE
 
     @pytest.mark.asyncio
@@ -426,11 +467,11 @@ class TestSuppressCacheWrites:
             with suppress_cache_writes():
                 started.set()
                 await release.wait()
-                await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE)
+                await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE, _TTL)
 
         task = asyncio.create_task(suppressed())
         await started.wait()
-        assert await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE) is True
+        assert await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE, _TTL) is True
         release.set()
         await task
 
@@ -456,6 +497,121 @@ class TestConnectionPoolBursts:
             await svc._client.aclose(close_connection_pool=True)
 
 
+async def _hang(*_args, **_kwargs):
+    await asyncio.Event().wait()
+
+
+_BOUND = 0.1
+_GUARD = 3
+
+
+class TestAHangingRedisCannotStallTheLockedPath:
+    @pytest.fixture(autouse=True)
+    def short_redis_bound(self, monkeypatch):
+        monkeypatch.setattr(cache_module, "REDIS_OPERATION_TIMEOUT_SECONDS", _BOUND)
+
+    @staticmethod
+    async def _fetch():
+        return {"v": 1}
+
+    @pytest.mark.asyncio
+    async def test_a_hanging_lock_acquire_pauses_the_cache_and_fetches_directly(self, fake_cache, monkeypatch):
+        monkeypatch.setattr(fake_cache._client, "set", _hang)
+
+        result = await asyncio.wait_for(fake_cache.get_or_fetch_with_lock("k", self._fetch, _TTL), _GUARD)
+
+        assert (result, fake_cache._available) == ({"v": 1}, False)
+
+    @pytest.mark.asyncio
+    async def test_a_hanging_lock_probe_pauses_the_cache_and_fetches_directly(self, fake_cache, monkeypatch):
+        await fake_cache._client.set(fake_cache._make_key("lock:k"), "peer-token")
+        monkeypatch.setattr(fake_cache._client, "exists", _hang)
+
+        result = await asyncio.wait_for(fake_cache.get_or_fetch_with_lock("k", self._fetch, _TTL), _GUARD)
+
+        assert (result, fake_cache._available) == ({"v": 1}, False)
+
+    @pytest.mark.asyncio
+    async def test_a_hanging_lock_release_still_returns_the_fetched_value(self, fake_cache, monkeypatch):
+        monkeypatch.setattr(fake_cache._client, "eval", _hang)
+
+        result = await asyncio.wait_for(fake_cache.get_or_fetch_with_lock("k", self._fetch, _TTL), _GUARD)
+
+        assert result == {"v": 1}
+
+    @pytest.mark.asyncio
+    async def test_a_hanging_connection_check_pauses_the_cache_and_fetches_directly(self, tcp_redis, monkeypatch):
+        monkeypatch.setattr(redis.Redis, "ping", _hang)
+        svc = CacheService()
+        try:
+            result = await asyncio.wait_for(svc.get_or_fetch_with_lock("k", self._fetch, _TTL), _GUARD)
+        finally:
+            await svc._client.aclose(close_connection_pool=True)
+
+        assert (result, svc._available) == ({"v": 1}, False)
+
+    @pytest.mark.asyncio
+    async def test_a_wait_for_a_pooled_connection_ends_on_the_same_bound(self, tcp_redis):
+        svc = CacheService()
+        client = await svc.get_client()
+        held = [await svc._pool.get_connection() for _ in range(svc._pool.max_connections)]
+        try:
+            health = await asyncio.wait_for(svc.health_check(), _GUARD)
+        finally:
+            for connection in held:
+                await svc._pool.release(connection)
+            await client.aclose(close_connection_pool=True)
+
+        assert health["status"] == "unhealthy"
+
+
+_BATCH_BOUND = 0.4
+_BATCH_KEYS = 2
+_BATCH = {f"k{i}": i for i in range(5)}
+
+
+class TestABatchLargerThanOneRoundTrip:
+    @pytest.fixture(autouse=True)
+    def small_round_trips(self, monkeypatch):
+        monkeypatch.setattr(cache_module, "REDIS_OPERATION_TIMEOUT_SECONDS", _BATCH_BOUND)
+        monkeypatch.setattr(cache_module, "_KEYS_PER_ROUND_TRIP", _BATCH_KEYS)
+
+    @pytest.mark.asyncio
+    async def test_a_read_slower_than_one_bound_in_total_still_returns_every_key(self, fake_cache, monkeypatch):
+        await fake_cache.mset(_BATCH, _TTL)
+        real_mget = fake_cache._client.mget
+
+        async def mget_taking_a_quarter_bound_per_key(keys):
+            await asyncio.sleep(len(keys) * _BATCH_BOUND / 4)
+            return await real_mget(keys)
+
+        monkeypatch.setattr(fake_cache._client, "mget", mget_taking_a_quarter_bound_per_key)
+
+        assert (await fake_cache.mget(list(_BATCH)), fake_cache._available) == (_BATCH, True)
+
+    @pytest.mark.asyncio
+    async def test_a_write_goes_out_in_bounded_round_trips_without_a_transaction(self, fake_cache, monkeypatch):
+        sent: list[tuple[bool, int]] = []
+        real_pipeline = fake_cache._client.pipeline
+
+        def recording_pipeline(*args, **kwargs):
+            pipe = real_pipeline(*args, **kwargs)
+            real_execute = pipe.execute
+
+            async def execute(*a, **kw):
+                sent.append((pipe.is_transaction, len(pipe.command_stack)))
+                return await real_execute(*a, **kw)
+
+            pipe.execute = execute
+            return pipe
+
+        monkeypatch.setattr(fake_cache._client, "pipeline", recording_pipeline)
+
+        assert await fake_cache.mset(_BATCH, _TTL) is True
+        assert sent == [(False, 2), (False, 2), (False, 1)]
+        assert await fake_cache.mget(list(_BATCH)) == _BATCH
+
+
 class TestFetchFailuresReachTheCaller:
     @pytest.mark.asyncio
     async def test_a_redis_failure_on_the_lock_still_raises_the_fetch_error(self, fake_cache, monkeypatch):
@@ -470,7 +626,7 @@ class TestFetchFailuresReachTheCaller:
             raise RuntimeError("upstream answered 503")
 
         with pytest.raises(RuntimeError, match="503"):
-            await fake_cache.get_or_fetch_with_lock("deps:npm:a:1.0.0", fetch, reraise_fetch_errors=True)
+            await fake_cache.get_or_fetch_with_lock("deps:npm:a:1.0.0", fetch, _TTL, reraise_fetch_errors=True)
         assert calls == ["fetch"]
 
     @pytest.mark.asyncio
@@ -484,7 +640,7 @@ class TestFetchFailuresReachTheCaller:
             raise RuntimeError("upstream answered 503")
 
         with pytest.raises(RuntimeError, match="503"):
-            await fake_cache.get_or_fetch_with_lock(key, fetch, max_wait_seconds=0.3, reraise_fetch_errors=True)
+            await fake_cache.get_or_fetch_with_lock(key, fetch, _TTL, max_wait_seconds=0.3, reraise_fetch_errors=True)
         assert calls == ["fetch"]
 
 
@@ -522,9 +678,9 @@ class TestAtomicPrimitives:
 
 _OPERATIONS = {
     "get": (lambda c: c.get("k"), None),
-    "set": (lambda c: c.set("k", 1), False),
+    "set": (lambda c: c.set("k", 1, _TTL), False),
     "mget": (lambda c: c.mget(["k", "j"]), {"k": None, "j": None}),
-    "mset": (lambda c: c.mset({"k": 1}), False),
+    "mset": (lambda c: c.mset({"k": 1}, _TTL), False),
     "incr": (lambda c: c.incr("n", 60), None),
     "pop": (lambda c: c.pop("k"), None),
     "eval": (lambda c: c.eval("return 1", "k"), None),
@@ -574,7 +730,7 @@ class TestFailuresFallBackToTheDefault:
     @pytest.mark.asyncio
     async def test_a_corrupt_entry_reads_as_absent(self, fake_cache):
         await fake_cache._client.set(fake_cache._make_key("bad"), "{not json")
-        await fake_cache.set("good", 1)
+        await fake_cache.set("good", 1, _TTL)
 
         assert await fake_cache.get("bad") is None
         assert await fake_cache.mget(["bad", "good"]) == {"bad": None, "good": 1}
@@ -586,7 +742,16 @@ class TestFailuresFallBackToTheDefault:
         circular: list = []
         circular.append(circular)
 
-        assert await fake_cache.set("k", circular) is False
-        assert await fake_cache.mset({"k": circular}) is False
+        assert await fake_cache.set("k", circular, _TTL) is False
+        assert await fake_cache.mset({"k": circular}, _TTL) is False
         assert await fake_cache._client.exists(fake_cache._make_key("k")) == 0
         assert fake_cache._available is True
+
+
+@pytest.mark.asyncio
+async def test_a_failed_stats_read_reaches_the_housekeeping_loop(fake_cache, monkeypatch):
+    fake_cache._client = AsyncMock(info=AsyncMock(side_effect=redis.ConnectionError("reset")))
+    monkeypatch.setattr(cache_module, "cache_service", fake_cache)
+
+    with pytest.raises(redis.ConnectionError):
+        await cache_module.update_cache_stats()

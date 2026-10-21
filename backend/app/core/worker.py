@@ -30,12 +30,13 @@ from app.core.metrics import (
     worker_jobs_processed_total,
     worker_queue_size,
 )
-from app.db.mongodb import get_database, open_gridfs_download_with_retry
+from app.db.mongodb import get_database
 from app.repositories.scans import ScanRepository
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis.engine import run_analysis
 from app.services.analysis.adhoc import run_adhoc_analysis
 from app.services.analysis.notifications import notify_analysis_failed
+from app.services.gridfs_maintenance import read_gridfs_file
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ async def _renew_adhoc_claim(db: AsyncIOMotorDatabase, job_id: str, worker_id: s
 async def _run_adhoc_job(db: AsyncIOMotorDatabase, job: dict[str, Any]) -> dict[str, Any]:
     fs = AsyncIOMotorGridFSBucket(db)
     try:
-        raw = await (await open_gridfs_download_with_retry(fs, ObjectId(job["input_file_id"]))).read()
+        raw = await read_gridfs_file(fs, ObjectId(job["input_file_id"]))
         request = await asyncio.to_thread(AdhocAnalyzeRequest.model_validate_json, raw)
         result = await run_adhoc_analysis(request, db)
         data = await asyncio.to_thread(lambda: result.model_dump_json().encode())

@@ -222,3 +222,40 @@ class TestRemediationPlanTargets:
         components = [s["component"] for s in result["plan"]]
         assert components == ["fast-uri", "left-pad"]
         assert [s["step"] for s in result["plan"]] == [1, 2]
+
+
+class TestRemediationPlanDirectness:
+    @staticmethod
+    def _seed_two_versions(db):
+        _seed_project(db)
+        _seed_dependency(db, "minimist", "1.2.8", direct=True)
+        _seed_dependency(db, "minimist", "0.0.8", direct=False)
+        fix = {"fixed_version": "1.2.6", "vulnerabilities": [{"id": "CVE-2021-44906", "severity": "CRITICAL"}]}
+        _seed_vuln_finding(db, "minimist:0.0.8", "minimist", "0.0.8", "CRITICAL", fix)
+
+    @pytest.mark.asyncio
+    async def test_a_transitive_version_is_not_labelled_direct_by_a_direct_version_of_the_package(self, db, admin_user):
+        self._seed_two_versions(db)
+
+        (step,) = (await _plan(db, admin_user))["plan"]
+
+        assert (step["is_direct"], step["direct_confidence"]) == (False, "transitive")
+
+    @pytest.mark.asyncio
+    async def test_a_declared_row_of_the_version_outranks_an_inferred_row_of_it(self, db, admin_user):
+        self._seed_two_versions(db)
+        db.dependencies._docs["minimist@0.0.8"].update(direct=True, direct_inferred=True)
+        db.dependencies._docs["minimist@0.0.8-declared"] = {
+            **db.dependencies._docs["minimist@0.0.8"],
+            "_id": "minimist@0.0.8-declared",
+            "direct_inferred": False,
+        }
+        db.dependencies._docs["minimist@0.0.8-transitive"] = {
+            **db.dependencies._docs["minimist@0.0.8"],
+            "_id": "minimist@0.0.8-transitive",
+            "direct": False,
+        }
+
+        (step,) = (await _plan(db, admin_user))["plan"]
+
+        assert step["direct_confidence"] == "declared"

@@ -480,11 +480,12 @@ async def _expire_scans(db: Any) -> None:
         await _expire_group(db, days, {"project_id": {"$in": project_ids}}, action, label)
 
 
-async def _best_effort[*Ts](label: str, task: Callable[[*Ts], Awaitable[object]], *args: *Ts) -> None:
+async def _best_effort[T, *Ts](label: str, task: Callable[[*Ts], Awaitable[T]], *args: *Ts) -> T | None:
     try:
-        await task(*args)
+        return await task(*args)
     except Exception as e:
         logger.exception("%s failed: %s", label, e)
+        return None
 
 
 async def run_housekeeping() -> None:
@@ -643,15 +644,16 @@ async def reconcile_update_frequency_ledger() -> None:
 
 async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
     last_update_frequency_reconcile = datetime.min.replace(tzinfo=timezone.utc)
+    archives_summed_at: int | None = None
 
     while True:
         await _best_effort("Stuck scan recovery", recover_stuck_scans, worker_manager)
         await _best_effort("Scheduled re-scan check", check_scheduled_rescans, worker_manager)
 
         db = await get_database()
-        await update_db_stats(db)
-        await update_archive_stats(db)
-        await update_cache_stats()
+        await _best_effort("Database statistics", update_db_stats, db)
+        archives_summed_at = await _best_effort("Archive statistics", update_archive_stats, db, archives_summed_at)
+        await _best_effort("Cache statistics", update_cache_stats)
 
         await _best_effort("Waiver recalculation", run_waiver_recalc, db)
         await _best_effort("Housekeeping task", run_housekeeping)
@@ -663,5 +665,6 @@ async def housekeeping_loop(worker_manager: "AnalysisWorkerManager") -> None:
         if _reconcile_due(now, last_update_frequency_reconcile):
             await reconcile_update_frequency_ledger()
             last_update_frequency_reconcile = now
+            archives_summed_at = None
 
         await asyncio.sleep(HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS)

@@ -77,7 +77,9 @@ RANKED_FINDING_PROJECTION = dict.fromkeys(
 _CLAMPED_LIMITS: ContextVar[list[tuple[int, int]] | None] = ContextVar("chat_tool_clamped_limits", default=None)
 
 # An LLM relaying a list has no chart beside it from which a reader could tell the list stops short.
-_BOUNDED_READS: ContextVar[list[tuple[str, int, int]] | None] = ContextVar("chat_tool_bounded_reads", default=None)
+_BOUNDED_READS: ContextVar[list[tuple[str, int, int | str]] | None] = ContextVar(
+    "chat_tool_bounded_reads", default=None
+)
 
 
 def begin_limit_ledger() -> None:
@@ -91,14 +93,24 @@ async def bounded_read(
     *,
     subject: str,
     limit: int,
+    # Required, as a read cut in collection order keeps arbitrary rows; None only where the stages sort.
+    sort: list[tuple[str, int]] | None,
+    count_cap: int | None = None,
     **find_kwargs: Any,
 ) -> tuple[list[dict[str, Any]], int]:
     """A truncated read is recorded so the answer says so even where the caller never named a limit."""
-    rows, total = await find_window(collection, query, limit, **find_kwargs)
-    ledger = _BOUNDED_READS.get()
-    if ledger is not None and total > len(rows):
-        ledger.append((subject, len(rows), total))
+    # Counting one past the cap tells a total above it from one that lands on it.
+    count_limit = count_cap + 1 if count_cap else None
+    rows, total = await find_window(collection, query, limit, count_limit=count_limit, sort=sort, **find_kwargs)
+    if total > len(rows):
+        note_bounded_read(subject, len(rows), f"more than {count_cap}" if count_cap and total > count_cap else total)
     return rows, total
+
+
+def note_bounded_read(subject: str, shown: int, total: int | str) -> None:
+    ledger = _BOUNDED_READS.get()
+    if ledger is not None:
+        ledger.append((subject, shown, total))
 
 
 def bounded_read_note() -> str | None:
@@ -293,6 +305,19 @@ def _json_size(value: Any) -> int:
     return len(json.dumps(value, ensure_ascii=False, default=str).encode())
 
 
+def _list_to_cut(result: dict[str, Any]) -> tuple[dict[str, Any], str, str] | None:
+    """The longest top-level list; only a result with none is searched one object down."""
+    top = [(result, key, key) for key, value in result.items() if isinstance(value, list) and value]
+    candidates = top or [
+        (holder, key, f"{parent}.{key}")
+        for parent, holder in result.items()
+        if isinstance(holder, dict)
+        for key, value in holder.items()
+        if isinstance(value, list) and value
+    ]
+    return max(candidates, key=lambda candidate: len(candidate[0][candidate[1]]), default=None)
+
+
 def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
     try:
         if _json_size(result) <= MAX_TOOL_RESULT_BYTES:
@@ -300,25 +325,19 @@ def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         return result
 
-    biggest_key = None
-    biggest_len = 0
-    for k, v in result.items():
-        if isinstance(v, list) and len(v) > biggest_len:
-            biggest_key = k
-            biggest_len = len(v)
-    if biggest_key is None:
-        result["_truncated"] = True
+    target = _list_to_cut(result)
+    if target is None:
         return result
-
-    original = result[biggest_key]
+    holder, key, label = target
+    original = holder[key]
     # The list may be a page of a larger set, whose total, not the page length, names the population.
-    population = result.get(f"{biggest_key}{_TOTAL_SUFFIX}")
-    total = population if isinstance(population, int) else biggest_len
+    population = holder.get(f"{key}{_TOTAL_SUFFIX}")
+    total = population if isinstance(population, int) else len(original)
 
     def keep(count: int) -> None:
-        result[biggest_key] = original[:count]
+        holder[key] = original[:count]
         result["_truncation_note"] = (
-            f"Result truncated from {total} to {count} entries in '{biggest_key}'. "
+            f"Result truncated from {total} to {count} entries in '{label}'. "
             f"Call this tool with a smaller limit or a narrower filter for more data."
         )
 

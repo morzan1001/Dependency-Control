@@ -11,6 +11,7 @@ from app.core.metrics import (
     PrometheusMiddleware,
     http_request_duration_seconds,
     http_request_size_bytes,
+    http_requests_in_progress,
     http_requests_total,
     http_response_size_bytes,
     metrics_endpoint,
@@ -62,6 +63,22 @@ def _endpoint_labels() -> set[str]:
         for family in metric.collect()
         for sample in family.samples
         if "endpoint" in sample.labels
+    }
+
+
+def _method_labels() -> set[str]:
+    return {
+        sample.labels["method"]
+        for metric in (
+            http_requests_total,
+            http_request_duration_seconds,
+            http_request_size_bytes,
+            http_response_size_bytes,
+            http_requests_in_progress,
+        )
+        for family in metric.collect()
+        for sample in family.samples
+        if "method" in sample.labels
     }
 
 
@@ -132,6 +149,21 @@ class TestRouteTemplateLabel:
         assert _endpoint_labels() - labels_before <= {UNMATCHED}
 
 
+class TestMethodLabel:
+    @pytest.mark.asyncio
+    async def test_unknown_methods_on_a_real_path_share_one_label_value(self) -> None:
+        labels = {"method": "OTHER", "endpoint": TOKEN_TEMPLATE, "status": "405"}
+        before = _sample("http_requests_total", labels)
+        methods = ("PROPFIND", "MKCOL", secrets.token_hex(6).upper())
+
+        async with _client() as client:
+            for method in methods:
+                await client.request(method, f"/api/v1/invitations/system/{secrets.token_urlsafe(8)}")
+
+        assert _sample("http_requests_total", labels) == before + len(methods)
+        assert _method_labels().isdisjoint(methods)
+
+
 class TestInProgressGauge:
     @staticmethod
     def _in_progress() -> float:
@@ -193,3 +225,67 @@ class TestMetricsEndpoint:
         assert response.status_code == 200
         assert len(generating_threads) == 1
         assert generating_threads[0] is not threading.current_thread()
+
+
+class _Archives:
+    """Counts its full-collection reads, the cost a housekeeping pass must not pay while nothing changed."""
+
+    def __init__(self, *sizes: int | None):
+        self.sizes = list(sizes)
+        self.scans = 0
+
+    async def estimated_document_count(self) -> int:
+        return len(self.sizes)
+
+    def aggregate(self, pipeline):
+        self.scans += 1
+        total = sum(size or 0 for size in self.sizes)
+        rows = [{"_id": None, "total_bytes": total}] if self.sizes else []
+
+        class _Rows:
+            async def to_list(self, _length):
+                return rows
+
+        return _Rows()
+
+
+def _archive_gauges() -> tuple[float | None, float | None]:
+    return REGISTRY.get_sample_value("archive_count_total"), REGISTRY.get_sample_value("archive_stored_bytes_total")
+
+
+class TestArchiveStats:
+    @pytest.mark.asyncio
+    async def test_the_stored_bytes_are_summed_again_only_once_the_archive_count_moves(self):
+        archives = _Archives(100, None, 50)
+        db = {"archive_metadata": archives}
+
+        counted = await metrics.update_archive_stats(db, None)
+        assert (_archive_gauges(), archives.scans) == ((3, 150), 1)
+
+        counted = await metrics.update_archive_stats(db, counted)
+        assert (_archive_gauges(), archives.scans) == ((3, 150), 1)
+
+        archives.sizes.append(25)
+        counted = await metrics.update_archive_stats(db, counted)
+        assert (_archive_gauges(), archives.scans) == ((4, 175), 2)
+
+        archives.sizes.clear()
+        await metrics.update_archive_stats(db, counted)
+        assert (_archive_gauges(), archives.scans) == ((0, 0), 3)
+
+
+class _Unreachable:
+    def __getitem__(self, _name: str) -> "_Unreachable":
+        return self
+
+    async def estimated_document_count(self) -> int:
+        raise RuntimeError("mongo unreachable")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "update", [metrics.update_db_stats, lambda db: metrics.update_archive_stats(db, None)], ids=["db", "archive"]
+)
+async def test_a_failed_stats_read_reaches_the_housekeeping_loop(update) -> None:
+    with pytest.raises(RuntimeError, match="mongo unreachable"):
+        await update(_Unreachable())

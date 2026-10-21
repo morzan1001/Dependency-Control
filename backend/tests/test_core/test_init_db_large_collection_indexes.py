@@ -45,6 +45,10 @@ def test_findings_declare_only_the_indexes_a_read_needs():
             "partialFilterExpression": {"type": "vulnerability"}
         },
         (("type", ASCENDING), ("scan_created_at", ASCENDING)): {},
+        (("scan_id", ASCENDING), ("severity", ASCENDING)): {
+            "name": "findings_kev_scan_severity",
+            "partialFilterExpression": {"details.vulnerabilities.in_kev": True},
+        },
     }
 
 

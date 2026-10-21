@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -32,7 +33,7 @@ def _deltas(series: list[tuple[str, dict[str, str]]]):
 
 @pytest.mark.asyncio
 async def test_cache_get_counts_a_stored_key_as_a_hit_and_an_absent_key_as_a_miss(fake_cache):
-    await fake_cache.set("present", 1)
+    await fake_cache.set("present", 1, 60)
     await fake_cache._client.set(fake_cache._make_key("corrupt"), "{not json")
     moved = _deltas([("cache_hits_total", {}), ("cache_misses_total", {})])
     await fake_cache.get("present")
@@ -43,7 +44,7 @@ async def test_cache_get_counts_a_stored_key_as_a_hit_and_an_absent_key_as_a_mis
 
 @pytest.mark.asyncio
 async def test_cache_mget_counts_each_requested_key_as_a_hit_or_a_miss(fake_cache):
-    await fake_cache.set("present", 1)
+    await fake_cache.set("present", 1, 60)
     await fake_cache._client.set(fake_cache._make_key("corrupt"), "{not json")
     moved = _deltas([("cache_hits_total", {}), ("cache_misses_total", {})])
     await fake_cache.mget(["present", "present", "corrupt", "absent"])
@@ -55,9 +56,9 @@ async def test_cache_mget_counts_each_requested_key_as_a_hit_or_a_miss(fake_cach
     "operation, call",
     [
         ("get", lambda c: c.get("k")),
-        ("set", lambda c: c.set("k", 1)),
+        ("set", lambda c: c.set("k", 1, 60)),
         ("mget", lambda c: c.mget(["k"])),
-        ("mset", lambda c: c.mset({"k": 1})),
+        ("mset", lambda c: c.mset({"k": 1}, 60)),
         ("incr", lambda c: c.incr("n", 60)),
         ("pop", lambda c: c.pop("k")),
     ],
@@ -113,15 +114,17 @@ async def test_the_worker_gauges_follow_the_queue_and_the_running_workers(monkey
 
 
 @pytest.mark.asyncio
-async def test_the_connection_gauge_follows_connect_and_close(monkeypatch):
-    client = MagicMock()
-    client.admin.command = AsyncMock()
-    monkeypatch.setattr(mongodb, "AsyncIOMotorClient", lambda *_args, **_kwargs: client)
+@pytest.mark.live_mongo
+async def test_the_connection_gauge_counts_the_pools_connections_until_the_client_closes(db):
+    host, port = db.client.address
+    baseline = _sample("db_connections_active")
+    client = mongodb.create_client(f"mongodb://{host}:{port}", minPoolSize=0)
 
-    await mongodb.connect_to_mongo()
-    assert _sample("db_connections_active") == 1
-    await mongodb.close_mongo_connection()
-    assert _sample("db_connections_active") == 0
+    await asyncio.gather(*(client.admin.command("ping") for _ in range(3)))
+    opened = _sample("db_connections_active") - baseline
+    client.close()
+
+    assert (opened >= 1, _sample("db_connections_active")) == (True, baseline)
 
 
 @pytest.mark.asyncio
@@ -174,16 +177,17 @@ def test_sbom_parsing_counts_the_sbom_its_components_and_a_parse_error():
 
 
 @pytest.mark.asyncio
-async def test_sbom_downloads_count_their_attempt_success_and_failure(monkeypatch):
+async def test_sbom_downloads_count_their_attempt_success_and_failure():
     stream = MagicMock(read=AsyncMock(return_value=b'{"bomFormat": "CycloneDX", "specVersion": "1.5"}'))
-    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", AsyncMock(return_value=stream))
     moved = _deltas(
         [
             ("analysis_gridfs_operations_total", {"operation": "download", "status": s})
             for s in ("attempt", "success", "error")
         ]
     )
-    await engine._load_sbom(None, str(ObjectId()), 1, write_file=False)
+    await engine._load_sbom(
+        SimpleNamespace(open_download_stream=AsyncMock(return_value=stream)), str(ObjectId()), 1, write_file=False
+    )
     engine._sbom_load_failed(ResultAggregator(), "gone")
     assert moved() == [1, 1, 1]
 

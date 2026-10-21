@@ -40,6 +40,12 @@ jobs:
           helm template . -f ../ci/prod-like-values.yaml > /dev/null
           helm template . --set database.type=percona --set database.percona.backup.enabled=true > /dev/null
 
+      - name: Render an explicit 0 and an unset pod uptime as the app reads them
+        working-directory: helm/dependency-control
+        run: |
+          helm template . --set backend.env.maxPodUptimeSeconds=0 | grep -A1 'name: MAX_POD_UPTIME_SECONDS' | grep -q 'value: "0"'
+          helm template . --set backend.env.maxPodUptimeSeconds=null | grep -A1 'name: MAX_POD_UPTIME_SECONDS' | grep -q 'value: "43200"'
+
   sonarcloud:
     name: SonarCloud
     needs: [backend, frontend]

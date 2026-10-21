@@ -7,6 +7,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
+from app.core.constants import JWKS_CACHE_TTL
 from app.services.github import GitHubCoreRateLimit, GitHubService
 from tests.mocks.github import make_github_instance
 
@@ -224,7 +225,7 @@ class TestConnectionAsksTheIssuerNow:
             httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(_unreachable))
         )
         jwks_key = GitHubService(instance)._get_cache_key(f"jwks:{instance.url}")
-        asyncio.run(fake_cache.set(jwks_key, {"keys": [{"kid": "k1"}]}))
+        asyncio.run(fake_cache.set(jwks_key, {"keys": [{"kid": "k1"}]}, JWKS_CACHE_TTL))
 
         with patch(f"{MODULE}.GitHubInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)):
             result = asyncio.run(test_connection(instance_id="gh-1", db=MagicMock(), current_user=admin_user))

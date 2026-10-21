@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
+from itertools import batched
 from types import TracebackType
 from typing import Any, TypeVar, cast
 
@@ -32,7 +33,12 @@ T = TypeVar("T")
 
 REDIS_CONNECTION_LOST_MSG = "Redis connection lost, disabling cache temporarily"
 REDIS_OPERATION_TIMEOUT_SECONDS = 5.0
+# Each round trip has its own timeout, so a large batch cannot outlast one and pause the cache.
+_KEYS_PER_ROUND_TRIP = 500
 _LOCK_POLL_INTERVAL_SECONDS = 0.1
+# The wait outlasts a 30 s upstream fetch and the lock the wait, so peers wait for the holder instead of re-fetching.
+STAMPEDE_LOCK_TTL_SECONDS = 60
+STAMPEDE_MAX_WAIT_SECONDS = 35.0
 
 # Compare-and-delete, so a slow fetch cannot delete a lock another pod has re-acquired since.
 _UNLOCK_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
@@ -227,9 +233,10 @@ class CacheService:
                     encoding="utf-8",
                     decode_responses=True,
                     max_connections=20,
+                    timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
                 )
                 self._client = redis.Redis(connection_pool=self._pool)
-                await self._client.ping()
+                await asyncio.wait_for(self._client.ping(), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
                 self._available = True
                 self._unavailable_since = 0
                 logger.info("Redis cache connection established")
@@ -286,12 +293,9 @@ class CacheService:
             cache_misses_total.inc()
         return None
 
-    async def set(self, key: str, value: Any, ttl_seconds: int | None = None) -> bool:
+    async def set(self, key: str, value: Any, ttl_seconds: int) -> bool:
         if _writes_suppressed.get() or not await self._ensure_available():
             return False
-
-        if ttl_seconds is None:
-            ttl_seconds = settings.CACHE_DEFAULT_TTL_HOURS * 3600
 
         with _CacheOp(self, "set"):
             client = await self.get_client()
@@ -310,10 +314,12 @@ class CacheService:
 
         with _CacheOp(self, "mget"):
             client = await self.get_client()
-            values = await asyncio.wait_for(
-                client.mget([self._make_key(k) for k in keys]),
-                timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
-            )
+            values: list[Any] = []
+            for batch in batched(keys, _KEYS_PER_ROUND_TRIP, strict=False):
+                values += await asyncio.wait_for(
+                    client.mget([self._make_key(k) for k in batch]),
+                    timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+                )
             result: dict[str, Any] = dict.fromkeys(keys)
             for key, value in zip(keys, values, strict=True):
                 if value:
@@ -325,19 +331,17 @@ class CacheService:
             return result
         return dict.fromkeys(keys)
 
-    async def mset(self, mapping: dict[str, Any], ttl_seconds: int | None = None) -> bool:
+    async def mset(self, mapping: dict[str, Any], ttl_seconds: int) -> bool:
         if _writes_suppressed.get() or not mapping or not await self._ensure_available():
             return False
 
-        if ttl_seconds is None:
-            ttl_seconds = settings.CACHE_DEFAULT_TTL_HOURS * 3600
-
         with _CacheOp(self, "mset"):
             client = await self.get_client()
-            pipe = client.pipeline()
-            for key, value in mapping.items():
-                pipe.set(self._make_key(key), json.dumps(value, default=str), ex=ttl_seconds)
-            await asyncio.wait_for(pipe.execute(), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
+            for batch in batched(mapping.items(), _KEYS_PER_ROUND_TRIP, strict=False):
+                pipe = client.pipeline(transaction=False)
+                for key, value in batch:
+                    pipe.set(self._make_key(key), json.dumps(value, default=str), ex=ttl_seconds)
+                await asyncio.wait_for(pipe.execute(), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
             return True
         return False
 
@@ -381,9 +385,9 @@ class CacheService:
         self,
         key: str,
         fetch_fn: Callable[[], Any],
-        ttl_seconds: int | None = None,
-        lock_ttl_seconds: int = 30,
-        max_wait_seconds: float = 5.0,
+        ttl_seconds: int,
+        lock_ttl_seconds: int = STAMPEDE_LOCK_TTL_SECONDS,
+        max_wait_seconds: float = STAMPEDE_MAX_WAIT_SECONDS,
         reraise_fetch_errors: bool = False,
     ) -> Any | None:
         """One pod fetches a miss while its peers wait on the lock, so a multi-pod deploy cannot stampede upstream."""
@@ -395,7 +399,8 @@ class CacheService:
         if not self._available or _writes_suppressed.get():
             return await self._fetch_bypassing_cache(key, fetch_fn, reraise_fetch_errors)
 
-        lock_key = self._make_key(f"lock:{key}")
+        lock_name = f"lock:{key}"
+        lock_key = self._make_key(lock_name)
         try:
             client = await self.get_client()
             deadline = time.monotonic() + max_wait_seconds
@@ -404,11 +409,10 @@ class CacheService:
             while time.monotonic() < deadline:
                 # Unique per-acquisition token so we only release a lock we still own.
                 lock_token = uuid.uuid4().hex
-                lock_acquired = await client.set(
-                    lock_key,
-                    lock_token,
-                    nx=True,
-                    ex=lock_ttl_seconds,  # Auto-expire to prevent deadlock on pod crash.
+                # The lock expires, so a holder whose pod crashed cannot deadlock its peers.
+                lock_acquired = await asyncio.wait_for(
+                    client.set(lock_key, lock_token, nx=True, ex=lock_ttl_seconds),
+                    timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
                 )
 
                 if lock_acquired:
@@ -424,12 +428,15 @@ class CacheService:
                             await self.set(key, {}, CacheTTL.NEGATIVE_RESULT)
                         return data
                     finally:
-                        await self._release_lock(client, lock_key, lock_token)
+                        await self.eval(_UNLOCK_LUA, lock_name, lock_token)
 
                 cached = await self._wait_for_lock_holder(client, key, lock_key, deadline)
                 if cached is not None:
                     return cached
 
+            cached = await self.get(key)
+            if cached is not None:
+                return cached
             logger.warning(f"Lock wait timeout for {key}, fetching anyway")
             try:
                 data = await fetch_fn()
@@ -444,7 +451,7 @@ class CacheService:
                 raise e.cause from None
             logger.warning(f"Fetch failed for {key}", exc_info=e.cause)
             return None
-        except redis.ConnectionError:
+        except (redis.ConnectionError, asyncio.TimeoutError):
             logger.warning(REDIS_CONNECTION_LOST_MSG)
             self._mark_unavailable()
             return await self._fetch_bypassing_cache(key, fetch_fn, reraise_fetch_errors)
@@ -486,16 +493,9 @@ class CacheService:
             cached = await self.get(key)
             if cached is not None:
                 return cached
-            if not await client.exists(full_lock_key):
+            if not await asyncio.wait_for(client.exists(full_lock_key), timeout=REDIS_OPERATION_TIMEOUT_SECONDS):
                 return None
         return None
-
-    async def _release_lock(self, client: "redis.Redis", full_lock_key: str, token: str) -> None:
-        try:
-            # redis-py types eval() as Awaitable[str] | str; the asyncio client always returns an awaitable.
-            await cast(Awaitable[str], client.eval(_UNLOCK_LUA, 1, full_lock_key, token))
-        except Exception as e:
-            logger.warning(f"Failed to release cache lock {full_lock_key}: {e}")
 
     async def health_check(self) -> dict[str, Any]:
         try:
@@ -533,26 +533,23 @@ cache_service = CacheService()
 
 
 async def update_cache_stats() -> None:
-    try:
-        if not cache_service._available:
-            return
+    if not cache_service._available:
+        return
 
-        client = await cache_service.get_client()
+    client = await cache_service.get_client()
 
-        memory_info = await client.info(section="memory")
-        clients_info = await client.info(section="clients")
+    memory_info = await client.info(section="memory")
+    clients_info = await client.info(section="clients")
 
-        total_keys = await client.dbsize()
+    total_keys = await client.dbsize()
 
-        connected_clients_count = clients_info.get("connected_clients", 0)
-        used_memory = memory_info.get("used_memory", 0)
+    connected_clients_count = clients_info.get("connected_clients", 0)
+    used_memory = memory_info.get("used_memory", 0)
 
-        cache_keys_total.set(total_keys)
-        cache_connected_clients.set(connected_clients_count)
-        cache_size_bytes.set(used_memory)
+    cache_keys_total.set(total_keys)
+    cache_connected_clients.set(connected_clients_count)
+    cache_size_bytes.set(used_memory)
 
-        logger.debug(
-            f"Updated cache stats: keys={total_keys}, clients={connected_clients_count}, memory={used_memory} bytes"
-        )
-    except Exception as e:
-        logger.warning(f"Failed to update cache statistics metrics: {e}")
+    logger.debug(
+        f"Updated cache stats: keys={total_keys}, clients={connected_clients_count}, memory={used_memory} bytes"
+    )

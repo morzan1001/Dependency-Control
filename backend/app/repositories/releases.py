@@ -1,12 +1,27 @@
 from collections.abc import Sequence
 from typing import Any
 
+import pymongo
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
-from app.core.init_db import RELEASES_LATEST_SORT, RELEASES_UPSERT_KEY_FIELDS
 from app.models.release import Release
 from app.repositories.base import BaseRepository
+
+RELEASES_UPSERT_KEY_NAME = "releases_upsert_key"
+# One release per (project, environment, scan), shared by the upsert filter and the unique index behind it.
+RELEASES_UPSERT_KEY_FIELDS: tuple[str, ...] = ("project_id", "environment", "scan_id")
+
+RELEASES_LATEST_LOOKUP_NAME = "releases_latest_lookup"
+# BSON dates are milliseconds, so ties break on _id; the sort is its index's tail, keeping the seek indexed.
+RELEASES_LATEST_SORT: list[tuple[str, int]] = [("released_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)]
+RELEASES_LATEST_LOOKUP_KEY: list[tuple[str, int]] = [
+    ("project_id", pymongo.ASCENDING),
+    ("environment", pymongo.ASCENDING),
+    *RELEASES_LATEST_SORT,
+]
+# The index order left once project_id is matched by equality.
+RELEASES_ENVIRONMENT_SORT = RELEASES_LATEST_LOOKUP_KEY[1:]
 
 
 class ReleaseRepository(BaseRepository[Release]):
