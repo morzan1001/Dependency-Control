@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -21,7 +21,6 @@ import {
   ComposedChart,
 } from 'recharts'
 import {
-  AlertTriangle,
   RefreshCw,
   Clock,
   Package,
@@ -29,6 +28,7 @@ import {
   GitBranch,
 } from 'lucide-react'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
+import { Notice } from './ThreatIntelNote'
 import { useUpdateFrequency } from '@/hooks/queries/use-analytics'
 import { formatDate, formatCoveragePct, formatUpdatesPerMonth } from '@/lib/utils'
 import type { UpdateFrequencyMetrics, DependencyUpdateEvent } from '@/types/analytics'
@@ -76,15 +76,6 @@ function retentionNotice(retentionDays: number, windowDays: number): string {
   return (
     `Retention keeps ${retentionDays} days of scans, so the monthly rate divides by those ` +
     `${retentionDays} days, not by all of the last ${windowDays} days.`
-  )
-}
-
-function WindowNotice({ children }: Readonly<{ children: ReactNode }>) {
-  return (
-    <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-      <span>{children}</span>
-    </div>
   )
 }
 
@@ -488,10 +479,10 @@ export function UpdateFrequency() {
           {windowDays !== undefined && (
             <>
               {data.window_scan_cap !== null && (
-                <WindowNotice>{windowCapNotice(data.window_scan_cap, windowDays)}</WindowNotice>
+                <Notice>{windowCapNotice(data.window_scan_cap, windowDays)}</Notice>
               )}
               {data.retention_days !== null && (
-                <WindowNotice>{retentionNotice(data.retention_days, windowDays)}</WindowNotice>
+                <Notice>{retentionNotice(data.retention_days, windowDays)}</Notice>
               )}
             </>
           )}
