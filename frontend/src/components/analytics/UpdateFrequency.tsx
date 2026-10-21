@@ -157,7 +157,7 @@ function TimelineChart({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
       <CardHeader>
         <CardTitle>Update Timeline</CardTitle>
         <CardDescription>
-          Dependency updates per scan interval, colored by update type
+          Dependency updates per scanned commit, colored by update type
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -255,7 +255,7 @@ function SlowPackagesTable({ data }: Readonly<{ data: UpdateFrequencyMetrics }>)
         <CardTitle>Slowest to Update</CardTitle>
         <CardDescription>
           {`Showing ${data.slowest_packages.length} of ${data.outdated_backlog} packages still outdated, ` +
-            'ranked by the scans they stayed outdated across'}
+            'ranked by the commits they stayed outdated across'}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -267,7 +267,7 @@ function SlowPackagesTable({ data }: Readonly<{ data: UpdateFrequencyMetrics }>)
                 <TableHead>Type</TableHead>
                 <TableHead>Current</TableHead>
                 <TableHead>Latest</TableHead>
-                <TableHead className="text-right">Scans Outdated</TableHead>
+                <TableHead className="text-right">Commits Outdated</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

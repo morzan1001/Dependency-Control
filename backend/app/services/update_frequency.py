@@ -305,7 +305,7 @@ def compute_trend(scan_timeline: Sequence[ScanTimelineEntry]) -> tuple[str, str]
     """The leading entry's incoming edge lies outside the window, so it is excluded; a missing backlog is not zero."""
     timeline = scan_timeline[1:]
     if len(timeline) < 4:
-        return "unknown", "Not enough scans to determine trend (need at least 5)"
+        return "unknown", "Not enough scanned commits to determine trend (need at least 5)"
 
     mid = len(timeline) // 2
     older = timeline[:mid]
@@ -318,7 +318,7 @@ def compute_trend(scan_timeline: Sequence[ScanTimelineEntry]) -> tuple[str, str]
 
     update_improving = newer_avg_updates > older_avg_updates * 1.1
     update_deteriorating = newer_avg_updates < older_avg_updates * 0.9
-    updates_msg = f"Updates/scan: {older_avg_updates:.1f} → {newer_avg_updates:.1f}"
+    updates_msg = f"Updates/commit: {older_avg_updates:.1f} → {newer_avg_updates:.1f}"
     signals = [(updates_msg, update_improving, update_deteriorating)]
 
     if older_avg_outdated is not None and newer_avg_outdated is not None:
@@ -341,7 +341,7 @@ def compute_trend(scan_timeline: Sequence[ScanTimelineEntry]) -> tuple[str, str]
     if deteriorating_parts:
         return "deteriorating", ". ".join(deteriorating_parts)
 
-    steady = f"Consistent (~{newer_avg_updates:.1f} updates/scan"
+    steady = f"Consistent (~{newer_avg_updates:.1f} updates/commit"
     if newer_avg_outdated is None:
         return "stable", f"{steady})"
     return "stable", f"{steady}, ~{newer_avg_outdated:.0f} outdated)"
@@ -377,7 +377,7 @@ def updates_per_month(total_updates: int, window_days: int | None) -> float | No
 # Two bars make the first interval; a commit run is one bar, so it also takes two commits.
 MIN_COMPARABLE_BARS = 2
 
-_NOT_ENOUGH_SCANS = f"Not enough scans to analyze (need at least {MIN_COMPARABLE_BARS})"
+_NOT_ENOUGH_COMMITS = f"Not enough scanned commits to analyze (need at least {MIN_COMPARABLE_BARS})"
 
 
 @dataclass(frozen=True)
@@ -527,7 +527,7 @@ def short_window(bars: Sequence[ScanTimelineEntry]) -> FoldedWindow:
         outdated_resolved=0,
         update_coverage_pct=None,
         trend_direction="unknown",
-        trend_detail=_NOT_ENOUGH_SCANS,
+        trend_detail=_NOT_ENOUGH_COMMITS,
         dominant_ecosystem=None,
         scan_timeline=[],
     )

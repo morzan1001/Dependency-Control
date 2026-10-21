@@ -15,6 +15,7 @@ from app.services.update_frequency import (
     compute_trend,
     dominant_ecosystem,
     measured_summary,
+    short_window,
 )
 from app.services.update_frequency_fold import (
     READY_COVERAGE_RATIO,
@@ -159,7 +160,7 @@ class TestGoldenWindow:
 
     def test_trend_detail_compares_halves_of_the_non_baseline_timeline(self) -> None:
         # older [s1, s2] = 4, 3 updates / 4, 3 outdated; newer [s3, s4] = 3, 1 / 5, 4
-        assert _fold_golden().trend_detail == "Updates/scan: 3.5 → 2.0. Outdated: 3.5 → 4.5"
+        assert _fold_golden().trend_detail == "Updates/commit: 3.5 → 2.0. Outdated: 3.5 → 4.5"
 
     def test_timeline(self) -> None:
         timeline = _fold_golden().scan_timeline
@@ -643,22 +644,27 @@ class TestTrend:
     def test_mixed_signals_report_stable_with_both_halves(self) -> None:
         direction, detail = compute_trend(_timeline((10, 10, 1, 1), (10, 10, 1, 1)))
         assert direction == "stable"
-        assert detail == "Mixed signals. Outdated: 10.0 → 1.0. Updates/scan: 10.0 → 1.0"
+        assert detail == "Mixed signals. Outdated: 10.0 → 1.0. Updates/commit: 10.0 → 1.0"
 
     def test_odd_timeline_splits_two_against_three(self) -> None:
         direction, detail = compute_trend(_timeline((4, 4, 1, 1, 1), (0, 0, 0, 0, 0)))
         assert direction == "deteriorating"
-        assert detail == "Updates/scan: 4.0 → 1.0"
+        assert detail == "Updates/commit: 4.0 → 1.0"
 
     def test_fewer_than_four_non_baseline_entries_is_unknown(self) -> None:
         direction, detail = compute_trend(_timeline((1, 2, 3), (1, 2, 3)))
         assert direction == "unknown"
-        assert detail == "Not enough scans to determine trend (need at least 5)"
+        assert detail == "Not enough scanned commits to determine trend (need at least 5)"
+
+    def test_a_window_below_two_bars_asks_for_a_second_scanned_commit(self) -> None:
+        assert short_window(_timeline((1,), (1,))).trend_detail == (
+            "Not enough scanned commits to analyze (need at least 2)"
+        )
 
     def test_a_fully_unmeasured_backlog_is_left_out_of_the_detail(self) -> None:
         direction, detail = compute_trend(_timeline((5, 5, 5, 5), (None, None, None, None)))
         assert direction == "stable"
-        assert detail == "Consistent (~5.0 updates/scan)"
+        assert detail == "Consistent (~5.0 updates/commit)"
 
     def test_a_partly_measured_half_averages_what_was_measured(self) -> None:
         direction, detail = compute_trend(_timeline((5, 5, 5, 5), (10, None, 4, None)))

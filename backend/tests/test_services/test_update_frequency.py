@@ -225,7 +225,7 @@ class TestComputeTrend:
         )
         direction, detail = compute_trend(timeline)
         assert direction == "stable"
-        assert "Updates/scan" in detail
+        assert "Updates/commit" in detail
         assert "Outdated" in detail
 
 

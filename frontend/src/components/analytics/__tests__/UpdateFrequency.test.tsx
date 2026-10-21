@@ -165,6 +165,19 @@ describe("UpdateFrequency", () => {
     expect(await screen.findByText(`avg. between ${metrics.scan_count} commits`)).toBeInTheDocument();
   });
 
+  it("counts the timeline bars and the slowest packages' outdated stretch in commits, like the cadence card", async () => {
+    mockedFrequency.mockResolvedValue({
+      ...metrics,
+      outdated_backlog: 1,
+      slowest_packages: [{ name: "libfoo", type: "pypi", current_version: "1.0.0", latest_version: "2.0.0", scans_outdated: 3 }],
+    });
+    renderFrequency();
+
+    expect(await screen.findByText("Dependency updates per scanned commit, colored by update type")).toBeInTheDocument();
+    expect(screen.getByText(/ranked by the commits they stayed outdated across$/)).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Commits Outdated" })).toBeInTheDocument();
+  });
+
   it("asks for a second scanned commit, not a second scan, before it analyses", async () => {
     mockedFrequency.mockResolvedValue({ ...metrics, scan_count: 1 });
     renderFrequency();
