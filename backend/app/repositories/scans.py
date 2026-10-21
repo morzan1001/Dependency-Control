@@ -131,6 +131,12 @@ def _live_default(scope: _HeadScope) -> str | None:
     return scope.default_branch if scope.default_branch and scope.default_branch not in scope.deleted else None
 
 
+def _head_lines(scope: _HeadScope) -> list[dict[str, Any]]:
+    default = _live_default(scope)
+    # A default branch this instance never scanned must leave the project visible rather than empty.
+    return [*([{"branch": default}] if default else []), {"branch": {"$nin": scope.deleted}} if scope.deleted else {}]
+
+
 def _is_tag_build(doc: dict[str, Any]) -> bool:
     return doc.get("branch") == doc.get("commit_tag")
 
@@ -283,14 +289,10 @@ class ScanRepository:
     async def _head_build(
         self, project_id: str, scope: _HeadScope, match: dict[str, Any], projection: dict[str, int] | None
     ) -> dict | None:
-        base = {**match, "project_id": project_id}
-        default = _live_default(scope)
-        if default and (on_default := await self._tip({**base, "branch": default}, projection)):
-            return on_default
-        # A default branch this instance never scanned must leave the project visible rather than empty.
-        if scope.deleted:
-            base["branch"] = {"$nin": scope.deleted}
-        return await self._tip(base, projection)
+        for line in _head_lines(scope):
+            if doc := await self._tip({**match, "project_id": project_id, **line}, projection):
+                return doc
+        return None
 
     async def head_build(self, project: Any, match: dict[str, Any], projection: dict[str, int]) -> dict | None:
         """The heading build itself, before the lineage step."""
@@ -570,10 +572,7 @@ class ScanRepository:
     async def _head_builds_between(
         self, project_id: str, scope: _HeadScope, since: datetime, until: datetime
     ) -> list[dict[str, Any]]:
-        default = _live_default(scope)
-        lines: list[dict[str, Any]] = [{"branch": default}] if default else []
-        lines.append({"branch": {"$nin": scope.deleted}} if scope.deleted else {})
-        for line in lines:
+        for line in _head_lines(scope):
             for tier in _BUILD_TIERS:
                 if builds := await self._builds_between({"project_id": project_id, **line, **tier}, since, until):
                     return builds
