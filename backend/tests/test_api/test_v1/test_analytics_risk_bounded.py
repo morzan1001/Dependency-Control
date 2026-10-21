@@ -17,8 +17,10 @@ from app.core.constants import (
     EXPLOIT_MATURITY_BOOST,
     IMPACT_AGE_BOOST,
     IMPACT_MAX_SCORE_BOOST,
+    REMEDIATION_SLA_DAYS,
 )
 from app.core.permissions import ALL_PERMISSIONS
+from app.models.finding import Severity
 from app.models.user import User
 from app.schemas.analytics import SeverityBreakdown, ThreatIntelFields
 from app.schemas.enrichment import VulnerabilityEnrichment
@@ -799,6 +801,37 @@ class TestPriorityReasons:
         counts = {"critical": 0, "high": 0, "medium": 1, "low": 3, severity: 1}
 
         assert (self._overdue(counts, sla_days - 1), self._overdue(counts, sla_days)) == (False, True)
+
+    @pytest.mark.parametrize(
+        ("intel", "expected"),
+        [
+            pytest.param(
+                ThreatIntelFields(has_kev=True, kev_ransomware_use=True, days_until_due=-3, max_epss_score=0.9),
+                ["ransomware", "deadline_overdue", "overdue", "epss", "critical", "blast_radius", "fix_available"],
+                id="ransomware",
+            ),
+            pytest.param(
+                ThreatIntelFields(has_kev=True, days_until_due=2, max_epss_score=0.9),
+                ["deadline", "overdue", "kev", "epss", "critical", "blast_radius", "fix_available"],
+                id="kev",
+            ),
+            pytest.param(
+                ThreatIntelFields(),
+                ["overdue", "critical", "blast_radius", "fix_available"],
+                id="no-threat-intel",
+            ),
+        ],
+    )
+    def test_a_missed_sla_ranks_with_the_deadlines_so_the_three_reason_cards_show_it(self, intel, expected):
+        reasons = build_priority_reasons(
+            {"critical": 1},
+            intel,
+            BLAST_RADIUS_THRESHOLD,
+            has_fix=True,
+            days_known=REMEDIATION_SLA_DAYS[Severity.CRITICAL],
+        )
+
+        assert [reason.split(":", 1)[0] for reason in reasons] == expected
 
     def test_a_component_with_only_low_cves_has_no_deadline_to_be_overdue_on(self):
         assert not self._overdue({"critical": 0, "high": 0, "medium": 0, "low": 4}, 3650)

@@ -283,6 +283,14 @@ def build_priority_reasons(
     elif days_until_due is not None and days_until_due <= KEV_DUE_SOON_DAYS:
         reasons.append(f"deadline:CISA deadline in {days_until_due} days")
 
+    # Within the first three reasons, the most the impact cards show, whatever else applies.
+    if missed := _missed_sla(severity_counts, days_known):
+        severity, sla_days = missed
+        reasons.append(
+            f"overdue:Known for {days_known} days - past the {sla_days}-day remediation SLA "
+            f"for {severity.value.lower()} vulnerabilities"
+        )
+
     if enrichment_data.has_kev and not enrichment_data.kev_ransomware_use:
         reasons.append("kev:Actively exploited in the wild (CISA KEV)")
 
@@ -297,13 +305,6 @@ def build_priority_reasons(
 
     if has_fix:
         reasons.append("fix_available:Fix available - easy to remediate")
-
-    if missed := _missed_sla(severity_counts, days_known):
-        severity, sla_days = missed
-        reasons.append(
-            f"overdue:Known for {days_known} days - past the {sla_days}-day remediation SLA "
-            f"for {severity.value.lower()} vulnerabilities"
-        )
 
     return reasons
 
