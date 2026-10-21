@@ -45,7 +45,7 @@ class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
         description="GitLab group path depth for team creation. "
         "1 = top-level group only (e.g. 'mo'), "
         "2 = two levels (e.g. 'mo/edge'), "
-        "0 = full path (current behavior)",
+        "0 = full path",
     )
 
     created_by: str = Field(..., description="User ID of the admin who created this instance")
