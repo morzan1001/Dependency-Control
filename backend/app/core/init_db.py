@@ -231,7 +231,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )
     await scan_update_deltas.create_index([("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.DESCENDING)])
 
-    # Streams the CSV export's (type, finding_id) order per severity; waived lets the severity count skip documents.
+    # The CSV export streams each severity bucket in (type, finding_id) order straight off this key.
     await findings.create_index(FINDINGS_SCAN_SEVERITY_INDEX)
 
     # A $type of "int" would match int32 alone.

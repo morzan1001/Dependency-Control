@@ -33,7 +33,6 @@ def test_findings_declare_only_the_indexes_a_read_needs():
             ("severity", ASCENDING),
             ("type", ASCENDING),
             ("finding_id", ASCENDING),
-            ("waived", ASCENDING),
         ): {},
         (("scan_id", ASCENDING), ("waived", ASCENDING)): {},
         (("scan_id", ASCENDING), ("type", ASCENDING)): {},
