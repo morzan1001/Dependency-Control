@@ -4,11 +4,19 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from app.models.finding import FindingType
 from app.schemas.bearer import BearerFinding
 from app.services.aggregation import ResultAggregator
 
 # bearer 2.1.1 `scan . --format json` over a Python file hashing a password with MD5 and logging an email.
 _BEARER_OUTPUT = json.loads((Path(__file__).parents[2] / "fixtures/sast/bearer_2.1.1_findings.json").read_text())
+
+
+def _kept_lines_and_skip_notice(agg: ResultAggregator, scanner: str) -> tuple[list[int], str]:
+    notice = agg.findings[f"SCAN-ERROR-{scanner}"]
+    assert notice.type == FindingType.SYSTEM_WARNING
+    kept = [f.details["start"]["line"] for f in agg.findings.values() if f is not notice]
+    return kept, notice.description
 
 
 class TestNormalizeOpengrep:
@@ -108,7 +116,10 @@ class TestNormalizeOpengrep:
 
         self.agg.aggregate("opengrep", self._opengrep_result([item(1, {"impact": ["HIGH"]}), item(2, {})]))
 
-        assert [f.details["start"]["line"] for f in self.agg.findings.values()] == [2]
+        assert _kept_lines_and_skip_notice(self.agg, "opengrep") == (
+            [2],
+            "Scanner 'opengrep' returned partial results: skipped 1 unreadable entry",
+        )
 
     def test_owasp_metadata_captured(self):
         result = self._opengrep_result(
@@ -504,7 +515,10 @@ class TestBearerEntryContract:
         agg = ResultAggregator()
         agg.aggregate("bearer", {"findings": [unreadable, {"id": "r", "full_filename": "a.py", "line_number": 2}]})
 
-        assert [f.details["start"]["line"] for f in agg.findings.values()] == [2]
+        assert _kept_lines_and_skip_notice(agg, "bearer") == (
+            [2],
+            "Scanner 'bearer' returned partial results: skipped 1 unreadable entry",
+        )
         with pytest.raises(ValidationError):
             BearerFinding.model_validate(unreadable)
 

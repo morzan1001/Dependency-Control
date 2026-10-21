@@ -510,10 +510,16 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     _aggregate_crypto_rules(parsed_inputs, aggregator, report)
     _aggregate_posted_scanners(request, aggregator, report)
 
-    records = [finding.model_dump() for finding in aggregator.get_findings()]
-    for record in records:
+    records = []
+    for finding in aggregator.get_findings():
+        if finding.type == FindingType.SYSTEM_WARNING:
+            # A normalizer's skipped entries: reported per analyzer here, as a finding it would read as a defect.
+            _record_errored(report, finding.scanners[0], finding.description)
+            continue
+        record = finding.model_dump()
         # Findings are addressed by ``finding_id`` everywhere the scan-backed API exposes them.
         record["finding_id"] = record["id"]
+        records.append(record)
     # Same dict objects as records, so every stage's in-place enrichment reaches the response.
     vulnerabilities = [record for record in records if record["type"] == FindingType.VULNERABILITY]
 

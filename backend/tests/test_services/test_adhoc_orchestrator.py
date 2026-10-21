@@ -417,6 +417,22 @@ async def test_where_the_unreadable_item_sits_does_not_change_the_result(items):
 
 
 @pytest.mark.asyncio
+async def test_an_entry_only_the_normalizer_cannot_read_is_reported_and_the_rest_kept():
+    unreadable = {**_opengrep_item(0), "extra": {"severity": "ERROR", "metadata": {"impact": ["HIGH"]}}}
+    request = AdhocAnalyzeRequest(
+        scanners={"opengrep": {"findings": [unreadable, _opengrep_item(1)]}}, analyzers=[], apply_global_waivers=False
+    )
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.errored == {
+        "opengrep": ["Scanner 'opengrep' returned partial results: skipped 1 unreadable entry"]
+    }
+    assert "opengrep" not in response.analyzers.ran
+    assert [f["type"] for f in response.findings] == ["sast"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("scanner", "payload", "field"), _WRONG_SHAPED_ENTRIES)
 async def test_entries_the_normalizer_cannot_read_are_not_reported_as_coverage(scanner, payload, field):
     """The entries are not the documented shape, so the run normalises to nothing, which must not read as all-clear."""

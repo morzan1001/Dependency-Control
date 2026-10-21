@@ -1,4 +1,3 @@
-import logging
 from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType
@@ -15,8 +14,6 @@ from app.services.normalizers.utils import (
 
 if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
-
-logger = logging.getLogger(__name__)
 
 _CRYPTO_MISUSE_RULE_ID_PREFIX = "crypto-misuse-"
 # Semgrep CE writes this into extra.fingerprint and extra.lines of every result when run without login.
@@ -109,19 +106,14 @@ def _parse_opengrep_item(item: dict[str, Any]) -> Finding:
 
 
 def normalize_opengrep(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
+    skipped: list[Exception] = []
     # OpenGrep emits either "findings" or "results" depending on version.
     for item in result.get("findings") or result.get("results") or []:
         try:
-            finding = _parse_opengrep_item(item)
+            aggregator.add_finding(_parse_opengrep_item(item), source=source)
         except Exception as exc:
-            logger.warning(
-                "normalize_opengrep: dropping unparseable finding (%s) — check_id=%s, path=%s",
-                exc,
-                item.get("check_id"),
-                item.get("path"),
-            )
-            continue
-        aggregator.add_finding(finding, source=source)
+            skipped.append(exc)
+    aggregator.add_skipped_entries("opengrep", skipped, source)
 
 
 def _parse_bearer_item(item: Any) -> Finding:
@@ -158,14 +150,10 @@ def _parse_bearer_item(item: Any) -> Finding:
 
 
 def normalize_bearer(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
+    skipped: list[Exception] = []
     for item in bearer_entries(result.get("findings")) or []:
         try:
-            finding = _parse_bearer_item(item)
+            aggregator.add_finding(_parse_bearer_item(item), source=source)
         except Exception as exc:
-            logger.warning(
-                "normalize_bearer: dropping unparseable finding (%s) — id=%s",
-                exc,
-                item.get("id") if isinstance(item, dict) else None,
-            )
-            continue
-        aggregator.add_finding(finding, source=source)
+            skipped.append(exc)
+    aggregator.add_skipped_entries("bearer", skipped, source)

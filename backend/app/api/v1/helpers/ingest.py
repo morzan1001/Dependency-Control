@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any
 
-from app.models.finding import Finding
+from app.models.finding import Finding, FindingType
 from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.repositories.analysis_results import AnalysisResultRepository
@@ -43,6 +43,7 @@ def _summarize(analyzer_name: str, result: dict[str, Any], waivers: list[Waiver]
     """Off the event loop: a large upload takes hundreds of milliseconds to aggregate, match and count."""
     aggregator = ResultAggregator()
     aggregator.aggregate(analyzer_name, result)
-    kept, waived_count = apply_waivers(aggregator.get_findings(), waivers)
+    findings = [f for f in aggregator.get_findings() if f.type != FindingType.SYSTEM_WARNING]
+    kept, waived_count = apply_waivers(findings, waivers)
     records = ({field: getattr(f, field) for field in _STATS_FIELDS} for f in kept)
     return len(kept), waived_count, compute_stats(records, {})

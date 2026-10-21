@@ -1,3 +1,4 @@
+import logging
 import re
 from collections import Counter
 from typing import Any
@@ -55,6 +56,8 @@ from app.services.normalizers.vulnerability import (
     normalize_trivy,
 )
 from app.services.waivers.signature import compute_match_signature
+
+logger = logging.getLogger(__name__)
 
 _LICENSE_SENTINELS = UNKNOWN_LICENSE_PATTERNS | {"NON-STANDARD"}
 _SPDX_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
@@ -306,6 +309,13 @@ class ResultAggregator:
         existing.description = "; ".join(sorted({e["message"] for e in errors}))
         if source and source not in existing.found_in:
             existing.found_in.append(source)
+
+    def add_skipped_entries(self, analyzer_name: str, errors: list[Exception], source: str | None) -> None:
+        if not errors:
+            return
+        message = f"skipped {len(errors)} unreadable {'entry' if len(errors) == 1 else 'entries'}"
+        logger.warning("%s: %s, first: %s", analyzer_name, message, errors[0])
+        self.add_scan_error(analyzer_name, message, partial=True, error_details=str(errors[0]), source=source)
 
     @staticmethod
     def _merge_cluster(cluster: list[Finding], representative: str) -> Finding:
