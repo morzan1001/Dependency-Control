@@ -260,7 +260,7 @@ def calculate_impact_score(
 
     base_impact *= _calculate_kev_boost(enrichment_data)
     base_impact *= _calculate_epss_boost(enrichment_data.max_epss_score)
-    base_impact *= EXPLOIT_MATURITY_BOOST.get(enrichment_data.exploit_maturity, 1.0)
+    base_impact *= EXPLOIT_MATURITY_BOOST[enrichment_data.exploit_maturity]
 
     if has_fix:
         base_impact *= IMPACT_FIX_AVAILABLE_BOOST

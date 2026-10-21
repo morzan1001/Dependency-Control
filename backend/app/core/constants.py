@@ -413,7 +413,7 @@ EXPLOIT_MATURITY_ORDER: dict[ExploitMaturity, int] = {
     level: rank for rank, level in enumerate(get_args(ExploitMaturity))
 }
 
-EXPLOIT_MATURITY_BOOST: dict[str, float] = {
+EXPLOIT_MATURITY_BOOST: dict[ExploitMaturity, float] = {
     "weaponized": 1.4,
     "active": 1.3,
     "high": 1.2,

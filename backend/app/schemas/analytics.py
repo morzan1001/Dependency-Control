@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.constants import ScopeName
+from app.core.constants import ExploitMaturity, ScopeName
 from app.schemas.pagination import Page
 from app.schemas.team import TeamRef
 
@@ -78,7 +78,7 @@ class ThreatIntelFields(BaseModel):
     kev_ransomware_use: bool = False
     kev_due_date: str | None = None  # Earliest CISA remediation deadline
     days_until_due: int | None = None  # negative when overdue
-    exploit_maturity: str = "unknown"
+    exploit_maturity: ExploitMaturity = "unknown"
     max_risk_score: float | None = None
     days_known: int | None = None
     has_fix: bool = False
