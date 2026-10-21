@@ -60,13 +60,13 @@ class DistributedLocksRepository:
         self.db = db
         self.collection = db.distributed_locks
 
-    async def acquire_lock(self, lock_name: str, holder_id: str, ttl_seconds: int = 30) -> bool:
+    async def acquire_lock(self, lock_name: str, holder_id: str, ttl_seconds: int) -> bool:
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=ttl_seconds)
 
         # While the lock is held the filter matches nothing, so the upsert's E11000 means another holder has it.
         try:
-            result = await self.collection.find_one_and_update(
+            await self.collection.update_one(
                 {
                     "_id": lock_name,
                     "$or": [
@@ -82,14 +82,12 @@ class DistributedLocksRepository:
                     }
                 },
                 upsert=True,
-                return_document=True,
             )
         except DuplicateKeyError:
             return False
+        return True
 
-        return result is not None
-
-    async def renew_lock(self, lock_name: str, holder_id: str, ttl_seconds: int = 30) -> bool:
+    async def renew_lock(self, lock_name: str, holder_id: str, ttl_seconds: int) -> bool:
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
         # False once another holder took the expired lock over (or it was released): the caller lost it.
         result = await self.collection.update_one(
