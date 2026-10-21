@@ -157,7 +157,7 @@ def _stored_enrichment(vuln: Mapping[str, Any]) -> VulnerabilityEnrichment:
         cve=str(vuln.get("id")),
         epss_score=vuln.get("epss_score"),
         epss_percentile=vuln.get("epss_percentile"),
-        is_kev=bool(vuln.get(DETAILS_KEY_IN_KEV)),
+        in_kev=bool(vuln.get(DETAILS_KEY_IN_KEV)),
         kev_date_added=vuln.get("kev_date_added"),
         kev_due_date=vuln.get("kev_due_date"),
         kev_required_action=vuln.get("kev_required_action"),
