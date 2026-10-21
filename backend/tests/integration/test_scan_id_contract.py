@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -6,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pymongo.errors import DuplicateKeyError
 
+from app.repositories.scans import ScanRepository
 from app.services.scan_manager import deterministic_scan_id
 
 _PIPELINE_ID = 5150
@@ -65,3 +67,16 @@ async def test_an_upload_that_loses_the_race_to_create_its_scan_still_lands_on_i
 
     assert resp.status_code == 200, resp.text
     assert (await db.scans.find_one({"_id": scan_id}))["commit_message"] == "the loser"
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_concurrent_first_uploads_of_one_scan_all_land_on_it(db):
+    repo = ScanRepository(db)
+    scan_ids = [f"scan-{i}" for i in range(200)]
+
+    await asyncio.gather(
+        *(repo.upsert_unless_restoring(scan_id, {"$inc": {"uploads": 1}}) for scan_id in scan_ids for _ in range(2))
+    )
+
+    assert await db.scans.count_documents({"uploads": 2}) == len(scan_ids)

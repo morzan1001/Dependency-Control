@@ -27,27 +27,27 @@ class DependencyRepository(BaseRepository[Dependency]):
                 return
             except BulkWriteError as e:
                 dependencies = [dependencies[index] for index in _duplicate_indexes(e)]
-        try:
-            await self.collection.bulk_write(
-                [
-                    UpdateOne(
-                        {
-                            "scan_id": d.scan_id,
-                            "name": d.name,
-                            "version": d.version,
-                            "purl": d.purl,
-                            "$nor": [{"created_at": {"$gt": d.created_at}}],
-                        },
-                        {"$set": d.model_dump(by_alias=True, exclude={"id"}), "$setOnInsert": {"_id": d.id}},
-                        upsert=True,
-                    )
-                    for d in dependencies
-                ],
-                ordered=False,
+        ops = [
+            UpdateOne(
+                {
+                    "scan_id": d.scan_id,
+                    "name": d.name,
+                    "version": d.version,
+                    "purl": d.purl,
+                    "$nor": [{"created_at": {"$gt": d.created_at}}],
+                },
+                {"$set": d.model_dump(by_alias=True, exclude={"id"}), "$setOnInsert": {"_id": d.id}},
+                upsert=True,
             )
-        except BulkWriteError as e:
-            # A row a later store wrote misses the filter, and its upsert collides on the unique index instead.
-            _duplicate_indexes(e)
+            for d in dependencies
+        ]
+        # The $nor term opts out of the server's upsert retry; a second collision means a later store owns the row.
+        for _ in range(2):
+            try:
+                await self.collection.bulk_write(ops, ordered=False)
+                return
+            except BulkWriteError as e:
+                ops = [ops[index] for index in _duplicate_indexes(e)]
 
     async def get_unique_packages(self, scan_ids: list[str]) -> int:
         pipeline: list[dict[str, Any]] = [
