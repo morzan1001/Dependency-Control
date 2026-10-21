@@ -499,7 +499,7 @@ class ScanRepository:
     ) -> dict[str, list[tuple[datetime, str]]]:
         """Per project, (from when, scan_id) of each analysis heading it; the last entry up to a moment heads then."""
         scopes = {project_id: scope for project_id, scope in map(_head_scope, projects) if project_id}
-        histories = await _bounded_gather(
+        histories = await bounded_gather(
             self._head_builds_between(project_id, scope, since, until) for project_id, scope in scopes.items()
         )
         builds = {project_id: docs for project_id, docs in zip(scopes, histories, strict=True) if docs}
