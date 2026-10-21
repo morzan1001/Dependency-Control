@@ -73,16 +73,16 @@ def compute_adoption_latencies(
     history: ReleaseHistory,
     observations: Sequence[Observation],
 ) -> list[int]:
-    published = {
-        (system, name, release.version): release.published_at
-        for (system, name), releases in history.items()
-        for release in releases
-    }
-    return [
-        (scan_date - published[(system, name, version)]).days
-        for system, name, version, scan_date in observations
-        if (system, name, version) in published
-    ]
+    """Indexes only the observed packages, as a fetched history carries every canary a registry ever published."""
+    published: dict[tuple[str, str], dict[str, datetime]] = {}
+    latencies: list[int] = []
+    for system, name, version, scan_date in observations:
+        package = (system, name)
+        if package not in published:
+            published[package] = {release.version: release.published_at for release in history.get(package, ())}
+        if (released := published[package].get(version)) is not None:
+            latencies.append((scan_date - released).days)
+    return latencies
 
 
 def aggregate_upstream_metrics(
@@ -140,23 +140,23 @@ class DepsDevReleaseHistoryFetcher:
         missing = [package for package in keys if package not in history]
         if missing:
             async with InstrumentedAsyncClient("deps.dev API", timeout=_FETCH_TIMEOUT_SECONDS) as client:
-                payloads = await gather_bounded(
-                    missing,
-                    lambda package: fetch_deps_dev_json(client, deps_dev_package_url(*package)),
-                    _FETCH_CONCURRENCY,
+                fetched = await gather_bounded(
+                    missing, lambda package: _fetch_and_cache(client, package, keys[package]), _FETCH_CONCURRENCY
                 )
             # A failed lookup stays uncached; a package deps.dev does not know is remembered as empty.
-            fetched = {
-                package: parse_deps_dev_response(payload or {})
-                for package, payload in zip(missing, payloads, strict=True)
-                if not isinstance(payload, BaseException)
-            }
-            await cache_service.mset(
-                {keys[package]: release_list_to_cache(releases) for package, releases in fetched.items()},
-                ttl_seconds=CacheTTL.RELEASE_HISTORY,
+            history.update(
+                (package, releases)
+                for package, releases in zip(missing, fetched, strict=True)
+                if not isinstance(releases, BaseException)
             )
-            history.update(fetched)
         return {package: releases for package, releases in history.items() if releases}
+
+
+async def _fetch_and_cache(client: InstrumentedAsyncClient, package: tuple[str, str], key: str) -> list[ReleaseInfo]:
+    """Cached as each lookup lands, so a request cut off by its budget still warms the next one."""
+    releases = parse_deps_dev_response(await fetch_deps_dev_json(client, deps_dev_package_url(*package)) or {})
+    await cache_service.set(key, release_list_to_cache(releases), ttl_seconds=CacheTTL.RELEASE_HISTORY)
+    return releases
 
 
 def release_list_to_cache(releases: Sequence[ReleaseInfo]) -> list[dict[str, str]]:

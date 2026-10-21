@@ -92,8 +92,8 @@ const STATUS_CONFIG: Record<
     className: 'bg-gray-500/10 text-gray-500 border-gray-500/20',
   },
   insufficient_data: {
-    label: 'Too few scans',
-    hint: 'Fewer than 2 comparable scans in this window.',
+    label: 'Too few commits',
+    hint: 'Fewer than 2 scanned commits in this window.',
     icon: Hourglass,
     className: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20',
   },
@@ -134,9 +134,9 @@ function StatusBadge({ status }: Readonly<{ status: Exclude<UpdateDataStatus, 'r
 }
 
 function partialHint(scanCount: number | null): string {
-  const scans = scanCount === null ? 'only part of' : `only ${scanCount} scans of`
+  const commits = scanCount === null ? 'only part of' : `only ${scanCount} commits of`
   return (
-    `Measured on ${scans} this window. The numbers are exact for those scans, but they ` +
+    `Measured on ${commits} this window. The numbers are exact for those commits, but they ` +
     'cover a shorter stretch than a fully measured project, so this row carries no rank ' +
     'and stays out of the team averages.'
   )
@@ -176,11 +176,31 @@ function CappedBadge({ cap, windowDays }: Readonly<{ cap: number; windowDays: nu
   )
 }
 
+function retainedHint(retentionDays: number, windowDays: number): string {
+  return (
+    `Retention deletes this project's scans after ${retentionDays} days, so the row covers only those days ` +
+    `of the last ${windowDays}. The monthly rate divides by those ${retentionDays} days, so it stays comparable.`
+  )
+}
+
+function RetainedBadge({ retentionDays, windowDays }: Readonly<{ retentionDays: number; windowDays: number }>) {
+  return (
+    <Badge
+      variant="outline"
+      className="gap-1 whitespace-nowrap font-normal bg-amber-500/10 text-amber-600 border-amber-500/20"
+      title={retainedHint(retentionDays, windowDays)}
+    >
+      <Info className="h-3 w-3" />
+      Retention {retentionDays} days
+    </Badge>
+  )
+}
+
 function unmeasuredNote(data: Comparison): string | null {
   const parts = [
     data.partial_projects > 0 && `${data.partial_projects} on a partial window`,
     data.pending_projects > 0 && `${data.pending_projects} not computed yet`,
-    data.skipped_insufficient_data > 0 && `${data.skipped_insufficient_data} with too few scans`,
+    data.skipped_insufficient_data > 0 && `${data.skipped_insufficient_data} with too few commits`,
     data.skipped_error > 0 && `${data.skipped_error} failed`,
   ].filter((part): part is string => typeof part === 'string')
 
@@ -469,6 +489,9 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                       {project.data_status === 'partial' && <PartialBadge scanCount={project.scan_count} />}
                       {project.window_scan_cap !== null && (
                         <CappedBadge cap={project.window_scan_cap} windowDays={project.window_days} />
+                      )}
+                      {project.retention_days !== null && (
+                        <RetainedBadge retentionDays={project.retention_days} windowDays={project.window_days} />
                       )}
                     </span>
                   </TableCell>

@@ -24,8 +24,8 @@ class _Store(dict):
     async def mget(self, keys: list[str]) -> dict[str, Any]:
         return {key: self.get(key) for key in keys}
 
-    async def mset(self, mapping: dict[str, Any], ttl_seconds: int | None = None) -> bool:
-        self.update(mapping)
+    async def set(self, key: str, value: Any, ttl_seconds: int | None = None) -> bool:
+        self[key] = value
         self.ttl = ttl_seconds
         return True
 
@@ -405,6 +405,26 @@ class TestDepsDevFetcher:
 
         assert {r.version for r in result[("npm", "foo")]} == {"9.9.9"}
         assert {r.version for r in result[("pypi", "foo")]} == {"1.0.0"}
+
+    def test_a_lookup_that_landed_stays_cached_when_the_request_is_cut_off(self, monkeypatch, cache):
+        real_client = httpx.AsyncClient
+
+        async def _answer(request: httpx.Request) -> httpx.Response:
+            if "slow" in str(request.url):
+                await asyncio.sleep(60)
+            return httpx.Response(200, json=_dated("1.0.0"), request=request)
+
+        monkeypatch.setattr(httpx, "AsyncClient", partial(real_client, transport=httpx.MockTransport(_answer)))
+
+        async def _cut_off() -> None:
+            with pytest.raises(TimeoutError):
+                async with asyncio.timeout(0.5):
+                    await DepsDevReleaseHistoryFetcher().fetch([("npm", "fast"), ("npm", "slow")])
+
+        asyncio.run(_cut_off())
+
+        assert [entry["version"] for entry in cache[CacheKeys.release_history("npm", "fast")]] == ["1.0.0"]
+        assert CacheKeys.release_history("npm", "slow") not in cache
 
     def test_the_url_follows_the_configured_deps_dev_base(self, monkeypatch, cache):
         monkeypatch.setattr("app.services.analyzers.deps_dev.DEPS_DEV_API_URL", "https://deps.example/v3")

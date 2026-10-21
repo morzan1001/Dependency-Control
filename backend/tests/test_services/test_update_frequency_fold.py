@@ -4,12 +4,16 @@ from typing import Any
 
 import pytest
 
+from app.api.v1.endpoints.analytics.update_frequency import _fold_branch
+from app.repositories.update_frequency import BranchWindowActivity
 from app.schemas.analytics import ScanTimelineEntry
 from app.schemas.team import TeamRef
 from app.services.release_history import UpstreamCadenceMetrics
 from app.services.update_frequency import DAYS_PER_MONTH, compute_trend, dominant_ecosystem
-from app.services.update_frequency import FoldedWindow
+from app.services.update_frequency import FoldedWindow, measured_summary
 from app.services.update_frequency_fold import (
+    READY_COVERAGE_RATIO,
+    CommitCoverage,
     commit_coverage,
     fold_window,
     select_window,
@@ -51,7 +55,6 @@ def _delta(
         "commit_hash": commit_hash if commit_hash is not None else f"c-{scan_id}",
         "prev_scan_id": None,
         "prev_created_at": None,
-        "is_baseline": True,
         "dep_count": dep_count,
         "updates": {
             "patch": patch,
@@ -75,7 +78,6 @@ def _chain(deltas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for delta in deltas:
         delta["prev_scan_id"] = prev["_id"] if prev else None
         delta["prev_created_at"] = prev["scan_created_at"] if prev else None
-        delta["is_baseline"] = prev is None
         if delta["dep_count"] > 0 and not delta["error"]:
             prev = delta
     return deltas
@@ -84,7 +86,7 @@ def _chain(deltas: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _fold(
     deltas: list[dict[str, Any]],
     baseline_outdated: set[str] | None = None,
-    window_days: int | None = 90,
+    window_days: int = 90,
 ) -> FoldedWindow:
     return fold_window(select_window(deltas), baseline_outdated, window_days)
 
@@ -106,7 +108,7 @@ def _golden_deltas() -> list[dict[str, Any]]:
 GOLDEN_BASELINE_OUTDATED = {"a", "b", "c", "d"}
 
 
-def _fold_golden(window_days: int | None = 90) -> FoldedWindow:
+def _fold_golden(window_days: int = 90) -> FoldedWindow:
     return _fold(_golden_deltas(), GOLDEN_BASELINE_OUTDATED, window_days)
 
 
@@ -179,9 +181,6 @@ class TestUpdatesPerMonth:
     def test_window_denominator_ignores_the_observed_span(self) -> None:
         # The scans span 40 days; the 90-day window is what counts.
         assert _fold_golden().updates_per_month == 3.72
-
-    def test_without_a_window_no_rate_is_reported(self) -> None:
-        assert _fold_golden(window_days=None).updates_per_month is None
 
     def test_ci_cadence_cannot_change_the_rate(self) -> None:
         # Same 3 updates in the same 90-day window: minutes apart or months apart.
@@ -266,41 +265,33 @@ class TestSameCommitRuns:
 
 
 class TestShortWindows:
-    def test_empty_window(self) -> None:
-        folded = _fold([], {"a"})
-        assert folded.scan_count == 0
-        assert folded.first_scan_date == ""
-        assert folded.last_scan_date == ""
-        assert folded.scan_timeline == []
-        assert folded.updates_per_month is None
-        assert folded.update_coverage_pct is None
-        assert folded.trend_direction == "unknown"
-        assert folded.trend_detail == "Not enough scans to analyze (need at least 2)"
+    """Decided before the fold, which only ever sees two or more bars."""
+
+    @staticmethod
+    def _status(deltas: list[dict[str, Any]]) -> str:
+        scans_per_commit: dict[str, int] = {}
+        for delta in deltas:
+            token = delta.get("commit_hash") or delta["_id"]
+            scans_per_commit[token] = scans_per_commit.get(token, 0) + 1
+        return _fold_branch("main", deltas, BranchWindowActivity(scans_per_commit, BASE)).status
+
+    def test_a_branch_without_deltas_is_pending(self) -> None:
+        assert self._status([]) == "pending"
 
     def test_baseline_only(self) -> None:
-        folded = _fold([_delta("s0", 3, outdated_count=4)], {"a", "b", "c", "d"})
-        assert folded.scan_count == 1
-        assert folded.first_scan_date == folded.last_scan_date == _at(3).isoformat()
-        assert folded.total_updates == 0
-        assert folded.time_range_days == 0.0
-        assert folded.avg_days_between_scans == 0.0
-        # A single scan measures no resolution, so coverage stays unmeasured.
-        assert folded.total_outdated_detected == 0
-        assert folded.update_coverage_pct is None
-        assert folded.scan_timeline == []
+        assert self._status(_chain([_delta("s0", 3, outdated_count=4)])) == "insufficient_data"
 
     def test_window_that_collapses_to_one_usable_scan(self) -> None:
+        assert self._status(_chain([_delta("s0", 0), _delta("s1", 1, dep_count=0)])) == "insufficient_data"
+
+    def test_a_writer_failure_that_leaves_one_usable_scan_is_an_error(self) -> None:
         deltas = _chain([_delta("s0", 0), _delta("s1", 1, dep_count=0), _delta("s2", 2, error="boom")])
-        assert _fold(deltas).scan_count == 1
+        assert self._status(deltas) == "error"
 
     def test_a_window_of_one_run_has_no_interval_to_divide_by(self) -> None:
         # Several documents, one bar: dividing by the documents would divide by zero intervals.
         deltas = _chain([_delta(f"r{i}", i, patch=1, commit_hash="c1") for i in range(5)])
-        folded = _fold(deltas)
-        assert folded.scan_count == 1
-        assert folded.updates_per_scan == 0.0
-        assert folded.avg_days_between_scans == 0.0
-        assert folded.trend_detail == "Not enough scans to analyze (need at least 2)"
+        assert self._status(deltas) == "insufficient_data"
 
 
 class TestUnusableScans:
@@ -351,6 +342,28 @@ class TestUnusableScans:
         assert _fold(with_empties).updates_per_scan == 4.0
 
 
+class TestCoverageVerdict:
+    def test_full_coverage_is_ready(self) -> None:
+        assert CommitCoverage(10, 10).status == "ready"
+
+    def test_the_drop_the_fold_makes_on_purpose_still_reads_as_ready(self) -> None:
+        # Same-commit retries and SBOM-less scans are dropped by design.
+        assert CommitCoverage(9, 10).status == "ready"
+
+    def test_a_window_the_backfill_barely_reached_is_partial(self) -> None:
+        # The measured post-deploy state: deltas for only the two newest of ten scans.
+        assert CommitCoverage(2, 10).status == "partial"
+
+    def test_the_threshold_is_the_documented_ratio(self) -> None:
+        assert CommitCoverage(80, 100).status == "ready"
+        assert CommitCoverage(79, 100).status == "partial"
+        assert READY_COVERAGE_RATIO == 0.8
+
+    def test_more_analyzed_scans_than_the_window_counted_is_ready(self) -> None:
+        # A scan can land between the two reads; that is not a coverage gap.
+        assert CommitCoverage(3, 2).status == "ready"
+
+
 class TestCommitCoverage:
     @staticmethod
     def _over(
@@ -393,6 +406,16 @@ class TestCommitCoverage:
             ]
         )
         assert self._over(deltas, 2) == (2, 2, "ready")
+
+    def test_an_sbom_less_retry_does_not_account_for_the_scan_that_still_owes_its_delta(self) -> None:
+        deltas = _chain(
+            [
+                _delta("s0", 0, commit_hash="c1"),
+                _delta("s1", 10, patch=1, commit_hash="c2"),
+                _delta("s2", 20, dep_count=0, commit_hash="c3"),
+            ]
+        )
+        assert self._over(deltas, undelivered={"c3": 1}) == (2, 3, "partial")
 
     def test_a_scan_naming_no_commit_stands_for_itself(self) -> None:
         deltas = _chain([_delta("s0", 0, commit_hash=""), _delta("s1", 10, patch=1, commit_hash="")])
@@ -691,7 +714,7 @@ class TestModelConstruction:
 
     def test_to_summary(self) -> None:
         teams = [TeamRef(id="team-1", name="Platform")]
-        summary = _fold_golden().to_summary("p1", "Project One", teams, branch="main", window_days=90)
+        summary = measured_summary(_fold_golden().to_metrics("p1", "Project One", branch="main"), teams, window_days=90)
         assert summary.project_id == "p1"
         assert summary.project_name == "Project One"
         assert summary.teams == teams
@@ -709,14 +732,14 @@ class TestModelConstruction:
 
     def test_summary_keeps_unmeasured_coverage_none(self) -> None:
         deltas = _chain([_delta("s0", 0), _delta("s1", 10, patch=1)])
-        summary = _fold(deltas).to_summary("p1", "Project One", window_days=90)
+        summary = measured_summary(_fold(deltas).to_metrics("p1", "Project One"), [], window_days=90)
         assert summary.update_coverage_pct is None
         assert summary.teams == []
 
     def test_a_partial_row_carries_the_folded_numbers_under_the_caveat(self) -> None:
         # The fold sums what it was given; only the caller knows the window held more.
         folded = _fold_golden()
-        summary = folded.to_summary("p1", "Project One", window_days=90, data_status="partial")
+        summary = measured_summary(folded.to_metrics("p1", "Project One"), [], window_days=90, data_status="partial")
         assert summary.data_status == "partial"
         assert (summary.scan_count, summary.total_updates) == (folded.scan_count, folded.total_updates)
         assert summary.updates_per_month == folded.updates_per_month

@@ -13,7 +13,7 @@ async def _seed_scan(db: FakeDatabase, project_id: str, scan_id: str) -> None:
     await db.scans.insert_one({"_id": scan_id, "project_id": project_id, "status": "completed", "sbom_refs": []})
     await db.dependencies.insert_one({"_id": f"{scan_id}:d", "scan_id": scan_id, "name": "flask"})
     await db.scan_update_deltas.insert_one({"_id": scan_id, "project_id": project_id, "branch": "main"})
-    await db.scan_outdated_sets.insert_one({"_id": scan_id, "names": ["flask"], "n": 1})
+    await db.scan_outdated_sets.insert_one({"_id": scan_id, "names": ["flask"]})
 
 
 @pytest.mark.asyncio

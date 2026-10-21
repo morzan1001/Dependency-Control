@@ -73,7 +73,7 @@ async def test_restore_rebuilds_the_delta_and_repoints_the_successor(archive_env
     # The successor arrives while the predecessor is archived, so it can only be a baseline.
     await _seed_scan(db, "scan-2", T0 + timedelta(hours=6), "2.32.0")
     await record_scan_update_delta(db, "scan-2")
-    assert (await db.scan_update_deltas.find_one({"_id": "scan-2"}))["is_baseline"] is True
+    assert (await db.scan_update_deltas.find_one({"_id": "scan-2"}))["prev_scan_id"] is None
 
     with (
         patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
@@ -94,5 +94,4 @@ async def test_restore_rebuilds_the_delta_and_repoints_the_successor(archive_env
 
     successor = await db.scan_update_deltas.find_one({"_id": "scan-2"})
     assert successor["prev_scan_id"] == "scan-1", "the successor still points past the restored scan"
-    assert successor["is_baseline"] is False
     assert successor["updates"]["minor"] == 1

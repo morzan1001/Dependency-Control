@@ -6,8 +6,8 @@ import pytest
 
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
-    _WINDOW_PROJECT_BATCH,
     WINDOW_HARD_LIMIT,
+    WINDOW_PROJECT_BATCH,
     ScanOutdatedSetRepository,
     ScanUpdateDeltaRepository,
     window_scans_by_branch,
@@ -35,32 +35,43 @@ def _delta(scan_id: str, project_id: str, branch: str, minutes: int, **overrides
     } | overrides
 
 
-class TestGroupWindowByBranch:
+class TestWindowChains:
     @pytest.mark.asyncio
-    async def test_buckets_are_keyed_by_project_and_branch_and_ordered_oldest_first(self):
+    async def test_only_the_asked_chains_are_read_and_each_comes_oldest_first(self):
         db = FakeDatabase()
         await db.scan_update_deltas.insert_one(_delta("s2", "p1", "main", 10))
         await db.scan_update_deltas.insert_one(_delta("s1", "p1", "main", 0))
         await db.scan_update_deltas.insert_one(_delta("d1", "p1", "develop", 5))
         await db.scan_update_deltas.insert_one(_delta("o1", "p2", "main", 5))
 
-        buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(["p1", "p2"], T0 - timedelta(days=1))
+        chains = await ScanUpdateDeltaRepository(db).window_chains(
+            [("p1", "main"), ("p2", "main")], T0 - timedelta(days=1), limit=10
+        )
 
-        assert {project: set(branches) for project, branches in buckets.items()} == {
-            "p1": {"main", "develop"},
-            "p2": {"main"},
+        assert {chain: [d["_id"] for d in deltas] for chain, deltas in chains.items()} == {
+            ("p1", "main"): ["s1", "s2"],
+            ("p2", "main"): ["o1"],
         }
-        assert [d["_id"] for d in buckets["p1"]["main"]] == ["s1", "s2"]
 
     @pytest.mark.asyncio
-    async def test_every_delta_names_its_project_and_branch(self):
+    async def test_a_chain_busier_than_the_limit_is_read_newest_first_up_to_it(self):
         db = FakeDatabase()
-        await db.scan_update_deltas.insert_one(_delta("s1", "p1", "main", 0))
+        for minutes in range(5):
+            await db.scan_update_deltas.insert_one(_delta(f"s{minutes}", "p1", "main", minutes))
 
-        buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(["p1"], T0 - timedelta(days=1))
+        chains = await ScanUpdateDeltaRepository(db).window_chains([("p1", "main")], T0 - timedelta(days=1), limit=3)
 
-        delta = buckets["p1"]["main"][0]
-        assert (delta["project_id"], delta["branch"]) == ("p1", "main")
+        assert [d["_id"] for d in chains["p1", "main"]] == ["s2", "s3", "s4"]
+
+    @pytest.mark.asyncio
+    async def test_same_millisecond_deltas_keep_the_writers_order(self):
+        db = FakeDatabase()
+        for scan_id in ("b", "a", "c"):
+            await db.scan_update_deltas.insert_one(_delta(scan_id, "p1", "main", 0))
+
+        chains = await ScanUpdateDeltaRepository(db).window_chains([("p1", "main")], T0 - timedelta(days=1), limit=2)
+
+        assert [d["_id"] for d in chains["p1", "main"]] == ["b", "c"]
 
     @pytest.mark.asyncio
     async def test_deltas_before_the_window_and_of_other_schemas_are_left_out(self):
@@ -69,64 +80,28 @@ class TestGroupWindowByBranch:
         await db.scan_update_deltas.insert_one(_delta("future_schema", "p1", "main", 5, schema_version=99))
         await db.scan_update_deltas.insert_one(_delta("keep", "p1", "main", 5))
 
-        buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(["p1"], T0 - timedelta(days=1))
+        chains = await ScanUpdateDeltaRepository(db).window_chains([("p1", "main")], T0 - timedelta(days=1), limit=10)
 
-        assert [d["_id"] for d in buckets["p1"]["main"]] == ["keep"]
+        assert [d["_id"] for d in chains["p1", "main"]] == ["keep"]
 
     @pytest.mark.asyncio
-    async def test_the_large_outdated_arrays_stay_out_of_the_grouped_output(self):
+    async def test_the_fold_gets_its_fields_and_nothing_else(self):
         db = FakeDatabase()
         await db.scan_update_deltas.insert_one(
             _delta("s1", "p1", "main", 0, updates_sample=[{"n": "requests"}], outdated_added=["flask"])
         )
 
-        buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(["p1"], T0 - timedelta(days=1))
+        chains = await ScanUpdateDeltaRepository(db).window_chains([("p1", "main")], T0 - timedelta(days=1), limit=10)
 
-        delta = buckets["p1"]["main"][0]
+        delta = chains["p1", "main"][0]
         assert "updates_sample" not in delta
-        assert delta["outdated_added"] == ["flask"]
+        assert (delta["project_id"], delta["branch"], delta["outdated_added"]) == ("p1", "main", ["flask"])
 
     @pytest.mark.asyncio
-    async def test_a_scope_larger_than_one_batch_is_read_in_batches(self):
-        db = FakeDatabase()
-        project_ids = [f"p{i}" for i in range(_WINDOW_PROJECT_BATCH * 2 + 1)]
-        for project_id in project_ids:
-            await db.scan_update_deltas.insert_one(_delta(f"{project_id}-s1", project_id, "main", 0))
-
-        real_find = db.scan_update_deltas.find
-        batch_sizes: list[int] = []
-
-        def _spy(query: dict[str, Any], *args: Any, **kwargs: Any):
-            batch_sizes.append(len(query["project_id"]["$in"]))
-            return real_find(query, *args, **kwargs)
-
-        db.scan_update_deltas.find = _spy  # type: ignore[method-assign]
-        buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(project_ids, T0 - timedelta(days=1))
-
-        assert len(buckets) == len(project_ids)
-        assert batch_sizes == [_WINDOW_PROJECT_BATCH, _WINDOW_PROJECT_BATCH, 1]
-
-    @pytest.mark.asyncio
-    async def test_no_stage_accumulates_the_window_server_side(self):
-        # Accumulating the deltas' outdated-name arrays in a $group blew the blocking-stage ceiling on real data.
-        db = FakeDatabase()
-        for index in range(3):
-            await db.scan_update_deltas.insert_one(_delta(f"s{index}", "p1", "main", index))
-
-        def _refuse(*_args: Any, **_kwargs: Any):
-            raise AssertionError("the window must not be accumulated server-side")
-
-        db.scan_update_deltas.aggregate = _refuse  # type: ignore[method-assign]
-        buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(["p1"], T0 - timedelta(days=1))
-
-        assert [d["_id"] for d in buckets["p1"]["main"]] == ["s0", "s1", "s2"]
-
-    @pytest.mark.asyncio
-    async def test_an_empty_scope_issues_no_query(self):
+    async def test_no_chains_issue_no_query(self):
         db = MagicMock()
-        buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch([], T0)
 
-        assert buckets == {}
+        assert await ScanUpdateDeltaRepository(db).window_chains([], T0, limit=10) == {}
         assert db.scan_update_deltas.find.call_count == 0
 
 
@@ -278,21 +253,20 @@ class TestWindowScansByBranch:
         assert activity["p1"]["main"].commit_count == 1
 
     @pytest.mark.asyncio
-    async def test_a_branch_whose_dates_are_restored_iso_strings_keeps_its_count(self):
-        # Archive restore inserts bundle JSON verbatim, so a branch can carry no real date at all.
+    async def test_a_branch_dated_only_in_restored_iso_strings_counts_without_a_window_neither(self):
+        # Archive restore inserts bundle JSON verbatim; the walk cannot date such scans, so they elect nothing.
         db = FakeDatabase()
         await _seed_scan(db, "s1", "p1", "main", 0, created_at="2026-01-01T00:00:00+00:00")
         await _seed_scan(db, "s2", "p1", "main", 10, created_at="2026-01-02T00:00:00+00:00")
 
         activity = await window_scans_by_branch(ScanRepository(db), ["p1"], None)
 
-        assert activity["p1"]["main"].commit_count == 2
-        assert activity["p1"]["main"].last_scan_at == datetime.min.replace(tzinfo=timezone.utc)
+        assert activity == {}
 
     @pytest.mark.asyncio
     async def test_a_scope_larger_than_one_batch_is_read_in_batches(self):
         db = FakeDatabase()
-        project_ids = [f"p{i}" for i in range(_WINDOW_PROJECT_BATCH * 2 + 1)]
+        project_ids = [f"p{i}" for i in range(WINDOW_PROJECT_BATCH * 2 + 1)]
         for project_id in project_ids:
             await _seed_scan(db, f"{project_id}-s1", project_id, "main", 0)
 
@@ -307,7 +281,7 @@ class TestWindowScansByBranch:
         activity = await window_scans_by_branch(ScanRepository(db), project_ids, T0 - timedelta(days=1))
 
         assert len(activity) == len(project_ids)
-        assert batch_sizes == [_WINDOW_PROJECT_BATCH, _WINDOW_PROJECT_BATCH, 1]
+        assert batch_sizes == [WINDOW_PROJECT_BATCH, WINDOW_PROJECT_BATCH, 1]
 
     @pytest.mark.asyncio
     async def test_an_empty_scope_issues_no_query(self):
@@ -315,6 +289,22 @@ class TestWindowScansByBranch:
 
         assert await window_scans_by_branch(ScanRepository(db), [], T0) == {}
         assert db.scans.find.call_count == 0
+
+
+class TestFindDependents:
+    @pytest.mark.asyncio
+    async def test_the_read_stops_at_the_window(self):
+        db = FakeDatabase()
+        await db.scan_update_deltas.insert_many(
+            [
+                _delta("before", "p1", "main", -2 * 24 * 60, prev_scan_id="gone"),
+                _delta("inside", "p1", "main", 0, prev_scan_id="gone"),
+            ]
+        )
+
+        docs = await ScanUpdateDeltaRepository(db).find_dependents("p1", "main", ["gone"], T0 - timedelta(days=1))
+
+        assert [doc["_id"] for doc in docs] == ["inside"]
 
 
 class TestWindowHardLimit:
@@ -327,8 +317,8 @@ class TestNamesByScan:
     @pytest.mark.asyncio
     async def test_scans_without_a_stored_set_are_absent_rather_than_empty(self):
         db = FakeDatabase()
-        await db.scan_outdated_sets.insert_one({"_id": "s1", "names": ["flask", "requests"], "n": 2})
-        await db.scan_outdated_sets.insert_one({"_id": "s2", "names": [], "n": 0})
+        await db.scan_outdated_sets.insert_one({"_id": "s1", "names": ["flask", "requests"]})
+        await db.scan_outdated_sets.insert_one({"_id": "s2", "names": []})
 
         names = await ScanOutdatedSetRepository(db).names_by_scan(["s1", "s2", "s3"])
 

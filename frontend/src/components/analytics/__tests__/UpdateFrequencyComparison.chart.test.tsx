@@ -43,6 +43,7 @@ const project = (name: string, coverage: number, id = name): ProjectUpdateSummar
   last_scan_date: "2026-08-01T00:00:00Z",
   data_status: "ready",
   window_scan_cap: null,
+  retention_days: null,
 });
 
 describe("UpdateFrequencyComparison chart", () => {

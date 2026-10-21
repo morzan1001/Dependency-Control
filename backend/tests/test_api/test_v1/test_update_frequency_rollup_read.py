@@ -7,18 +7,24 @@ from unittest.mock import patch
 import pytest
 
 from app.api.v1.endpoints.analytics import update_frequency as endpoint
+from app.services import update_frequency as walk
 from app.api.v1.endpoints.analytics.update_frequency import (
     _compute_comparison,
     _compute_comparison_from_rollup,
     _fold_branch,
-    _resolve_window,
+    _resolve_windows,
 )
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import WINDOW_HARD_LIMIT, BranchWindowActivity
 from app.schemas.analytics import UpdateFrequencyComparison, UpdateFrequencyMetrics
-from app.services.update_frequency import compute_update_frequency, elect_primary_branch, window_cutoff
+from app.services.update_frequency import (
+    DAYS_PER_MONTH,
+    compute_update_frequency,
+    elect_primary_branch,
+    window_cutoff,
+)
 from app.services.update_frequency_fold import window_bars
 from app.services.update_frequency_rollup import record_scan_update_delta
 from tests.helpers.update_frequency import rollup_metrics
@@ -99,6 +105,12 @@ async def _build_ledger(db: FakeDatabase) -> None:
         await record_scan_update_delta(db, scan["_id"])
 
 
+def _since() -> datetime:
+    since = window_cutoff(WINDOW_DAYS)
+    assert since is not None
+    return since
+
+
 def _project(**overrides: Any) -> dict[str, Any]:
     return {"_id": PROJECT, "name": "Project One", "default_branch": None, "deleted_branches": []} | overrides
 
@@ -113,9 +125,7 @@ async def _elected(db: FakeDatabase, project: dict[str, Any]) -> str | None:
     )
 
 
-async def _live(
-    db: FakeDatabase, project: dict[str, Any] | None = None, hard_limit: int = WINDOW_HARD_LIMIT
-) -> UpdateFrequencyMetrics:
+async def _live(db: FakeDatabase, project: dict[str, Any] | None = None) -> UpdateFrequencyMetrics:
     project = project or _project()
     branch = await _elected(db, project)
     return await compute_update_frequency(
@@ -126,7 +136,6 @@ async def _live(
         analysis_repo=AnalysisResultRepository(db),
         branch=branch,
         window_days=WINDOW_DAYS,
-        hard_limit=hard_limit,
     )
 
 
@@ -579,25 +588,40 @@ def _fake_deltas(branch: str, count: int, newest_days_ago: float, retries: int =
 
 
 class TestBranchChoice:
-    def test_a_project_whose_only_branches_are_deleted_resolves_to_nothing(self):
-        resolved = _resolve_window(
-            {"gone": BranchWindowActivity(_one_scan_each(3), _days_ago(2))},
-            {"gone": _fake_deltas("gone", 3, 2)},
-            {"_id": PROJECT, "deleted_branches": ["gone"]},
-        )
-        assert (resolved.branch, resolved.status) == (None, "insufficient_data")
+    @pytest.mark.asyncio
+    async def test_a_project_whose_only_branches_are_deleted_resolves_to_nothing(self):
+        db = FakeDatabase()
+        for i, day in enumerate((60, 50, 40)):
+            await _seed_scan(db, f"g{i}", _days_ago(day), {"requests": f"2.0.{i}"}, (), branch="gone")
+        await _build_ledger(db)
 
-    def test_the_branch_comes_from_the_scans_not_from_the_ledger(self):
-        # A ledger that reached only the quieter branch must not move the project; the scans still elect the branch.
-        resolved = _resolve_window(
-            {
-                "old": BranchWindowActivity(_one_scan_each(3), _days_ago(60)),
-                "new": BranchWindowActivity(_one_scan_each(2), _days_ago(10)),
-            },
-            {"new": _fake_deltas("new", 2, 10)},
-            {"_id": PROJECT},
-        )
-        assert (resolved.branch, resolved.status) == ("old", "pending")
+        resolved = await _resolve_windows(db, [_project(deleted_branches=["gone"])], _since())
+
+        assert (resolved[PROJECT].branch, resolved[PROJECT].status) == (None, "insufficient_data")
+
+    @pytest.mark.asyncio
+    async def test_the_branch_comes_from_the_scans_and_only_its_deltas_are_read(self):
+        db = FakeDatabase()
+        for i, day in enumerate((80, 70, 60)):
+            await _seed_scan(db, f"o{i}", _days_ago(day), {"requests": f"2.0.{i}"}, (), branch="old")
+        for i, day in enumerate((20, 10)):
+            await _seed_scan(db, f"n{i}", _days_ago(day), {"requests": f"9.0.{i}"}, (), branch="new")
+        await _build_ledger(db)
+        # A ledger that reached only the quieter branch must not move the project.
+        await db.scan_update_deltas.delete_many({"branch": "old"})
+        real_find = db.scan_update_deltas.find
+        read: list[tuple[str, str]] = []
+
+        def _spy(query: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
+            read.append((query["project_id"], query["branch"]))
+            return real_find(query, *args, **kwargs)
+
+        db.scan_update_deltas.find = _spy  # type: ignore[method-assign]
+
+        resolved = await _resolve_windows(db, [_project()], _since())
+
+        assert (resolved[PROJECT].branch, resolved[PROJECT].status) == ("old", "pending")
+        assert read == [(PROJECT, "old")]
 
     @pytest.mark.asyncio
     async def test_the_chosen_branch_is_reported_on_the_row(self):
@@ -751,9 +775,8 @@ async def _seed_storm(db: FakeDatabase, commits: int, retries: int) -> None:
 class TestWindowCap:
     @staticmethod
     async def _both(db: FakeDatabase, cap: int) -> tuple[UpdateFrequencyMetrics, UpdateFrequencyMetrics | None]:
-        live = await _live(db, hard_limit=cap)
-        with patch.object(endpoint, "WINDOW_HARD_LIMIT", cap):
-            return live, await _rollup(db)
+        with patch.object(endpoint, "WINDOW_HARD_LIMIT", cap), patch.object(walk, "WINDOW_HARD_LIMIT", cap):
+            return await _live(db), await _rollup(db)
 
     @pytest.mark.asyncio
     async def test_both_paths_fold_the_same_newest_documents_when_the_cap_bites(self):
@@ -789,7 +812,8 @@ class TestWindowCap:
         deltas = _fake_deltas("main", documents, 1, retries=retries)
         assert len({d["commit_hash"] for d in deltas}) == window_commits
 
-        resolved = _fold_branch("main", deltas, BranchWindowActivity(_one_scan_each(window_commits), _days_ago(1)))
+        read = deltas[-WINDOW_HARD_LIMIT:]
+        resolved = _fold_branch("main", read, BranchWindowActivity(_one_scan_each(window_commits), _days_ago(1)))
 
         assert resolved.status == "ready"
         assert len(resolved.window) == min(documents, WINDOW_HARD_LIMIT)
@@ -823,6 +847,63 @@ class TestComparisonRowDifferential:
         # Three of four forward updates are patches; no other field carries 0.75, so a swapped tier shows.
         assert (live.projects[0].patch_ratio, rolled.projects[0].patch_ratio) == (0.75, 0.75)
         assert (live.projects[0].total_updates, live.projects[0].update_coverage_pct) == (4, 100.0)
+
+
+class TestRetentionHorizon:
+    @pytest.mark.asyncio
+    async def test_both_read_paths_divide_a_window_past_retention_by_the_days_it_keeps(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {"a": "1.0.0", "b": "1.0.0"}, ("a",))
+        await _seed_scan(db, "s2", _days_ago(50), {"a": "1.0.1", "b": "1.1.0"}, ())
+        await _build_ledger(db)
+        await _seed_projects(db, [PROJECT])
+        await db.projects.update_one({"_id": PROJECT}, {"$set": {"retention_days": 90, "retention_action": "delete"}})
+
+        live = UpdateFrequencyComparison(**await _compute_comparison(db, [PROJECT], None, window_days=365))
+        rolled = UpdateFrequencyComparison(
+            **await _compute_comparison_from_rollup(db, [PROJECT], None, window_days=365)
+        )
+
+        assert live.projects[0].model_dump() == rolled.projects[0].model_dump()
+        row = rolled.projects[0]
+        assert (row.window_days, row.retention_days) == (365, 90)
+        assert row.updates_per_month == round(2 / (90 / DAYS_PER_MONTH), 2)
+
+    @pytest.mark.asyncio
+    async def test_both_read_paths_divide_by_the_whole_window_once_a_kept_scan_predates_retention(self):
+        # A pinned or released scan outlives retention, so its interval reaches past the horizon.
+        db = FakeDatabase()
+        await _seed_scan(db, "pinned", _days_ago(200), {"a": "1.0.0"}, ())
+        await _seed_scan(db, "s2", _days_ago(60), {"a": "1.0.1"}, ())
+        await _seed_scan(db, "s3", _days_ago(50), {"a": "1.0.2"}, ())
+        await _build_ledger(db)
+        await _seed_projects(db, [PROJECT])
+        await db.projects.update_one({"_id": PROJECT}, {"$set": {"retention_days": 90, "retention_action": "delete"}})
+
+        live = UpdateFrequencyComparison(**await _compute_comparison(db, [PROJECT], None, window_days=365))
+        rolled = UpdateFrequencyComparison(
+            **await _compute_comparison_from_rollup(db, [PROJECT], None, window_days=365)
+        )
+
+        assert live.projects[0].model_dump() == rolled.projects[0].model_dump()
+        row = rolled.projects[0]
+        assert (row.retention_days, row.updates_per_month) == (None, round(2 / (365 / DAYS_PER_MONTH), 2))
+
+    @pytest.mark.asyncio
+    async def test_a_project_that_keeps_its_scans_divides_by_the_whole_window(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {"a": "1.0.0"}, ())
+        await _seed_scan(db, "s2", _days_ago(50), {"a": "1.0.1"}, ())
+        await _build_ledger(db)
+        await _seed_projects(db, [PROJECT])
+        await db.projects.update_one({"_id": PROJECT}, {"$set": {"retention_days": 90, "retention_action": "none"}})
+
+        rolled = UpdateFrequencyComparison(
+            **await _compute_comparison_from_rollup(db, [PROJECT], None, window_days=365)
+        )
+
+        row = rolled.projects[0]
+        assert (row.retention_days, row.updates_per_month) == (None, round(1 / (365 / DAYS_PER_MONTH), 2))
 
 
 class TestScopeAndTeams:

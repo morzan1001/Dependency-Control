@@ -62,13 +62,12 @@ async def test_ingest_records_delta_for_each_scan(db, _stored_sboms):
 
     baseline = await db.scan_update_deltas.find_one({"_id": first})
     assert baseline is not None, "the ingest path never wrote a delta for the first scan"
-    assert baseline["is_baseline"] is True
+    assert baseline["prev_scan_id"] is None
     assert baseline["dep_count"] == 2
 
     delta = await db.scan_update_deltas.find_one({"_id": second})
     assert delta is not None, "the ingest path never wrote a delta for the second scan"
     assert delta["prev_scan_id"] == first
-    assert delta["is_baseline"] is False
     assert delta["updates"] == {"patch": 0, "minor": 1, "major": 0, "unknown": 0, "downgrade": 0}
 
     # No analyzer ran, so the scan has no outdated measurement to store.

@@ -4,23 +4,26 @@ from typing import Any
 import pytest
 from prometheus_client import REGISTRY
 
-from app.core import UNDATED
 from app.core.constants import (
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
 )
+from app.api.v1.endpoints.analytics.update_frequency import _branch_scan_token
+from app.core.init_db import create_indexes
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION
+from app.repositories import update_frequency as update_frequency_repository
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
-    _WINDOW_PROJECT_BATCH,
+    WINDOW_PROJECT_BATCH,
     BranchWindowActivity,
     LedgerEntry,
     ScanUpdateDeltaRepository,
     window_scan_ids_by_branch,
     window_scans_by_branch,
 )
+from app.services.update_frequency import _load_completed_scans
 from app.services.update_frequency_reconcile import ReconcileReport, run_update_frequency_reconcile
 
 pytestmark = [pytest.mark.live_mongo, pytest.mark.asyncio]
@@ -29,7 +32,7 @@ T0 = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 SINCE = T0 - timedelta(days=1)
 V = UPDATE_DELTA_SCHEMA_VERSION
 # Splits p-a and p-b into different batches, so a batch boundary cannot hide a lost chain.
-SCOPE = ["p-a", *(f"p-filler-{i:03d}" for i in range(_WINDOW_PROJECT_BATCH)), "p-b", "p-c"]
+SCOPE = ["p-a", *(f"p-filler-{i:03d}" for i in range(WINDOW_PROJECT_BATCH)), "p-b", "p-c"]
 
 
 def _at(minutes: int) -> datetime:
@@ -118,19 +121,19 @@ async def test_the_ledger_census_keys_every_named_chain_by_delta(db):
 
     assert chains == {
         ("p-a", "main"): {
-            "a1": LedgerEntry(V, None, None, _at(0), True),
-            "a2": LedgerEntry(V, "a1", _at(0), _at(10), False),
-            "a3": LedgerEntry(V, "a1", _at(0), _at(20), False),
-            "a4": LedgerEntry(V - 1, "a3", _at(20), _at(30), True),
-            "a5": LedgerEntry(None, None, None, _at(40), True),
+            "a1": LedgerEntry(V, None, None, _at(0), True, False),
+            "a2": LedgerEntry(V, "a1", _at(0), _at(10), False, False),
+            "a3": LedgerEntry(V, "a1", _at(0), _at(20), False, True),
+            "a4": LedgerEntry(V - 1, "a3", _at(20), _at(30), True, False),
+            "a5": LedgerEntry(None, None, None, _at(40), True, False),
         },
-        ("p-a", "release/1.x"): {"r1": LedgerEntry(V, "gone", None, _at(5), True)},
+        ("p-a", "release/1.x"): {"r1": LedgerEntry(V, "gone", None, _at(5), True, False)},
         ("p-b", "main"): {
-            "b0": LedgerEntry(V, None, None, SINCE, True),
-            "b1": LedgerEntry(V, "b0", SINCE, _at(1), False),
-            "b2": LedgerEntry(V, "b1", _at(1), _at(2), False),
+            "b0": LedgerEntry(V, None, None, SINCE, True, False),
+            "b1": LedgerEntry(V, "b0", SINCE, _at(1), False, False),
+            "b2": LedgerEntry(V, "b1", _at(1), _at(2), False, False),
         },
-        ("p-b", "feature"): {"f1": LedgerEntry(V + 1, None, None, _at(3), True)},
+        ("p-b", "feature"): {"f1": LedgerEntry(V + 1, None, None, _at(3), True, False)},
     }
 
 
@@ -169,18 +172,15 @@ async def test_branch_activity_inside_a_window_counts_commits_and_the_newest_sca
     }
 
 
-async def test_branch_activity_over_the_whole_history_skips_undated_scans_for_the_newest(db):
+async def test_branch_activity_over_the_whole_history_counts_only_dated_scans(db):
     await _seed_scans(db)
 
     activity = await window_scans_by_branch(ScanRepository(db), SCOPE, None)
 
     assert activity == {
         "p-a": {
-            "main": BranchWindowActivity(
-                {"c1": 2, "c2": 1, "sa4": 1, "sa5": 1, "sa6": 1, "c-old": 1, "c-text": 1}, _at(30)
-            ),
-            "dev": BranchWindowActivity({"cd1": 1, "cd2": 1, "cd3": 1}, _at(50)),
-            "legacy": BranchWindowActivity({"cl1": 1, "cl2": 1}, UNDATED),
+            "main": BranchWindowActivity({"c1": 2, "c2": 1, "sa4": 1, "sa5": 1, "sa6": 1, "c-old": 1}, _at(30)),
+            "dev": BranchWindowActivity({"cd3": 1}, _at(50)),
         },
         "p-b": {"main": BranchWindowActivity({"cb1": 1}, _at(1))},
     }
@@ -214,3 +214,96 @@ async def test_the_reconcile_accumulates_neither_census_server_side(db):
     assert issued[("scan_update_deltas", "aggregate")] == 0
     assert issued[("scans", "aggregate")] == 0
     assert issued[("scan_update_deltas", "find")] >= 1
+
+
+async def _explained(collection: Any, read: Any) -> list[dict[str, Any]]:
+    """Runs ``read`` and explains every cursor it opened on ``collection``, sort and limit included."""
+    cursors: list[Any] = []
+    real_find = collection.find
+
+    def _find(*args: Any, **kwargs: Any) -> Any:
+        cursors.append(real_find(*args, **kwargs))
+        return cursors[-1]
+
+    collection.find = _find
+    try:
+        await read()
+    finally:
+        collection.find = real_find
+    return [await cursor.explain() for cursor in cursors]
+
+
+async def test_the_comparison_reads_a_busy_chain_only_up_to_its_cap_off_the_chain_index(db):
+    await create_indexes(db)
+    await db.scan_update_deltas.insert_many(
+        [
+            {"_id": f"{branch}-{index:03d}", "project_id": "p-a", "branch": branch, "schema_version": V,
+             "scan_created_at": _at(index), "dep_count": 1, "error": None}
+            for branch in ("main", "feature")
+            for index in range(40)
+        ]
+    )  # fmt: skip
+    repo = ScanUpdateDeltaRepository(db)
+
+    plans = await _explained(repo.collection, lambda: repo.window_chains([("p-a", "main")], SINCE, limit=5))
+
+    (plan,) = plans
+    assert plan["executionStats"]["totalDocsExamined"] == 5
+    assert "project_id_1_branch_1_scan_created_at_-1__id_-1" in str(plan["queryPlanner"]["winningPlan"])
+
+
+async def test_the_scan_count_view_elects_from_a_bounded_read_off_the_tip_index(db, monkeypatch):
+    await create_indexes(db)
+    monkeypatch.setattr(update_frequency_repository, "WINDOW_HARD_LIMIT", 5)
+    for index in range(30):
+        await _scan(db, f"s{index:02d}", "p-a", "main" if index % 2 else "dev", _at(index), commit_hash=f"c{index}")
+    repo = ScanRepository(db)
+
+    plans = await _explained(repo.collection, lambda: window_scans_by_branch(repo, ["p-a"], None))
+
+    (plan,) = plans
+    assert plan["executionStats"]["totalDocsExamined"] == 5
+
+
+@pytest.mark.parametrize(("since", "examined"), [(None, 5), (_at(10), 21)])
+async def test_the_walk_reads_its_newest_scans_off_the_branch_index_without_a_blocking_sort(db, since, examined):
+    await create_indexes(db)
+    for index in range(30):
+        await _scan(db, f"s{index:02d}", "p-a", "main", _at(index), commit_hash=f"c{index}")
+    await _scan(db, "s-twin", "p-a", "main", _at(29), commit_hash="c29")
+    repo = ScanRepository(db)
+
+    plans = await _explained(repo.collection, lambda: _load_completed_scans(repo, "p-a", "main", 1, since))
+
+    (plan,) = plans
+    assert "SORT" not in str(plan["queryPlanner"]["winningPlan"])
+    assert plan["executionStats"]["totalDocsExamined"] == examined
+    scans, _truncated = await _load_completed_scans(repo, "p-a", "main", 1, since)
+    assert [scan["_id"] for scan in scans][-2:] == ["s-twin", "s29"]
+
+
+async def test_the_cache_token_reads_only_the_stretch_the_walk_reads(db, monkeypatch):
+    await create_indexes(db)
+    for index in range(30):
+        await _scan(db, f"s{index:02d}", "p-a", "main", _at(index), commit_hash=f"c{index}", completed_at=_at(index))
+    # The walk breaks this tie by _id descending, so the twin, not s25, closes its stretch of five.
+    await _scan(db, "s25-twin", "p-a", "main", _at(25), commit_hash="c25", completed_at=_at(25))
+    pipelines: list[list[dict[str, Any]]] = []
+    real_aggregate = ScanRepository.aggregate
+
+    async def _aggregate(self: ScanRepository, pipeline: list[dict[str, Any]], *args: Any, **kwargs: Any) -> Any:
+        pipelines.append(pipeline)
+        return await real_aggregate(self, pipeline, *args, **kwargs)
+
+    monkeypatch.setattr(ScanRepository, "aggregate", _aggregate)
+
+    token = await _branch_scan_token(db, "p-a", "main", None, 5)
+
+    assert token == f"5@{_at(29)}@{_at(25)}"
+    explain = await db.command(
+        "explain", {"aggregate": "scans", "pipeline": pipelines[0], "cursor": {}}, verbosity="executionStats"
+    )
+    stats = explain.get("executionStats") or explain["stages"][0]["$cursor"]["executionStats"]
+    assert stats["totalDocsExamined"] == 5
+    await db.scans.update_one({"_id": "s25-twin"}, {"$set": {"completed_at": _at(60)}})
+    assert await _branch_scan_token(db, "p-a", "main", None, 5) == f"5@{_at(60)}@{_at(25)}"

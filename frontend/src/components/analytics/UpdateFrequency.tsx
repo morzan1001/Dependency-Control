@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -65,11 +65,26 @@ function formatDays(days: number): string {
   return `${days.toFixed(days < 10 ? 1 : 0)}d`
 }
 
-function windowCapNotice(cap: number, windowDays?: number): string {
-  const scope = windowDays ? `the last ${windowDays} days` : 'the requested window'
+function windowCapNotice(cap: number, windowDays: number): string {
   return (
     `This branch is busier than the analysis follows: every number below covers its newest ` +
-    `${cap} scans, not all of ${scope}.`
+    `${cap} scans, not all of the last ${windowDays} days.`
+  )
+}
+
+function retentionNotice(retentionDays: number, windowDays: number): string {
+  return (
+    `Retention keeps ${retentionDays} days of scans, so the monthly rate divides by those ` +
+    `${retentionDays} days, not by all of the last ${windowDays} days.`
+  )
+}
+
+function WindowNotice({ children }: Readonly<{ children: ReactNode }>) {
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      <span>{children}</span>
+    </div>
   )
 }
 
@@ -104,7 +119,7 @@ function SummaryCards({ data, windowDays }: Readonly<{ data: UpdateFrequencyMetr
         <CardContent>
           <div className="text-2xl font-bold">{formatDays(data.avg_days_between_scans)}</div>
           <p className="text-xs text-muted-foreground">
-            avg. between {data.scan_count} scans
+            avg. between {data.scan_count} commits
           </p>
         </CardContent>
       </Card>
@@ -451,8 +466,8 @@ export function UpdateFrequency() {
           <CardContent className="py-12">
             <div className="flex flex-col items-center gap-4 text-muted-foreground">
               <Clock className="h-12 w-12" />
-              <p>At least 2 completed scans are required for update frequency analysis</p>
-              <p className="text-sm">Currently {data.scan_count} scan(s) available</p>
+              <p>At least 2 scanned commits are required for update frequency analysis</p>
+              <p className="text-sm">Currently {data.scan_count} commit(s) scanned</p>
             </div>
           </CardContent>
         </Card>
@@ -470,11 +485,15 @@ export function UpdateFrequency() {
             </div>
           )}
 
-          {data.window_scan_cap !== null && (
-            <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>{windowCapNotice(data.window_scan_cap, windowDays)}</span>
-            </div>
+          {windowDays !== undefined && (
+            <>
+              {data.window_scan_cap !== null && (
+                <WindowNotice>{windowCapNotice(data.window_scan_cap, windowDays)}</WindowNotice>
+              )}
+              {data.retention_days !== null && (
+                <WindowNotice>{retentionNotice(data.retention_days, windowDays)}</WindowNotice>
+              )}
+            </>
           )}
 
           <SummaryCards data={data} windowDays={windowDays} />

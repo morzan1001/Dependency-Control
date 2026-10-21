@@ -1,3 +1,4 @@
+import contextlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -104,7 +105,7 @@ class TestBaseline:
 
         doc = await _delta(db, "s1")
         assert doc is not None
-        assert doc["is_baseline"] is True
+        assert "is_baseline" not in doc
         assert doc["prev_scan_id"] is None
         assert doc["prev_created_at"] is None
         assert doc["dep_count"] == 2
@@ -129,10 +130,7 @@ class TestBaseline:
 
         outdated_set = await db.scan_outdated_sets.find_one({"_id": "s1"})
         assert outdated_set is not None
-        assert outdated_set["names"] == ["flask", "requests"]
-        assert outdated_set["n"] == 2
-        assert outdated_set["scan_created_at"] == _at(0)
-        assert outdated_set["schema_version"] == 1
+        assert outdated_set == {"_id": "s1", "names": ["flask", "requests"]}
 
     @pytest.mark.asyncio
     async def test_scan_without_dependencies_is_recorded_with_zero_deps(self):
@@ -144,7 +142,26 @@ class TestBaseline:
         doc = await _delta(db, "s1")
         assert doc is not None
         assert doc["dep_count"] == 0
-        assert doc["is_baseline"] is True
+
+    @pytest.mark.asyncio
+    async def test_scan_without_dependencies_links_no_predecessor_and_keeps_no_outdated_set(self):
+        """Never a predecessor and never folded, so a comparison or outdated set of it would go unread."""
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _at(0), [_dep("s1", "requests", "2.0.0")], ("requests",))
+        await _seed_scan(db, "s2", _at(1), [], ("requests",))
+        await record_scan_update_delta(db, "s1")
+        finds: list[Any] = []
+        _spy_on_find(db.scan_update_deltas, finds)
+        _spy_on_find(db.analysis_results, finds)
+
+        await record_scan_update_delta(db, "s2")
+
+        doc = await _delta(db, "s2")
+        assert doc is not None
+        assert (doc["dep_count"], doc["prev_scan_id"], doc["prev_created_at"]) == (0, None, None)
+        assert doc["outdated_count"] is None
+        assert await db.scan_outdated_sets.find_one({"_id": "s2"}) is None
+        assert finds == []
 
 
 class TestDiff:
@@ -181,7 +198,6 @@ class TestDiff:
 
         doc = await _delta(db, "s2")
         assert doc is not None
-        assert doc["is_baseline"] is False
         assert doc["prev_scan_id"] == "s1"
         assert doc["prev_created_at"] == _at(0)
         assert doc["updates"] == {"patch": 1, "minor": 1, "major": 1, "unknown": 0, "downgrade": 0}
@@ -379,7 +395,6 @@ class TestProjectSeparation:
 
         doc = await _delta(db, "b1")
         assert doc is not None
-        assert doc["is_baseline"] is True
         assert doc["prev_scan_id"] is None
         assert _counted(doc) == 0
 
@@ -415,7 +430,7 @@ class TestSameTimestamp:
         second = await _delta(db, "s2")
         assert first is not None
         assert second is not None
-        assert first["is_baseline"] is True
+        assert first["prev_scan_id"] is None
         assert second["prev_scan_id"] == "s1"
         assert second["updates"]["major"] == 1
 
@@ -450,7 +465,7 @@ class TestPredecessorSelection:
         empty = await _delta(db, "s2")
         assert empty is not None
         assert empty["dep_count"] == 0
-        assert empty["prev_scan_id"] == "s1"
+        assert empty["prev_scan_id"] is None
 
         doc = await _delta(db, "s3")
         assert doc is not None
@@ -482,6 +497,7 @@ class TestPredecessorSelection:
         assert demoted is not None
         assert "dependencies changed" in demoted["error"]
         assert demoted["dep_count"] == 0
+        assert demoted["commit_hash"] == "commit-s2"
         assert await db.scan_outdated_sets.find_one({"_id": "s2"}) is None
 
     @pytest.mark.asyncio
@@ -495,7 +511,7 @@ class TestPredecessorSelection:
 
         doc = await _delta(db, "s2")
         assert doc is not None
-        assert doc["is_baseline"] is True
+        assert doc["prev_scan_id"] is None
         assert _counted(doc) == 0
 
     @pytest.mark.asyncio
@@ -514,6 +530,22 @@ class TestPredecessorSelection:
         assert doc is not None
         assert doc["prev_scan_id"] == "s1"
         assert doc["updates"]["minor"] == 1
+
+    @pytest.mark.asyncio
+    async def test_an_error_document_that_counts_dependencies_is_not_a_predecessor(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _at(0), [_dep("s1", "requests", "2.0.0")])
+        await _seed_scan(db, "s2", _at(1), [_dep("s2", "requests", "2.1.0")])
+        await _seed_scan(db, "s3", _at(2), [_dep("s3", "requests", "2.2.0")])
+        await record_scan_update_delta(db, "s1")
+        await record_scan_update_delta(db, "s2")
+        await db.scan_update_deltas.update_one({"_id": "s2"}, {"$set": {"error": "OperationFailure: boom"}})
+
+        await record_scan_update_delta(db, "s3")
+
+        doc = await _delta(db, "s3")
+        assert doc is not None
+        assert doc["prev_scan_id"] == "s1"
 
 
 class TestOutOfOrderArrival:
@@ -556,7 +588,7 @@ class TestOutOfOrderArrival:
 
         empty = await _delta(db, "s3")
         assert empty is not None
-        assert empty["prev_scan_id"] == "s2"
+        assert empty["prev_scan_id"] is None
 
         doc = await _delta(db, "s4")
         assert doc is not None
@@ -572,12 +604,13 @@ class TestOutOfOrderArrival:
         await record_scan_update_delta(db, "anchor")
         for i in range(1, 8):
             await record_scan_update_delta(db, f"empty{i}")
+        await db.scan_update_deltas.update_many({}, {"$set": {"computed_at": T0}})
 
         await _seed_scan(db, "late", _at(1), [_dep("late", "requests", "1.5.0")])
         with caplog.at_level("WARNING"):
             await record_scan_update_delta(db, "late")
 
-        repaired = [i for i in range(1, 8) if (await _delta(db, f"empty{i}"))["prev_scan_id"] == "late"]
+        repaired = [i for i in range(1, 8) if (await _delta(db, f"empty{i}"))["computed_at"] != T0]
         assert repaired == [1, 2, 3, 4, 5]
         # Silence here would hide deltas left on a stale predecessor; the hop count is the assertion above.
         assert "repair stopped" in caplog.text
@@ -739,6 +772,30 @@ class TestScanLostItsUsableStatus:
         assert repaired["outdated_resolved"] == ["requests"]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("between", ["error", "sbom_less"])
+    async def test_the_linked_successor_is_repointed_past_a_delta_that_is_never_a_predecessor(self, between: str):
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _at(0), [_dep("s1", "requests", "1.0.0")])
+        await _seed_scan(db, "s2", _at(1), [_dep("s2", "requests", "2.0.0")])
+        await _seed_scan(db, "s3", _at(2), [] if between == "sbom_less" else [_dep("s3", "requests", "2.5.0")])
+        await _seed_scan(db, "s4", _at(3), [_dep("s4", "requests", "3.0.0")])
+        await record_scan_update_delta(db, "s1")
+        await record_scan_update_delta(db, "s2")
+        failing = _failing_dependency_reads(db, only_scan="s3") if between == "error" else contextlib.nullcontext()
+        with failing:
+            await record_scan_update_delta(db, "s3")
+        await record_scan_update_delta(db, "s4")
+        assert (await _delta(db, "s4"))["prev_scan_id"] == "s2"
+
+        await db.dependencies.delete_many({"scan_id": "s2"})
+        await db.scans.update_one({"_id": "s2"}, {"$set": {"status": "failed"}})
+        await record_scan_update_delta(db, "s2")
+
+        repaired = await _delta(db, "s4")
+        assert repaired["prev_scan_id"] == "s1"
+        assert repaired["updates"]["major"] == 1
+
+    @pytest.mark.asyncio
     async def test_a_scan_that_never_had_a_delta_stays_untouched(self):
         db = FakeDatabase()
         await _seed_scan(db, "s1", _at(0), [_dep("s1", "requests", "1.0.0")])
@@ -839,6 +896,7 @@ class TestFailures:
     async def test_unwritable_error_document_does_not_reach_the_caller(self):
         db = FakeDatabase()
         await _seed_scan(db, "s1", _at(0), [_dep("s1", "requests", "2.0.0")])
+        errors_before = _counter("error")
 
         async def _raise(*_args: Any, **_kwargs: Any) -> Any:
             raise RuntimeError("not authorized on scan_update_deltas")
@@ -846,9 +904,38 @@ class TestFailures:
         db.scan_update_deltas.update_one = _raise
 
         with _failing_dependency_reads(db):
-            await record_scan_update_delta(db, "s1")
+            written = await record_scan_update_delta(db, "s1")
 
+        assert written is False
         assert await _delta(db, "s1") is None
+        assert _counter("error") == errors_before + 1
+
+    @pytest.mark.asyncio
+    async def test_a_successor_whose_error_document_cannot_be_written_does_not_end_the_repair_walk(self):
+        db = FakeDatabase()
+        for index, scan_id in enumerate(("s1", "s2", "s3", "s4")):
+            await _seed_scan(db, scan_id, _at(index), [_dep(scan_id, "requests", f"{index + 1}.0.0")], ())
+        for scan_id in ("s1", "s3", "s4"):
+            await record_scan_update_delta(db, scan_id)
+        await db.scan_update_deltas.update_one({"_id": "s4"}, {"$set": {"computed_at": T0}})
+        real_find, real_update_one = db.analysis_results.find, db.scan_update_deltas.update_one
+
+        def _find(query: Any = None, *args: Any, **kwargs: Any) -> Any:
+            if (query or {}).get("scan_id") == "s3":
+                raise RuntimeError("connection reset by peer")
+            return real_find(query, *args, **kwargs)
+
+        async def _update_one(query: Any, *args: Any, **kwargs: Any) -> Any:
+            if query.get("_id") == "s3":
+                raise RuntimeError("not authorized on scan_update_deltas")
+            return await real_update_one(query, *args, **kwargs)
+
+        db.analysis_results.find = _find
+        db.scan_update_deltas.update_one = _update_one
+
+        assert await record_scan_update_delta(db, "s2") is True
+
+        assert (await _delta(db, "s4"))["computed_at"] != T0
 
     @pytest.mark.asyncio
     async def test_successful_write_counts_as_ok(self):

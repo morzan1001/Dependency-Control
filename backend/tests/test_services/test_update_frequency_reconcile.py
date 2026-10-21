@@ -99,9 +99,9 @@ async def _seed_chain(db: FakeDatabase, versions: dict[str, str], *, record: boo
 def spy(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     calls: list[str] = []
 
-    async def _record(db: Any, scan_id: str) -> None:
+    async def _record(db: Any, scan_id: str) -> bool:
         calls.append(scan_id)
-        await record_scan_update_delta(db, scan_id)
+        return await record_scan_update_delta(db, scan_id)
 
     monkeypatch.setattr(reconcile_module, "record_scan_update_delta", _record)
     return calls
@@ -224,18 +224,60 @@ class TestStaleSchema:
         assert spy == ["s1"]
         assert report.resolved == {"stale": 1}
 
+
+class TestRecordedFailure:
+    """A usable scan's error document keeps its branch partial until the scan leaves the window, unless retried."""
+
     @pytest.mark.asyncio
-    async def test_a_recorded_failure_is_left_alone(self, spy: list[str]):
-        """The writer stored that outcome on purpose."""
+    async def test_a_writer_failure_on_a_usable_scan_is_derived_again(
+        self, spy: list[str], caplog: pytest.LogCaptureFixture
+    ):
         db = FakeDatabase()
         await _seed_project(db)
-        await _seed_chain(db, {"s1": "1.0.0"})
-        await db.scan_update_deltas.update_one({"_id": "s1"}, {"$set": {"error": "boom"}})
+        await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"})
+        with patch.object(rollup_module, "load_scan_deps", AsyncMock(side_effect=RuntimeError("mongo hiccup"))):
+            await record_scan_update_delta(db, "s1")
+        assert await _folded_window(db) == ["s2"]
+        exported = _metric("error", "resolved")
+
+        with caplog.at_level(logging.WARNING, logger=reconcile_module.__name__):
+            report = await run_update_frequency_reconcile(db)
+
+        assert spy == ["s1"]
+        assert report.resolved == {"error": 1}
+        assert _metric("error", "resolved") == exported + 1
+        assert (await _delta(db, "s1") or {}).get("error") is None
+        assert await _folded_window(db) == ["s1", "s2"]
+        assert "1 error" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_a_delta_demoted_for_lost_dependencies_is_derived_again(self, spy: list[str]):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"})
+        await db.dependencies.insert_one({**_dep("s1", "flask", "3.0.0"), "project_id": PROJECT})
+        await record_scan_update_delta(db, "s2")
+        assert (await _delta(db, "s1") or {}).get("error")
 
         report = await run_update_frequency_reconcile(db)
 
-        assert spy == []
-        assert report == ReconcileReport(chains=1)
+        assert report.resolved == {"error": 1}
+        assert (await _delta(db, "s1") or {})["dep_count"] == 2
+        assert await _folded_window(db) == ["s1", "s2"]
+
+    @pytest.mark.asyncio
+    async def test_a_failure_that_repeats_is_counted_as_failed_again(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
+    ):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0"})
+        monkeypatch.setattr(rollup_module, "load_scan_deps", AsyncMock(side_effect=RuntimeError("boom")))
+        await record_scan_update_delta(db, "s1")
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert (spy, report.resolved, report.failed) == (["s1"], {}, {"error": 1})
 
 
 async def _folded_window(db: FakeDatabase) -> list[str]:
@@ -267,18 +309,27 @@ class TestSkipLink:
         assert await _folded_window(db) == ["p", "a", "b"]
 
     @pytest.mark.asyncio
-    async def test_the_successor_of_a_failed_recompute_is_relinked_past_it(self, spy: list[str]):
+    async def test_the_successor_of_a_failed_recompute_is_relinked_past_it(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
+    ):
         db = FakeDatabase()
         await _seed_project(db)
         await _seed_chain(db, {"s0": "1.0.0", "s1": "1.1.0", "s2": "1.2.0", "s3": "1.3.0"})
-        with patch.object(rollup_module, "load_scan_deps", AsyncMock(side_effect=RuntimeError("mongo hiccup"))):
-            await record_scan_update_delta(db, "s1")
+        real_load = rollup_module.load_scan_deps
+
+        async def _s1_keeps_failing(repo: Any, scan_id: str) -> Any:
+            if scan_id == "s1":
+                raise RuntimeError("mongo hiccup")
+            return await real_load(repo, scan_id)
+
+        monkeypatch.setattr(rollup_module, "load_scan_deps", _s1_keeps_failing)
+        await record_scan_update_delta(db, "s1")
         assert await _folded_window(db) == ["s2", "s3"]
 
         report = await run_update_frequency_reconcile(db)
 
-        assert spy == ["s2"]
-        assert report.resolved == {"relink": 1}
+        assert spy == ["s1", "s2"]
+        assert (report.resolved, report.failed) == ({"relink": 1}, {"error": 1})
         assert (await _delta(db, "s1") or {}).get("error")
         assert await _folded_window(db) == ["s0", "s2", "s3"]
 
@@ -328,7 +379,6 @@ class TestOrphanDelta:
         doc = await _delta(db, "s2")
         assert doc is not None
         assert doc["prev_scan_id"] is None
-        assert doc["is_baseline"] is True
 
     @pytest.mark.asyncio
     async def test_a_delta_of_a_scan_that_lost_its_usable_status_is_removed(self, spy: list[str]):
@@ -374,9 +424,36 @@ class TestOrphanDelta:
 
         monkeypatch.setattr(ScanUpdateDeltaRepository, "window_ledger_by_branch", _census_then_reingest)
 
-        await run_update_frequency_reconcile(db)
+        report = await run_update_frequency_reconcile(db)
 
         assert await _delta(db, "s1") is not None
+        assert await db.scan_outdated_sets.find_one({"_id": "s1"}) is not None
+        assert (report.resolved["orphan"], spy) == (0, [])
+
+    @pytest.mark.asyncio
+    async def test_a_scan_that_finalised_after_the_census_keeps_its_fresh_delta(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
+    ):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"})
+        await db.scans.update_one({"_id": "s1"}, {"$set": {"status": "pending"}})
+        real_scan_census = reconcile_module.window_scan_ids_by_branch
+
+        async def _census_then_finalise(*args: Any, **kwargs: Any) -> Any:
+            result = await real_scan_census(*args, **kwargs)
+            await db.scans.update_one({"_id": "s1"}, {"$set": {"status": "completed"}})
+            await record_scan_update_delta(db, "s1")
+            return result
+
+        monkeypatch.setattr(reconcile_module, "window_scan_ids_by_branch", _census_then_finalise)
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert (report.resolved, spy) == ({}, [])
+        assert await _delta(db, "s1") is not None
+        assert await db.scan_outdated_sets.find_one({"_id": "s1"}) is not None
+        assert await _folded_window(db) == ["s1", "s2"]
 
 
 class TestConcurrentIngest:
@@ -565,7 +642,7 @@ class TestCaps:
 
 class TestDriftMetric:
     @pytest.mark.asyncio
-    async def test_every_kind_of_drift_reaches_prometheus(self, spy: list[str]):
+    async def test_every_kind_of_drift_reaches_prometheus(self, spy: list[str], caplog: pytest.LogCaptureFixture):
         """A kind the warning line counts but the metric drops would understate the drift."""
         db = FakeDatabase()
         await _seed_project(db)
@@ -576,12 +653,67 @@ class TestDriftMetric:
         kinds = ("missing", "stale", "orphan", "dependent")
         before = {kind: _metric(kind, "resolved") for kind in kinds}
 
-        report = await run_update_frequency_reconcile(db)
+        with caplog.at_level(logging.WARNING, logger=reconcile_module.__name__):
+            report = await run_update_frequency_reconcile(db)
 
         assert report.resolved == {"missing": 1, "stale": 1, "orphan": 1, "dependent": 1}
         assert {kind: _metric(kind, "resolved") for kind in kinds} == {
             kind: value + 1 for kind, value in before.items()
         }
+        # The warning names each kind by its metric label, so a log line and a dashboard read alike.
+        assert all(f"1 {kind}" in caplog.text for kind in kinds)
+
+
+class TestFailedRepairs:
+    @pytest.mark.asyncio
+    async def test_a_derivation_that_stores_an_error_document_is_not_counted_as_resolved(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str], caplog: pytest.LogCaptureFixture
+    ):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0"}, record=False)
+        monkeypatch.setattr(rollup_module, "load_scan_deps", AsyncMock(side_effect=RuntimeError("boom")))
+        before = _metric("missing", "failed")
+
+        with caplog.at_level(logging.WARNING, logger=reconcile_module.__name__):
+            report = await run_update_frequency_reconcile(db)
+
+        assert (report.resolved, report.failed) == ({}, {"missing": 1})
+        assert (await _delta(db, "s1") or {})["error"] == "RuntimeError: boom"
+        assert _metric("missing", "failed") == before + 1
+        assert "could not derive 1 missing" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_a_scan_gone_before_its_repair_is_not_counted_as_resolved(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
+    ):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0"}, record=False)
+        real_classify = reconcile_module._classify
+
+        def _classify_then_delete(*args: Any) -> Any:
+            db.scans._docs.pop("s1")
+            return real_classify(*args)
+
+        monkeypatch.setattr(reconcile_module, "_classify", _classify_then_delete)
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert (spy, report.resolved, report.failed) == (["s1"], {}, {"missing": 1})
+
+    @pytest.mark.asyncio
+    async def test_failed_derivations_spend_the_repair_budget(self, monkeypatch: pytest.MonkeyPatch, spy: list[str]):
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"}, record=False)
+        monkeypatch.setattr(rollup_module, "load_scan_deps", AsyncMock(side_effect=RuntimeError("boom")))
+        monkeypatch.setattr(reconcile_module, "_MAX_REPAIRS", 1)
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert spy == ["s1"]
+        assert (report.failed, report.deferred) == ({"missing": 1}, {"missing": 1})
 
 
 class TestLock:
@@ -745,6 +877,49 @@ class TestScope:
         assert sorted(spy) == ["o1", "s1"]
         assert report.chains == 2
         assert report.drifted_chains == 2
+
+    @pytest.mark.asyncio
+    async def test_each_project_batch_is_censused_and_repaired_before_the_next_is_read(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Only one batch's ledger and scan census stay in memory while its repairs run."""
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_project(db, "proj-2")
+        await _seed_chain(db, {"s1": "1.0.0"}, record=False)
+        await _seed_scan(db, "o1", _at(0), [_dep("o1", "requests", "1.0.0")], project_id="proj-2")
+        monkeypatch.setattr(reconcile_module, "WINDOW_PROJECT_BATCH", 1)
+        events: list[tuple[str, Any]] = []
+        real_scan_census = reconcile_module.window_scan_ids_by_branch
+        real_ledger_census = ScanUpdateDeltaRepository.window_ledger_by_branch
+
+        async def _ledger_census(self: Any, project_ids: Any, since: Any) -> Any:
+            events.append(("ledger", list(project_ids)))
+            return await real_ledger_census(self, project_ids, since)
+
+        async def _scan_census(scan_repo: Any, project_ids: Any, since: Any) -> Any:
+            events.append(("scans", list(project_ids)))
+            return await real_scan_census(scan_repo, project_ids, since)
+
+        async def _record(inner_db: Any, scan_id: str) -> bool:
+            events.append(("repair", scan_id))
+            return await record_scan_update_delta(inner_db, scan_id)
+
+        monkeypatch.setattr(ScanUpdateDeltaRepository, "window_ledger_by_branch", _ledger_census)
+        monkeypatch.setattr(reconcile_module, "window_scan_ids_by_branch", _scan_census)
+        monkeypatch.setattr(reconcile_module, "record_scan_update_delta", _record)
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert events == [
+            ("ledger", ["proj-1"]),
+            ("scans", ["proj-1"]),
+            ("repair", "s1"),
+            ("ledger", ["proj-2"]),
+            ("scans", ["proj-2"]),
+            ("repair", "o1"),
+        ]
+        assert (report.chains, report.drifted_chains, report.resolved) == (2, 2, {"missing": 2})
 
 
 class TestHousekeepingWiring:

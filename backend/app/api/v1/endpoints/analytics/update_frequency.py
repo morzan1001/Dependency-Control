@@ -1,6 +1,6 @@
 import asyncio
 import contextlib
-from collections.abc import Coroutine, Mapping
+from collections.abc import Coroutine
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, cast
@@ -18,11 +18,15 @@ from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.api.v1.helpers.teams import resolve_team_names, team_refs
 from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.config import settings
+from app.core.constants import UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS
+from app.core.housekeeping import effective_retention, retention_deletes
 from app.core.permissions import Permissions
+from app.models.system import SystemSettings
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
+from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.update_frequency import (
     WINDOW_HARD_LIMIT,
     BranchWindowActivity,
@@ -39,13 +43,18 @@ from app.schemas.analytics import (
 )
 from app.services.release_history import DepsDevReleaseHistoryFetcher
 from app.services.update_frequency import (
+    MIN_COMPARABLE_BARS,
+    WALK_SCAN_SORT,
     compute_update_frequency,
     compute_update_frequency_comparison,
     elect_primary_branch,
+    measured_summary,
     placeholder_summary,
     rank_summaries,
+    retained_window,
     select_primary_branch,
     spanned_days,
+    walk_fetch_limit,
     window_cutoff,
 )
 from app.services.update_frequency_fold import (
@@ -58,9 +67,6 @@ from app.services.update_frequency_fold import (
 router = CustomAPIRouter()
 
 _DISCONNECT_POLL_SECONDS = 1.0
-
-# A ranking needs one shared window to compare like spans; a quarter covers the slowest realistic scan cadence.
-_DEFAULT_COMPARISON_WINDOW_DAYS = 90
 
 # Worst-case recompute times over the largest tenant: the live path walks every scan, the rollup a few queries.
 _LIVE_COMPARISON_BUDGET_SECONDS = 240.0
@@ -115,13 +121,34 @@ def _comparison_cache_key(
     return f"{base}:w{window_days}:r{int(use_rollup)}"
 
 
-async def _branch_scan_token(db: DatabaseDep, project_id: str, branch: str | None, since: datetime | None) -> str:
-    """Count and newest completion of the scans the walk reads; the latter catches a re-finalised scan."""
+def _retention_horizon(system: SystemSettings, project_days: int | None, project_action: str | None) -> int | None:
+    """Days of scans retention keeps, None where it deletes none; the head and released scans outlive it."""
+    days, action, _ = effective_retention(project_days, project_action, system)
+    return days if days > 0 and retention_deletes(action) else None
+
+
+async def _branch_scan_token(
+    db: DatabaseDep, project_id: str, branch: str | None, since: datetime | None, limit: int
+) -> str:
+    """Count, newest completion and oldest date of the scans the walk reads: a re-finalised or retired one moves it."""
     match = {**usable_scan_match(since), "project_id": project_id, "branch": branch}
     rows = await ScanRepository(db).aggregate(
-        [{"$match": match}, {"$group": {"_id": None, "scans": {"$sum": 1}, "completed_at": {"$max": "$completed_at"}}}]
+        [
+            {"$match": match},
+            # The walk's order, off the branch index, so the read stops at its stretch instead of grouping the branch.
+            {"$sort": dict(WALK_SCAN_SORT)},
+            {"$limit": limit},
+            {
+                "$group": {
+                    "_id": None,
+                    "scans": {"$sum": 1},
+                    "completed_at": {"$max": "$completed_at"},
+                    "oldest": {"$min": "$created_at"},
+                }
+            },
+        ]
     )
-    return f"{rows[0]['scans']}@{rows[0]['completed_at']}" if rows else "0"
+    return f"{rows[0]['scans']}@{rows[0]['completed_at']}@{rows[0]['oldest']}" if rows else "0"
 
 
 @router.get("/projects/{project_id}/update-frequency", responses=RESP_AUTH_404)
@@ -130,7 +157,14 @@ async def get_project_update_frequency(
     request: Request,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    max_scans: Annotated[int, Query(ge=2, le=500)] = 20,
+    max_scans: Annotated[
+        int,
+        Query(
+            ge=MIN_COMPARABLE_BARS,
+            le=500,
+            description="Newest timeline bars to analyse without window_days; consecutive scans of one commit count once",
+        ),
+    ] = 20,
     window_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
     branch: Annotated[str | None, Query(min_length=1, max_length=512)] = None,
 ) -> UpdateFrequencyMetrics:
@@ -147,10 +181,13 @@ async def get_project_update_frequency(
         max_scans=max_scans,
         window_days=window_days,
         branch=analyzed_branch,
-        version_token=await _branch_scan_token(db, project_id, analyzed_branch, since),
+        version_token=await _branch_scan_token(
+            db, project_id, analyzed_branch, since, walk_fetch_limit(max_scans, since)
+        ),
     )
 
     async def _fetch() -> dict[str, Any]:
+        system = await SystemSettingsRepository(db).get()
         metrics = await compute_update_frequency(
             project_id=project_id,
             project_name=project.name,
@@ -161,6 +198,7 @@ async def get_project_update_frequency(
             window_days=window_days,
             release_fetcher=DepsDevReleaseHistoryFetcher(),
             branch=analyzed_branch,
+            retention_days=_retention_horizon(system, project.retention_days, project.retention_action),
         )
         return metrics.model_dump()
 
@@ -192,13 +230,23 @@ async def _scoped_projects(
     projects_raw = await ProjectRepository(db).find_many_raw(
         query,
         sort_by="name",
-        projection={"_id": 1, "name": 1, "team_ids": 1, "deleted_branches": 1, "default_branch": 1},
+        projection={
+            "_id": 1,
+            "name": 1,
+            "team_ids": 1,
+            "deleted_branches": 1,
+            "default_branch": 1,
+            "retention_days": 1,
+            "retention_action": 1,
+        },
         limit=len(user_project_ids),
     )
 
     team_names = await resolve_team_names(db, {tid for p in projects_raw for tid in p.get("team_ids") or []})
+    system = await SystemSettingsRepository(db).get()
     for p in projects_raw:
         p["teams"] = team_refs(p.get("team_ids") or [], team_names)
+        p["retention_horizon"] = _retention_horizon(system, p.get("retention_days"), p.get("retention_action"))
     return projects_raw
 
 
@@ -232,28 +280,42 @@ class _ResolvedWindow:
     window_scan_cap: int | None = None
 
 
-def _resolve_window(
-    activity: Mapping[str, BranchWindowActivity],
-    deltas_by_branch: Mapping[str, list[dict[str, Any]]],
-    project: dict[str, Any],
-) -> _ResolvedWindow:
-    """The branch comes from the scans, not the deltas, so a ledger with holes cannot pick another branch than live."""
-    branch = select_primary_branch(activity, project.get("default_branch"), project.get("deleted_branches"))
-    if branch is None:
-        return _ResolvedWindow(None, [], "insufficient_data")
-    return _fold_branch(branch, deltas_by_branch.get(branch, []), activity[branch])
+async def _resolve_windows(
+    db: DatabaseDep, projects: list[dict[str, Any]], since: datetime
+) -> dict[str, _ResolvedWindow]:
+    """The scans pick the branch before any delta is read, so a ledger with holes cannot pick another one than live."""
+    project_ids = [str(p["_id"]) for p in projects]
+    activity = await window_scans_by_branch(ScanRepository(db), project_ids, since)
+    primaries = {
+        project_id: select_primary_branch(
+            activity.get(project_id, {}), project.get("default_branch"), project.get("deleted_branches")
+        )
+        for project_id, project in zip(project_ids, projects, strict=True)
+    }
+    # The live walk stops at the same count, so both paths truncate a branch busier than the cap to the same stretch.
+    chains = await ScanUpdateDeltaRepository(db).window_chains(
+        [(project_id, branch) for project_id, branch in primaries.items() if branch is not None],
+        since,
+        WINDOW_HARD_LIMIT,
+    )
+    return {
+        project_id: (
+            _ResolvedWindow(None, [], "insufficient_data")
+            if branch is None
+            else _fold_branch(branch, chains[project_id, branch], activity[project_id][branch])
+        )
+        for project_id, branch in primaries.items()
+    }
 
 
 def _fold_branch(branch: str, deltas: list[dict[str, Any]], activity: BranchWindowActivity) -> _ResolvedWindow:
-    # The live walk stops at the same count, so both paths truncate a branch busier than the cap to the same stretch.
     capped = len(deltas) >= WINDOW_HARD_LIMIT
-    deltas = deltas[-WINDOW_HARD_LIMIT:]
     if not deltas:
         return _ResolvedWindow(branch, [], "pending")
 
     window = select_window(deltas)
     bars = window_bars(window)
-    if len(bars) < 2:
+    if len(bars) < MIN_COMPARABLE_BARS:
         # A writer failure is the reason there is nothing to fold, not a scan cadence.
         return _ResolvedWindow(branch, [], "error" if any(d.get("error") for d in deltas) else "insufficient_data")
     # Past the cap the commit count spans more than either path reads, so comparing to it demotes the busiest projects.
@@ -273,16 +335,19 @@ def _rollup_summary(
         return placeholder_summary(project, resolved.status, window_days, resolved.branch)
 
     anchor_id = resolved.window[0]["_id"]
-    folded = fold_window(resolved.window, baselines.get(anchor_id), resolved.measured_days or window_days)
-    return folded.to_summary(
+    first_bar_at = window_bars(resolved.window)[0][-1]["scan_created_at"]
+    horizon = project.get("retention_horizon")
+    retained = None if resolved.measured_days else retained_window(window_days, horizon, first_bar_at)
+    rate_days = resolved.measured_days or retained or window_days
+    folded = fold_window(resolved.window, baselines.get(anchor_id), rate_days)
+    metrics = folded.to_metrics(
         str(project["_id"]),
         project.get("name", ""),
-        project.get("teams") or [],
         branch=resolved.branch,
-        window_days=window_days,
-        data_status=resolved.status,
         window_scan_cap=resolved.window_scan_cap,
+        retention_days=retained,
     )
+    return measured_summary(metrics, project.get("teams") or [], window_days=window_days, data_status=resolved.status)
 
 
 async def _compute_comparison_from_rollup(
@@ -296,15 +361,7 @@ async def _compute_comparison_from_rollup(
     if not projects_raw:
         return UpdateFrequencyComparison(projects=[]).model_dump()
 
-    since = cast(datetime, window_cutoff(window_days))
-    project_ids = [str(p["_id"]) for p in projects_raw]
-    activity = await window_scans_by_branch(ScanRepository(db), project_ids, since)
-    buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(project_ids, since)
-
-    resolved = {
-        project_id: _resolve_window(activity.get(project_id, {}), buckets.get(project_id, {}), project)
-        for project_id, project in zip(project_ids, projects_raw, strict=True)
-    }
+    resolved = await _resolve_windows(db, projects_raw, cast(datetime, window_cutoff(window_days)))
 
     baselines = await ScanOutdatedSetRepository(db).names_by_scan(
         [r.window[0]["_id"] for r in resolved.values() if r.window]
@@ -319,7 +376,7 @@ async def get_update_frequency_comparison(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     team_id: str | None = None,
-    window_days: Annotated[int, Query(ge=1, le=3650)] = _DEFAULT_COMPARISON_WINDOW_DAYS,
+    window_days: Annotated[int, Query(ge=1, le=3650)] = UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS,
 ) -> UpdateFrequencyComparison:
     """Cross-project ranking over one calendar window, never a scan count, so scan cadences stay comparable."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)

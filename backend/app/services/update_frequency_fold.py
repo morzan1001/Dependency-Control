@@ -4,18 +4,16 @@ import logging
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from itertools import dropwhile
 from typing import Any, Literal, get_args
 
 from app.core.constants import COUNTED_UPDATE_KINDS, UpdateKind
+from app.repositories.update_frequency import is_comparable_delta
 from app.schemas.analytics import ScanTimelineEntry
 from app.services.update_frequency import (
     FoldedWindow,
     fold_runs_into_bars,
     same_commit_runs,
-    short_window,
     summarise_window,
-    window_coverage_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,8 +21,7 @@ logger = logging.getLogger(__name__)
 
 def select_window(deltas: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     """Input must be one project's one branch, oldest first; the anchor window[0] contributes no update counts."""
-    usable = [d for d in deltas if int(d.get("dep_count", 0)) > 0 and not d.get("error")]
-    return _contiguous_tail(usable)
+    return _contiguous_tail([d for d in deltas if is_comparable_delta(d)])
 
 
 def window_bars(window: Sequence[dict[str, Any]]) -> list[list[dict[str, Any]]]:
@@ -37,14 +34,20 @@ def _commit_token(delta: dict[str, Any]) -> str:
     return token
 
 
+# Slack for scans the ledger reached between the two reads; a real gap loses far more than a fifth.
+READY_COVERAGE_RATIO = 0.8
+
+
 @dataclass(frozen=True)
 class CommitCoverage:
+    """Partial rows stay out of averages, best/worst and ranking; both counts are commits of one stretch."""
+
     accounted: int
     coverable: int
 
     @property
     def status(self) -> Literal["ready", "partial"]:
-        return window_coverage_status(self.accounted, self.coverable)
+        return "ready" if self.accounted >= self.coverable * READY_COVERAGE_RATIO else "partial"
 
 
 def commit_coverage(
@@ -64,24 +67,15 @@ def commit_coverage(
         token for token, seen in unmeasurable.items() if token not in measured and seen >= scans_per_commit[token]
     }
 
-    covered = dropwhile(lambda delta: delta["_id"] != window[0]["_id"], deltas)
-    accounted = {
-        _commit_token(d) for d in covered if not d.get("error") and _commit_token(d) in scans_per_commit
-    } - skipped
+    accounted = {token for delta in window if (token := _commit_token(delta)) in scans_per_commit}
     return CommitCoverage(len(accounted), len(scans_per_commit) - len(skipped))
 
 
-def fold_window(
-    window: Sequence[dict[str, Any]],
-    baseline_outdated: set[str] | None,
-    window_days: int | None,
-) -> FoldedWindow:
-    """baseline_outdated is window[0]'s outdated set, None without an analysis; window_days is None for a scan count."""
-    per_scan = [_timeline_entry(window[0], baseline=True)] if window else []
+def fold_window(window: Sequence[dict[str, Any]], baseline_outdated: set[str] | None, window_days: int) -> FoldedWindow:
+    """baseline_outdated is window[0]'s outdated set, None without an analysis."""
+    per_scan = [_timeline_entry(window[0], baseline=True)]
     per_scan.extend(_timeline_entry(delta, baseline=False) for delta in window[1:])
     timeline = fold_runs_into_bars(per_scan, [delta.get("commit_hash") for delta in window])
-    if len(timeline) < 2:
-        return short_window(timeline)
 
     kinds: Counter[str] = Counter()
     for delta in window[1:]:

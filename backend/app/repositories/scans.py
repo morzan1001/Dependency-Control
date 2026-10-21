@@ -81,7 +81,7 @@ def _is_fresher(doc: dict[str, Any], incumbent: dict[str, Any]) -> bool:
     return str(doc["_id"]) < str(incumbent["_id"])
 
 
-async def _bounded_gather[T](awaitables: Iterable[Awaitable[T]]) -> list[T]:
+async def bounded_gather[T](awaitables: Iterable[Awaitable[T]]) -> list[T]:
     semaphore = asyncio.Semaphore(_TIP_LOOKUP_CONCURRENCY)
 
     async def run(awaitable: Awaitable[T]) -> T:
@@ -319,7 +319,7 @@ class ScanRepository:
         )
         counts = {row["_id"]: int(row["scan_count"]) for row in rows if isinstance(row["_id"], str) and row["_id"]}
         branches = sorted(counts)
-        builds = await _bounded_gather(self._tip({"project_id": project_id, "branch": b}) for b in branches)
+        builds = await bounded_gather(self._tip({"project_id": project_id, "branch": b}) for b in branches)
         analyses = await self._freshest_analysis_docs([build for build in builds if build])
         return [
             (branch, counts[branch], analyses.get(build["_id"]) if build else None)
@@ -570,7 +570,7 @@ class ScanRepository:
             if scan_id in readable and _may_head(readable[scan_id], scopes[pid])
         }
         unresolved = [pid for pid in scopes if pid not in tips]
-        derived = await _bounded_gather(self._head_build(pid, scopes[pid], {}, _TIP_PROJECTION) for pid in unresolved)
+        derived = await bounded_gather(self._head_build(pid, scopes[pid], {}, _TIP_PROJECTION) for pid in unresolved)
         tips.update({pid: doc for pid, doc in zip(unresolved, derived, strict=True) if doc})
         lineage = await self.freshest_in_lineage(
             [doc["_id"] for doc in tips.values()], seeds={doc["_id"]: doc for doc in tips.values()}

@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import app.core.purl as purl_module
+import app.repositories.update_frequency as update_frequency_repository
 import app.services.update_frequency as update_frequency_module
 from app.core.purl import parse_purl
 from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
@@ -17,22 +19,27 @@ from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     BranchWindowActivity,
 )
-from app.schemas.analytics import ProjectUpdateSummary, ScanTimelineEntry, UpdateFrequencyMetrics
+from app.schemas.analytics import (
+    DependencyUpdateEvent,
+    ProjectUpdateSummary,
+    ScanTimelineEntry,
+    UpdateFrequencyMetrics,
+)
 from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
     _COMPARISON_CONCURRENCY,
-    READY_COVERAGE_RATIO,
+    DAYS_PER_MONTH,
     _build_slowest_packages,
     classify_version_change,
     compute_trend,
     compute_update_frequency,
     compute_update_frequency_comparison,
     elect_primary_branch,
+    fold_scan_deps,
     load_outdated_entries,
     rank_summaries,
     select_primary_branch,
     summarise_window,
-    window_coverage_status,
     window_cutoff,
 )
 from app.services.update_frequency_rollup import record_scan_update_delta
@@ -68,8 +75,35 @@ class TestClassifyVersionChange:
     def test_unparseable_returns_unknown(self):
         assert classify_version_change("abc123", "def456") == "unknown"
 
-    def test_one_unparseable_returns_unknown(self):
-        assert classify_version_change("1.0.0", "abc") == "unknown"
+    @pytest.mark.parametrize(
+        ("old", "new"),
+        [
+            ("5.3.10.RELEASE", "5.3.9.RELEASE"),
+            ("33.0.0-jre", "32.1.3-jre"),
+            ("v0.0.0-20220101000000-aaaaaaaaaaaa", "v0.0.0-20210101000000-bbbbbbbbbbbb"),
+            ("1.2.3-1ubuntu1", "1.2.3-1"),
+        ],
+    )
+    def test_a_rollback_outside_pep_440_is_a_downgrade(self, old: str, new: str):
+        assert classify_version_change(old, new) == "downgrade"
+
+    def test_a_respelling_outside_pep_440_is_no_change(self):
+        assert classify_version_change("4.1.100.Final", "4.1.100") == "none"
+
+    def test_a_forward_move_outside_pep_440_stays_unknown(self):
+        assert classify_version_change("5.3.9.RELEASE", "5.3.10.RELEASE") == "unknown"
+
+    @pytest.mark.parametrize(("old", "new"), [("2.0-1", "1:1.0-1"), ("1:2.38.1-5", "2:2.38.1-5")])
+    def test_a_debian_epoch_bump_is_an_update_whatever_version_follows_it(self, old: str, new: str):
+        assert classify_version_change(old, new) == "unknown"
+
+    def test_a_dropped_debian_epoch_is_a_downgrade(self):
+        assert classify_version_change("1:1.0-1", "2.0-1") == "downgrade"
+
+    def test_commit_hashes_are_not_ordered(self):
+        # Their letters sort at random, so ordering them would book half of all pin bumps as downgrades.
+        old, new = "8f4b7f84864484a7bf31766abe9204da3cbe65b3", "a8eba0b27e820071cde6df949e0beb9ba4906955"
+        assert classify_version_change(old, new) == "unknown"
 
     def test_identical_versions_returns_none(self):
         assert classify_version_change("1.0.0", "1.0.0") == "none"
@@ -377,28 +411,6 @@ class TestSelectPrimaryBranch:
         assert select_primary_branch(activity, None, []) == select_primary_branch(reversed_activity, None, []) == "beta"
 
 
-class TestWindowCoverageStatus:
-    def test_full_coverage_is_ready(self):
-        assert window_coverage_status(10, 10) == "ready"
-
-    def test_the_drop_the_fold_makes_on_purpose_still_reads_as_ready(self):
-        # Same-commit retries and SBOM-less scans are dropped by design.
-        assert window_coverage_status(9, 10) == "ready"
-
-    def test_a_window_the_backfill_barely_reached_is_partial(self):
-        # The measured post-deploy state: deltas for only the two newest of ten scans.
-        assert window_coverage_status(2, 10) == "partial"
-
-    def test_the_threshold_is_the_documented_ratio(self):
-        assert window_coverage_status(80, 100) == "ready"
-        assert window_coverage_status(79, 100) == "partial"
-        assert READY_COVERAGE_RATIO == 0.8
-
-    def test_more_analyzed_scans_than_the_window_counted_is_ready(self):
-        # A scan can land between the two reads; that is not a coverage gap.
-        assert window_coverage_status(3, 2) == "ready"
-
-
 class TestBranchScopedScanSelection:
     @staticmethod
     async def _compute_elected(scans, deps, *, default_branch=None, deleted_branches=None, **kwargs):
@@ -610,6 +622,31 @@ class TestBranchScopedScanSelection:
         assert m.total_updates == 1
 
     @pytest.mark.asyncio
+    async def test_the_scan_count_view_elects_from_the_newest_scans_only(self, monkeypatch):
+        # No read path folds more than the cap, so a branch busy only before it must not elect.
+        monkeypatch.setattr(update_frequency_repository, "WINDOW_HARD_LIMIT", 4)
+        scans = [_make_scan(f"l{i}", i, branch="legacy") for i in range(5)]
+        scans += [_make_scan(f"m{i}", 10 + i) for i in range(3)]
+        deps = {s["_id"]: [_make_dep(s["_id"], "pkg-a", "1.0.0")] for s in scans}
+
+        m = await self._compute_elected(scans, deps)
+
+        assert (m.branch, m.scan_count) == ("main", 3)
+
+    @pytest.mark.asyncio
+    async def test_a_branch_dated_only_in_text_does_not_win_the_scan_count_view(self):
+        # The walk cannot date these scans, so electing their busier branch would leave the view empty.
+        scans = [
+            {**_make_scan(f"r{i}", i, branch="restored"), "created_at": f"2026-02-0{i + 1}T00:00:00Z"} for i in range(3)
+        ]
+        scans += [_make_scan("m1", 10), _make_scan("m2", 20)]
+        deps = {s["_id"]: [_make_dep(s["_id"], "pkg-a", "1.0.0")] for s in scans}
+
+        m = await self._compute_elected(scans, deps)
+
+        assert (m.branch, m.scan_count) == ("main", 2)
+
+    @pytest.mark.asyncio
     async def test_a_same_commit_scan_storm_becomes_one_bar(self):
         # 5 CI runs of one commit within a day, then a real new commit.
         scans = [
@@ -664,6 +701,30 @@ class TestIdentityKeying:
         assert m.total_updates == 0
 
     @pytest.mark.asyncio
+    async def test_a_duplicate_outside_pep_440_keeps_its_highest_version(self):
+        purl = "pkg:maven/org.springframework/spring-core@{}"
+        older = self._raw_dep("s1", "spring-core", "5.3.9.RELEASE", purl.format("5.3.9.RELEASE"))
+        newer = self._raw_dep("s1", "spring-core", "5.3.10.RELEASE", purl.format("5.3.10.RELEASE"))
+        deps = {"s1": [older, newer], "s2": [{**newer, "scan_id": "s2"}]}
+
+        m = await _compute(_two_scans(), deps)
+
+        assert m.total_updates == 0
+
+    @pytest.mark.asyncio
+    async def test_a_maven_flip_flop_counts_one_update_not_two(self):
+        purl = "pkg:maven/org.springframework/spring-core@{}"
+        versions = ("5.3.10.RELEASE", "5.3.9.RELEASE", "5.3.10.RELEASE")
+        deps = {
+            f"s{i}": [self._raw_dep(f"s{i}", "spring-core", version, purl.format(version))]
+            for i, version in enumerate(versions, start=1)
+        }
+
+        m = await _compute([_make_scan("s1", 0), _make_scan("s2", 10), _make_scan("s3", 20)], deps)
+
+        assert (m.total_updates, m.downgrade_updates, m.unknown_updates) == (1, 1, 1)
+
+    @pytest.mark.asyncio
     async def test_pypi_name_variants_are_one_identity(self):
         # PEP 503 equivalent names (case/underscore/dot) must not read as remove+add.
         deps = {
@@ -702,6 +763,21 @@ class TestIdentityKeying:
         assert m.total_updates == 1
         assert m.recent_updates[0].package_name == "internal-lib"
         assert m.recent_updates[0].update_type == "patch"
+
+    def test_each_dependency_purl_is_parsed_once(self, monkeypatch):
+        parsed: list[str] = []
+
+        def _counting_parse(purl: str) -> Any:
+            parsed.append(purl)
+            return parse_purl(purl)
+
+        monkeypatch.setattr(purl_module, "parse_purl", _counting_parse)
+        monkeypatch.setattr(update_frequency_module, "parse_purl", _counting_parse)
+        deps = [_make_dep("s1", "pkg-a", "1.0.0"), _make_dep("s1", "pkg-b", "2.0.0", ptype="npm")]
+
+        fold_scan_deps(deps)
+
+        assert sorted(parsed) == sorted(dep["purl"] for dep in deps)
 
     @pytest.mark.asyncio
     async def test_scoped_npm_packages_do_not_collide(self):
@@ -961,7 +1037,7 @@ class TestAggregationAccuracy:
             "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
             "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
         }
-        return await _compute(scans, deps, window_days=window_days, hard_limit=10)
+        return await _compute(scans, deps, window_days=window_days)
 
     @pytest.mark.asyncio
     async def test_the_monthly_rate_measures_the_window_not_the_scan_cadence(self):
@@ -1177,6 +1253,39 @@ class TestStreamingOrchestrator:
         assert m.adoption_latency_days_median is None
 
     @pytest.mark.asyncio
+    async def test_without_a_release_fetcher_no_adoption_is_tracked(self, monkeypatch):
+        handed: list[tuple[Any, dict[str, Any], dict[str, Any]]] = []
+
+        async def _capture(fetcher: Any, specs: dict[str, Any], first_seen: dict[str, Any]) -> None:
+            handed.append((fetcher, dict(specs), dict(first_seen)))
+
+        monkeypatch.setattr(update_frequency_module, "_maybe_fetch_upstream_cadence", _capture)
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {"s1": [_make_dep("s1", "pkg-a", "1.0.0")], "s2": [_make_dep("s2", "pkg-a", "1.0.1")]}
+
+        m = await _compute(scans, deps)
+
+        assert m.total_updates == 1
+        assert handed == [(None, {}, {})]
+
+    @pytest.mark.asyncio
+    async def test_a_deps_dev_slower_than_the_budget_leaves_only_the_cadence_card_empty(self, monkeypatch):
+        monkeypatch.setattr(update_frequency_module, "_UPSTREAM_BUDGET_SECONDS", 0.05)
+
+        async def _never_answers(_packages: Sequence[tuple[str, str]]) -> ReleaseHistory:
+            await asyncio.sleep(60)
+            return {}
+
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {"s1": [_make_dep("s1", "pkg-a", "1.0.0")], "s2": [_make_dep("s2", "pkg-a", "1.0.1")]}
+
+        m = await asyncio.wait_for(
+            _compute(scans, deps, release_fetcher=SimpleNamespace(fetch=_never_answers)), timeout=5
+        )
+
+        assert (m.total_updates, m.adoption_latency_days_median, m.upstream_releases_last_12m_median) == (1, None, None)
+
+    @pytest.mark.asyncio
     async def test_a_rollback_to_an_old_version_is_no_adoption(self):
         """Returning to a years-old release must not add years to the adoption latency."""
         scans = [_scan_days_ago("s1", 60), _scan_days_ago("s2", 30), _scan_days_ago("s3", 0)]
@@ -1253,22 +1362,24 @@ class TestStreamingOrchestrator:
         assert m.scan_count == 30, "the calendar window should trump max_scans when it contains more scans"
 
     @pytest.mark.asyncio
-    async def test_hard_limit_caps_runaway_queries(self):
+    async def test_hard_limit_caps_runaway_queries(self, monkeypatch):
         # 2500 scans inside the window, so only the hard_limit cap stops a whole-collection load.
+        monkeypatch.setattr(update_frequency_module, "WINDOW_HARD_LIMIT", 100)
         scans = _recent_scans(2500)
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(2500)}
 
-        m = await _compute(scans, deps, max_scans=5, window_days=3000, hard_limit=100)
+        m = await _compute(scans, deps, max_scans=5, window_days=3000)
         assert m.scan_count == 100
         # And the response says so: every number above covers 100 of the branch's 2500 scans.
         assert m.window_scan_cap == 100
 
     @pytest.mark.asyncio
-    async def test_a_window_read_whole_names_no_cap(self):
+    async def test_a_window_read_whole_names_no_cap(self, monkeypatch):
+        monkeypatch.setattr(update_frequency_module, "WINDOW_HARD_LIMIT", 100)
         scans = _recent_scans(30)
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(30)}
 
-        m = await _compute(scans, deps, max_scans=5, window_days=3000, hard_limit=100)
+        m = await _compute(scans, deps, max_scans=5, window_days=3000)
 
         assert m.window_scan_cap is None
 
@@ -1340,7 +1451,6 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_a_project_whose_summary_cannot_be_built_is_counted_rather_than_lost(self):
-        # The summary is built outside the per-project guard, so its failure must not drop the project.
         scans_a, deps_a = self._two_scan_project("proj-a", "pkg-a", ("1.0.0", "1.0.1"))
         scans_b, deps_b = self._two_scan_project("proj-b", "pkg-b", ("2.0.0", "2.1.0"))
         projects = [{"_id": "proj-a", "name": "A"}, {"_id": "proj-b", "name": "B"}]
@@ -1350,7 +1460,7 @@ class TestStreamingOrchestrator:
         async def _bad_ratio_for_b(**kwargs):
             metrics = await real_compute(**kwargs)
             if kwargs["project_id"] == "proj-b":
-                # Survives here and fails only when the summary is built, outside the guard.
+                # Survives the walk and fails only when the summary is built.
                 metrics.granularity_ratio = {"patch": "not a number"}
             return metrics
 
@@ -1359,6 +1469,23 @@ class TestStreamingOrchestrator:
 
         assert {p.project_name for p in result.projects} == {"A", "B"}
         assert result.skipped_error == 1
+        assert [(p.data_status, p.branch) for p in result.projects if p.project_name == "B"] == [("error", "main")]
+
+    @pytest.mark.asyncio
+    async def test_a_primary_branch_of_one_commit_is_not_walked(self):
+        now = datetime.now(tz=timezone.utc)
+        scans = [
+            _make_scan(f"s{i}", 0, project_id="proj-c", commit_hash="c1") | {"created_at": now - timedelta(days=i)}
+            for i in range(3)
+        ]
+        deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(3)}
+        walk = AsyncMock(side_effect=AssertionError("a single commit was walked"))
+
+        with patch.object(update_frequency_module, "compute_update_frequency", walk):
+            result = await _compare([{"_id": "proj-c", "name": "C"}], scans, deps)
+
+        assert [(p.data_status, p.branch) for p in result.projects] == [("insufficient_data", "main")]
+        walk.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_outdated_loaded_per_pair_not_upfront(self):
@@ -1660,6 +1787,49 @@ class TestTheLiveWalkIsAlwaysFullyCovered:
         assert result.partial_projects == 0
 
 
+class TestRetentionCappedRate:
+    @staticmethod
+    async def _one_update(window_days: int, retention_days: int | None) -> UpdateFrequencyMetrics:
+        scans = [_scan_days_ago("s1", 60), _scan_days_ago("s2", 30)]
+        deps = {"s1": [_make_dep("s1", "pkg-a", "1.0.0")], "s2": [_make_dep("s2", "pkg-a", "1.0.1")]}
+        return await _compute(scans, deps, window_days=window_days, retention_days=retention_days)
+
+    @pytest.mark.asyncio
+    async def test_a_window_past_retention_divides_by_the_days_retention_keeps(self):
+        m = await self._one_update(window_days=365, retention_days=90)
+
+        assert (m.updates_per_month, m.retention_days) == (round(1 / (90 / DAYS_PER_MONTH), 2), 90)
+
+    @pytest.mark.asyncio
+    async def test_a_window_retention_covers_divides_by_the_window_and_names_no_horizon(self):
+        m = await self._one_update(window_days=90, retention_days=90)
+
+        assert (m.updates_per_month, m.retention_days) == (round(1 / (90 / DAYS_PER_MONTH), 2), None)
+
+    @pytest.mark.asyncio
+    async def test_a_kept_scan_older_than_retention_divides_by_the_whole_window(self):
+        # A pinned or released scan outlives retention, so its interval reaches past the horizon.
+        scans = [_scan_days_ago("pinned", 200), _scan_days_ago("s2", 60), _scan_days_ago("s3", 30)]
+        deps = {
+            "pinned": [_make_dep("pinned", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
+            "s3": [_make_dep("s3", "pkg-a", "1.0.2")],
+        }
+
+        m = await _compute(scans, deps, window_days=365, retention_days=90)
+
+        assert (m.updates_per_month, m.retention_days) == (round(2 / (365 / DAYS_PER_MONTH), 2), None)
+
+    @pytest.mark.asyncio
+    async def test_the_scan_count_view_has_no_rate_to_cap(self):
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {"s1": [_make_dep("s1", "pkg-a", "1.0.0")], "s2": [_make_dep("s2", "pkg-a", "1.0.1")]}
+
+        m = await _compute(scans, deps, retention_days=90)
+
+        assert (m.updates_per_month, m.retention_days) == (None, None)
+
+
 class TestWindowCutoff:
     def test_no_window_returns_none(self):
         assert window_cutoff(None) is None
@@ -1705,6 +1875,31 @@ class TestRecentUpdatesSelection:
         assert [event.package_name for event in m.recent_updates[1:]] == [
             f"pkg{i:03d}" for i in range(RECENT_UPDATES_LIMIT - 1)
         ]
+
+    @pytest.mark.asyncio
+    async def test_only_the_changes_the_list_can_show_become_events(self, monkeypatch):
+        built: list[DependencyUpdateEvent] = []
+
+        class _CountedEvent(DependencyUpdateEvent):
+            def __init__(self, **data: Any) -> None:
+                super().__init__(**data)
+                built.append(self)
+
+        monkeypatch.setattr(update_frequency_module, "DependencyUpdateEvent", _CountedEvent)
+        changed = RECENT_UPDATES_LIMIT + 10
+        scans = [_make_scan("s0", 0), _make_scan("s1", 1)]
+        deps = {
+            "s0": [_make_dep("s0", f"pkg{i:03d}", "1.0.0") for i in range(changed)],
+            "s1": [_make_dep("s1", f"pkg{i:03d}", "1.0.1") for i in range(changed)],
+        }
+
+        m = await _compute(scans, deps)
+
+        assert (m.total_updates, len(m.recent_updates), len(built)) == (
+            changed,
+            RECENT_UPDATES_LIMIT,
+            RECENT_UPDATES_LIMIT,
+        )
 
     @pytest.mark.asyncio
     async def test_the_newest_scan_comes_first(self):

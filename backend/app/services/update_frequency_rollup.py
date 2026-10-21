@@ -2,7 +2,7 @@
 
 import logging
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -14,7 +14,7 @@ from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import is_usable_build
 from app.repositories.update_frequency import ScanOutdatedSetRepository, ScanUpdateDeltaRepository
-from app.services.update_frequency import load_outdated_entries, load_scan_deps, version_changes
+from app.services.update_frequency import load_outdated_entries, load_scan_deps, resolved_outdated, version_changes
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +52,11 @@ class _Diff:
         return UpdateCounts(**self.counts)
 
 
-async def record_scan_update_delta(db: Any, scan_id: str) -> None:
-    """Never raises: the triggering ingest or restore would treat an exception as a lost scan."""
+async def record_scan_update_delta(db: Any, scan_id: str) -> bool:
+    """True once the scan's delta is written; never raises, as the ingest or restore would treat that as a lost scan."""
     try:
         if not settings.UPDATE_FREQUENCY_ROLLUP_ENABLED:
-            return
+            return False
         delta = await _record(db, scan_id)
         # An SBOM-less scan is never a predecessor, so no later delta can be stale because of it.
         if delta is not None and delta.dep_count > 0:
@@ -71,6 +71,8 @@ async def record_scan_update_delta(db: Any, scan_id: str) -> None:
     except Exception:
         logger.exception("Update-frequency rollup aborted for scan %s", sanitize_for_log(scan_id))
         update_frequency_delta_writes_total.labels(result="error").inc()
+        return False
+    return delta is not None
 
 
 async def _record(db: Any, scan_id: str) -> ScanUpdateDelta | None:
@@ -91,7 +93,10 @@ async def _compute_and_persist(db: Any, scan: _ScanRef) -> ScanUpdateDelta | Non
     except Exception as exc:
         logger.exception("Update-frequency delta failed for scan %s", scan.scan_id)
         update_frequency_delta_writes_total.labels(result="error").inc()
-        await _record_failure(db, scan, exc)
+        try:
+            await _save_error_delta(db, scan, f"{type(exc).__name__}: {exc}")
+        except Exception as save_exc:
+            logger.warning("Could not store the error delta of scan %s either: %s", scan.scan_id, save_exc)
         return None
 
     update_frequency_delta_writes_total.labels(result="ok").inc()
@@ -118,9 +123,9 @@ async def _load_scan(db: Any, scan_id: str) -> _ScanRef | None:
 
 async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[str] | None]:
     deps = await load_scan_deps(DependencyRepository(db), scan.scan_id)
-    outdated, failed = await _load_outdated(db, scan.scan_id)
-
-    prev, prev_deps = await _resolve_predecessor(db, scan)
+    # An SBOM-less scan is never a predecessor and never folded, so a comparison or outdated set of it would go unread.
+    outdated, failed = await _load_outdated(db, scan.scan_id) if deps else (None, set())
+    prev, prev_deps = await _resolve_predecessor(db, scan) if deps else (None, {})
     if prev is None:
         diff = _Diff()
     else:
@@ -135,7 +140,6 @@ async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[
         commit_hash=scan.commit_hash,
         prev_scan_id=prev["_id"] if prev else None,
         prev_created_at=prev["scan_created_at"] if prev else None,
-        is_baseline=prev is None,
         dep_count=len(deps),
         updates=diff.to_counts(),
         outdated_count=len(outdated) if outdated is not None else None,
@@ -161,24 +165,17 @@ async def _resolve_predecessor(db: Any, scan: _ScanRef) -> tuple[dict[str, Any] 
             len(prev_deps),
             prev.get("dep_count"),
         )
-        await repo.save(
-            ScanUpdateDelta(
-                id=prev["_id"],
-                project_id=scan.project_id,
-                branch=scan.branch,
-                scan_created_at=prev["scan_created_at"],
-                error=_STALE_DEPENDENCIES_ERROR,
-            )
+        demoted = replace(
+            scan, scan_id=prev["_id"], created_at=prev["scan_created_at"], commit_hash=prev.get("commit_hash")
         )
-        await ScanOutdatedSetRepository(db).delete(prev["_id"])
+        await _save_error_delta(db, demoted, _STALE_DEPENDENCIES_ERROR)
     return None, {}
 
 
 async def _discard_delta(db: Any, scan: _ScanRef) -> None:
     """The delta would keep counting dependencies the re-ingest already deleted."""
-    if not await ScanUpdateDeltaRepository(db).delete(scan.scan_id):
+    if not await ScanUpdateDeltaRepository(db).discard({"_id": scan.scan_id}):
         return
-    await ScanOutdatedSetRepository(db).delete(scan.scan_id)
     logger.info("Scan %s is no longer usable; dropped its update delta", scan.scan_id)
     await _repair_successors(
         db,
@@ -205,10 +202,8 @@ def _diff_scans(
         # The fold sums these; dropping them would keep packages outdated across the gap out of the denominator.
         diff.outdated_added = sorted(curr_outdated)
         return diff
-    curr_names = {info["name"] for info in curr_deps.values()} - curr_failed
     diff.outdated_added = sorted(curr_outdated - prev_outdated)
-    # A package that vanished, or whose lookup failed, was not brought up to date.
-    diff.outdated_resolved = sorted((prev_outdated & curr_names) - curr_outdated)
+    diff.outdated_resolved = sorted(resolved_outdated(prev_outdated, curr_outdated, curr_deps, curr_failed))
     return diff
 
 
@@ -226,17 +221,10 @@ async def _persist(db: Any, delta: ScanUpdateDelta, outdated: set[str] | None) -
         # A recomputation that finds no analysis must not leave the earlier set behind.
         await ScanOutdatedSetRepository(db).delete(delta.id)
         return
-    await ScanOutdatedSetRepository(db).save(
-        ScanOutdatedSet(
-            id=delta.id,
-            names=sorted(outdated),
-            n=len(outdated),
-            scan_created_at=delta.scan_created_at,
-        )
-    )
+    await ScanOutdatedSetRepository(db).save(ScanOutdatedSet(id=delta.id, names=sorted(outdated)))
 
 
-async def _record_failure(db: Any, scan: _ScanRef, exc: Exception) -> None:
+async def _save_error_delta(db: Any, scan: _ScanRef, error: str) -> None:
     """Keeps count(deltas) == count(usable scans); an outdated set must not survive next to an error document."""
     await ScanUpdateDeltaRepository(db).save(
         ScanUpdateDelta(
@@ -245,7 +233,7 @@ async def _record_failure(db: Any, scan: _ScanRef, exc: Exception) -> None:
             branch=scan.branch,
             scan_created_at=scan.created_at,
             commit_hash=scan.commit_hash,
-            error=f"{type(exc).__name__}: {exc}"[:_ERROR_MESSAGE_CAP],
+            error=error[:_ERROR_MESSAGE_CAP],
         )
     )
     await ScanOutdatedSetRepository(db).delete(scan.scan_id)
@@ -267,6 +255,10 @@ async def _repair_successors(
         successor = await repo.find_successor(project_id, branch, after, after_id)
         if successor is None:
             return
+        if only_when_linked and not successor.get("dep_count"):
+            # An error document counts 0 dependencies too, so neither kind is recomputed for a dropped anchor.
+            after, after_id = successor["scan_created_at"], successor["_id"]
+            continue
         if only_when_linked and successor.get("prev_scan_id") != anchor_id:
             return
         logger.info(

@@ -10,6 +10,7 @@ from app.core.purl import (
     package_identity,
     package_identity_expr,
     parse_purl,
+    parsed_package_identity,
     pep503_normalize,
 )
 from tests.mocks.fake_mongo import FakeCollection
@@ -291,6 +292,11 @@ class TestPackageIdentity:
     @pytest.mark.parametrize(("purl", "name", "component_type", "group", "expected"), _IDENTITY_TABLE)
     def test_identity_per_ecosystem(self, purl, name, component_type, group, expected):
         assert package_identity(purl, name, component_type, group) == expected
+
+    @pytest.mark.parametrize(("purl", "name", "component_type", "group", "expected"), _IDENTITY_TABLE)
+    def test_a_caller_holding_the_parsed_purl_gets_the_same_identity(self, purl, name, component_type, group, expected):
+        parsed = parse_purl(purl) if purl else None
+        assert parsed_package_identity(parsed, name, component_type, group) == expected
 
     @pytest.mark.parametrize(("purl", "name", "component_type", "group", "expected"), _IDENTITY_TABLE)
     def test_the_aggregation_expression_computes_the_same_identity(self, purl, name, component_type, group, expected):

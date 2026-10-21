@@ -442,6 +442,8 @@ export interface UpdateFrequencyMetrics {
     dominant_ecosystem: string | null;
     // Scans covered when the branch holds more than either read path follows; null when the whole window was read.
     window_scan_cap: number | null;
+    // Days retention keeps when fewer than the window; updates_per_month divides by them. Null when the window fits.
+    retention_days: number | null;
     // Packages still outdated in the newest measured scan, counted before slowest_packages was cut.
     outdated_backlog: number;
     scan_timeline: ScanTimelineEntry[];
@@ -471,6 +473,8 @@ export interface ProjectUpdateSummary {
     data_status: UpdateDataStatus;
     // Scans the row covers when the branch holds more than either read path follows; null when the whole window was read.
     window_scan_cap: number | null;
+    // Days retention keeps when fewer than the window; updates_per_month divides by them. Null when the window fits.
+    retention_days: number | null;
 }
 
 // projects lists the ranked ones first, then partial, pending, insufficient_data and error rows, which skip the averages.

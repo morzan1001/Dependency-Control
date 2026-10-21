@@ -294,7 +294,7 @@ update_frequency_delta_writes_total = Counter(
 update_frequency_reconcile_drift_total = Counter(
     "update_frequency_reconcile_drift_total",
     "Ledger entries the update-frequency reconcile found out of step with the scans, by kind and outcome.",
-    # kind in: missing|stale|severed|dependent|orphan; outcome in: resolved|deferred
+    # kind in: missing|stale|severed|relink|error|dependent|orphan; outcome in: resolved|failed|deferred
     ["kind", "outcome"],
 )
 

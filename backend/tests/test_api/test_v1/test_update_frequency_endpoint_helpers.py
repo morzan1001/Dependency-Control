@@ -12,20 +12,22 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.deps import get_current_active_user, get_database
 from app.api.v1.endpoints.analytics.update_frequency import (
-    _DEFAULT_COMPARISON_WINDOW_DAYS,
     _LIVE_COMPARISON_BUDGET_SECONDS,
     _ROLLUP_COMPARISON_BUDGET_SECONDS,
     _comparison_cache_key,
     _lock_timings,
     _project_cache_key,
+    _retention_horizon,
     get_project_update_frequency,
     get_update_frequency_comparison,
     router,
 )
 from app.core.cache import CacheTTL
 from app.core.config import settings
+from app.core.constants import UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.project import Project
+from app.models.system import SystemSettings
 from app.models.user import User
 from app.schemas.analytics import ProjectUpdateSummary, UpdateFrequencyComparison, UpdateFrequencyMetrics
 from app.services.rescan import build_rescan
@@ -61,6 +63,25 @@ class TestProjectCacheKey:
 
     def test_no_branch_and_a_branch_named_auto_get_different_keys(self):
         assert _pkey(branch=None) != _pkey(branch="auto")
+
+
+class TestRetentionHorizon:
+    def test_project_mode_reads_the_projects_retention(self):
+        assert _retention_horizon(SystemSettings(), 30, "delete") == 30
+
+    def test_global_mode_overrides_the_projects_retention(self):
+        system = SystemSettings(retention_mode="global", global_retention_days=60, global_retention_action="delete")
+        assert _retention_horizon(system, 30, "none") == 60
+
+    @pytest.mark.parametrize(("days", "action"), [(0, "delete"), (30, "none"), (None, None)])
+    def test_retention_that_deletes_nothing_keeps_every_day(self, days, action):
+        assert _retention_horizon(SystemSettings(), days, action) is None
+
+    def test_archiving_deletes_only_once_storage_is_configured(self, monkeypatch):
+        assert _retention_horizon(SystemSettings(), 30, "archive") is None
+        monkeypatch.setattr(settings, "S3_ENDPOINT_URL", "http://s3.invalid")
+        monkeypatch.setattr(settings, "S3_ACCESS_KEY", "key")
+        assert _retention_horizon(SystemSettings(), 30, "archive") == 30
 
 
 def _ckey(scope: str = "scope-a", team: str | None = None, **overrides: Any) -> str:
@@ -182,6 +203,7 @@ def _user(user_id: str) -> User:
 def _fake_db() -> MagicMock:
     db = MagicMock()
     db.scans.count_documents = AsyncMock(return_value=7)
+    db.system_settings.find_one = AsyncMock(return_value=None)
     return db
 
 
@@ -347,7 +369,7 @@ class TestReadPathSelection:
 
         assert compute.await_count == 0
         assert result.pending_projects == 3
-        assert rollup.await_args.kwargs["window_days"] == _DEFAULT_COMPARISON_WINDOW_DAYS
+        assert rollup.await_args.kwargs["window_days"] == UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS
 
     def test_the_two_paths_do_not_share_a_cache_entry(self):
         cache = FakeCache()
@@ -447,6 +469,51 @@ class TestProjectEndpointCaching:
         assert live.await_count == 2
 
     @pytest.mark.asyncio
+    async def test_a_scan_older_than_the_walked_stretch_keeps_the_entry(self):
+        # Two bars read at most ten scans, so the eleventh-newest is no input of the cached answer.
+        db = FakeDatabase()
+        await db.scans.insert_many([_scan(f"s{i:02d}", days_ago=20 - i) for i in range(12)])
+        live = AsyncMock(return_value=_metrics("live"))
+
+        with _project_patched(FakeCache(), live):
+            await _view(db, max_scans=2)
+            await db.scans.delete_one({"_id": "s00"})
+            await _view(db, max_scans=2)
+
+        assert live.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_scan_retired_from_inside_the_walked_stretch_misses(self):
+        db = FakeDatabase()
+        await db.scans.insert_many([_scan(f"s{i:02d}", days_ago=20 - i) for i in range(12)])
+        live = AsyncMock(return_value=_metrics("live"))
+
+        with _project_patched(FakeCache(), live):
+            await _view(db, max_scans=2)
+            await db.scans.delete_one({"_id": "s05"})
+            await _view(db, max_scans=2)
+
+        assert live.await_count == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("re_finalised", "computes"), [("s02-twin", 2), ("s02", 1)])
+    async def test_a_same_millisecond_twin_at_the_stretch_edge_counts_only_if_the_walk_reads_it(
+        self, re_finalised: str, computes: int
+    ):
+        # Two bars read ten scans; the walk breaks the tie at the tenth by _id descending, so it reads the twin.
+        db = FakeDatabase()
+        await db.scans.insert_many([_scan(f"s{i:02d}", days_ago=20 - i) for i in range(12)])
+        await db.scans.insert_one(_scan("s02-twin", days_ago=18))
+        live = AsyncMock(return_value=_metrics("live"))
+
+        with _project_patched(FakeCache(), live):
+            await _view(db, max_scans=2)
+            await db.scans.update_one({"_id": re_finalised}, {"$set": {"completed_at": _NOW}})
+            await _view(db, max_scans=2)
+
+        assert live.await_count == computes
+
+    @pytest.mark.asyncio
     async def test_a_re_finalised_scan_misses(self):
         db = await _scanned_db()
         live = AsyncMock(return_value=_metrics("live"))
@@ -467,6 +534,24 @@ class TestProjectEndpointCaching:
             await _view(db)
 
         assert live.await_args.kwargs["branch"] == "main"
+
+    @pytest.mark.asyncio
+    async def test_the_walk_gets_the_retention_the_system_applies_to_the_project(self):
+        db = await _scanned_db()
+        await db.system_settings.insert_one(
+            {
+                "_id": "current",
+                "retention_mode": "global",
+                "global_retention_days": 30,
+                "global_retention_action": "delete",
+            }
+        )
+        live = AsyncMock(return_value=_metrics("live"))
+
+        with _project_patched(FakeCache(), live):
+            await _view(db, window_days=365)
+
+        assert live.await_args.kwargs["retention_days"] == 30
 
     @pytest.mark.asyncio
     async def test_a_branch_named_auto_is_not_the_default_view(self):
@@ -569,7 +654,7 @@ def _summary(project_id: str, name: str, team_id: str, rate: float) -> ProjectUp
         teams=[{"id": team_id, "name": team_id}],
         data_status="ready",
         branch="main",
-        window_days=_DEFAULT_COMPARISON_WINDOW_DAYS,
+        window_days=UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS,
         scan_count=5,
         updates_per_month=rate,
         update_coverage_pct=rate * 10,
@@ -701,3 +786,25 @@ class TestComparisonLeaderDisconnect:
         assert sent[0]["status"] == 200
         assert returning.status_code == 200, returning.text
         assert compute.await_count == 1
+
+
+class TestBarCountDocumentation:
+    """The wire names say scans, but each counts commit runs; the OpenAPI schema is where clients learn that."""
+
+    def test_every_bar_count_says_a_commit_run_counts_once(self):
+        schemas = _app(FakeDatabase()).openapi()["components"]["schemas"]
+        documented = {
+            ("UpdateFrequencyMetrics", "scan_count"),
+            ("UpdateFrequencyMetrics", "updates_per_scan"),
+            ("UpdateFrequencyMetrics", "avg_days_between_scans"),
+            ("ProjectUpdateSummary", "scan_count"),
+        }
+        for model, field in documented:
+            assert "one commit count once" in schemas[model]["properties"][field].get("description", ""), (model, field)
+
+    def test_max_scans_says_it_caps_commit_runs(self):
+        parameters = _app(FakeDatabase()).openapi()["paths"]["/projects/{project_id}/update-frequency"]["get"][
+            "parameters"
+        ]
+        max_scans = next(param for param in parameters if param["name"] == "max_scans")
+        assert "one commit count once" in max_scans.get("description", "")

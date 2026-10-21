@@ -1,7 +1,9 @@
 """One scan pair at a time, so peak memory stays at ~2 x deps/scan regardless of project size."""
 
 import asyncio
+import heapq
 import logging
+import re
 from collections import Counter, defaultdict, deque
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -16,10 +18,11 @@ from app.core.constants import (
     COUNTED_UPDATE_KINDS,
     RECENT_UPDATES_LIMIT,
     SLOWEST_PACKAGES_LIMIT,
+    UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS,
     UPDATE_SAMPLE_RANK,
     UpdateKind,
 )
-from app.core.purl import package_identity, parse_purl
+from app.core.purl import parse_purl, parsed_package_identity
 from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -39,6 +42,7 @@ from app.schemas.analytics import (
     UpdateFrequencyMetrics,
 )
 from app.schemas.team import TeamRef
+from app.services.aggregation.versions import parse_version_key
 from app.services.release_history import (
     Observation,
     ReleaseHistoryFetcher,
@@ -63,13 +67,37 @@ def _release_tuple(version: Version) -> tuple[int, int]:
     )
 
 
+# Hex digests order at random, so ranking two commit pins would book half of all pin bumps as downgrades.
+_COMMIT_HASH = re.compile(r"[0-9a-f]{7,64}")
+# A Debian epoch outranks the whole version after it, which parse_version_key would read as one more number.
+_DEBIAN_EPOCH = re.compile(r"(\d+):")
+
+
+def _debian_epoch(version: str) -> int:
+    match = _DEBIAN_EPOCH.match(version)
+    return int(match.group(1)) if match else 0
+
+
+def _classify_outside_pep_440(old_version: str, new_version: str) -> UpdateKind | Literal["none"]:
+    """Maven, Debian and Go spellings: ordered for direction only, as their parts name no major, minor or patch."""
+    if _COMMIT_HASH.fullmatch(old_version) or _COMMIT_HASH.fullmatch(new_version):
+        return "unknown"
+    old_epoch, new_epoch = _debian_epoch(old_version), _debian_epoch(new_version)
+    if old_epoch != new_epoch:
+        return "downgrade" if new_epoch < old_epoch else "unknown"
+    old_key, new_key = parse_version_key(old_version), parse_version_key(new_version)
+    if new_key < old_key:
+        return "downgrade"
+    return "none" if new_key == old_key else "unknown"
+
+
 def classify_version_change(old_version: str, new_version: str) -> UpdateKind | Literal["none"]:
     """Backwards moves are downgrades, so rollbacks never count as activity; pre/post/local changes count as patch."""
     try:
         old_v = Version(old_version)
         new_v = Version(new_version)
     except InvalidVersion:
-        return "unknown"
+        return _classify_outside_pep_440(old_version, new_version)
 
     if old_v == new_v:
         return "none"
@@ -94,8 +122,8 @@ def _dep_record(dep: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
     if not name:
         return None
     purl = dep.get("purl", "")
-    identity = ":".join(package_identity(purl, name, dep.get("type"), dep.get("group")))
     parsed = parse_purl(purl) if purl else None
+    identity = ":".join(parsed_package_identity(parsed, name, dep.get("type"), dep.get("group")))
     if parsed:
         deps_dev_name = parsed.deps_dev_name
         display = parsed.full_name
@@ -130,7 +158,7 @@ def _resolve_duplicate(candidates: list[dict[str, str]]) -> dict[str, str]:
             continue
     if parseable:
         return max(parseable, key=lambda pair: pair[0])[1]
-    return max(candidates, key=lambda cand: cand["version"])
+    return max(candidates, key=lambda cand: (parse_version_key(cand["version"]), cand["version"]))
 
 
 def fold_scan_deps(deps: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
@@ -194,58 +222,65 @@ def _measured_count(outdated: set[str] | None) -> int | None:
     return None if outdated is None else len(outdated)
 
 
-def _update_sample_order(event: DependencyUpdateEvent) -> tuple[int, str, str]:
-    """Mongo document order is unstable, so the cut of a busy scan needs a total order of its own."""
-    return (UPDATE_SAMPLE_RANK[event.update_type], event.package_name, event.new_version)
+_VersionChange = tuple[str, dict[str, str], dict[str, str], UpdateKind]
 
 
 def version_changes(
     prev_deps: dict[str, dict[str, str]], curr_deps: dict[str, dict[str, str]]
-) -> Iterator[tuple[str, dict[str, str], dict[str, str], UpdateKind]]:
+) -> Iterator[_VersionChange]:
     for identity, curr in curr_deps.items():
         prev = prev_deps.get(identity)
         if prev is None or prev["version"] == curr["version"]:
             continue
         kind = classify_version_change(prev["version"], curr["version"])
-        if kind != "none":  # "none" is one PEP 440 identity spelled twice, e.g. v1.0.0 vs 1.0.0
+        # "none": one version spelled twice, e.g. v1.0.0 vs 1.0.0 or 4.1.100.Final vs 4.1.100
+        if kind != "none":
             yield identity, prev, curr, kind
 
 
-def _compare_scan_pair(
-    prev_deps: dict[str, dict[str, str]],
+def resolved_outdated(
+    prev_outdated: set[str], curr_outdated: set[str], curr_deps: dict[str, dict[str, str]], curr_failed: set[str]
+) -> set[str]:
+    """A package that vanished, or whose lookup failed, was not brought up to date."""
+    return (prev_outdated & ({info["name"] for info in curr_deps.values()} - curr_failed)) - curr_outdated
+
+
+def _update_sample_order(change: _VersionChange) -> tuple[int, str, str]:
+    """Mongo document order is unstable, so the cut of a busy scan needs a total order of its own."""
+    _identity, _prev, curr, kind = change
+    return (UPDATE_SAMPLE_RANK[kind], curr["display"], curr["version"])
+
+
+def _sample_events(
+    changes: list[_VersionChange],
     prev_scan_date: datetime,
-    curr_deps: dict[str, dict[str, str]],
     curr_scan_date: datetime,
     prev_outdated: set[str] | None,
-) -> list[tuple[DependencyUpdateEvent, str]]:
+) -> list[DependencyUpdateEvent]:
     days_between = max(1, (curr_scan_date - prev_scan_date).days)
     return [
-        (
-            DependencyUpdateEvent(
-                package_name=curr["display"],
-                package_type=curr["type"],
-                purl=curr["purl"] or None,
-                old_version=prev["version"],
-                new_version=curr["version"],
-                update_type=kind,
-                scan_date=curr_scan_date.isoformat(),
-                previous_scan_date=prev_scan_date.isoformat(),
-                days_between_scans=days_between,
-                was_outdated=prev["name"] in (prev_outdated or ()),
-            ),
-            identity,
+        DependencyUpdateEvent(
+            package_name=curr["display"],
+            package_type=curr["type"],
+            purl=curr["purl"] or None,
+            old_version=prev["version"],
+            new_version=curr["version"],
+            update_type=kind,
+            scan_date=curr_scan_date.isoformat(),
+            previous_scan_date=prev_scan_date.isoformat(),
+            days_between_scans=days_between,
+            was_outdated=prev["name"] in (prev_outdated or ()),
         )
-        for identity, prev, curr, kind in version_changes(prev_deps, curr_deps)
+        for _identity, prev, curr, kind in heapq.nsmallest(RECENT_UPDATES_LIMIT, changes, key=_update_sample_order)
     ]
 
 
 def _build_timeline_entry(
     scan_id: str,
     scan_date: datetime,
-    events: list[DependencyUpdateEvent],
+    type_counts: Mapping[str, int],
     outdated_count: int | None,
 ) -> ScanTimelineEntry:
-    type_counts = Counter(e.update_type for e in events)
     return ScanTimelineEntry(
         scan_id=scan_id,
         date=scan_date.isoformat(),
@@ -325,6 +360,13 @@ def window_cutoff(window_days: int | None) -> datetime | None:
     return datetime.now(tz=timezone.utc) - timedelta(days=window_days)
 
 
+def retained_window(window_days: int, horizon: int | None, first_bar_at: datetime) -> int | None:
+    """The horizon when shorter than the window, unless a pinned or released scan dates the first bar before it."""
+    if horizon is None or horizon >= window_days:
+        return None
+    return None if first_bar_at < datetime.now(tz=timezone.utc) - timedelta(days=horizon) else horizon
+
+
 def updates_per_month(total_updates: int, window_days: int | None) -> float | None:
     """Per calendar window, not scan span, so CI cadence cannot skew the ranking's primary sort key."""
     if window_days is None:
@@ -332,7 +374,10 @@ def updates_per_month(total_updates: int, window_days: int | None) -> float | No
     return round(total_updates / (window_days / DAYS_PER_MONTH), 2)
 
 
-_NOT_ENOUGH_SCANS = "Not enough scans to analyze (need at least 2)"
+# Two bars make the first interval; a commit run is one bar, so it also takes two commits.
+MIN_COMPARABLE_BARS = 2
+
+_NOT_ENOUGH_SCANS = f"Not enough scans to analyze (need at least {MIN_COMPARABLE_BARS})"
 
 
 @dataclass(frozen=True)
@@ -369,6 +414,7 @@ class FoldedWindow:
         recent_updates: Sequence[DependencyUpdateEvent] = (),
         upstream: UpstreamCadenceMetrics | None = None,
         window_scan_cap: int | None = None,
+        retention_days: int | None = None,
         outdated_backlog: int = 0,
     ) -> UpdateFrequencyMetrics:
         return UpdateFrequencyMetrics(
@@ -396,6 +442,7 @@ class FoldedWindow:
             trend_detail=self.trend_detail,
             dominant_ecosystem=self.dominant_ecosystem,
             window_scan_cap=window_scan_cap,
+            retention_days=retention_days,
             outdated_backlog=outdated_backlog,
             scan_timeline=self.scan_timeline,
             slowest_packages=list(slowest_packages),
@@ -408,36 +455,6 @@ class FoldedWindow:
                 upstream.upstream_days_since_latest_release_median if upstream else None
             ),
             adoption_latency_days_median=(upstream.adoption_latency_days_median if upstream else None),
-        )
-
-    def to_summary(
-        self,
-        project_id: str,
-        project_name: str,
-        teams: list[TeamRef] | None = None,
-        *,
-        branch: str | None = None,
-        window_days: int,
-        data_status: Literal["ready", "partial"] = "ready",
-        window_scan_cap: int | None = None,
-    ) -> ProjectUpdateSummary:
-        """data_status comes from window_coverage_status: the fold knows what it summed, not what the window held."""
-        return ProjectUpdateSummary(
-            project_id=project_id,
-            project_name=project_name,
-            teams=teams or [],
-            data_status=data_status,
-            branch=branch,
-            window_days=window_days,
-            scan_count=self.scan_count,
-            updates_per_month=self.updates_per_month,
-            update_coverage_pct=self.update_coverage_pct,
-            patch_ratio=self.granularity_ratio.get("patch", 0.0),
-            trend_direction=self.trend_direction,
-            total_updates=self.total_updates,
-            total_outdated=self.total_outdated_detected,
-            last_scan_date=self.last_scan_date,
-            window_scan_cap=window_scan_cap,
         )
 
 
@@ -566,6 +583,8 @@ def dominant_ecosystem(eco: Mapping[str, Any]) -> str | None:
 
 @dataclass
 class _AccumulatorState:
+    # Adoption feeds only the upstream cadence, which needs a release fetcher.
+    track_adoption: bool
     type_counter: Counter = field(default_factory=Counter)
     recent_events_by_scan: deque[list[DependencyUpdateEvent]] = field(
         default_factory=lambda: deque(maxlen=RECENT_UPDATES_LIMIT)
@@ -586,7 +605,7 @@ class _AccumulatorState:
             if name not in self.dep_type_map:
                 self.dep_type_map[name] = info["type"]
             system = info["deps_dev_system"]
-            if system and identity not in self.package_specs:
+            if self.track_adoption and system and identity not in self.package_specs:
                 self.package_specs[identity] = (system, info["deps_dev_name"])
 
     def record_outdated(self, outdated: set[str] | None) -> None:
@@ -608,28 +627,28 @@ class _AccumulatorState:
         """Both scans need an outdated analysis: a missing one would report the predecessor's whole backlog resolved."""
         if prev_outdated is None or curr_outdated is None:
             return
-        curr_names = {info["name"] for info in curr_deps.values()} - curr_failed
-        for pkg in prev_outdated:
-            if pkg in curr_names and pkg not in curr_outdated:
-                self.ever_resolved.add(pkg)
+        self.ever_resolved |= resolved_outdated(prev_outdated, curr_outdated, curr_deps, curr_failed)
 
-    def absorb_events(self, events: list[tuple[DependencyUpdateEvent, str]], curr_scan_date: datetime) -> None:
-        for e, identity in events:
-            self.type_counter[e.update_type] += 1
-            # Returning to an old release is no adoption of it.
-            if e.update_type != "downgrade" and len(self.first_seen_versions) < _MAX_OBSERVATIONS:
-                key = (identity, e.new_version)
-                if key not in self.first_seen_versions:
-                    self.first_seen_versions[key] = curr_scan_date
-        if events:
-            ranked = sorted((e for e, _identity in events), key=_update_sample_order)
-            self.recent_events_by_scan.append(ranked[:RECENT_UPDATES_LIMIT])
+    def absorb_changes(
+        self,
+        changes: list[_VersionChange],
+        prev_scan_date: datetime,
+        curr_scan_date: datetime,
+        prev_outdated: set[str] | None,
+    ) -> Counter[str]:
+        kinds: Counter[str] = Counter(kind for *_, kind in changes)
+        self.type_counter.update(kinds)
+        if self.track_adoption:
+            for identity, _prev, curr, kind in changes:
+                # Returning to an old release is no adoption of it.
+                if kind != "downgrade" and len(self.first_seen_versions) < _MAX_OBSERVATIONS:
+                    self.first_seen_versions.setdefault((identity, curr["version"]), curr_scan_date)
+        if changes:
+            self.recent_events_by_scan.append(_sample_events(changes, prev_scan_date, curr_scan_date, prev_outdated))
+        return kinds
 
     def recent_events(self) -> list[DependencyUpdateEvent]:
         return list(islice(chain.from_iterable(reversed(self.recent_events_by_scan)), RECENT_UPDATES_LIMIT))
-
-
-_MIN_COMPARABLE_COMMITS = 2
 
 
 def select_primary_branch(
@@ -642,7 +661,7 @@ def select_primary_branch(
     live = {branch: seen for branch, seen in activity.items() if branch not in deleted}
     if not live:
         return None
-    if default_branch in live and live[default_branch].commit_count >= _MIN_COMPARABLE_COMMITS:
+    if default_branch in live and live[default_branch].commit_count >= MIN_COMPARABLE_BARS:
         return default_branch
     return max(live, key=lambda branch: (live[branch].commit_count, live[branch].last_scan_at, branch))
 
@@ -656,15 +675,6 @@ async def elect_primary_branch(
 ) -> str | None:
     activity = await window_scans_by_branch(scan_repo, [project_id], since)
     return select_primary_branch(activity.get(project_id, {}), default_branch, deleted_branches)
-
-
-# Slack for scans the ledger reached between the two reads; a real gap loses far more than a fifth.
-READY_COVERAGE_RATIO = 0.8
-
-
-def window_coverage_status(accounted_commits: int, window_commits: int) -> Literal["ready", "partial"]:
-    """Partial rows stay out of averages, best/worst and ranking; both arguments count commits of one stretch."""
-    return "ready" if accounted_commits >= window_commits * READY_COVERAGE_RATIO else "partial"
 
 
 def same_commit_runs[T](items: Sequence[T], *, commit_of: Callable[[T], str | None]) -> list[list[T]]:
@@ -704,6 +714,14 @@ def fold_runs_into_bars(entries: Sequence[ScanTimelineEntry], commits: Sequence[
 # A bar can hold a whole run, so over-fetch lest a CI retry burst starves the window below max_scans.
 _BAR_FETCH_HEADROOM = 5
 
+# The delta ledger's chain order, so both read paths cut a same-millisecond tie at the same scan.
+WALK_SCAN_SORT: list[tuple[str, int]] = [("created_at", -1), ("_id", -1)]
+
+
+def walk_fetch_limit(max_scans: int, since: datetime | None) -> int:
+    """With since set, the calendar window (capped by WINDOW_HARD_LIMIT) applies and max_scans is ignored."""
+    return WINDOW_HARD_LIMIT if since is not None else min(WINDOW_HARD_LIMIT, max_scans * _BAR_FETCH_HEADROOM)
+
 
 async def _load_completed_scans(
     scan_repo: ScanRepository,
@@ -711,22 +729,17 @@ async def _load_completed_scans(
     branch: str,
     max_scans: int,
     since: datetime | None,
-    hard_limit: int,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """With since set, the calendar window (capped by hard_limit) applies and max_scans is ignored."""
-    fetch_limit = hard_limit if since is not None else min(hard_limit, max_scans * _BAR_FETCH_HEADROOM)
+    fetch_limit = walk_fetch_limit(max_scans, since)
     # Filtered in the query so the limit counts only usable scans, even when the newest ones failed.
     docs = await scan_repo.find_many_raw(
         {**usable_scan_match(since), "project_id": project_id, "branch": branch},
-        sort=[("created_at", -1), ("_id", -1)],
+        sort=WALK_SCAN_SORT,
         limit=fetch_limit,
         projection={"_id": 1, "created_at": 1, "commit_hash": 1},
     )
     scans_raw: list[dict[str, Any]] = [
-        {"_id": d["_id"], "created_at": d["created_at"], "commit_hash": d.get("commit_hash")}
-        for d in docs
-        # A restored bundle can carry ISO-string dates, which the aggregation and delta writer also skip.
-        if isinstance(d.get("created_at"), datetime)
+        {"_id": d["_id"], "created_at": d["created_at"], "commit_hash": d.get("commit_hash")} for d in docs
     ]
     scans_raw.reverse()
     if since is None:
@@ -752,31 +765,19 @@ async def compute_update_frequency(
     max_scans: int = 20,
     window_days: int | None = None,
     release_fetcher: ReleaseHistoryFetcher | None = None,
-    hard_limit: int = WINDOW_HARD_LIMIT,
+    retention_days: int | None = None,
 ) -> UpdateFrequencyMetrics:
     """One branch only, since other branches' differences are no updates; only window_days yields a monthly rate."""
     if branch is None:
         return short_window([]).to_metrics(project_id, project_name)
     since = window_cutoff(window_days)
 
-    completed_scans, truncated = await _load_completed_scans(
-        scan_repo, project_id, branch, max_scans, since, hard_limit
-    )
+    completed_scans, truncated = await _load_completed_scans(scan_repo, project_id, branch, max_scans, since)
 
-    state = _AccumulatorState()
+    state = _AccumulatorState(track_adoption=release_fetcher is not None)
 
-    analysed: list[dict[str, Any]] = []
+    analysed: list[tuple[dict[str, Any], set[str] | None]] = []
     prev_deps: dict[str, dict[str, str]] = {}
-    prev_outdated: set[str] | None = None
-    latest_outdated: set[str] | None = None
-
-    def _close_bar() -> None:
-        """The previous survivor ended its run, so it is the scan the bar tallies read."""
-        nonlocal latest_outdated
-        state.record_bar_outdated(prev_outdated)
-        if prev_outdated is not None:
-            latest_outdated = prev_outdated
-
     for curr_scan in completed_scans:
         curr_deps = await load_scan_deps(dep_repo, curr_scan["_id"])
         # An SBOM-less scan measured nothing, so it is dropped as in the delta ledger.
@@ -789,31 +790,32 @@ async def compute_update_frequency(
         )
         state.record_outdated(curr_outdated)
 
-        events: list[tuple[DependencyUpdateEvent, str]] = []
+        kinds: Counter[str] = Counter()
         if analysed:
-            prev_scan = analysed[-1]
-            if not curr_scan["commit_hash"] or prev_scan["commit_hash"] != curr_scan["commit_hash"]:
-                _close_bar()
+            prev_scan, prev_outdated = analysed[-1]
             state.record_resolved(prev_outdated, curr_outdated, curr_deps, curr_failed)
-            events = _compare_scan_pair(
-                prev_deps, prev_scan["created_at"], curr_deps, curr_scan["created_at"], prev_outdated
+            kinds = state.absorb_changes(
+                list(version_changes(prev_deps, curr_deps)),
+                prev_scan["created_at"],
+                curr_scan["created_at"],
+                prev_outdated,
             )
-            state.absorb_events(events, curr_scan["created_at"])
         state.scan_timeline.append(
-            _build_timeline_entry(
-                curr_scan["_id"], curr_scan["created_at"], [e for e, _ in events], _measured_count(curr_outdated)
-            )
+            _build_timeline_entry(curr_scan["_id"], curr_scan["created_at"], kinds, _measured_count(curr_outdated))
         )
 
-        analysed.append(curr_scan)
+        analysed.append((curr_scan, curr_outdated))
         prev_deps = curr_deps
-        prev_outdated = curr_outdated
 
-    if analysed:
-        _close_bar()
-    bars = fold_runs_into_bars(state.scan_timeline, [scan["commit_hash"] for scan in analysed])
+    latest_outdated: set[str] = set()
+    for run in same_commit_runs(analysed, commit_of=lambda member: member[0]["commit_hash"]):
+        run_outdated = run[-1][1]
+        state.record_bar_outdated(run_outdated)
+        if run_outdated is not None:
+            latest_outdated = run_outdated
+    bars = fold_runs_into_bars(state.scan_timeline, [scan["commit_hash"] for scan, _outdated in analysed])
 
-    if len(bars) < 2:
+    if len(bars) < MIN_COMPARABLE_BARS:
         return short_window(bars).to_metrics(project_id, project_name, branch=branch)
 
     upstream = await _maybe_fetch_upstream_cadence(release_fetcher, state.package_specs, state.first_seen_versions)
@@ -821,14 +823,14 @@ async def compute_update_frequency(
         state.package_outdated_counts,
         state.package_latest_info,
         state.dep_type_map,
-        latest_outdated or set(),
+        latest_outdated,
         _final_versions_by_name(prev_deps),
     )
+    first_bar_at = datetime.fromisoformat(bars[0].date)
+    retained = None if truncated or window_days is None else retained_window(window_days, retention_days, first_bar_at)
     # Past the cap the rate divides by the stretch the walk folded, not by a window it only partly saw.
     rate_days = (
-        spanned_days(datetime.fromisoformat(bars[0].date), datetime.fromisoformat(bars[-1].date))
-        if truncated
-        else window_days
+        spanned_days(first_bar_at, datetime.fromisoformat(bars[-1].date)) if truncated else retained or window_days
     )
     folded = summarise_window(
         bars,
@@ -845,9 +847,14 @@ async def compute_update_frequency(
         slowest_packages=slowest_packages,
         recent_updates=state.recent_events(),
         upstream=upstream,
-        window_scan_cap=hard_limit if truncated else None,
+        window_scan_cap=WINDOW_HARD_LIMIT if truncated else None,
+        retention_days=retained,
         outdated_backlog=outdated_backlog,
     )
+
+
+# Half the browser's 30 s request timeout, so a slow deps.dev never costs the walk its own answer.
+_UPSTREAM_BUDGET_SECONDS = 15.0
 
 
 async def _maybe_fetch_upstream_cadence(
@@ -860,7 +867,8 @@ async def _maybe_fetch_upstream_cadence(
         return None
 
     try:
-        history = await release_fetcher.fetch(list(dict.fromkeys(package_specs.values())))
+        async with asyncio.timeout(_UPSTREAM_BUDGET_SECONDS):
+            history = await release_fetcher.fetch(list(dict.fromkeys(package_specs.values())))
     except Exception:
         logger.warning("release-history fetcher failed; skipping upstream cadence", exc_info=True)
         return None
@@ -875,21 +883,45 @@ async def _maybe_fetch_upstream_cadence(
     return aggregate_upstream_metrics(history, observations=observations)
 
 
-def _project_key(project: dict[str, Any]) -> str:
-    return str(project.get("_id") or project.get("id", ""))
-
-
 def placeholder_summary(
     project: dict[str, Any], status: UpdateDataStatus, window_days: int, branch: str | None = None
 ) -> ProjectUpdateSummary:
     """A row without numbers, naming the branch it looked at, so every project stays accounted for once."""
     return ProjectUpdateSummary(
-        project_id=_project_key(project),
+        project_id=str(project["_id"]),
         project_name=project.get("name", ""),
         teams=project.get("teams") or [],
         data_status=status,
         branch=branch,
         window_days=window_days,
+    )
+
+
+def measured_summary(
+    metrics: UpdateFrequencyMetrics,
+    teams: list[TeamRef],
+    *,
+    window_days: int,
+    data_status: Literal["ready", "partial"] = "ready",
+) -> ProjectUpdateSummary:
+    """data_status comes from CommitCoverage: the fold knows what it summed, not what the window held."""
+    return ProjectUpdateSummary(
+        project_id=metrics.project_id,
+        project_name=metrics.project_name,
+        teams=teams,
+        data_status=data_status,
+        branch=metrics.branch,
+        window_days=window_days,
+        scan_count=metrics.scan_count,
+        updates_per_month=metrics.updates_per_month,
+        update_coverage_pct=metrics.update_coverage_pct,
+        patch_ratio=metrics.granularity_ratio.get("patch", 0.0),
+        trend_direction=metrics.trend_direction,
+        total_updates=metrics.total_updates,
+        total_outdated=metrics.total_outdated_detected,
+        last_scan_date=metrics.last_scan_date,
+        window_scan_cap=metrics.window_scan_cap,
+        retention_days=metrics.retention_days,
     )
 
 
@@ -937,72 +969,42 @@ async def compute_update_frequency_comparison(
     scan_repo: ScanRepository,
     dep_repo: DependencyRepository,
     analysis_repo: AnalysisResultRepository,
-    window_days: int = 90,
+    window_days: int = UPDATE_FREQUENCY_COMPARISON_WINDOW_DAYS,
 ) -> UpdateFrequencyComparison:
     """One calendar window for every project: different spans would rank scan cadence, not update activity."""
     # Per call: a Semaphore binds to the loop of first use, so a module-level one would pin to the first loop.
     semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
     since = window_cutoff(window_days)
 
-    activity = await window_scans_by_branch(scan_repo, [_project_key(p) for p in projects], since)
+    activity = await window_scans_by_branch(scan_repo, [str(p["_id"]) for p in projects], since)
 
     async def _compute_single(project: dict[str, Any]) -> ProjectUpdateSummary:
-        project_id = _project_key(project)
-        project_name = project.get("name", "")
-        teams = project.get("teams") or []
+        project_id = str(project["_id"])
+        primary: str | None = None
+        try:
+            branches = activity.get(project_id, {})
+            primary = select_primary_branch(branches, project.get("default_branch"), project.get("deleted_branches"))
+            # The window holds every scan the walk would read, so one commit can only ever fold into one bar.
+            if primary is None or branches[primary].commit_count < MIN_COMPARABLE_BARS:
+                return placeholder_summary(project, "insufficient_data", window_days, primary)
 
-        branches = activity.get(project_id, {})
-        primary = select_primary_branch(branches, project.get("default_branch"), project.get("deleted_branches"))
-        if primary is None:
-            return placeholder_summary(project, "insufficient_data", window_days)
-
-        async with semaphore:
-            try:
+            async with semaphore:
                 metrics = await compute_update_frequency(
                     project_id=project_id,
-                    project_name=project_name,
+                    project_name=project.get("name", ""),
                     scan_repo=scan_repo,
                     dep_repo=dep_repo,
                     analysis_repo=analysis_repo,
                     window_days=window_days,
                     branch=primary,
+                    retention_days=project.get("retention_horizon"),
                 )
-            except Exception:
-                logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)
-                return placeholder_summary(project, "error", window_days, primary)
-
-            if metrics.scan_count < 2:
+            if metrics.scan_count < MIN_COMPARABLE_BARS:
                 return placeholder_summary(project, "insufficient_data", window_days, primary)
+            # The walk reads the very scans coverage is measured against, so it cannot lag like the delta ledger.
+            return measured_summary(metrics, project.get("teams") or [], window_days=window_days)
+        except Exception:
+            logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)
+            return placeholder_summary(project, "error", window_days, primary)
 
-            return ProjectUpdateSummary(
-                project_id=metrics.project_id,
-                project_name=metrics.project_name,
-                teams=teams,
-                # The walk reads the very scans coverage is measured against, so it cannot lag like the delta ledger.
-                data_status="ready",
-                branch=metrics.branch,
-                window_days=window_days,
-                scan_count=metrics.scan_count,
-                updates_per_month=metrics.updates_per_month,
-                update_coverage_pct=metrics.update_coverage_pct,
-                patch_ratio=metrics.granularity_ratio.get("patch", 0),
-                trend_direction=metrics.trend_direction,
-                total_updates=metrics.total_updates,
-                total_outdated=metrics.total_outdated_detected,
-                last_scan_date=metrics.last_scan_date,
-                window_scan_cap=metrics.window_scan_cap,
-            )
-
-    results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)
-    summaries = [
-        r
-        if isinstance(r, ProjectUpdateSummary)
-        # gather() hands back anything that escaped _compute_single's own guard.
-        else placeholder_summary(project, "error", window_days)
-        for project, r in zip(projects, results, strict=True)
-    ]
-    for outcome in results:
-        if isinstance(outcome, BaseException):
-            logger.warning("Update-frequency comparison lost a project", exc_info=outcome)
-
-    return rank_summaries(summaries)
+    return rank_summaries(await asyncio.gather(*[_compute_single(p) for p in projects]))

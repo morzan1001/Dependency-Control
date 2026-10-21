@@ -7,12 +7,12 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection
 
-from app.core import UNDATED
+from app.core.constants import SCANS_TIP_SORT
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION, ScanOutdatedSet, ScanUpdateDelta
 from app.repositories.base import BaseRepository
-from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
+from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository, bounded_gather
 
-_NEIGHBOUR_PROJECTION = {"_id": 1, "scan_created_at": 1, "prev_scan_id": 1, "dep_count": 1}
+_NEIGHBOUR_PROJECTION = {"_id": 1, "scan_created_at": 1, "commit_hash": 1, "prev_scan_id": 1, "dep_count": 1}
 
 # Everything the pure fold needs for a comparison row.
 _WINDOW_PROJECTION = {
@@ -46,12 +46,12 @@ _SCAN_ID_PROJECTION = {"_id": 1, "project_id": 1, "branch": 1, "created_at": 1}
 _ACTIVITY_PROJECTION = {**_SCAN_ID_PROJECTION, "commit_hash": 1}
 
 # Bounds one read's $in list.
-_WINDOW_PROJECT_BATCH = 100
+WINDOW_PROJECT_BATCH = 100
 
 
-def _chain_order(doc: dict[str, Any]) -> tuple[datetime, str]:
-    """The writer's total order over one branch."""
-    return (doc["scan_created_at"], doc["_id"])
+def is_comparable_delta(delta: dict[str, Any]) -> bool:
+    """Carries dependencies and no writer failure, so a later scan can be diffed against it."""
+    return int(delta.get("dep_count") or 0) > 0 and not delta.get("error")
 
 
 @dataclass(frozen=True)
@@ -60,8 +60,8 @@ class LedgerEntry:
     prev_scan_id: str | None
     prev_created_at: datetime | None
     scan_created_at: datetime
-    # Carries dependencies and no writer failure, so a later scan can be diffed against it.
     comparable: bool
+    failed: bool
 
 
 def _ledger_entry(delta: dict[str, Any]) -> LedgerEntry:
@@ -71,7 +71,8 @@ def _ledger_entry(delta: dict[str, Any]) -> LedgerEntry:
         delta.get("prev_scan_id"),
         prev_at if isinstance(prev_at, datetime) else None,
         delta["scan_created_at"],
-        int(delta.get("dep_count") or 0) > 0 and not delta.get("error"),
+        is_comparable_delta(delta),
+        bool(delta.get("error")),
     )
 
 
@@ -92,11 +93,8 @@ WINDOW_HARD_LIMIT = 1000
 
 
 def usable_scan_match(since: datetime | None) -> dict[str, Any]:
-    """The usable builds both read paths fold, from ``since`` on."""
-    scoped: dict[str, Any] = dict(USABLE_BUILD_MATCH)
-    if since is not None:
-        scoped["created_at"] = {"$gte": since}
-    return scoped
+    """The usable builds both read paths fold, from ``since`` on; an archive restore can store created_at as text."""
+    return {**USABLE_BUILD_MATCH, "created_at": {"$type": "date"} if since is None else {"$gte": since}}
 
 
 def _named_branch(doc: dict[str, Any]) -> tuple[str, str] | None:
@@ -114,7 +112,7 @@ async def _window_docs(
     projection: dict[str, int],
 ) -> AsyncIterator[tuple[tuple[str, str], dict[str, Any]]]:
     """Streamed for bucketing in Python, as a $group over a window's documents outgrew a blocking stage's 100 MB."""
-    for batch in batched(project_ids, _WINDOW_PROJECT_BATCH, strict=False):
+    for batch in batched(project_ids, WINDOW_PROJECT_BATCH, strict=False):
         # Unsorted: a blocking sort has the same ceiling.
         async for doc in collection.find({"project_id": {"$in": list(batch)}, **scope}, projection):
             chain = _named_branch(doc)
@@ -128,6 +126,18 @@ def _commit_token(scan: dict[str, Any]) -> Any:
     return scan["_id"] if commit in (None, "") else commit
 
 
+async def _newest_scans(
+    collection: AsyncIOMotorCollection, project_ids: Sequence[str], scope: dict[str, Any]
+) -> AsyncIterator[tuple[tuple[str, str], dict[str, Any]]]:
+    """Each project's newest WINDOW_HARD_LIMIT scans off the tip index: older activity is no recent branch to elect."""
+    for project_id in project_ids:
+        cursor = collection.find({"project_id": project_id, **scope}, _ACTIVITY_PROJECTION).sort(SCANS_TIP_SORT)
+        async for doc in cursor.limit(WINDOW_HARD_LIMIT):
+            chain = _named_branch(doc)
+            if chain is not None:
+                yield chain, doc
+
+
 async def window_scans_by_branch(
     scan_repo: ScanRepository,
     project_ids: Sequence[str],
@@ -136,22 +146,23 @@ async def window_scans_by_branch(
     """Both read paths pick their branch from these counts, so neither settles on a branch the other would not."""
     # A findings-only scan holds no dependencies to compare; $ne keeps scans older than sbom_refs.
     scoped = {**usable_scan_match(since), "sbom_refs": {"$ne": []}}
+    scans = (
+        _newest_scans(scan_repo.collection, project_ids, scoped)
+        if since is None
+        else _window_docs(scan_repo.collection, project_ids, scoped, _ACTIVITY_PROJECTION)
+    )
 
     commits: dict[tuple[str, str], Counter[str]] = {}
     latest: dict[tuple[str, str], datetime] = {}
-    async for chain, scan in _window_docs(scan_repo.collection, project_ids, scoped, _ACTIVITY_PROJECTION):
+    async for chain, scan in scans:
         per_commit = commits.setdefault(chain, Counter())
         if isinstance(token := _commit_token(scan), str):
             per_commit[token] += 1
-        created_at = scan.get("created_at")
-        # Archive restore can insert a scan date as an ISO string.
-        if isinstance(created_at, datetime) and created_at > latest.get(chain, UNDATED):
-            latest[chain] = created_at
+        latest[chain] = max(latest.get(chain, scan["created_at"]), scan["created_at"])
 
     activity: dict[str, dict[str, BranchWindowActivity]] = {}
     for (project_id, branch), per_commit in commits.items():
-        moment = latest.get((project_id, branch), UNDATED)
-        activity.setdefault(project_id, {})[branch] = BranchWindowActivity(per_commit, moment)
+        activity.setdefault(project_id, {})[branch] = BranchWindowActivity(per_commit, latest[project_id, branch])
     return activity
 
 
@@ -190,6 +201,7 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
                 "project_id": project_id,
                 "branch": branch,
                 "dep_count": {"$gt": 0},
+                "error": None,
                 "$or": _outside(before, before_id, "$lt"),
             },
             direction=-1,
@@ -207,17 +219,24 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
             direction=1,
         )
 
-    async def group_window_by_branch(
-        self, project_ids: Sequence[str], since: datetime
-    ) -> dict[str, dict[str, list[dict[str, Any]]]]:
-        scope = {"scan_created_at": {"$gte": since}, "schema_version": UPDATE_DELTA_SCHEMA_VERSION}
-        buckets: dict[str, dict[str, list[dict[str, Any]]]] = {}
-        async for (project_id, branch), delta in _window_docs(self.collection, project_ids, scope, _WINDOW_PROJECTION):
-            buckets.setdefault(project_id, {}).setdefault(branch, []).append(delta)
-        for branches in buckets.values():
-            for deltas in branches.values():
-                deltas.sort(key=_chain_order)
-        return buckets
+    async def window_chains(
+        self, chains: Sequence[tuple[str, str]], since: datetime, limit: int
+    ) -> dict[tuple[str, str], list[dict[str, Any]]]:
+        """Each chain oldest first, in the writer's (scan_created_at, _id) order, read newest first up to ``limit``."""
+
+        async def _read(project_id: str, branch: str) -> list[dict[str, Any]]:
+            query = {
+                "project_id": project_id,
+                "branch": branch,
+                "scan_created_at": {"$gte": since},
+                "schema_version": UPDATE_DELTA_SCHEMA_VERSION,
+            }
+            cursor = self.collection.find(query, _WINDOW_PROJECTION).sort([("scan_created_at", -1), ("_id", -1)])
+            docs: list[dict[str, Any]] = await cursor.limit(limit).to_list(limit)
+            docs.reverse()
+            return docs
+
+        return dict(zip(chains, await bounded_gather(_read(*chain) for chain in chains), strict=True))
 
     async def window_ledger_by_branch(
         self, project_ids: Sequence[str], since: datetime
@@ -229,13 +248,28 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
             chains.setdefault(chain, {})[delta["_id"]] = _ledger_entry(delta)
         return chains
 
-    async def find_dependents(self, project_id: str, branch: str, prev_scan_ids: Sequence[str]) -> list[dict[str, Any]]:
+    async def find_dependents(
+        self, project_id: str, branch: str, prev_scan_ids: Sequence[str], since: datetime
+    ) -> list[dict[str, Any]]:
         if not prev_scan_ids:
             return []
         return await self.collection.find(
-            {"project_id": project_id, "branch": branch, "prev_scan_id": {"$in": list(prev_scan_ids)}},
+            {
+                "project_id": project_id,
+                "branch": branch,
+                "scan_created_at": {"$gte": since},
+                "prev_scan_id": {"$in": list(prev_scan_ids)},
+            },
             _NEIGHBOUR_PROJECTION,
         ).to_list(None)
+
+    async def discard(self, query: dict[str, Any]) -> list[str]:
+        """Deletes the matching deltas and exactly their outdated sets, so a delta the query spares keeps its set."""
+        ids = [doc["_id"] for doc in await self.collection.find(query, {"_id": 1}).to_list(None)]
+        if ids:
+            await self.collection.delete_many({**query, "_id": {"$in": ids}})
+            await ScanOutdatedSetRepository(self.db).delete_many({"_id": {"$in": ids}})
+        return ids
 
     async def _neighbour(self, query: dict[str, Any], direction: int) -> dict[str, Any] | None:
         docs = (

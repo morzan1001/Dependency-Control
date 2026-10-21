@@ -58,6 +58,7 @@ const metrics: UpdateFrequencyMetrics = {
   upstream_days_since_latest_release_median: null,
   adoption_latency_days_median: null,
   window_scan_cap: null,
+  retention_days: null,
   outdated_backlog: 0,
   dominant_ecosystem: "npm",
   scan_timeline: [
