@@ -115,16 +115,22 @@ class CryptoTrendService:
         if projects is None:
             query = {} if resolved.project_ids is None else {"_id": {"$in": resolved.project_ids}}
             projects = await read_scope_projects(self.db, query)
-        timelines = await ScanRepository(self.db).head_timelines(projects, range_start, range_end)
+        scan_repo = ScanRepository(self.db)
+        timelines = await scan_repo.head_timelines(projects, range_start, range_end)
+        # CBOMs mostly arrive as uploads of their own, which no head timeline picks.
+        uploads = await scan_repo.cbom_upload_timelines(projects, range_start, range_end)
         starts = _bucket_starts(range_start, range_end, bucket)
         # A project counts in every bucket with its head analysis at the bucket's end, until its next scan.
-        heads = [_heads_before(timelines, _next_bucket(start, bucket)) for start in starts]
+        heads = [
+            sorted({*_heads_before(timelines, end), *_heads_before(uploads, end)})
+            for end in (_next_bucket(start, bucket) for start in starts)
+        ]
         scan_ids = sorted({scan_id for bucket_heads in heads for scan_id in bucket_heads})
         if metric in _METRIC_FILTER:
             counts = await self._finding_counts(metric, scan_ids)
             values = [sum(counts.get(scan_id, 0) for scan_id in bucket_heads) for bucket_heads in heads]
         else:
-            per_scan = await self._asset_values(metric, list(timelines), scan_ids)
+            per_scan = await self._asset_values(metric, sorted({*timelines, *uploads}), scan_ids)
             values = [
                 len(set().union(*(per_scan.get(scan_id, set()) for scan_id in bucket_heads))) for bucket_heads in heads
             ]

@@ -226,6 +226,52 @@ async def test_a_newer_build_without_an_sbom_keeps_the_sbom_builds_count(db):
     assert await _series(db) == _days(1, 1, 1, 1, 1, 1, first=_START + 1 * _DAY)
 
 
+_SBOM_REFS = [{"type": "gridfs_reference", "gridfs_id": "g1"}]
+
+
+async def _cbom_upload(db, scan_id, at, *, branch="unknown", pipeline_id=None, findings=0):
+    await _scan(
+        db, scan_id, at, branch=branch, findings=findings, scan_type="cbom", sbom_refs=[], pipeline_id=pipeline_id
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("branch", "pipeline_id"), [("unknown", None), ("main", 77)], ids=["manual-upload", "cbom-only-pipeline-on-main"]
+)
+async def test_a_cbom_upload_off_the_head_line_counts_beside_the_head_build(db, branch, pipeline_id):
+    await _project(db)
+    await _scan(db, "build", _START + 1 * _DAY, findings=1, sbom_refs=_SBOM_REFS)
+    await _cbom_upload(db, "cbom", _START + 3 * _DAY, branch=branch, pipeline_id=pipeline_id, findings=2)
+    await _scan(db, "next-build", _START + 5 * _DAY, findings=1, sbom_refs=_SBOM_REFS)
+
+    assert await _series(db) == _days(1, 1, 3, 3, 3, 3, first=_START + 1 * _DAY)
+
+
+@pytest.mark.asyncio
+async def test_only_the_newest_cbom_upload_counts_and_a_feature_branch_upload_not_at_all(db):
+    await _project(db)
+    await _scan(db, "build", _START + 1 * _DAY, findings=1, sbom_refs=_SBOM_REFS)
+    await _cbom_upload(db, "first", _START + 2 * _DAY, findings=4)
+    await _cbom_upload(db, "second", _START + 4 * _DAY, findings=2)
+    await _cbom_upload(db, "feature", _START + 5 * _DAY, branch="feature/x", pipeline_id=78, findings=9)
+
+    assert await _series(db) == _days(1, 5, 5, 3, 3, 3, first=_START + 1 * _DAY)
+
+
+@pytest.mark.asyncio
+async def test_unique_algorithms_take_a_cbom_uploads_assets_with_the_head_builds(db):
+    await _project(db)
+    await _scan(db, "build", _START + 1 * _DAY, sbom_refs=_SBOM_REFS)
+    await _cbom_upload(db, "cbom", _START + 3 * _DAY)
+    for _id, scan_id, name in (("a1", "build", "AES"), ("a2", "cbom", "RSA"), ("a3", "cbom", "AES")):
+        await db.crypto_assets.insert_one(
+            {"_id": _id, "project_id": "p", "scan_id": scan_id, "asset_type": "algorithm", "name": name}
+        )
+
+    assert await _series(db, metric="unique_algorithms") == _days(1, 1, 2, 2, 2, 2, first=_START + 1 * _DAY)
+
+
 @pytest.mark.asyncio
 async def test_a_rescan_counts_from_when_it_reanalysed_the_head_build(db):
     await _project(db)

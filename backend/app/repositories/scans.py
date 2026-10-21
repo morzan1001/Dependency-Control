@@ -17,6 +17,7 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
+    SCAN_TYPE_CBOM,
     SCAN_USABLE_STATUSES,
     SCANS_TIP_SORT,
     ScanStatus,
@@ -568,6 +569,31 @@ class ScanRepository:
             events.sort(key=lambda event: event[1], reverse=True)
             timelines[project_id] = sorted(events, key=lambda event: event[0])
         return timelines
+
+    async def cbom_upload_timelines(
+        self, projects: Sequence[Any], since: datetime, until: datetime
+    ) -> dict[str, list[tuple[datetime, str]]]:
+        """Per project, (from when, scan_id) of the CBOM-only uploads its head timeline skips: on its head branch or manual."""
+        scopes = {project_id: scope for project_id, scope in map(_head_scope, projects) if project_id}
+        histories = await bounded_gather(
+            self._builds_between(
+                {
+                    "project_id": project_id,
+                    "scan_type": SCAN_TYPE_CBOM,
+                    "sbom_refs.0": {"$exists": False},
+                    **USABLE_BUILD_MATCH,
+                    "$or": [_head_lines(scope)[0], {"pipeline_id": None}],
+                },
+                since,
+                until,
+            )
+            for project_id, scope in scopes.items()
+        )
+        return {
+            project_id: [(doc["created_at"], doc["_id"]) for doc in docs]
+            for project_id, docs in zip(scopes, histories, strict=True)
+            if docs
+        }
 
     async def _head_builds_between(
         self, project_id: str, scope: _HeadScope, since: datetime, until: datetime
