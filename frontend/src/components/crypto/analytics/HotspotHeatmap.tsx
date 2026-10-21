@@ -44,52 +44,57 @@ export function HotspotHeatmap({ scope, scopeId, groupBy }: Readonly<Props>) {
   const max = Math.max(...data.items.map((e) => e.asset_count), 1);
 
   return (
-    <div className="overflow-auto">
-      {(rowsCut || columns.length < columnTotal || sampledRows > 0) && (
-        <p className="pb-2 text-xs text-muted-foreground">
-          {rowsCut && `Showing ${data.items.length} of ${data.total} hotspots. `}
-          {columns.length < columnTotal && `Showing ${columns.length} of ${columnTotal} ${axis}. `}
-          {sampledRows > 0 &&
-            `${sampledRows} row(s) list a sample of their locations — a "?" cell is unknown, not absent.`}
+    <div className="space-y-2">
+      {rowsCut && (
+        <p className="text-xs text-muted-foreground">{`Showing ${data.items.length} of ${data.total} hotspots`}</p>
+      )}
+      {columns.length < columnTotal && (
+        <p className="text-xs text-muted-foreground">{`Showing ${columns.length} of ${columnTotal} ${axis}`}</p>
+      )}
+      {sampledRows > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {`${sampledRows} row(s) list a sample of their locations — a "?" cell is unknown, not absent`}
         </p>
       )}
-      <table className="text-xs">
-        <thead>
-          <tr>
-            <th className="sticky left-0 bg-background p-1 text-left">Key</th>
-            {columns.map((c) => (
-              <th
-                key={c}
-                className="p-1 font-mono text-muted-foreground whitespace-nowrap"
-                title={scope === "project" ? c : (projectNameById.get(c) ?? c)}
-              >
-                {columnLabel(c)}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.items.map((e) => (
-            <tr key={e.key}>
-              <td className="sticky left-0 bg-background p-1 font-mono whitespace-nowrap">
-                {e.key} <span className="text-muted-foreground">({e.asset_count})</span>
-              </td>
-              {columns.map((c) => {
-                const cell = heatmapCell(e, c, scope, max);
-                return (
-                  <td
-                    key={c}
-                    className={`p-1 text-center min-w-6 ${heatmapBgClass(cell.state, cell.intensityRatio)}`}
-                    title={cell.title}
-                  >
-                    {cell.label}
-                  </td>
-                );
-              })}
+      <div className="overflow-auto">
+        <table className="text-xs">
+          <thead>
+            <tr>
+              <th className="sticky left-0 bg-background p-1 text-left">Key</th>
+              {columns.map((c) => (
+                <th
+                  key={c}
+                  className="p-1 font-mono text-muted-foreground whitespace-nowrap"
+                  title={scope === "project" ? c : (projectNameById.get(c) ?? c)}
+                >
+                  {columnLabel(c)}
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {data.items.map((e) => (
+              <tr key={e.key}>
+                <td className="sticky left-0 bg-background p-1 font-mono whitespace-nowrap">
+                  {e.key} <span className="text-muted-foreground">({e.asset_count})</span>
+                </td>
+                {columns.map((c) => {
+                  const cell = heatmapCell(e, c, scope, max);
+                  return (
+                    <td
+                      key={c}
+                      className={`p-1 text-center min-w-6 ${heatmapBgClass(cell.state, cell.intensityRatio)}`}
+                      title={cell.title}
+                    >
+                      {cell.label}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

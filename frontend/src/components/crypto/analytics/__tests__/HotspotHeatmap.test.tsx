@@ -91,13 +91,13 @@ describe("HotspotHeatmap (org scope columns)", () => {
   it("says how many of the columns it is showing", async () => {
     renderWithClient(<HotspotHeatmap scope="global" groupBy="name" />);
     await screen.findByText("RSA-2048");
-    expect(screen.getByText(/Showing 30 of 42 projects/)).toBeInTheDocument();
+    expect(screen.getByText("Showing 30 of 42 projects")).toBeInTheDocument();
   });
 
-  it("says how many of the scope's hotspots it lists as rows", async () => {
+  it("says how many of the scope's hotspots it lists as rows, in the words of the other hotspot views", async () => {
     renderWithClient(<HotspotHeatmap scope="global" groupBy="name" />);
     await screen.findByText("RSA-2048");
-    expect(screen.getByText(/Showing 1 of 12 hotspots/)).toBeInTheDocument();
+    expect(screen.getByText("Showing 1 of 12 hotspots")).toBeInTheDocument();
   });
 
   it("resolves a project ObjectId to its name in the column header", async () => {
