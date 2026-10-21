@@ -23,8 +23,6 @@ class TestWebhookModel:
         assert webhook.is_active is True
         assert webhook.consecutive_failures == 0
         assert webhook.circuit_breaker_until is None
-        assert webhook.total_deliveries == 0
-        assert webhook.total_failures == 0
 
     def test_project_scoped(self):
         webhook = Webhook(

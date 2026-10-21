@@ -13,8 +13,6 @@ class GitHubOIDCPayload(BaseModel):
     ref: str | None = None
     sha: str | None = None
     workflow: str | None = None
-    run_id: str | None = None
-    event_name: str | None = None
 
 
 class GitHubPullRequest(BaseModel):

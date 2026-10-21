@@ -45,8 +45,6 @@ class TestGitHubOIDCPayloadModel:
         assert payload.ref is None
         assert payload.sha is None
         assert payload.workflow is None
-        assert payload.run_id is None
-        assert payload.event_name is None
 
     def test_with_all_fields(self):
         payload = GitHubOIDCPayload(
@@ -57,14 +55,10 @@ class TestGitHubOIDCPayloadModel:
             ref="refs/heads/main",
             sha="abc123",
             workflow="CI",
-            run_id="9876",
-            event_name="push",
         )
         assert payload.ref == "refs/heads/main"
         assert payload.sha == "abc123"
         assert payload.workflow == "CI"
-        assert payload.run_id == "9876"
-        assert payload.event_name == "push"
 
     def test_extra_claims_ignored(self):
         payload = GitHubOIDCPayload(

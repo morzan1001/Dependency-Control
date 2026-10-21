@@ -22,5 +22,3 @@ class Webhook(MongoDocument, CreatedAtModel):
     # Circuit breaker, so a failing receiver is not hammered.
     consecutive_failures: int = 0
     circuit_breaker_until: datetime | None = None
-    total_deliveries: int = 0
-    total_failures: int = 0
