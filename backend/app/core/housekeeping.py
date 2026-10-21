@@ -109,7 +109,7 @@ async def _reap_orphan_callgraphs(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE)
 
 async def _reap_orphan_scans(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
     """Finishes a project delete whose cascade broke off; the age window lets an ingest still writing a scan finish."""
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ORPHAN_MIN_AGE_HOURS)
     scanned = await db.scans.distinct("project_id")
     live = set(await db.projects.distinct("_id", {"_id": {"$in": scanned}}))
     gone = [project_id for project_id in scanned if project_id not in live]

@@ -318,7 +318,7 @@ class ScanRepository:
         """The given names some scan carries as its branch rather than its tag."""
         query = {"project_id": project_id, **BRANCH_SCAN_FILTER}
         ordered = list(names)
-        found = await _bounded_gather(self.collection.find_one({**query, "branch": b}, {"_id": 1}) for b in ordered)
+        found = await bounded_gather(self.collection.find_one({**query, "branch": b}, {"_id": 1}) for b in ordered)
         return {b for b, hit in zip(ordered, found, strict=True) if hit}
 
     async def branch_tips(

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
+from app.core.constants import ORPHAN_MIN_AGE_HOURS
 from app.core.housekeeping import _reap_orphan_scans
 from tests.helpers.databases import DATABASES
 
@@ -34,7 +34,7 @@ async def test_a_deleted_project_leaves_no_scan_and_a_retry_is_not_found(
 async def test_housekeeping_finishes_a_delete_whose_cascade_broke_off(db, database):
     """The recent-scans page joins each scan to its project after paging, so a leftover scan shortens a page."""
     now = datetime.now(timezone.utc)
-    old = now - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS * 2)
+    old = now - timedelta(hours=ORPHAN_MIN_AGE_HOURS * 2)
     await db.projects.insert_one({"_id": "p-live", "name": "live"})
     await db.scans.insert_many(
         [
