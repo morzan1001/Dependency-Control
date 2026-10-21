@@ -72,7 +72,11 @@ export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }
         )}
         <ThreatIntelNote
           sources={data.threat_intel_unavailable ?? []}
-          consequence="this advice uses the KEV and EPSS signals stored at scan time."
+          consequence={
+            data.threat_intel_unavailable?.includes('KEV')
+              ? 'this advice uses the KEV and EPSS signals stored at scan time.'
+              : 'this advice uses live KEV marks and the EPSS scores stored at scan time.'
+          }
         />
         <TileGroup
           title="Vulnerabilities"

@@ -86,6 +86,14 @@ describe("SummaryCard live threat intel", () => {
     expect(screen.getByText(/Live KEV data could not be read in full/)).toHaveTextContent(/stored at scan time/);
   });
 
+  it("says only the EPSS scores come from the scan when EPSS alone could not be read", () => {
+    render(<SummaryCard data={makeResponse({ threat_intel_unavailable: ["EPSS"] })} />);
+
+    expect(screen.getByText(/Live EPSS data could not be read in full/)).toHaveTextContent(
+      "Live EPSS data could not be read in full; this advice uses live KEV marks and the EPSS scores stored at scan time.",
+    );
+  });
+
   it("stays quiet when every live source answered", () => {
     render(<SummaryCard data={makeResponse({ threat_intel_unavailable: [] })} />);
 

@@ -354,7 +354,7 @@ export interface RecommendationsResponse {
   // Dependency rows the engine reasoned over against what the scan holds.
   dependencies_read: number;
   dependencies_total: number;
-  // Live KEV/EPSS sources that could not be read; the advice then rests on the scores stored at scan time.
+  // Live KEV/EPSS sources that could not be read; the advice then rests on what the scan stored for them.
   threat_intel_unavailable?: string[];
 }
 
