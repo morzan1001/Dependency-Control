@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from app.models.finding import FindingType
 from app.schemas.bearer import BearerFinding
 from app.services.aggregation import ResultAggregator
+from app.services.normalizers.utils import UNKNOWN_RULE_ID
 
 # bearer 2.1.1 `scan . --format json` over a Python file hashing a password with MD5 and logging an email.
 _BEARER_OUTPUT = json.loads((Path(__file__).parents[2] / "fixtures/sast/bearer_2.1.1_findings.json").read_text())
@@ -507,8 +508,8 @@ class TestBearerEntryContract:
     @pytest.mark.parametrize(
         "unreadable",
         [
-            pytest.param({"rule_id": "r", "full_filename": "a.py", "line_number": 1}, id="without-a-rule-id"),
             pytest.param({"id": "r", "severity": 3, "full_filename": "a.py", "line_number": 1}, id="wrongly-typed"),
+            pytest.param("a.py:1", id="not-an-object"),
         ],
     )
     def test_an_unreadable_entry_is_dropped_and_its_siblings_kept(self, unreadable):
@@ -521,6 +522,14 @@ class TestBearerEntryContract:
         )
         with pytest.raises(ValidationError):
             BearerFinding.model_validate(unreadable)
+
+    def test_an_entry_without_a_rule_id_is_a_finding_under_the_shared_rule_placeholder(self):
+        agg = ResultAggregator()
+        agg.aggregate("bearer", {"findings": {"high": [{"title": "t", "full_filename": "a.py", "line_number": 1}]}})
+
+        [finding] = agg.get_findings()
+        assert finding.id == "BEARER-unknown-a.py-1"
+        assert finding.details["sast_findings"][0]["id"] == UNKNOWN_RULE_ID
 
     def test_the_parent_snippet_stands_in_for_a_missing_code_extract(self):
         agg = ResultAggregator()

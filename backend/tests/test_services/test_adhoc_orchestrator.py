@@ -129,12 +129,12 @@ _WRONG_SHAPED_ENTRIES = [
     (
         "bearer",
         {"findings": {"critical": [{"detector": "AWS", "raw": "AKIAIOSFODNN7EXAMPLE"}]}},
-        "id",
+        "no Bearer finding key",
     ),
     (
         "bearer",
         {"findings": [{"detector": "AWS", "raw": "AKIAIOSFODNN7EXAMPLE"}]},
-        "id",
+        "no Bearer finding key",
     ),
 ]
 
@@ -951,6 +951,7 @@ _BEARER_SPARSE_ENTRY = {
         pytest.param({**_BEARER_SPARSE_ENTRY, "title": ""}, id="empty-title"),
         pytest.param({"id": "python_lang_logger", "full_filename": "app.py", "line_number": 3}, id="no-title"),
         pytest.param({**_BEARER_SPARSE_ENTRY, "source": {"start": 3, "column": {"start": 1, "end": 9}}}, id="no-end"),
+        pytest.param({"full_filename": "app.py", "line_number": 3}, id="no-rule-id"),
     ],
 )
 async def test_a_bearer_entry_the_ingest_normalizer_reads_is_read_here_too(entry):

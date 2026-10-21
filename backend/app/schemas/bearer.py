@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.ingest import PipelineIngest
 
@@ -13,7 +13,7 @@ class BearerSourceLocation(BaseModel):
 
 
 class BearerFinding(BaseModel):
-    id: str = Field(description="Rule ID (e.g., 'go_lang_logger_leak')")
+    id: str | None = Field(None, description="Rule ID (e.g., 'go_lang_logger_leak')")
     severity: str | None = Field(None, description="Severity; a grouped report gives each entry its group's key")
     cwe_ids: list[str] | None = Field(None, description="CWE identifiers")
     title: str | None = Field(None, description="Human-readable title of the finding")
@@ -35,6 +35,13 @@ class BearerFinding(BaseModel):
 
     code_extract: str | None = Field(None, description="Code snippet showing the finding")
 
+    @model_validator(mode="after")
+    def _sets_a_bearer_key(self) -> "BearerFinding":
+        # Every key is optional and a grouped report injects severity, so only another key marks Bearer output.
+        if not self.model_fields_set - {"severity"}:
+            raise ValueError("no Bearer finding key is set")
+        return self
+
 
 def bearer_entries(container: Any) -> list[Any] | None:
     """Bearer posts a flat list or severity groups; a group's severity is each entry's default."""
@@ -55,11 +62,3 @@ class BearerIngest(PipelineIngest):
         default_factory=dict,
         description="Bearer JSON output. Findings are grouped by severity (critical, high, medium, low, warning).",
     )
-
-    @field_validator("findings")
-    @classmethod
-    def _entries_readable(cls, findings: dict[str, Any] | None) -> dict[str, Any] | None:
-        """Stored verbatim and normalized on every later run, so an unreadable entry is refused before it is stored."""
-        for entry in bearer_entries(findings) or []:
-            BearerFinding.model_validate(entry)
-        return findings

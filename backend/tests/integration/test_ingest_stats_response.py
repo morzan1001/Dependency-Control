@@ -1,11 +1,14 @@
 """The findings-ingest response body is machine-facing, so its shape is pinned."""
 
+import json
 import threading
+from pathlib import Path
 
 import pytest
 
 from app.api.v1.helpers import ingest as ingest_helpers
 from app.models.waiver import Waiver
+from app.repositories.analysis_results import AnalysisResultRepository
 from app.services import scan_manager
 
 _SEVERITIES = ("CRITICAL", "ERROR", "WARNING", "INFO", "NEGLIGIBLE", "BOGUS")
@@ -74,6 +77,23 @@ async def test_a_skipped_entry_is_not_counted_as_a_finding(client, db, api_key_h
 
     assert resp.status_code == 200, resp.text
     assert (resp.json()["findings_count"], resp.json()["stats"]["total"]) == (len(_SEVERITIES) - 1,) * 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_bearer_report_is_stored_whole_and_counts_every_readable_entry(client, db, api_key_headers):
+    report = json.loads((Path(__file__).parents[1] / "fixtures/sast/bearer_2.1.1_findings.json").read_text())
+    without_rule_id = {k: v for k, v in report["medium"][0].items() if k != "id"}
+    unreadable = {**report["high"][0], "line_number": "nine"}
+    findings = {"high": [*report["high"], unreadable], "medium": [*report["medium"], without_rule_id]}
+    body = {"pipeline_id": 424243, "commit_hash": "c" * 40, "branch": "main", "findings": findings}
+
+    resp = await client.post("/api/v1/ingest/bearer", json=body, headers=api_key_headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["findings_count"] == 3
+    [row] = [row async for row in db.analysis_results.find({"analyzer_name": "bearer"})]
+    assert (await AnalysisResultRepository(db).load_result(row))["findings"] == findings
 
 
 @pytest.mark.asyncio

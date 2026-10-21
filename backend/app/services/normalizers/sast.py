@@ -118,6 +118,7 @@ def normalize_opengrep(aggregator: "ResultAggregator", result: dict[str, Any], s
 
 def _parse_bearer_item(item: Any) -> Finding:
     entry = BearerFinding.model_validate(item)
+    rule_id = entry.id or UNKNOWN_RULE_ID
     title = entry.title or "Unknown data risk"
     sev_str = (entry.severity or "info").upper()
     filename = entry.full_filename or entry.filename or "unknown"
@@ -127,7 +128,7 @@ def _parse_bearer_item(item: Any) -> Finding:
     column = location.column or {}
 
     details = SastScannerDetails(
-        rule_id=entry.id,
+        rule_id=rule_id,
         title=title,
         code_extract=entry.code_extract or entry.snippet,
         start=LineSpan(line=line_number, column=column.get("start") or 0),
@@ -138,7 +139,7 @@ def _parse_bearer_item(item: Any) -> Finding:
     ).model_dump(exclude_none=True)
 
     return Finding(
-        id=build_finding_id(FindingIdPrefix.BEARER, entry.id, filename, line_number),
+        id=build_finding_id(FindingIdPrefix.BEARER, rule_id, filename, line_number),
         type=FindingType.SAST,
         severity=safe_severity(_BEARER_OVERRIDES.get(sev_str, sev_str)),
         component=filename,
