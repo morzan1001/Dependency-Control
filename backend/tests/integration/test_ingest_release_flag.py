@@ -1,11 +1,11 @@
 import json
-import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 import pymongo
 import pytest
+from bson import ObjectId
 from pymongo.errors import AutoReconnect
 
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT
@@ -110,7 +110,7 @@ async def test_one_scan_marked_into_two_environments_keeps_both(client, db, api_
     releases = await db.releases.find({"scan_id": scan_id}).to_list(None)
     assert len(releases) == _TWO_RECORDS
     assert {r["environment"] for r in releases} == {_STAGING, DEFAULT_RELEASE_ENVIRONMENT}
-    assert len({uuid.UUID(r["_id"]) for r in releases}) == _TWO_RECORDS
+    assert len({ObjectId(r["_id"]) for r in releases}) == _TWO_RECORDS
     for environment in (_STAGING, DEFAULT_RELEASE_ENVIRONMENT):
         assert (await latest_release(environment))["scan_id"] == scan_id
 
