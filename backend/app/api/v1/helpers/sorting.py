@@ -29,9 +29,38 @@ def _folded_expr(text: str) -> dict[str, Any]:
     return {"$toLower": {"$cond": [{"$regexMatch": {"input": text, "regex": "[\u0080-\u036f]"}}, replaced, text]}}
 
 
-def case_insensitive_sort(order: Sequence[tuple[str, int]], text_fields: Collection[str]) -> list[dict[str, Any]]:
+# Digit runs up to this long compare by value, as under a numericOrdering collation.
+_NUMBER_WIDTH = 20
+
+
+def _numbered_expr(text: dict[str, Any]) -> dict[str, Any]:
+    pad = {"$max": [0, {"$subtract": [_NUMBER_WIDTH, {"$strLenCP": "$$this.match"}]}]}
+    padded = {"$concat": [{"$substrCP": ["0" * _NUMBER_WIDTH, 0, pad]}, "$$this.match"]}
+    return {
+        "$reduce": {
+            "input": {"$regexFindAll": {"input": text, "regex": "[0-9]+|[^0-9]+"}},
+            "initialValue": "",
+            "in": {
+                "$concat": [
+                    "$$value",
+                    {"$cond": [{"$regexMatch": {"input": "$$this.match", "regex": "^[0-9]"}}, padded, "$$this.match"]},
+                ]
+            },
+        }
+    }
+
+
+def case_insensitive_sort(
+    order: Sequence[tuple[str, int]], text_fields: Collection[str], numbered_fields: Collection[str] = ()
+) -> list[dict[str, Any]]:
     """case_insensitive_key's order as pipeline stages, for reads a query collation would take off their indexes."""
-    folded = {f"_folded.{field}": _folded_expr(f"${field}") for field, _ in order if field in text_fields}
+    folded = {
+        f"_folded.{field}": _numbered_expr(_folded_expr(f"${field}"))
+        if field in numbered_fields
+        else _folded_expr(f"${field}")
+        for field, _ in order
+        if field in text_fields
+    }
     spec: dict[str, int] = {}
     for field, direction in order:
         if field in text_fields:

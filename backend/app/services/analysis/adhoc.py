@@ -24,6 +24,7 @@ from app.models.waiver import Waiver
 from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.waivers import WaiverRepository
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport, WaiversApplied
+from app.schemas.analytics import RecommendationResponse
 from app.schemas.bearer import BearerFinding, bearer_entries
 from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
 from app.schemas.enrichment import VulnerabilityEnrichment
@@ -554,7 +555,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         dependencies=aggregator.get_dependency_enrichments(),
         epss_kev_summary=dict(build_epss_kev_summary(live_vulnerabilities, threat_intel)),
         reachability_summary=dict(build_reachability_summary(live_vulnerabilities, [callgraph])) if callgraph else None,
-        recommendations=[recommendation.to_dict() for recommendation in recommendations],
+        recommendations=[RecommendationResponse.model_validate(recommendation) for recommendation in recommendations],
         analyzers=report,
         waivers_applied=waivers_applied,
         waived_count=waived_count,

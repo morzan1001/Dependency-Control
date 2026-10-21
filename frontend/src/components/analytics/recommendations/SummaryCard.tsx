@@ -1,6 +1,7 @@
 import { RecommendationsResponse } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { AlertTriangle, Lightbulb, ShieldAlert, type LucideIcon } from 'lucide-react'
+import { Notice, ThreatIntelNote } from '../ThreatIntelNote'
 
 interface Tile {
   label: string
@@ -56,13 +57,23 @@ export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {data.total_findings < data.findings_total && (
+          <Notice>
+            Reasoned over {data.total_findings.toLocaleString()} of {data.findings_total.toLocaleString()} findings
+            in this scan. Every count and card here covers those findings and under-reports the rest.
+          </Notice>
+        )}
         {data.dependencies_read < data.dependencies_total && (
-          <div className="rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <Notice>
             Reasoned over {data.dependencies_read.toLocaleString()} of {data.dependencies_total.toLocaleString()}{" "}
             dependency rows in this scan. Advice that counts components — fragmentation, license drift — is
             scoped to those rows and under-reports the rest.
-          </div>
+          </Notice>
         )}
+        <ThreatIntelNote
+          sources={data.threat_intel_unavailable ?? []}
+          consequence="this advice uses the KEV and EPSS signals stored at scan time."
+        />
         <TileGroup
           title="Vulnerabilities"
           icon={ShieldAlert}
@@ -81,6 +92,7 @@ export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }
             { label: 'SAST Issues', value: summary.sast_issues, color: 'text-cyan-500' },
             { label: 'IAC Issues', value: summary.iac_issues, color: 'text-indigo-500' },
             { label: 'License Issues', value: summary.license_issues, color: 'text-pink-500' },
+            { label: 'Crypto Issues', value: summary.crypto_issues ?? 0, color: 'text-teal-500' },
           ])}
         />
         <TileGroup title="Health & Insights" icon={Lightbulb} tiles={healthTiles} />

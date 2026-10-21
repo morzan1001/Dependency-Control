@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections import Counter
 from typing import Any
 
 from fastapi import HTTPException
@@ -21,7 +22,6 @@ from app.core.constants import (
 from app.core.cve import entry_cves
 from app.core.permissions import Permissions
 from app.models.finding import CRYPTO_FINDING_TYPES
-from app.models.finding_record import FindingRecord
 from app.repositories.base import find_window
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
@@ -33,9 +33,13 @@ from app.schemas.analytics import (
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation, RecommendationType
 from app.services.component_identity import component_name_candidates
-from app.services.enrichment.service import apply_enrichments, vulnerability_enrichment_service
+from app.services.enrichment.service import (
+    THREAT_INTEL_SOURCES,
+    apply_enrichments,
+    vulnerability_enrichment_service,
+)
 from app.services.recommendation import trends
-from app.services.recommendation.common import live_cves
+from app.services.recommendation.common import live_cves, live_fixed_version
 from app.services.recommendation.crypto import CRYPTO_ISSUE_FINDING_TYPES, CRYPTO_RECOMMENDATION_TYPES
 from app.services.recommendations import generate_recommendations
 
@@ -58,10 +62,10 @@ _JOIN_PROJECTION = dict.fromkeys(
 )
 
 _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
-    RecommendationType.BASE_IMAGE_UPDATE: ("base_image_updates", "total_fixable_vulns"),
-    RecommendationType.DIRECT_DEPENDENCY_UPDATE: ("direct_updates", "total_fixable_vulns"),
-    RecommendationType.TRANSITIVE_FIX_VIA_PARENT: ("transitive_updates", "total_fixable_vulns"),
-    RecommendationType.NO_FIX_AVAILABLE: ("no_fix", "total_unfixable_vulns"),
+    RecommendationType.BASE_IMAGE_UPDATE: ("base_image_updates", None),
+    RecommendationType.DIRECT_DEPENDENCY_UPDATE: ("direct_updates", None),
+    RecommendationType.TRANSITIVE_FIX_VIA_PARENT: ("transitive_updates", None),
+    RecommendationType.NO_FIX_AVAILABLE: ("no_fix", None),
     RecommendationType.ROTATE_SECRETS: (None, "secrets_to_rotate"),
     RecommendationType.FIX_CODE_SECURITY: (None, "sast_issues"),
     RecommendationType.FIX_INFRASTRUCTURE: (None, "iac_issues"),
@@ -78,27 +82,105 @@ _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
     RecommendationType.SHARED_VULNERABILITY: (None, "cross_project_issues"),
     **dict.fromkeys(CRYPTO_RECOMMENDATION_TYPES, (None, "crypto_issues")),
 }
+# Their cards restate findings the tallies above already count, or have no tile to fall under.
+_NOT_SUMMARISED = frozenset(
+    {
+        RecommendationType.LICENSE_DRIFT,
+        RecommendationType.CRITICAL_RISK,
+        RecommendationType.CRITICAL_HOTSPOT,
+        RecommendationType.KNOWN_EXPLOIT,
+        RecommendationType.RANSOMWARE_RISK,
+        RecommendationType.ACTIVELY_EXPLOITED,
+        RecommendationType.MALWARE_DETECTED,
+        RecommendationType.TYPOSQUAT_DETECTED,
+        RecommendationType.HASH_MISMATCH,
+        RecommendationType.EOL_DEPENDENCY,
+        RecommendationType.QUICK_WIN,
+        RecommendationType.SINGLE_UPDATE_MULTI_FIX,
+        RecommendationType.TOXIC_DEPENDENCY,
+        RecommendationType.ATTACK_SURFACE_REDUCTION,
+    }
+)
 _SAST_FINDING_TYPES = {"sast"} | (CRYPTO_FINDING_TYPES - CRYPTO_ISSUE_FINDING_TYPES)
 
 
-async def _apply_live_threat_intel(findings: list[FindingRecord]) -> dict[str, VulnerabilityEnrichment]:
-    """Mark each finding's advisories with KEV/EPSS as of now, not as of the scan."""
-    vuln_findings = [f for f in findings if f.type == "vulnerability"]
-    all_cves = list({c for f in vuln_findings for c in live_cves([f.details])})
+async def _apply_live_threat_intel(
+    findings: list[dict[str, Any]],
+) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
+    """Mark each finding's advisories with KEV/EPSS as of now, not as of the scan, unless a live source is down."""
+    vuln_findings = [f for f in findings if f["type"] == "vulnerability"]
+    all_cves = list({c for f in vuln_findings for c in live_cves([f["details"]])})
     if not all_cves:
-        return {}
+        return {}, []
     try:
-        enrichments = await vulnerability_enrichment_service.enrich_cves(all_cves)
+        enrichments, unavailable = await vulnerability_enrichment_service.enrich_cves(all_cves)
     except Exception as e:
         logger.warning("Recommendations: live CVE enrichment failed, using stored data: %s", e)
-        return {}
+        return {}, list(THREAT_INTEL_SOURCES)
+    if unavailable:
+        # A partial refresh would clear stored KEV marks and the risk points they carry, so the scan's data stands.
+        logger.warning("Recommendations: %s unavailable, using stored data", " and ".join(unavailable))
+        return {}, unavailable
 
     # A CVE the live sources returned nothing for keeps the scores stored at scan time.
     live = {cve: e for cve, e in enrichments.items() if e.epss_score is not None or e.in_kev}
     for f in vuln_findings:
-        refreshed = [v for v in f.details.get("vulnerabilities") or [] if any(c in live for c in entry_cves(v))]
+        refreshed = [v for v in f["details"].get("vulnerabilities") or [] if any(c in live for c in entry_cves(v))]
         apply_enrichments({"vulnerabilities": refreshed}, live)
-    return enrichments
+    return enrichments, []
+
+
+async def _dependency_window(
+    dep_repo: DependencyRepository, project_id: str, scan_id: str
+) -> tuple[list[dict[str, Any]], int]:
+    query = {"project_id": project_id, "scan_id": scan_id}
+    return await find_window(dep_repo.collection, query, SCAN_DEPENDENCY_READ_LIMIT, projection=_DEPENDENCY_PROJECTION)
+
+
+async def _join_dependencies(
+    dep_repo: DependencyRepository, project_id: str, scan_id: str, findings: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The dependency window can miss a finding's row; this reads exactly the rows the findings name."""
+    names = list(
+        {
+            n
+            for f in findings
+            if f["type"] in ("vulnerability", "outdated")
+            for n in component_name_candidates(f["component"])
+        }
+    )
+    query = {"project_id": project_id, "scan_id": scan_id, "name": {"$in": names}}
+    return [dep async for dep in dep_repo.iterate_raw(query, _JOIN_PROJECTION)]
+
+
+async def _previous_scan(finding_repo: FindingRepository, scan_id: str) -> trends.PreviousScan:
+    previous = trends.PreviousScan()
+    async for doc in finding_repo.iterate_raw(
+        {"scan_id": scan_id, "waived": {"$ne": True}}, trends.PREVIOUS_SCAN_PROJECTION
+    ):
+        previous.add(doc)
+    return previous
+
+
+async def _history(
+    scan_repo: ScanRepository,
+    finding_repo: FindingRepository,
+    dep_repo: DependencyRepository,
+    project_id: str,
+    scan_id: str,
+) -> tuple[trends.PreviousScan | None, list[dict[str, Any]] | None, dict[str, trends.CveRecurrence], int]:
+    """The previous scan's findings and dependencies, and CVE recurrence over the window the text names."""
+    preceding = await scan_repo.get_preceding_scans(scan_id, _RECURRENCE_WINDOW_SCANS - 1)
+    recent_scan_ids = [scan_id, *(scan.id for scan in preceding)]
+    recurrence = trends.build_cve_recurrence(finding_repo.iter_vulnerability_identities(recent_scan_ids))
+    if not preceding:
+        return None, None, await recurrence, len(recent_scan_ids)
+    previous, (previous_dependencies, _), cve_recurrence = await asyncio.gather(
+        _previous_scan(finding_repo, preceding[0].id),
+        _dependency_window(dep_repo, project_id, preceding[0].id),
+        recurrence,
+    )
+    return previous, previous_dependencies, cve_recurrence, len(recent_scan_ids)
 
 
 @router.get("/projects/{project_id}/recommendations", responses=RESP_AUTH_404)
@@ -134,47 +216,20 @@ async def get_project_recommendations(
     )
 
     async def _compute() -> dict[str, Any]:
-        findings, findings_total = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
-        threat_intel = await _apply_live_threat_intel(findings)
-
-        dependencies, dependencies_total = await find_window(
-            dep_repo.collection,
-            {"project_id": project_id, "scan_id": scan_id},
-            SCAN_DEPENDENCY_READ_LIMIT,
-            projection=_DEPENDENCY_PROJECTION,
+        findings, findings_total = await finding_repo.find_raw_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
+        (
+            (threat_intel, threat_intel_unavailable),
+            (dependencies, dependencies_total),
+            join_dependencies,
+            (previous, previous_scan_dependencies, cve_recurrence, recurrence_window_scans),
+            cross_project_data,
+        ) = await asyncio.gather(
+            _apply_live_threat_intel(findings),
+            _dependency_window(dep_repo, project_id, scan_id),
+            _join_dependencies(dep_repo, project_id, scan_id, findings),
+            _history(scan_repo, finding_repo, dep_repo, project_id, scan_id),
+            gather_cross_project_data(user_projects, project_id, db),
         )
-        # The window above can miss a finding's row; the join reads exactly the rows the findings name.
-        names = list(
-            {
-                n
-                for f in findings
-                if f.type in ("vulnerability", "outdated")
-                for n in component_name_candidates(f.component)
-            }
-        )
-        join_query = {"project_id": project_id, "scan_id": scan_id, "name": {"$in": names}}
-        join_dependencies = [dep async for dep in dep_repo.iterate_raw(join_query, _JOIN_PROJECTION)]
-
-        previous = None
-        previous_scan_dependencies = None
-        preceding = await scan_repo.get_preceding_scans(scan_id, _RECURRENCE_WINDOW_SCANS - 1)
-        if preceding:
-            previous_scan = preceding[0]
-            previous = trends.PreviousScan()
-            previous_query = {"scan_id": previous_scan.id, "waived": {"$ne": True}}
-            async for doc in finding_repo.iterate_raw(previous_query, trends.PREVIOUS_SCAN_PROJECTION):
-                previous.add(doc)
-            previous_scan_dependencies, _ = await find_window(
-                dep_repo.collection,
-                {"project_id": project_id, "scan_id": previous_scan.id},
-                SCAN_DEPENDENCY_READ_LIMIT,
-                projection=_DEPENDENCY_PROJECTION,
-            )
-
-        recent_scan_ids = [scan_id, *(scan.id for scan in preceding)]
-        cve_recurrence = await trends.build_cve_recurrence(finding_repo.iter_vulnerability_identities(recent_scan_ids))
-
-        cross_project_data = await gather_cross_project_data(user_projects, project_id, db)
 
         recommendations = await asyncio.to_thread(
             generate_recommendations,
@@ -184,10 +239,11 @@ async def get_project_recommendations(
             previous_scan=previous,
             previous_scan_dependencies=previous_scan_dependencies,
             cve_recurrence=cve_recurrence,
-            recurrence_window_scans=len(recent_scan_ids),
+            recurrence_window_scans=recurrence_window_scans,
             cross_project_data=cross_project_data,
             threat_intel=threat_intel,
         )
+        unfixable_vulns = await asyncio.to_thread(_unfixable_vulnerabilities, findings)
 
         finding_counts = _finding_counts(findings)
         response = RecommendationsResponse(
@@ -197,10 +253,11 @@ async def get_project_recommendations(
             total_findings=len(findings),
             findings_total=findings_total,
             total_vulnerabilities=finding_counts["vulnerabilities"],
-            recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
-            summary=_summarize(recommendations, finding_counts),
+            recommendations=[RecommendationResponse.model_validate(r) for r in recommendations],
+            summary=_summarize(recommendations, finding_counts, unfixable_vulns),
             dependencies_read=len(dependencies),
             dependencies_total=dependencies_total,
+            threat_intel_unavailable=threat_intel_unavailable,
         )
         # mode="json" so a cache hit reconstructs the same shape as a miss (enums/datetimes).
         return response.model_dump(mode="json")
@@ -217,23 +274,35 @@ async def get_project_recommendations(
     return RecommendationsResponse.model_validate(payload)
 
 
-def _finding_counts(findings: list[FindingRecord]) -> dict[str, int]:
+def _finding_counts(findings: list[dict[str, Any]]) -> dict[str, int]:
+    types = Counter(f["type"] for f in findings)
     return {
-        "vulnerabilities": sum(1 for f in findings if f.type == "vulnerability"),
-        "secrets": sum(1 for f in findings if f.type == "secret"),
-        "sast": sum(1 for f in findings if f.type in _SAST_FINDING_TYPES),
-        "iac": sum(1 for f in findings if f.type == "iac"),
-        "license": sum(1 for f in findings if f.type == "license"),
-        "quality": sum(1 for f in findings if f.type == "quality"),
-        "crypto": sum(1 for f in findings if f.type in CRYPTO_ISSUE_FINDING_TYPES),
+        "vulnerabilities": types["vulnerability"],
+        "secrets": types["secret"],
+        "sast": sum(types[t] for t in _SAST_FINDING_TYPES),
+        "iac": types["iac"],
+        "license": types["license"],
+        "quality": types["quality"],
+        "crypto": sum(types[t] for t in CRYPTO_ISSUE_FINDING_TYPES),
     }
 
 
-def _summarize(recommendations: list[Recommendation], finding_counts: dict[str, int]) -> dict[str, Any]:
+def _unfixable_vulnerabilities(findings: list[dict[str, Any]]) -> int:
+    """The engine's no-fix bucket in full, while its card lists only the Critical/High part."""
+    return sum(1 for f in findings if f["type"] == "vulnerability" and not live_fixed_version(f))
+
+
+def _summarize(
+    recommendations: list[Recommendation], finding_counts: dict[str, int], unfixable_vulns: int
+) -> dict[str, Any]:
     summary: dict[str, Any] = {key: 0 for keys in _SUMMARY_BUCKETS.values() for key in keys if key}
     summary["finding_counts"] = finding_counts
+    summary["total_fixable_vulns"] = finding_counts["vulnerabilities"] - unfixable_vulns
+    summary["total_unfixable_vulns"] = unfixable_vulns
     for rec in recommendations:
-        count_key, impact_key = _SUMMARY_BUCKETS.get(rec.type, (None, None))
+        if rec.type in _NOT_SUMMARISED:
+            continue
+        count_key, impact_key = _SUMMARY_BUCKETS[rec.type]
         if count_key:
             summary[count_key] += 1
         if impact_key:

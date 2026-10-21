@@ -101,7 +101,7 @@ def _vulnerability_records(scan_id: str, component: str, version: str, advisorie
 @pytest.fixture
 def no_live_intel(monkeypatch):
     async def _enrich(_cves):
-        return {}
+        return {}, []
 
     monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _enrich)
 
@@ -281,7 +281,7 @@ async def test_the_live_per_cve_threat_intel_reaches_the_engine(client, db, owne
     live = {cve: VulnerabilityEnrichment(cve=cve, risk_score=20.0) for cve in ("CVE-2023-0001", "CVE-2023-0002")}
 
     async def _enrich(cves):
-        return {cve: live[cve] for cve in cves}
+        return {cve: live[cve] for cve in cves}, []
 
     monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _enrich)
     seen: dict = {}
@@ -291,6 +291,30 @@ async def test_the_live_per_cve_threat_intel_reaches_the_engine(client, db, owne
 
     assert resp.status_code == 200, resp.text
     assert seen["threat_intel"] == live
+    assert resp.json()["threat_intel_unavailable"] == []
+
+
+@pytest.mark.asyncio
+async def test_an_unavailable_live_source_is_named_and_the_engine_reasons_on_stored_data(
+    client, db, owner_auth_headers_proj, monkeypatch
+):
+    await _insert_scan(db, "s")
+    finding = _finding("f1", "vulnerability")
+    finding["details"] = {"vulnerabilities": [{"id": "CVE-2023-0001", "in_kev": True}]}
+    await db.findings.insert_one(finding)
+
+    async def _kev_down(cves):
+        return {}, ["KEV"]
+
+    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _kev_down)
+    seen: dict = {}
+    monkeypatch.setattr(rec_module, "generate_recommendations", _engine_returning([], seen))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["threat_intel_unavailable"] == ["KEV"]
+    assert seen["threat_intel"] == {}
 
 
 @pytest.mark.asyncio
@@ -365,8 +389,9 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
         "direct_updates": 1,
         "transitive_updates": 1,
         "no_fix": 1,
-        "total_fixable_vulns": 7,
-        "total_unfixable_vulns": 8,
+        # Counted from the findings, not the card impacts: the one vulnerability records no fix.
+        "total_fixable_vulns": 0,
+        "total_unfixable_vulns": 1,
         "secrets_to_rotate": 16,
         "sast_issues": 64,
         "iac_issues": 128,
@@ -388,6 +413,37 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
             "crypto": 1,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_the_fixable_and_no_fix_tiles_count_every_vulnerability_finding_card_or_not(
+    client, db, owner_auth_headers_proj, no_live_intel
+):
+    await _insert_scan(db, "s")
+    zlib = {"name": "zlib1g", "version": "1.2.13", "purl": "pkg:deb/debian/zlib1g@1.2.13", "type": "deb"}
+    await db.dependencies.insert_one(zlib | {"_id": "d-zlib", "project_id": "p", "scan_id": "s"})
+    records = [
+        ("lodash", "4.17.20", {"id": "CVE-2024-0001", "severity": "MEDIUM"}),
+        ("minimist", "0.0.8", {"id": "CVE-2024-0002", "severity": "LOW"}),
+        ("left-pad", "1.0.0", {"id": "CVE-2024-0003", "severity": "HIGH", "fixed_version": "1.3.0"}),
+        ("zlib1g", "1.2.13", {"id": "CVE-2024-0004", "severity": "MEDIUM", "fixed_version": "1.2.13.dfsg-1"}),
+    ]
+    for component, version, advisory in records:
+        await db.findings.insert_many(_vulnerability_records("s", component, version, [advisory]))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total_vulnerabilities"] == 4
+    assert (body["summary"]["total_fixable_vulns"], body["summary"]["total_unfixable_vulns"]) == (2, 2)
+    vulnerability_cards = {
+        "base_image_update",
+        "direct_dependency_update",
+        "transitive_fix_via_parent",
+        "no_fix_available",
+    }
+    assert vulnerability_cards.isdisjoint(_card_types(resp))
 
 
 @pytest.mark.asyncio
@@ -417,8 +473,22 @@ async def test_waived_findings_do_not_reach_the_engine(client, db, owner_auth_he
     resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
 
     assert resp.status_code == 200, resp.text
-    assert [f.id for f in seen["findings"]] == ["f-live"]
+    assert [f["id"] for f in seen["findings"]] == ["f-live"]
     assert resp.json()["findings_total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_engine_reasons_on_the_raw_finding_rows(client, db, owner_auth_headers_proj, monkeypatch):
+    await _insert_scan(db, "s")
+    await db.findings.insert_one(_finding("f1", "secret"))
+    seen: dict = {}
+    monkeypatch.setattr(rec_module, "generate_recommendations", _engine_returning([], seen))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    [finding] = seen["findings"]
+    assert (type(finding), finding["_id"]) == (dict, "f1")
 
 
 _CROSS_PROJECT_COMPARISON_LIMIT = 20
@@ -579,7 +649,7 @@ async def test_a_cve_the_live_refresh_has_no_data_for_keeps_its_stored_scores(
     resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
 
     assert resp.status_code == 200, resp.text
-    [entry] = seen["findings"][0].details["vulnerabilities"]
+    [entry] = seen["findings"][0]["details"]["vulnerabilities"]
     assert (entry["epss_score"], entry["risk_score"]) == (0.42, 71.5)
 
 
@@ -631,8 +701,38 @@ async def test_the_engine_gets_findings_and_dependencies_without_the_payload_no_
 
     assert resp.status_code == 200, resp.text
     [finding], [dependency] = seen["findings"], seen["dependencies"]
-    [stored_advisory] = finding.details["vulnerabilities"]
-    assert (stored_advisory["id"], finding.related_findings) == ("CVE-2021-23337", [])
+    [stored_advisory] = finding["details"]["vulnerabilities"]
+    assert (stored_advisory["id"], finding.get("related_findings")) == ("CVE-2021-23337", None)
     assert not set(_ADVISORY_PAYLOAD) & set(stored_advisory)
     assert (dependency["name"], dependency["license"]) == ("lodash", "MIT")
     assert not set(_DEPENDENCY_PAYLOAD) & set(dependency)
+
+
+@pytest.mark.asyncio
+async def test_the_reads_after_the_findings_wait_on_no_live_threat_intel_call(
+    client, db, owner_auth_headers_proj, monkeypatch
+):
+    await _insert_scan(db, "s")
+    finding = _finding("f1", "vulnerability")
+    finding["details"] = {"vulnerabilities": [{"id": "CVE-2023-0001"}]}
+    await db.findings.insert_one(finding)
+    events: list[str] = []
+
+    async def _slow_enrich(_cves):
+        await asyncio.sleep(0.05)
+        events.append("enriched")
+        return {}, []
+
+    gather_cross_project_data = rec_module.gather_cross_project_data
+
+    async def _cross_project(*args):
+        events.append("cross-project read")
+        return await gather_cross_project_data(*args)
+
+    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _slow_enrich)
+    monkeypatch.setattr(rec_module, "gather_cross_project_data", _cross_project)
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert events == ["cross-project read", "enriched"]

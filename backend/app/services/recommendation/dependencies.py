@@ -21,6 +21,7 @@ from app.services.recommendation.common import (
     ModelOrDict,
     get_attr,
     installed_copy_lookup,
+    package_label,
     recommend,
     sampled,
     severity_impact,
@@ -30,6 +31,13 @@ _FRAGMENTATION_MIN_VERSIONS = 3
 # Counts that must be exceeded: fragmented packages for a MEDIUM card, outdated transitives for a card at all.
 _FRAGMENTED_PACKAGES_FOR_MEDIUM = 3
 _OUTDATED_TRANSITIVE_CARD_MIN = 3
+
+_DEDUPE_COMMANDS: dict[str, tuple[str, ...]] = {
+    "npm": ("# For npm: npm dedupe", "# For yarn: yarn dedupe", "# For pnpm: pnpm dedupe"),
+    # Gradle resolves Maven coordinates, so its packages carry the maven type.
+    "maven": ("# For Maven/Gradle: pin one version in dependencyManagement or a dependency constraint",),
+    "pypi": ("# For pip: pin one version in a constraints file (pip install -c constraints.txt)",),
+}
 
 
 def analyze_outdated_dependencies(
@@ -116,8 +124,8 @@ def analyze_version_fragmentation(
 
     significant_fragmented: list[dict[str, Any]] = sorted(
         (
-            {"name": name, "versions": list(versions), "count": len(versions)}
-            for (_, name), versions in versions_by_package.items()
+            {"type": ecosystem, "name": name, "versions": list(versions), "count": len(versions)}
+            for (ecosystem, name), versions in versions_by_package.items()
             if len(versions) >= _FRAGMENTATION_MIN_VERSIONS
         ),
         key=lambda x: x["count"],
@@ -126,6 +134,8 @@ def analyze_version_fragmentation(
 
     if significant_fragmented:
         priority = Priority.MEDIUM if len(significant_fragmented) > _FRAGMENTED_PACKAGES_FOR_MEDIUM else Priority.LOW
+        ecosystems = {f["type"] for f in significant_fragmented}
+        commands = [line for ecosystem, lines in _DEDUPE_COMMANDS.items() if ecosystem in ecosystems for line in lines]
 
         recommendations.append(
             recommend(
@@ -142,7 +152,7 @@ def analyze_version_fragmentation(
                     "single version."
                 ),
                 impact={"total": 0},
-                components=(f["name"] for f in significant_fragmented),
+                components=(package_label(f) for f in significant_fragmented),
                 action={
                     "type": "deduplicate_versions",
                     **sampled(
@@ -150,6 +160,7 @@ def analyze_version_fragmentation(
                         [
                             {
                                 "name": f["name"],
+                                "type": f["type"],
                                 # Sets are unordered; rank first so the sample shows the newest versions.
                                 "versions": newest_first(f["versions"])[:ACTION_VERSION_SAMPLE],
                                 "version_count": f["count"],
@@ -159,11 +170,7 @@ def analyze_version_fragmentation(
                         ],
                         AFFECTED_COMPONENTS_SHOWN,
                     ),
-                    "commands": [
-                        "# For npm: npm dedupe",
-                        "# For yarn: yarn dedupe",
-                        "# For pnpm: pnpm dedupe",
-                    ],
+                    **({"commands": commands} if commands else {}),
                 },
                 effort=Effort.LOW,
             )
@@ -232,8 +239,9 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
         pkg = get_attr(f, "component", "")
         version = get_attr(f, "version", "")
         details = get_attr(f, "details", {})
-        eol_date = details.get("eol_date", "")
-        if eol_date:
+        eol_date = details.get("eol_date")
+        # endoflife.date reports an undated end of life as True.
+        if isinstance(eol_date, str) and eol_date:
             affected_packages.append(f"{pkg}@{version} (EOL: {eol_date})")
         else:
             affected_packages.append(f"{pkg}@{version}")

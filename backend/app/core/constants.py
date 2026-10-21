@@ -458,8 +458,8 @@ KEV_DUE_SOON_DAYS: int = 30
 
 # The largest boost product; every boost is >= 1.0, so fix_impact_score lies in [base, base * IMPACT_MAX_SCORE_BOOST].
 IMPACT_MAX_SCORE_BOOST: float = (
-    KEV_RANSOMWARE_BOOST
-    * EPSS_VERY_HIGH_BOOST
+    max(KEV_RANSOMWARE_BOOST, KEV_OVERDUE_BOOST, KEV_DUE_SOON_BOOST, KEV_DEFAULT_BOOST)
+    * max(EPSS_VERY_HIGH_BOOST, EPSS_HIGH_BOOST, EPSS_MEDIUM_BOOST)
     * max(EXPLOIT_MATURITY_BOOST.values())
     * IMPACT_FIX_AVAILABLE_BOOST
     * IMPACT_AGE_BOOST
@@ -674,7 +674,7 @@ SIMILAR_PACKAGE_GROUPS: list[dict[str, Any]] = [
     },
     {
         "category": "Testing Assertion",
-        "packages": ["chai", "expect", "should", "assert"],
+        "packages": ["chai", "should"],
         "suggestion": "Use Jest's built-in expect or standardize on one assertion library",
     },
 ]
@@ -760,7 +760,7 @@ SCAN_USABLE_STATUSES = [
 # BSON dates are milliseconds, so a date-ordered pick of scans tie-breaks on _id, lowest first.
 SCANS_TIP_SORT: list[tuple[str, int]] = [("created_at", -1), ("_id", 1)]
 
-FINDINGS_SCAN_SEVERITY_INDEX: dict[str, int] = {"scan_id": 1, "severity": 1, "type": 1, "finding_id": 1}
+FINDINGS_SCAN_SEVERITY_INDEX: dict[str, int] = {"scan_id": 1, "severity": 1, "type": 1, "finding_id": 1, "waived": 1}
 
 # Hinted, as unhinted the planner trial-runs each scan_id index to the end; init_db must create them.
 FINDINGS_SCAN_TYPE_INDEX: dict[str, int] = {"scan_id": 1, "type": 1}

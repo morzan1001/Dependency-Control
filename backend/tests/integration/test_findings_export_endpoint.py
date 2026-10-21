@@ -42,8 +42,8 @@ async def _seed_finding(db, scan_id, *, finding_id, ftype="vulnerability", sever
 def _parse(resp) -> list[dict]:
     assert resp.headers["content-type"].startswith("text/csv")
     text = resp.text
-    assert text.startswith("﻿")
-    return list(csv.DictReader(io.StringIO(text.lstrip("﻿"))))
+    assert text.startswith("\ufeff")
+    return list(csv.DictReader(io.StringIO(text.lstrip("\ufeff"))))
 
 
 @pytest.mark.asyncio

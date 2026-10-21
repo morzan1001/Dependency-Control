@@ -145,7 +145,7 @@ async def test_ghsa_resolution_collapses_cve_and_ghsa_entries(monkeypatch):
         return {}, None
 
     monkeypatch.setattr(service._ghsa_provider, "resolve_ghsa_to_cve", fake_resolve)
-    monkeypatch.setattr(service, "_enrich_cves", fake_enrich_cves)
+    monkeypatch.setattr(service, "enrich_cves", fake_enrich_cves)
 
     await service.enrich_findings([finding])
 

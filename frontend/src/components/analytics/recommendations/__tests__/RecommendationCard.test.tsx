@@ -397,3 +397,24 @@ describe('RecommendationCard priority projects', () => {
     expect(screen.getByText('Platform').closest('.max-w-\\[50\\%\\]')?.parentElement).toHaveClass('flex-1')
   })
 })
+
+describe('RecommendationCard packages of two ecosystems', () => {
+  it.each(['standardize_versions', 'deduplicate_versions'])('lists %s packages sharing a name apart, each with its type', (type) => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    renderExpanded(makeRecommendation({
+      type,
+      packages: [
+        { name: 'foo', type: 'npm', versions: ['2.0.0', '1.0.0'], project_count: 2 },
+        { name: 'foo', type: 'pypi', versions: ['2.0.0', '1.0.0'], project_count: 2 },
+      ],
+    }))
+
+    const duplicateKeyWarnings = consoleError.mock.calls.filter((args) => args.join(' ').includes('same key'))
+    consoleError.mockRestore()
+    expect(duplicateKeyWarnings).toEqual([])
+    expect(screen.getAllByText('foo')).toHaveLength(2)
+    expect(screen.getByText('npm')).toBeInTheDocument()
+    expect(screen.getByText('pypi')).toBeInTheDocument()
+  })
+})

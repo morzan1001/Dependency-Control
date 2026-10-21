@@ -174,14 +174,14 @@ def _suggested_replacement(finding_type: str, asset_name: str, findings: list[Mo
         algorithm = get_attr(findings[0], "details", {}).get("asset_name") or asset_name
         return _ALGORITHM_REPLACEMENTS.get(str(algorithm).upper())
     if finding_type == "crypto_weak_key":
+        sizes = [get_attr(f, "details", {}).get("key_size_bits") for f in findings]
+        bits = min((b for b in sizes if isinstance(b, int) and b > 0), default=None)
+        if bits is None:
+            return None
         # RSA/DSA below policy get bumped to the next NIST tier (3072); others defer to policy.
-        for f in findings:
-            bits = get_attr(f, "details", {}).get("key_size_bits")
-            if isinstance(bits, int) and bits > 0:
-                if asset_name.upper().startswith(("RSA", "DSA")):
-                    return f"≥3072-bit (currently {bits})"
-                return f"increase from {bits} bits per policy"
-        return None
+        if asset_name.upper().startswith(("RSA", "DSA")):
+            return f"≥3072-bit (currently {bits})"
+        return f"increase from {bits} bits per policy"
     if finding_type == "crypto_weak_protocol":
         upper = asset_name.upper()
         if "TLS" in upper:

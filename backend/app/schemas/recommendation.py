@@ -75,18 +75,3 @@ class Recommendation:
     # Position in, and size of, its generator's ranked list; both 0 unless the list was cut.
     rank: int = 0
     ranked_out_of: int = 0
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "type": self.type.value,
-            "priority": self.priority.value,
-            "title": self.title,
-            "description": self.description,
-            "impact": self.impact,
-            "affected_components": self.affected_components,
-            "affected_components_total": self.affected_components_total,
-            "rank": self.rank,
-            "ranked_out_of": self.ranked_out_of,
-            "action": self.action,
-            "effort": self.effort.value,
-        }

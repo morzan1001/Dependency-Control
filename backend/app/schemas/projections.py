@@ -12,6 +12,7 @@ class ProjectWithScanId(BaseModel):
     name: str = ""
     latest_scan_id: str | None = None
     latest_scan_from_tag: bool = False
+    last_scan_at: datetime | None = None
     deleted_branches: list[str] = Field(default_factory=list)
     default_branch: str | None = None
     active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))

@@ -11,7 +11,7 @@ from app.schemas.inventory import LicenseItem
 from app.services.analyzers.license_compliance.analyzer import classify_license
 from app.services.analyzers.license_compliance.normalizer import tokenize_license_string
 
-LICENSE_COLUMNS = ["license", "category", "risks", "component_count", "components"]
+LICENSE_COLUMNS = list(LicenseItem.model_fields)
 
 UNKNOWN_LICENSE = "unknown"
 

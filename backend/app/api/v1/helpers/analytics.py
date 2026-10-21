@@ -4,6 +4,7 @@ from typing import Annotated, Any
 
 from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import BaseModel
 
 from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.core.constants import (
@@ -16,6 +17,7 @@ from app.core.constants import (
     EPSS_VERY_HIGH_BOOST,
     EPSS_VERY_HIGH_THRESHOLD,
     EXPLOIT_MATURITY_BOOST,
+    ExploitMaturity,
     IMPACT_AGE_BOOST,
     IMPACT_FIX_AVAILABLE_BOOST,
     IMPACT_MAX_SCORE_BOOST,
@@ -39,7 +41,6 @@ from app.models.user import User
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
-from app.schemas.analytics import CVEEnrichmentResult
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.projections import ProjectWithScanId
 from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
@@ -156,6 +157,18 @@ def extract_fix_versions(details_list: list[Any], installed_version: str | None)
     return {part for vuln in advisories for part in split_fixed_versions(vuln.get("fixed_version"))}
 
 
+class CVEEnrichmentResult(BaseModel):
+    max_epss: float | None = None
+    max_percentile: float | None = None
+    max_risk: float | None = None
+    has_kev: bool = False
+    kev_count: int = 0
+    kev_ransomware_use: bool = False
+    kev_due_date: str | None = None
+    exploit_maturity: ExploitMaturity = "unknown"
+    days_until_due: int | None = None
+
+
 def process_cve_enrichments(
     details_list: list[Any], enrichments: Mapping[str, VulnerabilityEnrichment]
 ) -> CVEEnrichmentResult:
@@ -215,6 +228,14 @@ def impact_pre_score(severity_counts: dict[str, int], affected_projects: int) ->
     )
     reach_multiplier = min(affected_projects, IMPACT_REACH_MULTIPLIER_CAP)
     return float(severity_score * reach_multiplier)
+
+
+def impact_pre_score_expr(counts: str, project_ids: str) -> dict[str, Any]:
+    """impact_pre_score as an aggregation expression over a severity-count document and a project-id array."""
+    severity_score = [
+        {"$multiply": [f"{counts}.{sev.lower()}", weight]} for sev, weight in IMPACT_SEVERITY_WEIGHTS.items()
+    ]
+    return {"$multiply": [{"$add": severity_score}, {"$min": [{"$size": project_ids}, IMPACT_REACH_MULTIPLIER_CAP]}]}
 
 
 def select_impact_candidates[T](scored: list[tuple[float, T]], limit: int) -> list[T]:
@@ -368,28 +389,48 @@ async def vuln_details_by(
     }
 
 
-def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> list[dict[str, Any]]:
+def cross_project_package_pipeline(scan_ids: list[str], min_projects: int, viewed_scan_id: str) -> list[dict[str, Any]]:
     """Grouped in Mongo because a per-scan sample of the packages cannot produce a version count per package."""
     return [
         {MONGO_MATCH: {"scan_id": {"$in": scan_ids}}},
         {
             MONGO_GROUP: {
-                "_id": package_identity_expr(),
-                "versions": {"$addToSet": "$version"},
-                # One head scan per compared project, so distinct scans count the projects.
+                "_id": {"package": package_identity_expr(), "version": "$version"},
                 "scan_ids": {"$addToSet": "$scan_id"},
+            }
+        },
+        {
+            MONGO_GROUP: {
+                "_id": "$_id.package",
+                "versions": {"$push": "$_id.version"},
+                "scan_ids": {"$push": "$scan_ids"},
+                "least_shared": {"$min": {"$size": "$scan_ids"}},
             }
         },
         {
             "$project": {
                 "name": "$_id.path",
+                "type": "$_id.type",
                 "versions": 1,
                 "version_count": {"$size": "$versions"},
-                "project_count": {"$size": "$scan_ids"},
+                "scan_ids": {
+                    "$reduce": {"input": "$scan_ids", "initialValue": [], "in": {"$setUnion": ["$$value", "$$this"]}}
+                },
+                "least_shared": 1,
             }
         },
-        {MONGO_MATCH: {"version_count": {"$gt": 1}, "project_count": {"$gte": min_projects}}},
-        *case_insensitive_sort([("version_count", -1), ("name", 1)], {"name"}),
+        # One head scan per compared project, so distinct scans count the projects.
+        {"$addFields": {"project_count": {"$size": "$scan_ids"}}},
+        # Projects holding the same version set (nested copies included) agree; a version some project lacks differs.
+        {
+            MONGO_MATCH: {
+                "scan_ids": viewed_scan_id,
+                "project_count": {"$gte": min_projects},
+                "$expr": {"$lt": ["$least_shared", "$project_count"]},
+            }
+        },
+        {"$unset": ["least_shared", "scan_ids"]},
+        *case_insensitive_sort([("version_count", -1), ("name", 1), ("type", 1)], {"name"}),
     ]
 
 
@@ -406,13 +447,17 @@ async def gather_cross_project_data(
     dep_repo = DependencyRepository(db)
 
     cross_project_data: dict[str, Any] = {
+        "current_project_id": current_project_id,
         "projects": [],
         "shared_packages": [],
         "total_projects": len(user_projects),
     }
 
     scanned = [p for p in user_projects if p.latest_scan_id]
-    compared = sorted(scanned, key=lambda p: p.id != current_project_id)[:_CROSS_PROJECT_COMPARISON_LIMIT]
+    compared = sorted(
+        scanned,
+        key=lambda p: (p.id != current_project_id, -(p.last_scan_at.timestamp() if p.last_scan_at else 0)),
+    )[:_CROSS_PROJECT_COMPARISON_LIMIT]
     head_scan_ids = await scan_repo.get_latest_active_scan_ids(compared)
     scan_ids = list(head_scan_ids.values())
 
@@ -425,9 +470,10 @@ async def gather_cross_project_data(
     details_by_scan = await vuln_details_by(finding_repo, {"scan_id": {"$in": scan_ids}}, "scan_id")
     scan_cves_map = {scan_id: live_cves(details) for (scan_id,), details in details_by_scan.items()}
 
-    cross_project_data["shared_packages"] = await dep_repo.aggregate(
-        cross_project_package_pipeline(scan_ids, CROSS_PROJECT_MIN_OCCURRENCES)
-    )
+    if viewed_scan_id := head_scan_ids.get(current_project_id):
+        cross_project_data["shared_packages"] = await dep_repo.aggregate(
+            cross_project_package_pipeline(scan_ids, CROSS_PROJECT_MIN_OCCURRENCES, viewed_scan_id)
+        )
 
     for project in compared:
         if not (scan_id := head_scan_ids.get(project.id)):

@@ -6,7 +6,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.repositories.crypto_asset import SCAN_ORDER, CryptoAssetRepository, scan_query
 from app.schemas.inventory import CryptoItem
 
-CRYPTO_COLUMNS = ["name", "asset_type", "primitive", "variant", "key_size_bits", "location_count", "locations"]
+CRYPTO_COLUMNS = list(CryptoItem.model_fields)
 
 _EXPORT_PROJECTION = {
     "name": 1,

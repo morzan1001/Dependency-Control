@@ -130,9 +130,7 @@ def _resolver_per_environment():
     return _fake
 
 
-def _matched_scan_ids(pipeline: list[dict[str, Any]]) -> list[str] | None:
-    if not any("details_list" in (stage.get("$group") or {}) for stage in pipeline):
-        return None
+def _matched_scan_ids(pipeline: list[dict[str, Any]]) -> list[str]:
     return pipeline[0]["$match"]["scan_id"]["$in"]
 
 
@@ -141,9 +139,7 @@ async def test_the_impact_cache_does_not_serve_head_results_to_a_release_request
     read: list[list[str]] = []
 
     async def _fake_aggregate(pipeline, **_kw):
-        matched = _matched_scan_ids(pipeline)
-        if matched is not None:
-            read.append(matched)
+        read.append(_matched_scan_ids(pipeline))
         return []
 
     finding_repo = MagicMock()
@@ -167,9 +163,7 @@ async def test_the_hotspot_cache_does_not_serve_head_results_to_a_release_reques
     read: list[list[str]] = []
 
     async def _fake_aggregate(pipeline, **_kw):
-        matched = _matched_scan_ids(pipeline)
-        if matched is not None:
-            read.append(matched)
+        read.append(_matched_scan_ids(pipeline))
         return []
 
     finding_repo = MagicMock()

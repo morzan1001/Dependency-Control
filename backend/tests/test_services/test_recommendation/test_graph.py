@@ -455,3 +455,32 @@ class TestDuplicatePackagesMatchTheQualifiedName:
         ]
 
         assert analyze_duplicate_packages(deps) == []
+
+
+class TestDuplicatePackagesCompareTheChosenPackages:
+    def test_a_transitive_package_is_no_second_choice(self):
+        deps = [_dep("axios", direct=True), _dep("got"), _dep("express", direct=True)]
+
+        assert analyze_duplicate_packages(deps) == []
+
+    def test_two_direct_packages_of_one_category_are_flagged(self):
+        deps = [_dep("axios", direct=True), _dep("got", direct=True), _dep("ky")]
+
+        [rec] = analyze_duplicate_packages(deps)
+
+        assert rec.action["duplicates"][0]["found"] == ["axios", "got"]
+
+    def test_an_sbom_without_direct_marks_compares_every_package(self):
+        [rec] = analyze_duplicate_packages([_dep("axios"), _dep("got")])
+
+        assert rec.action["duplicates"][0]["found"] == ["axios", "got"]
+
+    def test_jest_and_node_assertion_helpers_are_not_rival_assertion_libraries(self):
+        deps = [_dep("chai"), _dep("expect"), _dep("assert")]
+
+        assert analyze_duplicate_packages(deps) == []
+
+    def test_two_assertion_libraries_are_flagged(self):
+        [rec] = analyze_duplicate_packages([_dep("chai"), _dep("should")])
+
+        assert rec.action["duplicates"][0]["category"] == "Testing Assertion"

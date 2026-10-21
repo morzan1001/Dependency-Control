@@ -5,16 +5,12 @@ from pymongo.errors import BulkWriteError
 
 from app.core.purl import package_identity_expr
 from app.models.dependency import Dependency
-from app.repositories.base import DUPLICATE_KEY_ERROR, BaseRepository, find_window
+from app.repositories.base import DUPLICATE_KEY_ERROR, BaseRepository
 
 
 class DependencyRepository(BaseRepository[Dependency]):
     collection_name = "dependencies"
     model_class = Dependency
-
-    async def find_by_scan(self, project_id: str, scan_id: str, limit: int) -> tuple[list[Dependency], int]:
-        rows, total = await find_window(self.collection, {"project_id": project_id, "scan_id": scan_id}, limit)
-        return self._to_model_list(rows), total
 
     async def upsert_many(self, dependencies: list[Dependency], fresh: bool = False) -> None:
         if fresh:
@@ -59,5 +55,42 @@ class DependencyRepository(BaseRepository[Dependency]):
             {"$group": {"_id": "$type", "count": {"$sum": 1}}},
             # Ties break by name: $group order is arbitrary and the summary tile names the leading types.
             *case_insensitive_sort([("count", -1), ("_id", 1)], {"_id"}),
+        ]
+        return await self.aggregate(pipeline)
+
+    async def get_top_usage(self, scan_ids: list[str], limit: int, type_filter: str | None) -> list[dict[str, Any]]:
+        from app.api.v1.helpers.sorting import case_insensitive_sort  # app.api.v1.helpers imports this module
+
+        match: dict[str, Any] = {"scan_id": {"$in": scan_ids}}
+        if type_filter:
+            match["type"] = type_filter
+        pipeline: list[dict[str, Any]] = [
+            {"$match": match},
+            {
+                "$group": {
+                    "_id": package_identity_expr(),
+                    "name": {"$min": "$name"},
+                    "type": {"$min": "$type"},
+                    "group": {"$max": "$group"},
+                    "versions": {"$addToSet": "$version"},
+                    "project_ids": {"$addToSet": "$project_id"},
+                    "total_occurrences": {"$sum": 1},
+                }
+            },
+            {
+                "$project": {
+                    "name": 1,
+                    "type": 1,
+                    "group": 1,
+                    "versions": 1,
+                    "version_count": {"$size": "$versions"},
+                    "project_count": {"$size": "$project_ids"},
+                    "total_occurrences": 1,
+                }
+            },
+            *case_insensitive_sort(
+                [("project_count", -1), ("total_occurrences", -1), ("name", 1), ("_id", 1)], {"name"}
+            ),
+            {"$limit": limit},
         ]
         return await self.aggregate(pipeline)

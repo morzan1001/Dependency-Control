@@ -6,16 +6,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.api.v1.helpers.analytics import (
+    CVEEnrichmentResult,
     build_priority_reasons,
     calculate_impact_score,
     impact_pre_score,
     select_impact_candidates,
     severity_counts_from_details,
 )
-from app.core.constants import BLAST_RADIUS_THRESHOLD, IMPACT_AGE_BOOST, IMPACT_MAX_SCORE_BOOST
+from app.core.constants import (
+    BLAST_RADIUS_THRESHOLD,
+    EXPLOIT_MATURITY_BOOST,
+    IMPACT_AGE_BOOST,
+    IMPACT_MAX_SCORE_BOOST,
+)
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
-from app.schemas.analytics import CVEEnrichmentResult, SeverityBreakdown
+from app.schemas.analytics import SeverityBreakdown
+from app.schemas.enrichment import VulnerabilityEnrichment
 from tests.helpers.analytics_scope import projections
 
 MODULE = "app.api.v1.endpoints.analytics.risk"
@@ -104,10 +111,31 @@ def _details_is_slimmed_before_group(pipeline: list[dict[str, Any]]) -> bool:
     return False
 
 
+def _answer(rows: list[dict[str, Any]], pipeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The counted read gets the counts of `rows`, ranked by pre-score as the impact read sorts; any other gets `rows`."""
+    if not any("$unwind" in stage for stage in pipeline):
+        return rows
+    counted = []
+    for row in rows:
+        counts = severity_counts_from_details(row["details_list"])
+        counted.append(
+            {
+                **{key: row[key] for key in ("_id", "project_ids", "first_seen")},
+                "counts": counts,
+                "cve_count": sum(counts.values()),
+                "pre_score": impact_pre_score(counts, len(row["project_ids"])),
+            }
+        )
+    return sorted(counted, key=lambda group: -group["pre_score"])
+
+
 def _run_impact(
     agg_results: list[dict[str, Any]],
     limit: int = 20,
+    enrich: Any = None,
+    read: int = 0,
 ) -> tuple[Any, list[dict[str, Any]], list[dict[str, Any]]]:
+    """``read`` picks the findings read returned: 0 ranks the counted groups, 1 fetches the candidates' advisories."""
     from app.api.v1.endpoints.analytics.risk import get_impact_analysis
 
     user = _admin_user()
@@ -124,36 +152,34 @@ def _run_impact(
     async def _fake_aggregate(pipeline, **kwargs):
         captured.append(pipeline)
         captured_kwargs.append(kwargs)
-        return agg_results
+        return _answer(agg_results, pipeline)
 
     mock_finding_repo = MagicMock()
     mock_finding_repo.aggregate = _fake_aggregate
-
-    async def _fake_enrich(_cves):
-        return {}
 
     with (
         patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=mock_finding_repo),
-        patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake_enrich),
+        patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=enrich or _no_enrichment),
     ):
         response = asyncio.run(get_impact_analysis(current_user=user, db=db, limit=limit))
 
-    assert captured, "aggregate() was never called for /impact"
-    return response, captured[0], captured_kwargs[0]
+    assert len(captured) > read, "the findings read asked for never ran for /impact"
+    return response, captured[read], captured_kwargs[read]
 
 
-async def _no_enrichment(_cves: list[str]) -> dict[str, Any]:
-    return {}
+async def _no_enrichment(_cves: list[str]) -> tuple[dict[str, Any], list[str]]:
+    return {}, []
 
 
 def _run_hotspots(
     agg_results: list[dict[str, Any]],
     limit: int = 20,
-    sort_by: str = "finding_count",
+    sort_by: str = "risk",
     skip: int = 0,
     enrich: Any = _no_enrichment,
+    type_rows: Any = None,
 ) -> tuple[Any, list[dict[str, Any]], list[dict[str, Any]]]:
     from app.api.v1.endpoints.analytics.risk import get_vulnerability_hotspots
 
@@ -171,13 +197,13 @@ def _run_hotspots(
     async def _fake_finding_aggregate(pipeline, **kwargs):
         captured.append(pipeline)
         captured_kwargs.append(kwargs)
-        return agg_results
+        return _answer(agg_results, pipeline)
 
     mock_finding_repo = MagicMock()
     mock_finding_repo.aggregate = _fake_finding_aggregate
 
     mock_dep_repo = MagicMock()
-    mock_dep_repo.aggregate = AsyncMock(return_value=[])
+    mock_dep_repo.aggregate = type_rows or AsyncMock(return_value=[])
 
     with (
         patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
@@ -201,38 +227,46 @@ def _run_hotspots(
     return response, captured[0], captured_kwargs[0]
 
 
+def _advisory_read_of_impact() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    group = {"_id": {"component": "lodash", "version": "4.17.11"}, "project_ids": ["proj-1"], "first_seen": None}
+    _, pipeline, kwargs = _run_impact(agg_results=[{**group, "details_list": [_LODASH_DETAILS]}], read=1)
+    return pipeline, kwargs
+
+
 class TestImpactPipelineBounded:
-    def test_no_full_details_push(self):
+    def test_the_ranking_read_hands_over_counts_not_advisories(self):
         _, pipeline, _ = _run_impact(agg_results=[])
+        assert not any("details_list" in (stage.get("$group") or {}) for stage in pipeline)
+
+    def test_no_full_details_push(self):
+        pipeline, _ = _advisory_read_of_impact()
         assert _details_is_slimmed_before_group(pipeline), (
             "details must be $project-slimmed to fix-version fields before $group"
         )
 
-    def test_severities_are_not_collected_as_a_raw_array(self):
-        _, pipeline, _ = _run_impact(agg_results=[])
+    @pytest.mark.parametrize("read", [0, 1])
+    def test_severities_are_not_collected_as_a_raw_array(self, read):
+        pipeline = _advisory_read_of_impact()[0] if read else _run_impact(agg_results=[])[1]
         collected = list(_iter_array_accumulators(pipeline))
         assert collected, "no array accumulator in the $group — the check below would inspect nothing"
         for _acc, expr in collected:
             assert expr != "$severity", "raw severity array must not be collected; use scalar counts"
 
-    def test_counts_come_from_advisories(self):
-        _, pipeline, _ = _run_impact(agg_results=[])
-        _assert_counts_come_from_advisories(pipeline)
-
     def test_details_carry_advisories_via_add_to_set(self):
-        _, pipeline, _ = _run_impact(agg_results=[])
+        pipeline, _ = _advisory_read_of_impact()
         group = _group_stage(pipeline)
         assert "details_list" in group, "expected details_list accumulator in $group"
         assert "$addToSet" in group["details_list"], "details_list must use $addToSet, not $push"
         assert "finding_ids" not in group, "finding_id is component:version, not a CVE; must not drive counts"
 
     def test_no_arbitrary_slice_on_enrichment_arrays(self):
-        _, pipeline, _ = _run_impact(agg_results=[])
+        pipeline, _ = _advisory_read_of_impact()
         sliced = _sliced_fields_after_group(pipeline)
         assert "details_list" not in sliced, "details_list must NOT be $slice-truncated (drops advisories)"
 
-    def test_allow_disk_use_threaded(self):
-        _, _, kwargs = _run_impact(agg_results=[])
+    @pytest.mark.parametrize("read", [0, 1])
+    def test_allow_disk_use_threaded(self, read):
+        kwargs = _advisory_read_of_impact()[1] if read else _run_impact(agg_results=[])[2]
         assert kwargs.get("allow_disk_use") is True, "allow_disk_use=True must be passed for /impact aggregation"
 
 
@@ -445,7 +479,7 @@ class TestDistinctSeverityCounts:
             "project_ids": ["p1"],
             "first_seen": None,
         }
-        hotspot = _build_hotspot(group, {}, {}, {}, {"p1": "p1"})
+        hotspot = _build_hotspot(group, {}, [], {}, {}, {"p1": "p1"})
 
         assert hotspot.finding_count == hotspot.cve_count == sum(hotspot.severity_breakdown.model_dump().values()) == 3
 
@@ -504,11 +538,12 @@ class TestHotspotsPostSortPagination:
             "post-sort pipeline must not $skip in Mongo; pagination is applied in Python after the epss/risk re-sort"
         )
 
-    def test_finding_count_sort_paginates_in_python(self):
-        # finding_count is derived in Python from advisories, so Mongo cannot order or page by it.
+    def test_finding_count_sort_paginates_in_mongo(self):
+        # The counted read ranks the distinct CVEs in Mongo, so it orders and pages before any advisory is read.
         _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="finding_count", skip=40, limit=20)
-        assert not any("$skip" in stage for stage in pipeline), "finding_count must not $skip in Mongo"
-        assert not any("$limit" in stage for stage in pipeline), "finding_count must not $limit in Mongo"
+        assert any(stage.get("$sort", {}).get("cve_count") == -1 for stage in pipeline)
+        assert any(stage.get("$skip") == 40 for stage in pipeline), "expected $skip in Mongo pipeline"
+        assert any(stage.get("$limit") == 20 for stage in pipeline), "expected $limit in Mongo pipeline"
 
     def test_component_sort_paginates_in_mongo(self):
         # component is a stored field, so it can be globally ordered and paged in Mongo.
@@ -536,9 +571,9 @@ class TestHotspotsBuildOnlyThePage:
 
         enriched: list[str] = []
 
-        async def _record(cves: list[str]) -> dict[str, Any]:
+        async def _record(cves: list[str]) -> tuple[dict[str, Any], list[str]]:
             enriched.extend(cves)
-            return {}
+            return {}, []
 
         with patch(f"{MODULE}._build_hotspot", side_effect=risk._build_hotspot) as build:
             response, _, _ = _run_hotspots(
@@ -546,14 +581,9 @@ class TestHotspotsBuildOnlyThePage:
             )
         return response, enriched, build
 
-    def test_the_default_sort_enriches_and_builds_only_the_page(self):
-        response, enriched, build = self._run("finding_count")
-
-        assert len(response) == build.call_count == 20
-        assert sorted(enriched) == sorted(top for hotspot in response for top in hotspot.top_cves)
-
-    def test_an_enrichment_sort_ranks_every_group_but_builds_only_the_page(self):
-        response, enriched, build = self._run("epss")
+    @pytest.mark.parametrize("sort_by", ["risk", "epss"])
+    def test_an_enrichment_sort_ranks_every_group_but_builds_only_the_page(self, sort_by):
+        response, enriched, build = self._run(sort_by)
 
         assert len(response) == build.call_count == 20
         assert len(enriched) == 300
@@ -681,6 +711,34 @@ class TestImpactPreScoreIsScoreBase:
                 counts, ap, CVEEnrichmentResult(), has_fix=False, days_known=None
             ), f"pre-score must equal the un-boosted impact score (ap={ap})"
 
+    def test_the_boost_ceiling_is_the_highest_boost_any_enrichment_reaches(self):
+        counts = {"critical": 1}
+        due_soon = (datetime.now(timezone.utc) + timedelta(days=5)).date().isoformat()
+        kev_states = [
+            {},
+            {"has_kev": True},
+            {"has_kev": True, "days_until_due": 5, "kev_due_date": due_soon},
+            {"has_kev": True, "days_until_due": -1},
+            {"has_kev": True, "kev_ransomware_use": True},
+        ]
+        ratios = [
+            calculate_impact_score(
+                counts,
+                1,
+                CVEEnrichmentResult(**kev, max_epss=epss, exploit_maturity=maturity),
+                has_fix=has_fix,
+                days_known=days_known,
+            )
+            / impact_pre_score(counts, 1)
+            for kev in kev_states
+            for epss in (None, 0.005, 0.05, 0.2, 0.6)
+            for maturity in EXPLOIT_MATURITY_BOOST
+            for has_fix in (False, True)
+            for days_known in (None, 120)
+        ]
+
+        assert max(ratios) == pytest.approx(IMPACT_MAX_SCORE_BOOST)
+
     def test_reach_is_capped_like_the_score(self):
         counts = {"critical": 1, "high": 0, "medium": 0, "low": 0}
         assert impact_pre_score(counts, 10) == impact_pre_score(counts, 9999)
@@ -790,7 +848,7 @@ class TestPriorityReasons:
             "first_seen": datetime.now(timezone.utc) - timedelta(days=120),
         }
 
-        hotspot = _build_hotspot(group, {}, {}, {}, {})
+        hotspot = _build_hotspot(group, {}, [], {}, {}, {})
 
         assert hotspot.priority_reasons == build_priority_reasons(
             {"critical": 1}, CVEEnrichmentResult(), len(projects), has_fix=True, days_known=hotspot.days_known
@@ -833,15 +891,15 @@ def _impact_aggregate_calls(*limits: int) -> int:
     async def _fake_get_projects_with_scans(_p, _d, **_kw):
         return {"proj-1": "P1"}, ["scan-latest"]
 
-    async def _fake_aggregate(_pipeline, **_kw):
+    async def _fake_aggregate(pipeline, **_kw):
         calls["n"] += 1
-        return [_impact_row("a", 3, critical=1)]
+        return _answer([_impact_row("a", 3, critical=1)], pipeline)
 
     repo = MagicMock()
     repo.aggregate = _fake_aggregate
 
     async def _fake_enrich(_c):
-        return {}
+        return {}, []
 
     with (
         patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
@@ -877,7 +935,7 @@ def _hotspots_aggregate_calls(*sort_bys: str) -> int:
     dep_repo.aggregate = AsyncMock(return_value=[])
 
     async def _fake_enrich(_c):
-        return {}
+        return {}, []
 
     with (
         patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
@@ -894,11 +952,12 @@ def _hotspots_aggregate_calls(*sort_bys: str) -> int:
 
 
 class TestAnalyticsResultCache:
+    # An uncached /impact reads twice: the counted groups, then the candidates' advisories.
     def test_impact_repeat_call_hits_cache(self):
-        assert _impact_aggregate_calls(20, 20) == 1, "identical /impact request must be served from cache"
+        assert _impact_aggregate_calls(20, 20) == 2, "identical /impact request must be served from cache"
 
     def test_impact_distinct_limit_misses_cache(self):
-        assert _impact_aggregate_calls(20, 10) == 2, "a different limit must not reuse a cached result"
+        assert _impact_aggregate_calls(20, 10) == 4, "a different limit must not reuse a cached result"
 
     def test_hotspots_repeat_call_hits_cache(self):
         assert _hotspots_aggregate_calls("finding_count", "finding_count") == 1
@@ -918,14 +977,14 @@ class TestAnalyticsResultCache:
         async def _fake_get_projects_with_scans(_p, _d, **_kw):
             return {"proj-1": "P1"}, ["scan-latest"]
 
-        async def _fake_aggregate(_pipeline, **_kw):
-            return [_impact_row("lodash", 3, critical=2, high=1)]
+        async def _fake_aggregate(pipeline, **_kw):
+            return _answer([_impact_row("lodash", 3, critical=2, high=1)], pipeline)
 
         repo = MagicMock()
         repo.aggregate = _fake_aggregate
 
         async def _fake_enrich(_c):
-            return {}
+            return {}, []
 
         with (
             patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
@@ -982,3 +1041,68 @@ class TestDistinctVulnCount:
         response, _, _ = _run_hotspots(agg_results=[_row_with_advisories("lodash", _MIXED_VULNS)])
         b = response[0].severity_breakdown
         assert response[0].finding_count == b.critical + b.high + b.medium + b.low
+
+
+_ONE_GROUP = [
+    {
+        "_id": {"component": "log4j-core", "version": "2.14.1"},
+        "project_ids": ["proj-1"],
+        "first_seen": None,
+        "details_list": [{"vulnerabilities": [{"id": "CVE-2021-44228", "severity": "CRITICAL"}]}],
+    }
+]
+
+
+async def _kev_down(cves: list[str]) -> tuple[dict[str, Any], list[str]]:
+    return {cve: VulnerabilityEnrichment(cve=cve, epss_score=0.9, risk_score=60.0) for cve in cves}, ["KEV"]
+
+
+async def _feeds_down(_cves: list[str]) -> tuple[dict[str, Any], list[str]]:
+    raise RuntimeError("feeds down")
+
+
+class TestThreatIntelOutage:
+    def test_impact_rows_name_the_source_that_was_unavailable(self):
+        [row], _, _ = _run_impact(agg_results=_ONE_GROUP, enrich=_kev_down)
+        assert row.threat_intel_unavailable == ["KEV"]
+        assert row.max_epss_score == 0.9, "the source that answered still counts"
+
+    def test_hotspots_name_the_source_that_was_unavailable(self):
+        [row], _, _ = _run_hotspots(agg_results=_ONE_GROUP, enrich=_kev_down)
+        assert row.threat_intel_unavailable == ["KEV"]
+
+    def test_a_failed_enrichment_names_both_sources(self):
+        [impact], _, _ = _run_impact(agg_results=_ONE_GROUP, enrich=_feeds_down)
+        [hotspot], _, _ = _run_hotspots(agg_results=_ONE_GROUP, enrich=_feeds_down)
+        assert impact.threat_intel_unavailable == hotspot.threat_intel_unavailable == ["KEV", "EPSS"]
+
+    def test_a_complete_enrichment_names_none(self):
+        [impact], _, _ = _run_impact(agg_results=_ONE_GROUP)
+        [hotspot], _, _ = _run_hotspots(agg_results=_ONE_GROUP)
+        assert impact.threat_intel_unavailable == hotspot.threat_intel_unavailable == []
+
+
+class TestHotspotReadsOverlap:
+    @staticmethod
+    def _first_two_events(sort_by: str) -> set[str]:
+        events: list[str] = []
+
+        async def _slow_enrich(_cves):
+            events.append("enrichment started")
+            await asyncio.sleep(0.02)
+            return {}, []
+
+        async def _slow_type_rows(_pipeline):
+            events.append("type read started")
+            await asyncio.sleep(0.02)
+            events.append("type read done")
+            return []
+
+        _run_hotspots(agg_results=_ONE_GROUP, sort_by=sort_by, enrich=_slow_enrich, type_rows=_slow_type_rows)
+        return set(events[:2])
+
+    def test_the_type_read_runs_beside_the_enrichment_of_the_page(self):
+        assert self._first_two_events("finding_count") == {"type read started", "enrichment started"}
+
+    def test_the_type_read_runs_beside_the_enrichment_an_epss_sort_ranks_by(self):
+        assert self._first_two_events("epss") == {"type read started", "enrichment started"}

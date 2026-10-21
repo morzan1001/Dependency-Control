@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 
+from app.schemas.analytics import RecommendationResponse
 from app.services.aggregation import ResultAggregator
 from app.services.recommendation import (
     crypto,
@@ -345,11 +346,17 @@ def _cross_project_cards():
         for i in range(4)
     ]
     shared = [
-        {"name": f"shared-{i:02d}", "versions": ["1.0.0", "2.0.0"], "version_count": 2, "project_count": 3}
+        {
+            "name": f"shared-{i:02d}",
+            "type": "npm",
+            "versions": ["1.0.0", "2.0.0"],
+            "version_count": 2,
+            "project_count": 3,
+        }
         for i in range(_CROWD)
     ]
     return insights.analyze_cross_project_patterns(
-        {"projects": projects, "shared_packages": shared, "total_projects": 6}
+        {"current_project_id": "p0", "projects": projects, "shared_packages": shared, "total_projects": 6}
     )
 
 
@@ -377,7 +384,7 @@ def _risk_cards():
 
 def _cards():
     return [
-        card.to_dict()
+        RecommendationResponse.model_validate(card).model_dump()
         for build in (
             _vulnerability_cards,
             _exploited_cards,

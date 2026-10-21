@@ -128,11 +128,10 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def any_in_scans(self, scan_ids: list[str], query: dict[str, Any]) -> bool:
         return await self.collection.find_one({"scan_id": {"$in": scan_ids}, **query}, {"_id": 1}) is not None
 
-    async def find_by_scan(self, scan_id: str, limit: int) -> tuple[list[FindingRecord], int]:
+    async def find_raw_by_scan(self, scan_id: str, limit: int) -> tuple[list[dict[str, Any]], int]:
         """``limit`` has no default, so no caller gets a hidden cap."""
         query = {"scan_id": scan_id, "waived": {"$ne": True}}
-        rows, total = await find_window(self.collection, query, limit, projection=_RECOMMENDATION_EXCLUDED)
-        return self._to_model_list(rows), total
+        return await find_window(self.collection, query, limit, projection=_RECOMMENDATION_EXCLUDED)
 
     async def iter_vulnerability_identities(self, scan_ids: Sequence[str]) -> AsyncGenerator[dict[str, Any], None]:
         """Unbounded, as a recurrence count over a cut would report a CVE present in every scan as mostly absent."""

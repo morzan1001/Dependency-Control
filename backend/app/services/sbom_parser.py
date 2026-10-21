@@ -738,14 +738,6 @@ class SBOMParser:
 
         if not name:
             return None
-        # Every other producer names a scoped npm package "@scope/name"; the bare name is another package.
-        if (
-            isinstance(group, str)
-            and group.startswith("@")
-            and not name.startswith("@")
-            and get_purl_type(purl) == "npm"
-        ):
-            name = f"{group}/{name}"
 
         layer_digest, found_by, locations, raw_properties, prop_cpes = self._extract_cyclonedx_properties(comp)
         # The spec field is the single string `cpe`; syft lists its CPEs as syft:cpe23 properties.
@@ -759,6 +751,14 @@ class SBOMParser:
             keep, purl = _purl_less_identity(kind, name, version, pkg_type, group, cpes)
             if not keep:
                 return None
+        # Other producers name a scoped npm package "@scope/name"; only npm has '@' groups, purl or not.
+        if (
+            isinstance(group, str)
+            and group.startswith("@")
+            and not name.startswith("@")
+            and get_purl_type(comp.get("purl")) in ("npm", None)
+        ):
+            name = f"{group}/{name}"
 
         direct, direct_inferred = directness(bom_ref or purl)
         license_str, license_url = self._extract_licenses_full(

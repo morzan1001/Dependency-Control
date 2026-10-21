@@ -60,18 +60,20 @@ def _quality_finding(
     }
 
 
-def _cross_project_data(projects, total_projects=None, shared_packages=None):
+def _cross_project_data(projects, total_projects=None, shared_packages=None, current_project_id="p1"):
     return {
+        "current_project_id": current_project_id,
         "projects": projects,
         "shared_packages": shared_packages or [],
         "total_projects": total_projects or len(projects),
     }
 
 
-def _shared_package(name="requests", versions=("2.28.0", "2.31.0"), project_count=2):
+def _shared_package(name="requests", versions=("2.28.0", "2.31.0"), project_count=2, package_type="pypi"):
     """A row of the cross-project aggregation, which counts every dependency row in Mongo instead of sampling."""
     return {
         "name": name,
+        "type": package_type,
         "versions": list(versions),
         "version_count": len(versions),
         "project_count": project_count,
@@ -240,6 +242,35 @@ class TestAnalyzeCrossProjectPatternsSharedVuln:
         # The per-project CVE lists carry no severity to break the count down by.
         assert shared_recs[0].impact == {"total": 1}
 
+    def test_only_cves_the_viewed_project_has_are_listed(self):
+        data = _cross_project_data(
+            [
+                _project(project_id="current", project_name="Current", cves=["CVE-2024-001"]),
+                _project(project_id="p1", project_name="App1", cves=["CVE-2024-001", "CVE-2024-002"]),
+                _project(project_id="p2", project_name="App2", cves=["CVE-2024-001", "CVE-2024-002"]),
+            ],
+            current_project_id="current",
+        )
+
+        [card] = [r for r in analyze_cross_project_patterns(data) if r.type == RecommendationType.SHARED_VULNERABILITY]
+
+        assert [c["cve"] for c in card.action["cves"]] == ["CVE-2024-001"]
+        assert card.impact == {"total": 1}
+
+    def test_no_card_when_the_viewed_project_shares_no_cve(self):
+        data = _cross_project_data(
+            [
+                _project(project_id="current", project_name="Current"),
+                _project(project_id="p1", project_name="App1", cves=["CVE-2024-002"]),
+                _project(project_id="p2", project_name="App2", cves=["CVE-2024-002"]),
+            ],
+            current_project_id="current",
+        )
+
+        assert not [
+            r for r in analyze_cross_project_patterns(data) if r.type == RecommendationType.SHARED_VULNERABILITY
+        ]
+
 
 class TestAnalyzeCrossProjectPatternsInconsistentVersions:
     def test_inconsistent_versions_produces_recommendation(self):
@@ -274,6 +305,29 @@ class TestAnalyzeCrossProjectPatternsInconsistentVersions:
         ]
         assert len(pattern_recs) == expected
 
+    def test_packages_sharing_a_name_across_ecosystems_are_named_with_their_type(self):
+        data = _cross_project_data(
+            [_project(project_id="p1"), _project(project_id="p2")],
+            shared_packages=[_shared_package("foo", package_type="npm"), _shared_package("foo", package_type="pypi")],
+        )
+
+        [card] = [r for r in analyze_cross_project_patterns(data) if r.type == RecommendationType.CROSS_PROJECT_PATTERN]
+
+        assert [(p["name"], p["type"]) for p in card.action["packages"]] == [("foo", "npm"), ("foo", "pypi")]
+        assert card.affected_components == [
+            "foo (npm): 2 versions across 2 projects",
+            "foo (pypi): 2 versions across 2 projects",
+        ]
+
+    def test_the_text_says_the_packages_are_the_viewed_projects(self):
+        data = _cross_project_data(
+            [_project(project_id="p1"), _project(project_id="p2")], shared_packages=[_shared_package()]
+        )
+
+        [card] = [r for r in analyze_cross_project_patterns(data) if r.type == RecommendationType.CROSS_PROJECT_PATTERN]
+
+        assert card.description.startswith("These packages of this project are used across multiple projects")
+
 
 class TestAnalyzeCrossProjectPatternsPrioritizeProjects:
     @pytest.mark.parametrize(
@@ -284,9 +338,30 @@ class TestAnalyzeCrossProjectPatternsPrioritizeProjects:
                     _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
                     _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
                     _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
+                    _project(project_id="p4", project_name="App4", total_critical=0, total_high=0),
                 ],
                 1,
                 id="one-project-above-critical-threshold",
+            ),
+            pytest.param(
+                [
+                    _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
+                    _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
+                    _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
+                ],
+                0,
+                id="only-the-listed-projects",
+            ),
+            pytest.param(
+                [
+                    _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
+                    _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
+                    _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
+                    _project(project_id="p4", project_name="App4", total_critical=1, total_high=0),
+                    _project(project_id="p5", project_name="App5", total_critical=1, total_high=0),
+                ],
+                0,
+                id="the-last-listed-project-does-not-stand-out",
             ),
             pytest.param(
                 [
@@ -319,6 +394,7 @@ class TestAnalyzeCrossProjectPatternsPrioritizeProjects:
                 _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
                 _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
                 _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
+                _project(project_id="p4", project_name="App4", total_critical=0, total_high=3),
             ]
         )
         result = analyze_cross_project_patterns(data)
@@ -343,7 +419,7 @@ class TestCrossProjectCardsStateTheirOwnNumbers:
         ]
 
         assert shared.description.startswith(
-            "These CVEs appear in 2 or more of your projects, compared across all 2 of your projects."
+            "These CVEs of this project appear in 2 or more of your projects, compared across all 2 of your projects."
         )
 
     def test_the_most_affected_card_books_no_other_projects_findings_as_its_impact(self):
@@ -480,3 +556,35 @@ def test_scorecard_correlation_counts_a_cve_on_two_installed_versions_once():
     assert rec.description.startswith("Found 1 critical/high vulnerabilities")
     assert rec.impact["high"] == rec.impact["total"] == 1
     assert [p["version"] for p in rec.action["packages"]] == ["5.7.1", "7.3.5"]
+
+
+class TestCorrelateScorecardCountsOnlyUnfixedVulnerabilities:
+    def test_an_advisory_with_a_recorded_fix_is_left_to_the_update_cards(self):
+        log4j = stored_vulnerability(
+            "log4j-core",
+            "2.14.0",
+            [
+                {"id": "CVE-2021-44228", "severity": "CRITICAL", "fixed_version": "2.15.0"},
+                {"id": "CVE-2021-45105", "severity": "HIGH"},
+            ],
+        )
+
+        [rec] = correlate_scorecard_with_vulnerabilities(
+            [log4j], [_quality_finding(component="log4j-core", critical_issues=["Maintained"])]
+        )
+
+        assert rec.description.startswith("Found 1 critical/high vulnerabilities")
+        assert (rec.impact["critical"], rec.impact["high"], rec.impact["total"]) == (0, 1, 1)
+        assert rec.action["packages"][0]["cves"] == ["CVE-2021-45105"]
+
+    def test_a_package_whose_critical_and_high_advisories_all_name_a_fix_gets_no_card(self):
+        fixed = stored_vulnerability(
+            "lodash", "4.17.20", [{"id": "CVE-2021-23337", "severity": "HIGH", "fixed_version": "4.17.21"}]
+        )
+
+        assert (
+            correlate_scorecard_with_vulnerabilities(
+                [fixed], [_quality_finding(component="lodash", critical_issues=["Maintained"])]
+            )
+            == []
+        )

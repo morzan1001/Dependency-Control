@@ -1,7 +1,6 @@
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 
-from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, EPSS_VERY_HIGH_THRESHOLD
-from app.core.cve import counted_cves
+from app.core.constants import EPSS_VERY_HIGH_THRESHOLD
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import (
     Effort,
@@ -14,6 +13,7 @@ from app.services.recommendation.common import (
     MALWARE_REMEDIATION_STEPS,
     ModelOrDict,
     cve_severities,
+    cve_signals,
     get_attr,
     live_advisories,
     name_some,
@@ -25,21 +25,6 @@ from app.services.recommendation.common import (
 _CVES_NAMED = 5
 
 
-def _cve_signals(
-    finding: ModelOrDict, threat_intel: Mapping[str, VulnerabilityEnrichment]
-) -> Iterator[tuple[str, bool, bool, float]]:
-    for advisory in live_advisories(get_attr(finding, "details", {})):
-        cves = counted_cves(advisory)
-        for cve in cves:
-            # A bundle's stored marks are any one CVE's; a single CVE keeps its own, which a KEV outage cannot clear.
-            live = threat_intel.get(cve) if len(cves) > 1 else None
-            if live is not None:
-                yield cve, live.in_kev, live.kev_ransomware_use, live.epss_score or 0.0
-            else:
-                in_kev, ransomware = advisory.get(DETAILS_KEY_IN_KEV), advisory.get(DETAILS_KEY_KEV_RANSOMWARE)
-                yield cve, bool(in_kev), bool(ransomware), advisory.get("epss_score") or 0.0
-
-
 def _exploited_cves(
     finding: ModelOrDict, threat_intel: Mapping[str, VulnerabilityEnrichment]
 ) -> tuple[set[str], set[str], dict[str, float]]:
@@ -47,7 +32,9 @@ def _exploited_cves(
     ransomware: set[str] = set()
     kev: set[str] = set()
     epss: dict[str, float] = {}
-    for cve, in_kev, ransomware_use, epss_score in _cve_signals(finding, threat_intel):
+    for cve, in_kev, ransomware_use, epss_score in cve_signals(
+        live_advisories(get_attr(finding, "details", {})), threat_intel
+    ):
         if ransomware_use:
             ransomware.add(cve)
         elif in_kev:

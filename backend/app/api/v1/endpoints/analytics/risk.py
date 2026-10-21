@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
@@ -9,6 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
+    CVEEnrichmentResult,
     ReleaseEnvironmentQuery,
     build_priority_reasons,
     calculate_days_known,
@@ -16,7 +18,7 @@ from app.api.v1.helpers.analytics import (
     extract_fix_versions,
     get_projects_with_scans,
     get_user_projects,
-    impact_pre_score,
+    impact_pre_score_expr,
     process_cve_enrichments,
     require_analytics_permission,
     select_impact_candidates,
@@ -32,7 +34,8 @@ from app.api.v1.helpers.sorting import (
     parse_sort_direction,
 )
 from app.core.cache import scope_digest
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, SEVERITY_ORDER, severity_rank_expr
+from app.core.cve import counted_cves_expr
 from app.core.permissions import Permissions
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
@@ -50,7 +53,7 @@ from app.services.component_identity import (
 )
 from app.services.analytics.cache import get_analytics_cache
 from app.services.aggregation.versions import newest_first, normalize_version
-from app.services.enrichment.service import vulnerability_enrichment_service
+from app.services.enrichment.service import THREAT_INTEL_SOURCES, vulnerability_enrichment_service
 from app.services.recommendation.common import live_cves
 
 logger = logging.getLogger(__name__)
@@ -68,18 +71,72 @@ _CVES_SHOWN = 5
 _FIRST_SEEN = {"$min": {"$ifNull": ["$first_seen_at", "$scan_created_at"]}}
 
 HotspotSort = Literal["finding_count", "component", "first_seen", "epss", "risk"]
-_MONGO_SORTS = {"component": "_id.component", "first_seen": "first_seen"}
-# The other keys derive from the advisories and their enrichment, so they rank in Python.
+_MONGO_SORTS = {"component": "_id.component", "first_seen": "first_seen", "finding_count": "cve_count"}
+# The other keys derive from the live enrichment of every advisory, so they rank in Python.
 _PYTHON_RANKS: dict[str, Callable[[dict[str, Any], Mapping[str, VulnerabilityEnrichment]], float]] = {
-    "finding_count": lambda r, _enrichments: sum(severity_counts_from_details(r["details_list"]).values()),
     "epss": lambda r, enrichments: process_cve_enrichments(r["details_list"], enrichments).max_epss or 0,
     "risk": lambda r, enrichments: process_cve_enrichments(r["details_list"], enrichments).max_risk or 0,
 }
 
+_LIVE_VULNERABILITIES = {"type": "vulnerability", "waived": {"$ne": True}}
 
-def _vulnerable_groups(scan_ids: list[str]) -> list[dict[str, Any]]:
+
+def _counted_groups(scan_ids: list[str]) -> list[dict[str, Any]]:
+    """Each (component, version) group with severity_counts_from_details' counts, but without its advisory lists."""
+    live = {
+        "$filter": {"input": {"$ifNull": ["$details.vulnerabilities", []]}, "cond": {"$ne": ["$$this.waived", True]}}
+    }
+    advisory = {"cves": counted_cves_expr("$$v"), "rank": severity_rank_expr({"$toUpper": "$$v.severity"})}
     return [
-        {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability", "waived": {"$ne": True}}},
+        {"$match": {"scan_id": {"$in": scan_ids}, **_LIVE_VULNERABILITIES}},
+        {
+            "$project": {
+                "component": 1,
+                "version": 1,
+                "project_id": 1,
+                "first_seen_at": 1,
+                "scan_created_at": 1,
+                "advisories": {"$map": {"input": live, "as": "v", "in": advisory}},
+            }
+        },
+        # Preserved, so a finding whose advisories are all waived still counts its project and age.
+        {"$unwind": {"path": "$advisories", "preserveNullAndEmptyArrays": True}},
+        {"$unwind": {"path": "$advisories.cves", "preserveNullAndEmptyArrays": True}},
+        {
+            "$group": {
+                "_id": {"component": "$component", "version": "$version", "cve": "$advisories.cves"},
+                "rank": {"$max": "$advisories.rank"},
+                "project_ids": {"$addToSet": "$project_id"},
+                "first_seen": _FIRST_SEEN,
+            }
+        },
+        {
+            "$group": {
+                "_id": {"component": "$_id.component", "version": "$_id.version"},
+                "project_ids": {"$push": "$project_ids"},
+                "first_seen": {"$min": "$first_seen"},
+                "ranks": {"$push": {"$cond": [{"$eq": [{"$type": "$_id.cve"}, "string"]}, "$rank", "$$REMOVE"]}},
+            }
+        },
+        {
+            "$project": {
+                "project_ids": {
+                    "$reduce": {"input": "$project_ids", "initialValue": [], "in": {"$setUnion": ["$$value", "$$this"]}}
+                },
+                "first_seen": 1,
+                "cve_count": {"$size": "$ranks"},
+                "counts": {
+                    label.lower(): {"$size": {"$filter": {"input": "$ranks", "cond": {"$eq": ["$$this", rank]}}}}
+                    for label, rank in SEVERITY_ORDER.items()
+                },
+            }
+        },
+    ]
+
+
+def _vulnerable_groups(match: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {"$match": {**match, **_LIVE_VULNERABILITIES}},
         {
             "$project": {
                 "component": 1,
@@ -103,16 +160,33 @@ def _vulnerable_groups(scan_ids: list[str]) -> list[dict[str, Any]]:
     ]
 
 
-async def _enrich(groups: Iterable[dict[str, Any]]) -> dict[str, VulnerabilityEnrichment]:
-    """Enrichment is supplementary, so a failure leaves the groups unenriched."""
+async def _with_advisories(
+    repo: FindingRepository, scan_ids: list[str], groups: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The full rows, advisory lists included, of these counted groups alone and in their order."""
+    keys = [(group["_id"]["component"], group["_id"].get("version")) for group in groups]
+    if not keys:
+        return []
+    match = {
+        "scan_id": {"$in": scan_ids},
+        "component": {"$in": list({component for component, _ in keys})},
+        "version": {"$in": list({version for _, version in keys})},
+    }
+    rows = await repo.aggregate(_vulnerable_groups(match), allow_disk_use=True)
+    by_key = {(row["_id"]["component"], row["_id"].get("version")): row for row in rows}
+    return [by_key[key] for key in keys if key in by_key]
+
+
+async def _enrich(groups: Iterable[dict[str, Any]]) -> tuple[dict[str, VulnerabilityEnrichment], list[str]]:
+    """Enrichment is supplementary, so a failure leaves the groups unenriched and names every source unavailable."""
     cves = list({cve for group in groups for cve in live_cves(group["details_list"])})
     if not cves:
-        return {}
+        return {}, []
     try:
         return await vulnerability_enrichment_service.enrich_cves(cves)
     except Exception as e:
         logger.warning(f"Failed to enrich CVEs: {e}")
-        return {}
+        return {}, list(THREAT_INTEL_SOURCES)
 
 
 @router.get("/impact", responses=RESP_AUTH)
@@ -140,68 +214,39 @@ async def _impact(
     if not scan_ids:
         return []
 
-    pipeline = [*_vulnerable_groups(scan_ids), {"$limit": ANALYTICS_MAX_QUERY_LIMIT}]
-    results = await FindingRepository(db).aggregate(pipeline, allow_disk_use=True)
-
-    # Severity/vuln counts come from the advisory lists (finding_id is only component:version).
-    counted = [(r, severity_counts_from_details(r["details_list"])) for r in results]
-    candidates = select_impact_candidates(
-        [(impact_pre_score(counts, len(r["project_ids"])), (r, counts)) for r, counts in counted], limit
+    repo = FindingRepository(db)
+    pipeline = [
+        *_counted_groups(scan_ids),
+        {"$addFields": {"pre_score": impact_pre_score_expr("$counts", "$project_ids")}},
+        {"$sort": {"pre_score": -1, "_id": 1}},
+        {"$limit": ANALYTICS_MAX_QUERY_LIMIT},
+    ]
+    counted = await repo.aggregate(pipeline, allow_disk_use=True)
+    candidates = await _with_advisories(
+        repo, scan_ids, select_impact_candidates([(group["pre_score"], group) for group in counted], limit)
     )
-    enrichments = await _enrich(r for r, _ in candidates)
+    enrichments, unavailable = await _enrich(candidates)
 
     impact_results = []
-    for r, severity_counts in candidates:
-        version = r["_id"].get("version")
+    for r in candidates:
+        # Severity/vuln counts come from the advisory lists (finding_id is only component:version).
+        severity_counts = severity_counts_from_details(r["details_list"])
+        intel, enrichment = _threat_intel(r, severity_counts, enrichments, unavailable)
         affected_projects = len(r["project_ids"])
-        fix_versions = extract_fix_versions(r["details_list"], version)
-        has_fix = len(fix_versions) > 0
-
-        enrichment_data = process_cve_enrichments(r["details_list"], enrichments)
-
-        days_known = calculate_days_known(r["first_seen"])
-
-        base_impact = calculate_impact_score(
-            severity_counts,
-            affected_projects,
-            enrichment_data,
-            has_fix,
-            days_known,
-        )
-
-        priority_reasons = build_priority_reasons(
-            severity_counts,
-            enrichment_data,
-            affected_projects,
-            has_fix,
-            days_known,
-        )
-
         impact_results.append(
             ImpactAnalysisResult(
+                **intel,
                 component=r["_id"]["component"],
-                version=version or "unknown",
+                version=r["_id"].get("version") or "unknown",
                 affected_projects=affected_projects,
                 total_findings=sum(severity_counts.values()),
                 findings_by_severity=SeverityBreakdown.from_counts(severity_counts),
-                fix_impact_score=base_impact,
+                fix_impact_score=calculate_impact_score(
+                    severity_counts, affected_projects, enrichment, intel["has_fix"], intel["days_known"]
+                ),
                 affected_project_names=[
                     project_name_map.get(pid, "Unknown") for pid in r["project_ids"][:_AFFECTED_PROJECTS_SHOWN]
                 ],
-                max_epss_score=enrichment_data.max_epss,
-                epss_percentile=enrichment_data.max_percentile,
-                has_kev=enrichment_data.has_kev,
-                kev_count=enrichment_data.kev_count,
-                kev_ransomware_use=enrichment_data.kev_ransomware_use,
-                kev_due_date=enrichment_data.kev_due_date,
-                days_until_due=enrichment_data.days_until_due,
-                exploit_maturity=enrichment_data.exploit_maturity,
-                max_risk_score=enrichment_data.max_risk,
-                days_known=days_known,
-                has_fix=has_fix,
-                fix_versions=newest_first(fix_versions)[:_FIX_VERSIONS_SHOWN],
-                fix_version_count=len(fix_versions),
-                priority_reasons=priority_reasons,
             )
         )
 
@@ -217,58 +262,65 @@ def _format_first_seen(first_seen: Any) -> str:
     return str(first_seen)
 
 
+def _threat_intel(
+    r: dict[str, Any],
+    severity_counts: dict[str, int],
+    enrichments: Mapping[str, VulnerabilityEnrichment],
+    unavailable: list[str],
+) -> tuple[dict[str, Any], CVEEnrichmentResult]:
+    details_list = r["details_list"]
+    fix_versions = extract_fix_versions(details_list, r["_id"].get("version"))
+    days_known = calculate_days_known(r.get("first_seen"))
+    enrichment = process_cve_enrichments(details_list, enrichments)
+    intel = {
+        "max_epss_score": enrichment.max_epss,
+        "epss_percentile": enrichment.max_percentile,
+        "has_kev": enrichment.has_kev,
+        "kev_count": enrichment.kev_count,
+        "kev_ransomware_use": enrichment.kev_ransomware_use,
+        "kev_due_date": enrichment.kev_due_date,
+        "days_until_due": enrichment.days_until_due,
+        "exploit_maturity": enrichment.exploit_maturity,
+        "max_risk_score": enrichment.max_risk,
+        "days_known": days_known,
+        "has_fix": bool(fix_versions),
+        "fix_versions": newest_first(fix_versions)[:_FIX_VERSIONS_SHOWN],
+        "fix_version_count": len(fix_versions),
+        "priority_reasons": build_priority_reasons(
+            severity_counts, enrichment, len(r["project_ids"]), bool(fix_versions), days_known
+        ),
+        "threat_intel_unavailable": unavailable,
+    }
+    return intel, enrichment
+
+
 def _build_hotspot(
     r: dict[str, Any],
-    enrichments: dict[str, Any],
+    enrichments: Mapping[str, VulnerabilityEnrichment],
+    unavailable: list[str],
     version_type_index: dict[str, set[str]],
     type_index: dict[str, set[str]],
     project_name_map: dict[str, str],
 ) -> VulnerabilityHotspot:
-    details_list = r["details_list"]
-    severity_counts = severity_counts_from_details(details_list)
-    fix_versions = extract_fix_versions(details_list, r["_id"].get("version"))
-    has_fix = len(fix_versions) > 0
+    severity_counts = severity_counts_from_details(r["details_list"])
     component = r["_id"]["component"]
     # One name at one version can ship in several ecosystems (a deb and an apk openssl); name them all.
     types = lookup_component(version_type_index, component) or lookup_component(type_index, component)
-    dep_type = "/".join(sorted(types)) if types else "unknown"
-
-    first_seen_str = _format_first_seen(r.get("first_seen"))
-    days_known = calculate_days_known(r.get("first_seen"))
-
-    cves = live_cves(details_list)
-    top_cves = cves[:_CVES_SHOWN]
-
-    enrichment_data = process_cve_enrichments(details_list, enrichments)
-    priority_reasons = build_priority_reasons(
-        severity_counts, enrichment_data, len(r["project_ids"]), has_fix, days_known
-    )
+    cves = live_cves(r["details_list"])
+    intel, _ = _threat_intel(r, severity_counts, enrichments, unavailable)
 
     return VulnerabilityHotspot(
-        component=r["_id"]["component"],
+        **intel,
+        component=component,
         version=r["_id"].get("version") or "unknown",
-        type=dep_type,
+        type="/".join(sorted(types)) if types else "unknown",
         finding_count=sum(severity_counts.values()),
         severity_breakdown=SeverityBreakdown.from_counts(severity_counts),
         affected_projects=[project_name_map.get(pid, "Unknown") for pid in r["project_ids"][:_HOTSPOT_PROJECTS_SHOWN]],
         affected_project_count=len(r["project_ids"]),
-        first_seen=first_seen_str,
-        max_epss_score=enrichment_data.max_epss,
-        epss_percentile=enrichment_data.max_percentile,
-        has_kev=enrichment_data.has_kev,
-        kev_count=enrichment_data.kev_count,
-        kev_ransomware_use=enrichment_data.kev_ransomware_use,
-        kev_due_date=enrichment_data.kev_due_date,
-        days_until_due=enrichment_data.days_until_due,
-        exploit_maturity=enrichment_data.exploit_maturity,
-        max_risk_score=enrichment_data.max_risk,
-        days_known=days_known,
-        has_fix=has_fix,
-        fix_versions=newest_first(fix_versions)[:_FIX_VERSIONS_SHOWN],
-        fix_version_count=len(fix_versions),
-        top_cves=top_cves,
+        first_seen=_format_first_seen(r.get("first_seen")),
+        top_cves=cves[:_CVES_SHOWN],
         cve_count=len(cves),
-        priority_reasons=priority_reasons,
     )
 
 
@@ -278,7 +330,7 @@ async def get_vulnerability_hotspots(
     db: DatabaseDep,
     skip: Annotated[int, Query(ge=0, description="Number of records to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
-    sort_by: HotspotSort = "finding_count",
+    sort_by: HotspotSort = "risk",
     sort_order: SortOrderQuery = "desc",
     release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[VulnerabilityHotspot]:
@@ -292,6 +344,22 @@ async def get_vulnerability_hotspots(
     return await get_analytics_cache().get_or_compute(
         key, lambda: _hotspots(db, projects, release_environment, sort_by, sort_order, skip, limit)
     )
+
+
+def _ranked_page(
+    groups: list[dict[str, Any]],
+    rank: Callable[[dict[str, Any], Mapping[str, VulnerabilityEnrichment]], float],
+    enrichments: Mapping[str, VulnerabilityEnrichment],
+    descending: bool,
+    skip: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    # $group emits its rows in no fixed order, so ties need an order of their own to page through.
+    ordered = sorted(
+        groups, key=lambda r: (case_insensitive_key(r["_id"]["component"]), r["_id"].get("version") or "unknown")
+    )
+    ordered.sort(key=lambda r: rank(r, enrichments), reverse=descending)
+    return ordered[skip : skip + limit]
 
 
 async def _hotspots(
@@ -308,11 +376,15 @@ async def _hotspots(
         return []
 
     sort_direction = parse_sort_direction(sort_order)
-    pipeline = _vulnerable_groups(scan_ids)
-    if sort_by in _MONGO_SORTS:
-        order = [(_MONGO_SORTS[sort_by], sort_direction), ("_id", 1)]
-        pipeline += [*case_insensitive_sort(order, {"_id.component"}), {"$skip": skip}, {"$limit": limit}]
-    groups = await FindingRepository(db).aggregate(pipeline, allow_disk_use=True)
+    repo = FindingRepository(db)
+    rank = _PYTHON_RANKS.get(sort_by)
+    if rank:
+        groups = await repo.aggregate(_vulnerable_groups({"scan_id": {"$in": scan_ids}}), allow_disk_use=True)
+    else:
+        order = [(_MONGO_SORTS[sort_by], sort_direction), ("_id.component", 1), ("_id", 1)]
+        page = [*case_insensitive_sort(order, {"_id.component"}), {"$skip": skip}, {"$limit": limit}]
+        counted = await repo.aggregate([*_counted_groups(scan_ids), *page], allow_disk_use=True)
+        groups = await _with_advisories(repo, scan_ids, counted)
 
     # A component may be group-qualified while the inventory keeps the bare artifact name, so both spellings match.
     candidates = list({name for r in groups for name in component_name_candidates(r["_id"]["component"])})
@@ -325,29 +397,27 @@ async def _hotspots(
             }
         },
     ]
+    # Only an enrichment-ranked sort needs every group enriched; the others enrich their page alone.
+    type_rows, (enrichments, unavailable) = await asyncio.gather(
+        DependencyRepository(db).aggregate(type_pipeline), _enrich(groups)
+    )
+    if rank:
+        groups = _ranked_page(groups, rank, enrichments, sort_direction == -1, skip, limit)
+
     types_by_version: dict[str, dict[str, set[str]]] = {}
     types_by_name: dict[str, set[str]] = {}
-    for row in await DependencyRepository(db).aggregate(type_pipeline):
+    for row in type_rows:
         name, version = row["_id"]["name"], normalize_version(row["_id"]["version"])
         types_by_version.setdefault(version, {}).setdefault(name, set()).update(row["types"])
         types_by_name.setdefault(name, set()).update(row["types"])
     type_index_by_version = {version: build_component_index(types) for version, types in types_by_version.items()}
     type_index = build_component_index(types_by_name)
 
-    # Only an enrichment-ranked sort needs every group enriched; the others enrich their page alone.
-    enrichments = await _enrich(groups) if sort_by in ("epss", "risk") else None
-    if rank := _PYTHON_RANKS.get(sort_by):
-        # $group emits its rows in no fixed order, so ties need an order of their own to page through.
-        groups.sort(key=lambda r: (case_insensitive_key(r["_id"]["component"]), r["_id"].get("version") or "unknown"))
-        groups.sort(key=lambda r: rank(r, enrichments or {}), reverse=sort_direction == -1)
-        groups = groups[skip : skip + limit]
-    if enrichments is None:
-        enrichments = await _enrich(groups)
-
     return [
         _build_hotspot(
             r,
             enrichments,
+            unavailable,
             type_index_by_version.get(normalize_version(r["_id"].get("version")), {}),
             type_index,
             project_name_map,

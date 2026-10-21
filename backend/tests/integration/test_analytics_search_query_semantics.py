@@ -131,6 +131,25 @@ async def test_dependency_search_orders_names_whatever_their_case(client, db, sc
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 @pytest.mark.parametrize("has_vulnerabilities", [None, "true"])
+async def test_dependency_search_orders_versions_by_the_value_of_their_numbers(
+    client, db, scanned, has_vulnerabilities
+):
+    for i, version in enumerate(["10.0.0", "9.10.0", "9.0.0", "9.2.0"]):
+        await db.dependencies.insert_one({**_dependency(f"lib-{i}"), "version": version})
+        await db.findings.insert_one({**_vulnerability(f"lib-{i}"), "version": version})
+    params = {"q": "lib", "sort_by": "version", "sort_order": "asc"}
+    if has_vulnerabilities:
+        params["has_vulnerabilities"] = has_vulnerabilities
+
+    resp = await client.get(_SEARCH_PATH, params=params, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    assert [row["version"] for row in resp.json()["items"]] == ["9.0.0", "9.2.0", "9.10.0", "10.0.0"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("has_vulnerabilities", [None, "true"])
 async def test_dependency_search_keeps_only_the_requested_version(client, db, scanned, has_vulnerabilities):
     await db.dependencies.insert_one(_dependency("a-lib"))
     await db.dependencies.insert_one({**_dependency("b-lib"), "version": "2.0.0"})
@@ -639,3 +658,208 @@ async def test_the_vulnerability_search_lists_a_scanner_error_only_when_its_type
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert ([(row["component"], row["vulnerability_id"]) for row in body["items"]], body["total"]) == ([expected], 1)
+
+
+@pytest_asyncio.fixture
+async def two_projects(db, scanned):
+    """Ordered by name case-insensitively, omega precedes Project-P; by id or by binary name it follows."""
+    from app.models.project import Project, ProjectMember
+
+    other = Project(id="p2", name="omega", members=[ProjectMember(user_id="ownerp", role="admin")])
+    await db.projects.insert_one({**other.model_dump(by_alias=True), "latest_scan_id": "scan-p2"})
+    await db.projects.update_one({"_id": "p"}, {"$set": {"name": "Project-P"}})
+    await db.scans.insert_one(
+        {"_id": "scan-p2", "project_id": "p2", "status": "completed", "created_at": datetime.now(timezone.utc)}
+    )
+    return scanned
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("has_vulnerabilities", [None, "true"])
+@pytest.mark.parametrize(
+    ("sort_order", "expected"), [("asc", ["omega", "Project-P"]), ("desc", ["Project-P", "omega"])]
+)
+async def test_dependency_search_sorts_by_the_project_name(
+    client, db, two_projects, has_vulnerabilities, sort_order, expected
+):
+    for scan_id, project_id in ((_SCAN_ID, "p"), ("scan-p2", "p2")):
+        dependency = {**_dependency("lodash"), "_id": f"dep-{project_id}", "scan_id": scan_id, "project_id": project_id}
+        await db.dependencies.insert_one(dependency)
+        await db.findings.insert_one(
+            {**_vulnerability("lodash"), "_id": f"finding-{project_id}", "scan_id": scan_id, "project_id": project_id}
+        )
+    params = {"q": "lodash", "sort_by": "project_name", "sort_order": sort_order}
+    if has_vulnerabilities:
+        params["has_vulnerabilities"] = has_vulnerabilities
+
+    pages = await _pages(client, _SEARCH_PATH, two_projects, params, 2)
+
+    assert [row["project_name"] for page in pages for row in page["items"]] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("sort_order", "expected"), [("asc", ["omega", "Project-P"]), ("desc", ["Project-P", "omega"])]
+)
+async def test_vulnerability_search_sorts_by_the_project_name(client, db, two_projects, sort_order, expected):
+    for scan_id, project_id in ((_SCAN_ID, "p"), ("scan-p2", "p2")):
+        await db.findings.insert_one(
+            {**_vulnerability("lodash"), "_id": f"finding-{project_id}", "scan_id": scan_id, "project_id": project_id}
+        )
+    params = {"q": _CVE, "sort_by": "project_name", "sort_order": sort_order}
+
+    pages = await _pages(client, _VULN_SEARCH_PATH, two_projects, params, 2)
+
+    assert [row["project_name"] for page in pages for row in page["items"]] == expected
+
+
+_DEPENDENCY_DETAILS = {
+    "license": "MIT",
+    "license_url": "https://opensource.org/licenses/MIT",
+    "purl": "pkg:npm/full-lib@1.0.0",
+    "source_type": "application",
+    "source_target": "package-lock.json",
+    "layer_digest": "sha256:abc",
+    "found_by": "javascript-lock-cataloger",
+    "locations": ["/app/package-lock.json"],
+    "cpes": ["cpe:2.3:a:full:lib:1.0.0:*:*:*:*:*:*:*"],
+    "description": "a full library",
+    "author": "Ada",
+    "publisher": "Acme",
+    "group": "acme",
+    "homepage": "https://full-lib.dev",
+    "repository_url": "https://github.com/acme/full-lib",
+    "download_url": "https://registry.npmjs.org/full-lib/-/full-lib-1.0.0.tgz",
+    "hashes": {"sha256": "abc"},
+    "properties": {"syft:package:foundBy": "javascript-lock-cataloger"},
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize("has_vulnerabilities", [None, "true"])
+async def test_dependency_search_returns_every_field_of_the_dependency(client, db, scanned, has_vulnerabilities):
+    await db.dependencies.insert_one(
+        {**_dependency("full-lib"), **_DEPENDENCY_DETAILS, "parent_components": ["root"], "scope": "runtime"}
+    )
+    await db.findings.insert_one(_vulnerability("full-lib"))
+    params = {"q": "full-lib"}
+    if has_vulnerabilities:
+        params["has_vulnerabilities"] = has_vulnerabilities
+
+    resp = await client.get(_SEARCH_PATH, params=params, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items"] == [
+        {
+            "project_id": "p",
+            "project_name": "project-p",
+            "package": "full-lib",
+            "version": "1.0.0",
+            "type": "npm",
+            "direct": True,
+            **_DEPENDENCY_DETAILS,
+        }
+    ]
+
+
+_THREAT_INTEL = {
+    "epss_score": 0.4,
+    "epss_percentile": 0.9,
+    "in_kev": True,
+    "kev_ransomware_use": True,
+    "kev_due_date": "2026-01-01",
+    "fixed_version": "1.3.1",
+}
+
+
+def _row(component: str, vulnerability_id: str, **fields) -> dict:
+    return {
+        "component": component,
+        "version": "1.0.0",
+        "project_id": "p",
+        "project_name": "project-p",
+        "scan_id": _SCAN_ID,
+        "finding_id": f"{component}:1.0.0",
+        "finding_type": "vulnerability",
+        "vulnerability_id": vulnerability_id,
+        "epss_score": 0.4,
+        "epss_percentile": 0.9,
+        "in_kev": True,
+        "kev_ransomware": True,
+        "kev_due_date": "2026-01-01",
+        "fixed_version": "1.3.1",
+        "waived": True,
+        **fields,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_the_page_read_keeps_every_field_a_result_row_shows(client, db, scanned):
+    direct = {
+        **_vulnerability("left-pad", waived=True),
+        "aliases": ["GHSA-aaaa-bbbb-cccc"],
+        "description": "prototype pollution",
+        "details": {**_THREAT_INTEL, "vulnerabilities": [{"id": "CVE-2025-0001", "cvss_score": 7.1}]},
+    }
+    advisory = {"id": _CVE, "aliases": ["GHSA-dddd-eeee-ffff"], "severity": "HIGH", "cvss_score": 8.1}
+    nested = _named("right-pad", "HIGH", {**advisory, **_THREAT_INTEL, "description": "nested", "waived": True})
+    nested["details"]["vulnerabilities"][0]["waiver_reason"] = "accepted upstream"
+    await db.findings.insert_many([direct, nested])
+
+    rows = []
+    for query in ("left-pad", _CVE):
+        resp = await client.get(_VULN_SEARCH_PATH, params={"q": query, "include_waived": "true"}, headers=scanned)
+        assert resp.status_code == 200, resp.text
+        rows += resp.json()["items"]
+
+    assert rows == [
+        _row(
+            "left-pad",
+            "left-pad:1.0.0",
+            aliases=["GHSA-aaaa-bbbb-cccc"],
+            severity="HIGH",
+            cvss_score=7.1,
+            description="prototype pollution",
+            waiver_reason="accepted risk",
+        ),
+        _row(
+            "right-pad",
+            _CVE,
+            aliases=["GHSA-dddd-eeee-ffff"],
+            severity="HIGH",
+            cvss_score=8.1,
+            description="nested",
+            waiver_reason="accepted upstream",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("param", "value", "fixed_version"),
+    [("has_fix", "true", "1.0.1"), ("has_fix", "false", None), ("in_kev", "false", None)],
+)
+async def test_the_kev_and_fix_filters_list_only_vulnerability_findings(
+    client, db, scanned, param, value, fixed_version
+):
+    vulnerability = _vulnerability("frob-vuln")
+    vulnerability["details"]["fixed_version"] = fixed_version
+    outdated = {
+        **_vulnerability("frob-old"),
+        "type": "outdated",
+        "severity": "INFO",
+        "description": "frob-old 1.0.0 is outdated",
+        "details": {"fixed_version": "2.0.0"},
+    }
+    await db.findings.insert_many([vulnerability, outdated, _low_license()])
+
+    resp = await client.get(_VULN_SEARCH_PATH, params={"q": "frob", param: value}, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert ([row["component"] for row in body["items"]], body["total"]) == (["frob-vuln"], 1)

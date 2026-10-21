@@ -12,20 +12,10 @@ from app.repositories.findings import FindingRepository
 from app.schemas.inventory import ComponentItem
 from app.services.aggregation.cross_link import is_ahead_of_default
 
-COMPONENT_COLUMNS = [
-    "name",
-    "version",
-    "latest_version",
-    "ecosystem",
-    "license",
-    "license_category",
-    "direct",
-    "eol",
-    "outdated",
-    "purl",
-]
+COMPONENT_COLUMNS = list(ComponentItem.model_fields)
 
 TEXT_SORT_FIELDS = frozenset({"name", "version", "type", "license"})
+NUMBERED_SORT_FIELDS = frozenset({"version"})
 _SORT_FIELDS = {*TEXT_SORT_FIELDS, "direct"}
 
 _DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "license": 1, "license_category": 1, "direct": 1, "purl": 1}
@@ -86,7 +76,8 @@ def _ordered(query: dict[str, Any], sort_field: str, direction: int) -> list[dic
         if sort_field == "name"
         else [(sort_field, direction), ("name", 1), ("version", 1), ("_id", 1)]
     )
-    return [{"$match": query}, {"$project": _DEP_PROJECTION}, *case_insensitive_sort(order, TEXT_SORT_FIELDS)]
+    sort = case_insensitive_sort(order, TEXT_SORT_FIELDS, NUMBERED_SORT_FIELDS)
+    return [{"$match": query}, {"$project": _DEP_PROJECTION}, *sort]
 
 
 async def get_components_page(

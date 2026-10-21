@@ -39,3 +39,20 @@ async def test_compare_scans_payload_labels_both_sides(db, admin_user):
 
     assert result["from_reachability"] == {"coverable_count": _COVERABLE, "analyzed_count": _ANALYSED}
     assert result["to_reachability"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_side_with_nothing_coverable_reports_no_reachability(db, admin_user):
+    await _seed_one_enriched_side(db)
+    nothing_coverable = {"coverable_count": 0, "analyzed_count": 0, "reachable_count": 0, "unknown_count": 4}
+    await db["scans"].update_one({"_id": _RESCANNED_SCAN}, {"$set": {"stats": {"reachability": nothing_coverable}}})
+
+    result = await ChatToolRegistry().execute_tool(
+        "compare_scans",
+        {"project_id": _PROJECT, "from_scan_id": _ENRICHED_SCAN, "to_scan_id": _RESCANNED_SCAN},
+        admin_user,
+        db,
+    )
+
+    assert result["from_reachability"] == {"coverable_count": _COVERABLE, "analyzed_count": _ANALYSED}
+    assert result["to_reachability"] is None

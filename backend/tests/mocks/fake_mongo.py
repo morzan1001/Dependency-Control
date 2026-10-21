@@ -654,6 +654,26 @@ def _eval_expr(doc: dict, expr):
         if found is None:
             return None
         return {"match": found.group(0), "idx": found.start(), "captures": list(found.groups())}
+    if "$regexFindAll" in expr:
+        spec = expr["$regexFindAll"]
+        val = _eval_expr(doc, spec["input"])
+        if not isinstance(val, str):
+            return []
+        return [
+            {"match": found.group(0), "idx": found.start(), "captures": list(found.groups())}
+            for found in _re.finditer(spec["regex"], val)
+        ]
+    if "$strLenCP" in expr:
+        return len(_eval_expr(doc, expr["$strLenCP"]))
+    if "$substrCP" in expr:
+        text, start, count = (_eval_expr(doc, operand) for operand in expr["$substrCP"])
+        return text[int(start) : int(start) + int(count)]
+    if "$subtract" in expr:
+        minuend, subtrahend = (_to_number(_eval_expr(doc, operand)) for operand in expr["$subtract"])
+        return None if minuend is None or subtrahend is None else minuend - subtrahend
+    if "$max" in expr and isinstance(expr["$max"], list):
+        values = [v for v in (_eval_expr(doc, operand) for operand in expr["$max"]) if v is not None]
+        return max(values) if values else None
     if "$cond" in expr:
         cond = expr["$cond"]
         if isinstance(cond, list):

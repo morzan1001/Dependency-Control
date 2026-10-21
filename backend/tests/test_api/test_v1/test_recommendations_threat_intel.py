@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 from app.api.v1.endpoints.analytics.recommendations import _apply_live_threat_intel
 from app.models.finding import Finding, FindingType
-from app.models.finding_record import FindingRecord
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import RecommendationType
 from app.services.analysis.engine import _prepare_finding_records
@@ -20,18 +19,22 @@ def _live(cve: str, **fields) -> VulnerabilityEnrichment:
 MODULE = "app.api.v1.endpoints.analytics.recommendations"
 
 
-def _finding(advisories: list[dict]) -> FindingRecord:
+def _finding(advisories: list[dict]) -> dict:
     finding = Finding.model_validate(stored_vulnerability("c", "1", advisories))
     [record], _ = _prepare_finding_records([finding], "s", "p", None)
-    return FindingRecord.model_validate(record)
+    return record
 
 
-def _run(findings, enrichments):
+def _refresh(findings, enrichments, unavailable=()):
     async def _fake(cves):
-        return {c: enrichments[c] for c in cves if c in enrichments}
+        return {c: enrichments[c] for c in cves if c in enrichments}, list(unavailable)
 
     with patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake):
         return asyncio.run(_apply_live_threat_intel(findings))
+
+
+def _run(findings, enrichments):
+    return _refresh(findings, enrichments)[0]
 
 
 class TestApplyLiveThreatIntel:
@@ -39,7 +42,7 @@ class TestApplyLiveThreatIntel:
         # advisory listed as GHSA + its CVE alias; enrichment keyed on the canonical CVE
         f = _finding([{"id": "GHSA-x", "aliases": ["CVE-1"]}])
         _run([f], {"CVE-1": _live("CVE-1", in_kev=True, epss_score=0.9)})
-        [advisory] = f.details["vulnerabilities"]
+        [advisory] = f["details"]["vulnerabilities"]
         assert advisory["in_kev"] is True
         assert advisory["epss_score"] == 0.9
 
@@ -52,7 +55,7 @@ class TestApplyLiveThreatIntel:
                 "CVE-2": _live("CVE-2", in_kev=True, epss_score=0.7, kev_ransomware_use=True),
             },
         )
-        first, second = sorted(f.details["vulnerabilities"], key=lambda a: a["id"])
+        first, second = sorted(f["details"]["vulnerabilities"], key=lambda a: a["id"])
         assert "in_kev" not in first
         assert first["epss_score"] == 0.2
         assert second["kev_ransomware_use"] is True
@@ -61,12 +64,12 @@ class TestApplyLiveThreatIntel:
     def test_live_epss_replaces_the_stored_value(self):
         f = _finding([{"id": "CVE-1", "resolved_cve": "CVE-1", "epss_score": 0.95}])
         _run([f], {"CVE-1": _live("CVE-1", epss_score=0.1)})
-        assert f.details["vulnerabilities"][0]["epss_score"] == 0.1
+        assert f["details"]["vulnerabilities"][0]["epss_score"] == 0.1
 
     def test_non_vulnerability_findings_untouched(self):
-        f = _finding([{"id": "CVE-1"}]).model_copy(update={"type": FindingType.SECRET})
+        f = _finding([{"id": "CVE-1"}]) | {"type": FindingType.SECRET.value}
         _run([f], {"CVE-1": _live("CVE-1", in_kev=True)})
-        assert "in_kev" not in f.details["vulnerabilities"][0]
+        assert "in_kev" not in f["details"]["vulnerabilities"][0]
 
     def test_no_cves_no_enrichment_call(self):
         f = _finding([{"id": "CVE-1", "waived": True}])
@@ -74,7 +77,7 @@ class TestApplyLiveThreatIntel:
 
         async def _fake(cves):
             called["n"] += 1
-            return {}
+            return {}, []
 
         with patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake):
             asyncio.run(_apply_live_threat_intel([f]))
@@ -86,14 +89,36 @@ class TestApplyLiveThreatIntel:
 
         assert _run([f], live) == live
 
-    def test_a_failed_refresh_hands_back_no_enrichment(self):
+    def test_a_failed_refresh_hands_back_no_enrichment_and_names_both_sources(self):
         f = _finding([{"id": "CVE-1"}])
 
         async def _down(cves):
             raise RuntimeError("feed down")
 
         with patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_down):
-            assert asyncio.run(_apply_live_threat_intel([f])) == {}
+            assert asyncio.run(_apply_live_threat_intel([f])) == ({}, ["KEV", "EPSS"])
+
+    def test_a_complete_refresh_names_no_unavailable_source(self):
+        f = _finding([{"id": "CVE-1", "resolved_cve": "CVE-1"}])
+        assert _refresh([f], {"CVE-1": _live("CVE-1", epss_score=0.1)})[1] == []
+
+    def test_a_kev_outage_keeps_the_stored_marks_and_scores(self):
+        stored = {"in_kev": True, "kev_ransomware_use": True, "epss_score": 0.4, "risk_score": 88.0}
+        f = _finding([{"id": "CVE-1", "resolved_cve": "CVE-1", **stored}])
+
+        enrichments, unavailable = _refresh([f], {"CVE-1": _live("CVE-1", epss_score=0.9)}, ["KEV"])
+
+        assert (enrichments, unavailable) == ({}, ["KEV"])
+        [advisory] = f["details"]["vulnerabilities"]
+        assert {key: advisory.get(key) for key in stored} == stored
+
+    def test_a_kev_outage_keeps_the_ransomware_card_of_a_bundled_advisory(self):
+        f = _finding([{"id": "CVE-1", "aliases": ["CVE-2"], "in_kev": True, "kev_ransomware_use": True}])
+        live = {"CVE-1": _live("CVE-1"), "CVE-2": _live("CVE-2")}
+
+        enrichments, _ = _refresh([f], live, ["KEV"])
+
+        assert RecommendationType.RANSOMWARE_RISK in {r.type for r in detect_known_exploits([f], enrichments)}
 
 
 class TestRefreshedCards:
@@ -112,7 +137,7 @@ class TestRefreshedCards:
 
         async def _fake(cves):
             requested.extend(cves)
-            return {}
+            return {}, []
 
         with patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake):
             asyncio.run(_apply_live_threat_intel([f]))

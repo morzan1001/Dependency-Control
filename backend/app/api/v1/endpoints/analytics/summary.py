@@ -15,11 +15,9 @@ from app.api.v1.helpers.analytics import (
     vuln_details_by,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
-from app.api.v1.helpers.sorting import case_insensitive_sort
 from app.core.cache import scope_digest
 from app.core.constants import FINDINGS_SCAN_TYPE_INDEX
 from app.core.permissions import Permissions
-from app.core.purl import package_identity_expr
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.releases import ReleaseRepository
@@ -170,47 +168,12 @@ async def _top_dependencies(
     if not scan_ids:
         return []
 
-    match_stage: dict[str, Any] = {"scan_id": {"$in": scan_ids}}
-    if type:
-        match_stage["type"] = type
-
-    pipeline: list[dict[str, Any]] = [
-        {"$match": match_stage},
-        {
-            "$group": {
-                "_id": package_identity_expr(),
-                "name": {"$min": "$name"},
-                "type": {"$min": "$type"},
-                "group": {"$max": "$group"},
-                "versions": {"$addToSet": "$version"},
-                "project_ids": {"$addToSet": "$project_id"},
-                "total_occurrences": {"$sum": 1},
-            }
-        },
-        {
-            "$project": {
-                "name": 1,
-                "type": 1,
-                "group": 1,
-                "versions": 1,
-                "version_count": {"$size": "$versions"},
-                "project_count": {"$size": "$project_ids"},
-                "total_occurrences": 1,
-            }
-        },
-        *case_insensitive_sort([("project_count", -1), ("total_occurrences", -1), ("name", 1), ("_id", 1)], {"name"}),
-        {"$limit": limit},
-    ]
-
-    dep_repo = DependencyRepository(db)
-    finding_repo = FindingRepository(db)
-
-    results = await dep_repo.aggregate(pipeline)
+    results = await DependencyRepository(db).get_top_usage(scan_ids, limit, type)
 
     # Every same-artifact spelling is read, so build_component_index sees the ambiguity it guards against.
     listed_artifacts = sorted({extract_artifact_name(dep["name"]) for dep in results})
     details_by_component = await vuln_details_by(
-        finding_repo,
+        FindingRepository(db),
         {
             "scan_id": {"$in": scan_ids},
             "$expr": {"$in": [artifact_name_expr("$component"), listed_artifacts]},
@@ -228,8 +191,8 @@ async def _top_dependencies(
         enriched.append(
             DependencyUsage(
                 name=dep["name"],
-                type=dep.get("type", "unknown"),
-                group=dep.get("group"),
+                type=dep["type"],
+                group=dep["group"],
                 # $addToSet has no order, so rank before sampling.
                 versions=newest_first(dep["versions"])[:_VERSION_SAMPLE],
                 version_count=dep["version_count"],

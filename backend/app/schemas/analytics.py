@@ -2,23 +2,11 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.constants import ExploitMaturity, ScopeName
+from app.core.constants import ScopeName
 from app.schemas.pagination import Page
 from app.schemas.team import TeamRef
-
-
-class CVEEnrichmentResult(BaseModel):
-    max_epss: float | None = None
-    max_percentile: float | None = None
-    max_risk: float | None = None
-    has_kev: bool = False
-    kev_count: int = 0
-    kev_ransomware_use: bool = False
-    kev_due_date: str | None = None
-    exploit_maturity: ExploitMaturity = "unknown"
-    days_until_due: int | None = None
 
 
 class SeverityBreakdown(BaseModel):
@@ -69,6 +57,7 @@ class DependencyTreeNode(BaseModel):
     source_target: str | None = None
     layer_digest: str | None = None
     locations: list[str] = []
+    locations_total: int = 0
 
 
 class DependencyGraph(BaseModel):
@@ -82,7 +71,26 @@ class DependencyGraph(BaseModel):
     dependencies_total: int = 0
 
 
-class ImpactAnalysisResult(BaseModel):
+class ThreatIntelFields(BaseModel):
+    max_epss_score: float | None = None
+    epss_percentile: float | None = None
+    has_kev: bool = False
+    kev_count: int = 0
+    kev_ransomware_use: bool = False
+    kev_due_date: str | None = None  # Earliest CISA remediation deadline
+    days_until_due: int | None = None  # negative when overdue
+    exploit_maturity: str = "unknown"
+    max_risk_score: float | None = None
+    days_known: int | None = None
+    has_fix: bool = False
+    fix_versions: list[str] = []
+    fix_version_count: int = 0
+    priority_reasons: list[str] = []
+    # Live KEV/EPSS sources that could not be read, so their signals and the scores they raise may be missing.
+    threat_intel_unavailable: list[str] = []
+
+
+class ImpactAnalysisResult(ThreatIntelFields):
     component: str
     version: str
     affected_projects: int
@@ -90,23 +98,9 @@ class ImpactAnalysisResult(BaseModel):
     findings_by_severity: SeverityBreakdown
     fix_impact_score: float
     affected_project_names: list[str]
-    max_epss_score: float | None = None
-    fix_version_count: int = 0
-    epss_percentile: float | None = None
-    has_kev: bool = False
-    kev_count: int = 0
-    kev_ransomware_use: bool = False
-    kev_due_date: str | None = None  # Earliest CISA remediation deadline
-    days_until_due: int | None = None  # negative when overdue
-    exploit_maturity: str = "unknown"
-    max_risk_score: float | None = None
-    days_known: int | None = None
-    has_fix: bool = False
-    fix_versions: list[str] = []
-    priority_reasons: list[str] = []
 
 
-class VulnerabilityHotspot(BaseModel):
+class VulnerabilityHotspot(ThreatIntelFields):
     component: str
     version: str
     type: str
@@ -114,23 +108,9 @@ class VulnerabilityHotspot(BaseModel):
     severity_breakdown: SeverityBreakdown
     affected_projects: list[str]
     affected_project_count: int = 0
-    fix_version_count: int = 0
     cve_count: int = 0
     first_seen: str
-    max_epss_score: float | None = None
-    epss_percentile: float | None = None
-    has_kev: bool = False
-    kev_count: int = 0
-    kev_ransomware_use: bool = False
-    kev_due_date: str | None = None  # Earliest CISA remediation deadline
-    days_until_due: int | None = None  # negative when overdue
-    exploit_maturity: str = "unknown"
-    max_risk_score: float | None = None
-    days_known: int | None = None
-    has_fix: bool = False
-    fix_versions: list[str] = []
     top_cves: list[str] = []
-    priority_reasons: list[str] = []
 
 
 class DependencyTypeStats(BaseModel):
@@ -157,6 +137,12 @@ class AnalyticsScope(BaseModel):
     oldest_analysis_at: datetime | None = None
 
 
+class AffectedProjectRef(BaseModel):
+    id: str
+    name: str
+    direct: bool
+
+
 class DependencyMetadata(BaseModel):
     name: str
     version: str = Field(..., description="The version the metadata describes")
@@ -181,7 +167,7 @@ class DependencyMetadata(BaseModel):
     deps_dev: dict[str, Any] | None = None
 
     project_count: int = 0
-    affected_projects: list[dict[str, Any]] = []  # [{id, name, direct}]
+    affected_projects: list[AffectedProjectRef] = []
     total_vulnerability_count: int = 0
 
     enrichment_sources: list[str] = []
@@ -254,6 +240,8 @@ class DependencySearchResponse(Page[DependencySearchResult]):
 
 
 class RecommendationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     type: str
     priority: str
     title: str
@@ -282,6 +270,8 @@ class RecommendationsResponse(BaseModel):
     findings_total: int = 0
     dependencies_read: int = 0
     dependencies_total: int = 0
+    # Live KEV/EPSS sources that could not be read; the advice then rests on the scores stored at scan time.
+    threat_intel_unavailable: list[str] = []
 
 
 class DependencyUpdateEvent(BaseModel):

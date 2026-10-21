@@ -25,7 +25,7 @@ def _defaulted(method) -> set[str]:
 @pytest.mark.parametrize(
     "method",
     [
-        FindingRepository.find_by_scan,
+        FindingRepository.find_raw_by_scan,
         ScanRepository.find_many_with_stats,
         ProjectRepository.find_many_with_scan_id,
         AnalysisResultRepository.find_by_scan,

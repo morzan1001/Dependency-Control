@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_413
+from app.api.v1.helpers.responses import RESP_413, attachment
 from app.api.v1.helpers.users import resolve_usernames
 from app.core.constants import (
     MAX_COMPLIANCE_REPORT_PAGE,
@@ -180,11 +180,10 @@ async def download_report(
     except Exception as exc:
         raise HTTPException(status_code=410, detail="Artifact storage error") from exc
 
-    headers = {"Content-Disposition": f'attachment; filename="{r.artifact_filename}"'}
     return StreamingResponse(
         iter_gridfs_chunks(stream),
         media_type=r.artifact_mime_type or "application/octet-stream",
-        headers=headers,
+        headers=attachment(str(r.artifact_filename)),
     )
 
 

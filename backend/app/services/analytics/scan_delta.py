@@ -89,19 +89,17 @@ def _validate_query(
 def _describe_sides(sides: list[tuple[str, dict]]) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     for side, (scan_id, doc) in zip(("from", "to"), sides, strict=True):
-        reach = (doc.get("stats") or {}).get("reachability")
+        reach = (doc.get("stats") or {}).get("reachability") or {}
         fields[f"{side}_side"] = ScanDeltaSide(
             scan_id=scan_id,
             branch=doc.get("branch"),
             commit_hash=doc.get("commit_hash"),
             created_at=doc.get("created_at"),
         )
+        coverable, analyzed = reach.get("coverable_count", 0), reach.get("analyzed_count", 0)
+        # Every non-empty scan carries reachability stats, also when nothing in it could be analysed.
         fields[f"{side}_reachability"] = (
-            ScanDeltaReachability(
-                coverable_count=reach.get("coverable_count", 0), analyzed_count=reach.get("analyzed_count", 0)
-            )
-            if reach
-            else None
+            ScanDeltaReachability(coverable_count=coverable, analyzed_count=analyzed) if coverable or analyzed else None
         )
     return fields
 

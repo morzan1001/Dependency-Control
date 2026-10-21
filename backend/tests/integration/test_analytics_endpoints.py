@@ -342,7 +342,7 @@ async def test_recommendations_count_only_vulnerability_findings_as_vulnerabilit
 def _no_enrichment(monkeypatch):
     from app.api.v1.endpoints.analytics import recommendations as rec_module
 
-    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", AsyncMock(return_value={}))
+    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", AsyncMock(return_value=({}, [])))
 
 
 @pytest.mark.asyncio

@@ -122,6 +122,50 @@ class TestAnalyzeVersionFragmentationCaseInsensitive:
         assert len(result) == 1
 
 
+_NPM_DEDUPE = ["# For npm: npm dedupe", "# For yarn: yarn dedupe", "# For pnpm: pnpm dedupe"]
+_MAVEN_PIN = "# For Maven/Gradle: pin one version in dependencyManagement or a dependency constraint"
+_PIP_PIN = "# For pip: pin one version in a constraints file (pip install -c constraints.txt)"
+
+
+class TestAnalyzeVersionFragmentationEcosystems:
+    @staticmethod
+    def _fragmented(*purl_types: str) -> list:
+        return [
+            _dep(name="foo", version=f"1.0.{v}", purl=f"pkg:{purl_type}/foo@1.0.{v}")
+            for purl_type in purl_types
+            for v in range(3)
+        ]
+
+    def test_each_package_names_its_ecosystem(self):
+        [rec] = analyze_version_fragmentation(self._fragmented("npm", "pypi"))
+
+        assert sorted((p["name"], p["type"]) for p in rec.action["packages"]) == [("foo", "npm"), ("foo", "pypi")]
+
+    def test_same_named_packages_of_two_ecosystems_count_as_two_components(self):
+        [rec] = analyze_version_fragmentation(self._fragmented("npm", "pypi"))
+
+        assert (sorted(rec.affected_components), rec.affected_components_total) == (["foo (npm)", "foo (pypi)"], 2)
+
+    @pytest.mark.parametrize(
+        ("purl_types", "commands"),
+        [
+            pytest.param(("npm",), _NPM_DEDUPE, id="npm"),
+            pytest.param(("maven",), [_MAVEN_PIN], id="maven"),
+            pytest.param(("pypi",), [_PIP_PIN], id="pypi"),
+            pytest.param(("pypi", "golang", "npm"), [*_NPM_DEDUPE, _PIP_PIN], id="mixed"),
+        ],
+    )
+    def test_the_commands_follow_the_ecosystems_of_the_fragmented_packages(self, purl_types, commands):
+        [rec] = analyze_version_fragmentation(self._fragmented(*purl_types))
+
+        assert rec.action["commands"] == commands
+
+    def test_an_ecosystem_without_a_dedupe_tool_gets_no_commands(self):
+        [rec] = analyze_version_fragmentation(self._fragmented("golang", "deb"))
+
+        assert "commands" not in rec.action
+
+
 class TestAnalyzeDevInProductionEmpty:
     def test_empty_returns_empty(self):
         assert analyze_dev_in_production([]) == []
@@ -241,13 +285,13 @@ class TestAnalyzeEndOfLifeAffectedComponents:
         [
             pytest.param(None, id="missing_date"),
             pytest.param("", id="empty_date"),
+            pytest.param(True, id="undated_eol"),
         ],
     )
     def test_eol_without_a_date_is_just_name_version(self, eol_date):
         findings = [_eol_finding(component="node", version="16.0.0", eol_date=eol_date)]
         rec = analyze_end_of_life(findings)[0]
-        assert "node@16.0.0" in rec.affected_components
-        assert "(EOL:" not in rec.affected_components[0]
+        assert rec.affected_components == ["node@16.0.0"]
 
 
 class TestAnalyzeEndOfLifeMultiple:

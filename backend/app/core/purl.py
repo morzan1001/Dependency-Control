@@ -151,7 +151,7 @@ def _pep503_expr(name: dict[str, Any]) -> dict[str, Any]:
 
 def package_identity_expr() -> dict[str, Any]:
     """:func:`package_identity` as an aggregation expression over a dependency row."""
-    # Mongo cannot percent-decode; '%40' (the npm scope) is the only escape producers write in a package path.
+    # Mongo cannot percent-decode, so only the npm scope's '%40' is decoded; other escapes stay as the purl wrote them.
     path = {"$replaceAll": {"input": {"$arrayElemAt": ["$$m.captures", 1]}, "find": "%40", "replacement": "@"}}
     folded = {"$cond": [{"$in": ["$$type", list(_CASE_INSENSITIVE_TYPES)]}, {"$toLower": path}, path]}
     return {

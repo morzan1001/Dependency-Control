@@ -26,6 +26,7 @@ def _aggregated_row() -> dict:
         "_id": "leftpad",
         "name": "leftpad",
         "type": "npm",
+        "group": None,
         # $addToSet returns the set in no particular order; oldest-first is one such order.
         "versions": versions,
         "version_count": len(versions),
@@ -36,7 +37,7 @@ def _aggregated_row() -> dict:
 
 async def _top_dependencies() -> list:
     dep_repo = MagicMock()
-    dep_repo.aggregate = AsyncMock(return_value=[_aggregated_row()])
+    dep_repo.get_top_usage = AsyncMock(return_value=[_aggregated_row()])
     finding_repo = MagicMock()
     finding_repo.aggregate = AsyncMock(return_value=[])
     with (

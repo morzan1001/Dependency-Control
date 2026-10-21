@@ -7,6 +7,7 @@ import pytest
 from app.api.v1.helpers.sorting import case_insensitive_key
 from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.chat.tools.crypto_tools import list_crypto_assets
+from tests.helpers.profiler import profiled
 
 _PID = "test-project-id"
 _NOW = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
@@ -141,6 +142,27 @@ async def test_stats_license_count_counts_tokenized_units(client, db, member_aut
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_stats_read_the_scans_dependencies_in_one_pass(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "a", direct=True, license_id="MIT")
+    await _seed_dep(db, "s1", "b", dep_type="pypi", license_id="Apache-2.0")
+
+    resp, entries = await profiled(
+        db, client.get(f"/api/v1/projects/{_PID}/inventory/stats", headers=member_auth_headers)
+    )
+
+    body = resp.json()
+    assert (body["components_total"], body["direct_count"], body["license_count"], body["ecosystems"]) == (
+        2,
+        1,
+        2,
+        ["npm", "pypi"],
+    )
+    assert [next(iter(e["command"])) for e in entries if e["ns"].endswith(".dependencies")] == ["aggregate"]
+
+
+@pytest.mark.asyncio
 async def test_stats_404_for_branch_without_completed_scan(client, db, member_auth_headers):
     await _seed_scan(db)
     resp = await client.get(
@@ -154,8 +176,8 @@ def _parse_csv(resp) -> list[dict]:
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/csv")
     text = resp.text
-    assert text.startswith("﻿")
-    return list(csv.DictReader(io.StringIO(text.lstrip("﻿"))))
+    assert text.startswith("\ufeff")
+    return list(csv.DictReader(io.StringIO(text.lstrip("\ufeff"))))
 
 
 async def _seed_lifecycle_finding(db, scan_id, component, version, ftype, latest=None):
@@ -315,6 +337,42 @@ async def test_components_sort_by_version_descending(client, db, member_auth_hea
 
     assert resp.status_code == 200
     assert [i["version"] for i in resp.json()["items"]] == ["3.0.0", "2.0.0", "1.0.0"]
+
+
+_NUMBERED_VERSIONS = ["9.0.0", "9.2.0", "9.10.0", "10.0.0", "10.0.0-rc.2", "10.0.0-rc.10"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sort_order", ["asc", "desc"])
+async def test_components_sort_versions_by_the_value_of_their_numbers(client, db, member_auth_headers, sort_order):
+    await _seed_scan(db)
+    for i, version in enumerate(reversed(_NUMBERED_VERSIONS)):
+        await _seed_dep(db, "s1", f"pkg-{i}", version=version)
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/components",
+        params={"sort_by": "version", "sort_order": sort_order},
+        headers=member_auth_headers,
+    )
+
+    assert resp.status_code == 200
+    expected = _NUMBERED_VERSIONS if sort_order == "asc" else _NUMBERED_VERSIONS[::-1]
+    assert [i["version"] for i in resp.json()["items"]] == expected
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_components_list_one_packages_versions_by_the_value_of_their_numbers(client, db, member_auth_headers):
+    await _seed_scan(db)
+    for version in ("10.0.0", "9.0.0"):
+        await _seed_dep(db, "s1", "lib", version=version)
+
+    rows = _parse_csv(
+        await client.get(f"/api/v1/projects/{_PID}/inventory/components/export", headers=member_auth_headers)
+    )
+
+    assert [r["version"] for r in rows] == ["9.0.0", "10.0.0"]
 
 
 # Each column's values sort differently by code point than whatever their case and accents.

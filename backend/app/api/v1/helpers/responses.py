@@ -1,4 +1,10 @@
+from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 from typing import Any
+
+from fastapi.responses import StreamingResponse
+
+from app.services.inventory.csv_stream import filename_part, iter_csv
 
 _Responses = dict[int | str, dict[str, Any]]
 
@@ -36,3 +42,18 @@ RESP_AUTH_404_500: _Responses = {**RESP_AUTH, **RESP_404, **RESP_500}
 RESP_AUTH_400_404_500: _Responses = {**RESP_AUTH, **RESP_400, **RESP_404, **RESP_500}
 RESP_AUTH_400_404_409_500: _Responses = {**RESP_AUTH, **RESP_400, **RESP_404, **RESP_409, **RESP_500}
 RESP_AUTH_400_404_501: _Responses = {**RESP_AUTH, **RESP_400, **RESP_404, **RESP_501}
+
+
+def attachment(filename: str) -> dict[str, str]:
+    return {"Content-Disposition": f'attachment; filename="{filename}"'}
+
+
+def export_filename(*parts: str | None, extension: str = "csv") -> str:
+    safe = [filename_part(part) for part in parts if part]
+    return "_".join([*safe, datetime.now(timezone.utc).date().isoformat()]) + f".{extension}"
+
+
+def csv_response(filename: str, columns: list[str], rows: AsyncIterator[dict[str, Any]]) -> StreamingResponse:
+    return StreamingResponse(
+        iter_csv(columns, rows), media_type="text/csv; charset=utf-8", headers=attachment(filename)
+    )

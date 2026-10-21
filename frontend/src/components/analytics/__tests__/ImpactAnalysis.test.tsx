@@ -77,6 +77,38 @@ describe("ImpactAnalysis fix versions", () => {
   });
 });
 
+describe("ImpactAnalysis live threat intel", () => {
+  const row: ImpactAnalysisResult = {
+    component: "log4j-core",
+    version: "2.14.1",
+    affected_projects: 1,
+    total_findings: 1,
+    findings_by_severity: { critical: 1, high: 0, medium: 0, low: 0 },
+    fix_impact_score: 10,
+    affected_project_names: ["a"],
+  };
+
+  it("names the live sources that could not be read once above the results", async () => {
+    vi.mocked(analyticsApi.getImpactAnalysis).mockResolvedValue([
+      { ...row, threat_intel_unavailable: ["KEV", "EPSS"] },
+      { ...row, component: "lodash", threat_intel_unavailable: ["KEV", "EPSS"] },
+    ]);
+    renderImpact();
+
+    expect(await screen.findByText(/Live KEV and EPSS data could not be read in full/)).toHaveTextContent(
+      /exploit signals and the scores they raise may be incomplete\./,
+    );
+  });
+
+  it("stays quiet when every live source answered", async () => {
+    vi.mocked(analyticsApi.getImpactAnalysis).mockResolvedValue([{ ...row, threat_intel_unavailable: [] }]);
+    renderImpact();
+
+    await screen.findAllByText("log4j-core");
+    expect(screen.queryByText(/could not be read in full/)).not.toBeInTheDocument();
+  });
+});
+
 describe("ImpactAnalysis load error", () => {
   it("says the request failed instead of reporting nothing to analyze", async () => {
     vi.mocked(analyticsApi.getImpactAnalysis).mockRejectedValue(

@@ -131,7 +131,8 @@ class ProjectRepository(BaseRepository[Project]):
         if limit <= 0:
             return []
         cursor = self.collection.find(
-            query, {"_id": 1, "name": 1, "active_analyzers": 1, **dict.fromkeys(HEAD_SCOPE_FIELDS, 1)}
+            query,
+            {"_id": 1, "name": 1, "last_scan_at": 1, "active_analyzers": 1, **dict.fromkeys(HEAD_SCOPE_FIELDS, 1)},
         ).limit(limit)
         docs = await cursor.to_list(limit)
         return [ProjectWithScanId(**doc) for doc in docs]

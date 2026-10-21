@@ -36,7 +36,7 @@ def _populated() -> Dependency:
 def test_every_shared_field_is_the_dependencys_own():
     dep = _populated()
 
-    result = _dep_to_search_result(dep, {"p1": "Project One"})
+    result = _dep_to_search_result(dep.model_dump(by_alias=True), {"p1": "Project One"})
 
     assert (result.project_name, result.package) == ("Project One", "jackson-core")
     shared = DependencySearchResult.model_fields.keys() - {"project_name", "package"}
@@ -44,4 +44,4 @@ def test_every_shared_field_is_the_dependencys_own():
 
 
 def test_an_unknown_project_reads_as_unknown():
-    assert _dep_to_search_result(_populated(), {}).project_name == "Unknown"
+    assert _dep_to_search_result(_populated().model_dump(by_alias=True), {}).project_name == "Unknown"

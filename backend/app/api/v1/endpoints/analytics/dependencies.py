@@ -20,16 +20,18 @@ from app.core.constants import FINDINGS_SCAN_COMPONENT_INDEX, SCAN_DEPENDENCY_RE
 from app.core.permissions import Permissions
 from app.models.dependency import Dependency
 from app.models.finding_record import FindingRecord
+from app.repositories.base import find_window
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.repositories.findings import FindingRepository
 from app.schemas.analytics import (
+    AffectedProjectRef,
     DependencyGraph,
     DependencyMetadata,
     DependencyTreeNode,
     SeverityBreakdown,
 )
-from app.core.purl import get_purl_type, package_identity, package_identity_expr
+from app.core.purl import get_purl_type, package_identity_expr
 from app.services.component_identity import (
     artifact_segment,
     build_component_index,
@@ -50,6 +52,30 @@ router = CustomAPIRouter()
 TreeFindings = dict[str, dict[str, list[Any]]]
 
 _COMPONENT_FINDINGS_SHOWN = 100
+
+_ALL_LOCATIONS = {"$ifNull": ["$locations", []]}
+# What build_dependency_edges and _build_tree_node read of a row.
+_TREE_ROW = {
+    "$project": {
+        **dict.fromkeys(
+            (
+                "name",
+                "version",
+                "purl",
+                "type",
+                "direct",
+                "direct_inferred",
+                "parent_components",
+                "source_type",
+                "source_target",
+                "layer_digest",
+            ),
+            1,
+        ),
+        "locations": _ALL_LOCATIONS,
+        "locations_total": {"$size": _ALL_LOCATIONS},
+    }
+}
 
 
 @dataclass(frozen=True)
@@ -104,35 +130,36 @@ def _tree_findings_map(details_by_package: dict[tuple[Any, ...], list[Any]]) -> 
     return build_component_index(details_by_component)
 
 
-def _build_tree_node(dep: Dependency, findings_map: TreeFindings, *, direct: bool) -> DependencyTreeNode:
+def _build_tree_node(dep: dict[str, Any], findings_map: TreeFindings, *, direct: bool) -> DependencyTreeNode:
     # The bare-artifact alias keys are lowercased, dependency names are not.
-    by_version = lookup_component(findings_map, dep.name) or {}
+    by_version = lookup_component(findings_map, dep["name"]) or {}
     # A finding without a version cannot tell the package's versions apart, so it covers them all.
-    details = by_version.get(normalize_version(dep.version), []) + by_version.get("unknown", [])
+    details = by_version.get(normalize_version(dep["version"]), []) + by_version.get("unknown", [])
     finding_info = severity_counts_from_details(details) if details else {}
     findings_count = sum(finding_info.values())
 
     return DependencyTreeNode(
-        id=dep.id,
-        name=dep.name,
-        version=dep.version,
-        purl=dep.purl or "",
-        type=dep.type,
+        id=str(dep["_id"]),
+        name=dep["name"],
+        version=dep["version"],
+        purl=dep.get("purl") or "",
+        type=dep.get("type", "unknown"),
         direct=direct,
-        direct_inferred=dep.direct_inferred,
+        direct_inferred=dep.get("direct_inferred", False),
         has_findings=findings_count > 0,
         findings_count=findings_count,
         findings_severity=SeverityBreakdown.from_counts(finding_info) if finding_info else None,
-        source_type=dep.source_type,
-        source_target=dep.source_target,
-        layer_digest=dep.layer_digest,
-        locations=dep.locations,
+        source_type=dep.get("source_type"),
+        source_target=dep.get("source_target"),
+        layer_digest=dep.get("layer_digest"),
+        locations=dep["locations"],
+        locations_total=dep["locations_total"],
         child_ids=[],
     )
 
 
 def _build_dependency_graph(
-    dependencies: list[Dependency],
+    dependencies: list[dict[str, Any]],
     findings_map: TreeFindings,
     dependencies_total: int,
 ) -> DependencyGraph:
@@ -147,8 +174,7 @@ def _build_dependency_graph(
         )
         node.child_ids = [node_by_key[ck].id for ck in child_keys]
 
-    def _closure(start: str) -> set:
-        seen: set = set()
+    def _closure(start: str, seen: set[str]) -> set[str]:
         stack = [start]
         while stack:
             key = stack.pop()
@@ -161,16 +187,16 @@ def _build_dependency_graph(
     def _has_resolvable_parent(key: str) -> bool:
         return any(p in node_by_key for p in edges.parents_by_key[key])
 
-    reachable: set = set()
+    reachable: set[str] = set()
     root_keys = [key for key in node_by_key if key in edges.direct_keys or not _has_resolvable_parent(key)]
     for key in root_keys:
-        reachable |= _closure(key)
+        _closure(key, reachable)
 
     # What is still unreachable is a disconnected cycle: one entry per cycle, dropping roots its subtree covers.
     extra_roots: list[str] = []
     for key in node_by_key:
         if key not in reachable:
-            component = _closure(key)
+            component = _closure(key, set())
             extra_roots = [r for r in extra_roots if r not in component]
             extra_roots.append(key)
             reachable |= component
@@ -203,8 +229,11 @@ async def get_dependency_tree(
     if not scan_id:
         return DependencyGraph()
 
-    dependencies, dependencies_total = await dep_repo.find_by_scan(
-        project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
+    dependencies, dependencies_total = await find_window(
+        dep_repo.collection,
+        {"project_id": project_id, "scan_id": scan_id},
+        SCAN_DEPENDENCY_READ_LIMIT,
+        stages=[_TREE_ROW],
     )
 
     if not dependencies:
@@ -302,17 +331,17 @@ async def _package_projects_by_version(
 
 def _affected_projects(
     projects_by_version: dict[str, list[dict[str, Any]]], project_name_map: dict[str, str]
-) -> dict[str, dict[str, Any]]:
-    affected: dict[str, dict[str, Any]] = {}
+) -> dict[str, AffectedProjectRef]:
+    affected: dict[str, AffectedProjectRef] = {}
     for projects in projects_by_version.values():
         for project in projects:
-            if not project.get("id"):
+            if not (project_id := project.get("id")):
                 continue
-            entry = affected.setdefault(
-                project["id"],
-                {"id": project["id"], "name": project_name_map.get(project["id"], "Unknown"), "direct": False},
-            )
-            entry["direct"] = entry["direct"] or bool(project.get("direct"))
+            if project_id not in affected:
+                affected[project_id] = AffectedProjectRef(
+                    id=project_id, name=project_name_map.get(project_id, "Unknown"), direct=False
+                )
+            affected[project_id].direct = affected[project_id].direct or bool(project.get("direct"))
     return affected
 
 
@@ -358,11 +387,8 @@ async def get_dependency_metadata_endpoint(
         projects_by_version,
         key=lambda v: (len({p.get("id") for p in projects_by_version[v]}), parse_version_key(v or ""), v or ""),
     )
-    dependencies = [
-        dep
-        for dep in await dep_repo.find_many({**dep_query, "version": shown_version}, limit=100)
-        if package_identity(dep.purl, dep.name, dep.type, dep.group)[1] == path
-    ]
+    same_package = {"$eq": [{"$getField": {"field": "path", "input": package_identity_expr()}}, path]}
+    dependencies = await dep_repo.find_many({**dep_query, "version": shown_version, "$expr": same_package}, limit=100)
     if not dependencies:
         return None
 

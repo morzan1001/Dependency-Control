@@ -53,6 +53,9 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_400_404_409_502,
     RESP_AUTH_404,
     RESP_AUTH_404_500,
+    attachment,
+    csv_response,
+    export_filename,
 )
 from app.core.constants import (
     ARCHIVE_BATCH_SIZE,
@@ -123,7 +126,6 @@ from app.services.gridfs_maintenance import (
     gridfs_ref_id,
     iter_gridfs_chunks,
 )
-from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.findings_export import FINDINGS_COLUMNS, ExportedScan, iter_findings_rows
 from app.services.rescan import create_rescan
 from app.services.scan_cascade import delete_scans_and_related_data
@@ -905,12 +907,8 @@ async def read_scan(
     return (await _with_releases(db, [scan.model_dump(by_alias=True)]))[0]
 
 
-def _attachment(filename: str) -> dict[str, str]:
-    return {"Content-Disposition": f'attachment; filename="{filename}"'}
-
-
 def _stream_json(stream: Any, filename: str) -> StreamingResponse:
-    return StreamingResponse(iter_gridfs_chunks(stream), media_type="application/json", headers=_attachment(filename))
+    return StreamingResponse(iter_gridfs_chunks(stream), media_type="application/json", headers=attachment(filename))
 
 
 async def _open_gridfs(db: Any, file_id: str | None, what: str) -> Any:
@@ -987,7 +985,7 @@ async def download_analysis_result(
     if file_id := row.get("result_gridfs_id"):
         return _stream_json(await _open_gridfs(db, file_id, "Analysis result"), filename)
     # Legacy rows in live data carry the result inline.
-    return JSONResponse(row["result"], headers=_attachment(filename))
+    return JSONResponse(row["result"], headers=attachment(filename))
 
 
 def _build_scan_findings_match(
@@ -1388,7 +1386,7 @@ async def export_project_sbom(
     return StreamingResponse(
         iter(partial(spool.read, DEFAULT_CHUNK_SIZE), b""),
         media_type="application/zip",
-        headers=_attachment(export_filename(project.name, "sboms", extension="zip")),
+        headers=attachment(export_filename(project.name, "sboms", extension="zip")),
         background=BackgroundTask(spool.close),
     )
 

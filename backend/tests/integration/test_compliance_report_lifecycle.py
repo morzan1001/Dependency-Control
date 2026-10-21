@@ -171,6 +171,7 @@ async def test_a_project_report_names_the_project_and_keeps_its_id_for_machines(
     served = await client.get(f"/api/v1/compliance/reports/{report.id}/download", headers=owner_auth_headers_proj)
 
     assert report.artifact_filename.startswith("nist-sp-800-131a_project-project-p_")
+    assert served.headers["content-disposition"] == f'attachment; filename="{report.artifact_filename}"'
     assert (served.json()["scope_description"], served.json()["scope"]) == (
         "project 'project-p'",
         {"kind": "project", "id": "p"},

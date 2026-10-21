@@ -1,4 +1,5 @@
 from collections import defaultdict
+from statistics import median
 from typing import Any
 
 from app.core.constants import CROSS_PROJECT_MIN_OCCURRENCES, max_severity
@@ -16,6 +17,8 @@ from app.services.recommendation.common import (
     cve_severities,
     get_attr,
     live_advisories,
+    names_fix,
+    package_label,
     recommend,
     sampled,
     scorecard_details,
@@ -64,7 +67,8 @@ def correlate_scorecard_with_vulnerabilities(
 
         score = scorecard["overall_score"]
         is_unmaintained = scorecard["has_maintenance_issues"]
-        severities = cve_severities(live_advisories(get_attr(vf, "details")))
+        # A fixable advisory belongs to the update cards; this card claims what may never receive a fix.
+        severities = cve_severities(a for a in live_advisories(get_attr(vf, "details")) if not names_fix(a))
         risky = {cve: severity for cve, severity in severities.items() if severity in ("CRITICAL", "HIGH")}
 
         # A score exists only where deps_dev flagged it under the project's own threshold.
@@ -175,20 +179,25 @@ def analyze_cross_project_patterns(cross_project_data: dict[str, Any]) -> list[R
         if compared < total_projects
         else f"compared across all {total_projects} of your projects"
     )
+    viewed_cves = {
+        cve for p in projects if p["project_id"] == cross_project_data["current_project_id"] for cve in p["cves"]
+    }
     cards = (
-        _shared_vulnerability_card(projects, scope_note),
+        _shared_vulnerability_card(projects, viewed_cves, scope_note),
         _version_inconsistency_card(cross_project_data["shared_packages"], scope_note),
         _most_affected_projects_card(projects),
     )
     return [card for card in cards if card is not None]
 
 
-def _shared_vulnerability_card(projects: list[dict[str, Any]], scope_note: str) -> Recommendation | None:
+def _shared_vulnerability_card(
+    projects: list[dict[str, Any]], viewed_cves: set[str], scope_note: str
+) -> Recommendation | None:
     widespread_cves = sorted(
         (
             (cve, proj_list)
             for cve, proj_list in _build_cve_project_map(projects).items()
-            if len(proj_list) >= CROSS_PROJECT_MIN_OCCURRENCES
+            if cve in viewed_cves and len(proj_list) >= CROSS_PROJECT_MIN_OCCURRENCES
         ),
         key=lambda c: len(c[1]),
         reverse=True,
@@ -201,7 +210,8 @@ def _shared_vulnerability_card(projects: list[dict[str, Any]], scope_note: str) 
         priority=Priority.HIGH if len(widespread_cves) > _SHARED_CVES_HIGH_PRIORITY else Priority.MEDIUM,
         title=f"{len(widespread_cves)} vulnerabilities affect multiple projects",
         description=(
-            f"These CVEs appear in {CROSS_PROJECT_MIN_OCCURRENCES} or more of your projects, {scope_note}. "
+            f"These CVEs of this project appear in {CROSS_PROJECT_MIN_OCCURRENCES} or more of your projects, "
+            f"{scope_note}. "
             "Fixing them once (e.g., in a shared package or template) "
             "could benefit all affected projects."
         ),
@@ -237,13 +247,13 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
         priority=Priority.LOW,
         title=f"Version inconsistency across {len(inconsistent_packages)} shared packages",
         description=(
-            f"These packages are used across multiple projects but with "
+            f"These packages of this project are used across multiple projects but with "
             f"different versions, {scope_note}. Standardizing versions can simplify "
             "maintenance and reduce security gaps."
         ),
         impact={"total": 0},
         components=(
-            f"{p['name']}: {p['version_count']} versions across {p['project_count']} projects"
+            f"{package_label(p)}: {p['version_count']} versions across {p['project_count']} projects"
             for p in inconsistent_packages
         ),
         action={
@@ -253,6 +263,7 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
                 [
                     {
                         "name": p["name"],
+                        "type": p["type"],
                         # $addToSet is unordered; rank first so the sample shows the newest versions.
                         "versions": newest_first(p["versions"])[:ACTION_VERSION_SAMPLE],
                         "version_count": p["version_count"],
@@ -273,13 +284,19 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
     )
 
 
+def _weighted_findings(project: dict[str, Any]) -> int:
+    return int(project["total_critical"] * _CRITICAL_RANK_WEIGHT + project["total_high"])
+
+
 def _most_affected_projects_card(projects: list[dict[str, Any]]) -> Recommendation | None:
-    if len(projects) < _TOP_PROJECTS:
+    # The card claims its projects stand out, so it needs others to stand out from.
+    if len(projects) <= _TOP_PROJECTS:
         return None
-    top_problematic = sorted(
-        projects, key=lambda p: p["total_critical"] * _CRITICAL_RANK_WEIGHT + p["total_high"], reverse=True
-    )[:_TOP_PROJECTS]
+    ranked = sorted(projects, key=_weighted_findings, reverse=True)
+    top_problematic, rest = ranked[:_TOP_PROJECTS], ranked[_TOP_PROJECTS:]
     if not any(p["total_critical"] > _TOP_PROJECT_CRITICAL_GATE for p in top_problematic):
+        return None
+    if _weighted_findings(top_problematic[-1]) <= median(map(_weighted_findings, rest)):
         return None
 
     return recommend(

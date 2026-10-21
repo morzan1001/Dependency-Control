@@ -215,6 +215,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await dependencies.create_index(DEPENDENCIES_SCAN_PACKAGE_INDEX, unique=True, sparse=True)
     await dependencies.create_index(DEPENDENCIES_SCAN_VERSION_INDEX)
     await dependencies.create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
+    # Counts the type distribution off the index alone, without reading a dependency document.
+    await dependencies.create_index([("scan_id", pymongo.ASCENDING), ("type", pymongo.ASCENDING)])
     # Bounds the anchored purl-prefix match of the per-scan enrichment copy to one scan's range.
     await dependencies.create_index([("scan_id", pymongo.ASCENDING), ("purl", pymongo.ASCENDING)])
 
@@ -229,7 +231,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )
     await scan_update_deltas.create_index([("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.DESCENDING)])
 
-    # The CSV export streams each severity bucket in (type, finding_id) order straight off this key.
+    # Streams the CSV export's (type, finding_id) order per severity; waived lets the severity count skip documents.
     await findings.create_index(FINDINGS_SCAN_SEVERITY_INDEX)
 
     # A $type of "int" would match int32 alone.

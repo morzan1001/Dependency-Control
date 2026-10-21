@@ -26,8 +26,9 @@ def _dep(_id, scan_id, project_id, name, version, purl=None, group=None, compone
     }
 
 
-def _run(col: FakeCollection, scan_ids: list[str]):
-    return asyncio.run(col.aggregate(cross_project_package_pipeline(scan_ids, _MIN_PROJECTS)).to_list())
+def _run(col: FakeCollection, scan_ids: list[str], viewed_scan_id: str = "s1"):
+    pipeline = cross_project_package_pipeline(scan_ids, _MIN_PROJECTS, viewed_scan_id)
+    return asyncio.run(col.aggregate(pipeline).to_list())
 
 
 def _two_scans_with_a_late_package() -> FakeCollection:
@@ -188,3 +189,54 @@ def test_packages_on_as_many_versions_are_listed_by_name_whatever_its_case():
         "github.com/google/uuid",
         "github.com/Masterminds/semver",
     ]
+
+
+def test_projects_holding_the_same_nested_copies_are_not_reported():
+    col = FakeCollection()
+    docs = [
+        _dep(f"d-{scan}-{version}", scan, project, "requests", version)
+        for scan, project in (("s1", "p1"), ("s2", "p2"))
+        for version in ("2.28.0", "2.31.0")
+    ]
+    col._docs = {d["_id"]: d for d in docs}
+
+    assert _run(col, ["s1", "s2"]) == []
+
+
+def test_a_project_holding_a_copy_the_other_lacks_reports_every_version():
+    col = FakeCollection()
+    docs = [
+        _dep("d1", "s1", "p1", "requests", "2.28.0"),
+        _dep("d2", "s1", "p1", "requests", "2.31.0"),
+        _dep("d3", "s2", "p2", "requests", "2.31.0"),
+    ]
+    col._docs = {d["_id"]: d for d in docs}
+
+    [row] = _run(col, ["s1", "s2"])
+
+    assert (sorted(row["versions"]), row["version_count"], row["project_count"]) == (["2.28.0", "2.31.0"], 2, 2)
+
+
+def test_packages_sharing_a_name_across_ecosystems_are_listed_apart_with_their_type():
+    col = FakeCollection()
+    docs = [
+        _dep(f"d-{ecosystem}-{scan}", scan, project, "foo", version, f"pkg:{ecosystem}/foo@{version}")
+        for ecosystem in ("pypi", "npm")
+        for scan, project, version in (("s1", "p1", "1.0.0"), ("s2", "p2", "2.0.0"))
+    ]
+    col._docs = {d["_id"]: d for d in docs}
+
+    assert [(r["name"], r["type"]) for r in _run(col, ["s1", "s2"])] == [("foo", "npm"), ("foo", "pypi")]
+
+
+def test_only_packages_the_viewed_project_holds_are_reported():
+    col = FakeCollection()
+    docs = [
+        _dep("d1", "s1", "p1", "flask", "2.0.0"),
+        _dep("d2", "s2", "p2", "flask", "3.0.0"),
+        _dep("d3", "s2", "p2", "requests", "2.28.0"),
+        _dep("d4", "s3", "p3", "requests", "2.31.0"),
+    ]
+    col._docs = {d["_id"]: d for d in docs}
+
+    assert [r["name"] for r in _run(col, ["s1", "s2", "s3"], viewed_scan_id="s1")] == ["flask"]

@@ -58,6 +58,7 @@ async def seeded(db, owner_auth_headers_proj):
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_impact_ranking_skips_waived_findings(client, seeded):
     resp = await client.get("/api/v1/analytics/impact", headers=seeded)
     assert resp.status_code == 200, resp.text

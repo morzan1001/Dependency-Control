@@ -148,6 +148,26 @@ def test_only_rsa_and_dsa_keys_are_told_to_reach_3072_bits(name, primitive, bits
     assert rec.action["suggested_replacement"] == suggested
 
 
+def test_a_key_card_quotes_the_smallest_key_its_asset_was_found_with():
+    rule = _DSA_KEY_RULE.model_copy(update={"match_name_patterns": ["RSA*"], "match_min_key_size_bits": 4096})
+    assets = [
+        CryptoAsset(
+            project_id="p",
+            scan_id="s",
+            bom_ref=f"crypto/algorithm/rsa-{bits}",
+            name="RSA",
+            asset_type=CryptoAssetType.ALGORITHM,
+            primitive=CryptoPrimitive.PKE,
+            key_size_bits=bits,
+        )
+        for bits in (2048, 512)
+    ]
+
+    [rec] = process_crypto(crypto_findings_for_assets(assets, [rule], scanner="crypto_weak_key"))
+
+    assert rec.action["suggested_replacement"] == "≥3072-bit (currently 512)"
+
+
 def test_certificate_and_protocol_cards_name_their_asset_like_every_crypto_card():
     _, findings = scan_cbom(load_cbom("tls_service.json"))
 

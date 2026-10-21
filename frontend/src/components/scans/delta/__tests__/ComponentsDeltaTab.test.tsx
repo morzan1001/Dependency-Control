@@ -57,6 +57,31 @@ describe("ComponentsDeltaTab", () => {
     });
   });
 
+  it("shows the license move of a version change that also changed the license", async () => {
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      category: "components", from_scan_id: "a", to_scan_id: "b", project_id: "p1",
+      totals: { added: 0, removed: 0, unchanged: 0, changed: 2, by_severity: {}, by_type: {} },
+      page: 1, page_size: 50, total_pages: 1,
+      items: [
+        {
+          change: "version_changed", name: "mongodb-driver", purl: "pkg:maven/org.mongodb/mongodb-driver",
+          version: null, from_version: "3.12.0", to_version: "4.0.0",
+          license: null, from_license: "BSD-3-Clause", to_license: "SSPL-1.0",
+        },
+        {
+          change: "version_changed", name: "react", purl: "pkg:npm/react",
+          version: null, from_version: "18.2.0", to_version: "18.3.1",
+          license: null, from_license: "MIT", to_license: "MIT",
+        },
+      ],
+    });
+    renderTab();
+
+    expect(await screen.findByText("BSD-3-Clause → SSPL-1.0")).toBeInTheDocument();
+    const reactRow = screen.getByText("react").closest("tr")!;
+    expect(within(reactRow).getByText("MIT")).toBeInTheDocument();
+  });
+
   it("shows skeleton rows while loading", () => {
     (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     renderTab();

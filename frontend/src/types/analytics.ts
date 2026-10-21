@@ -42,6 +42,7 @@ export interface DependencyTreeNode {
   source_target?: string;
   layer_digest?: string;
   locations?: string[];
+  locations_total?: number;
   child_ids: string[];
 }
 
@@ -53,41 +54,7 @@ export interface DependencyGraph {
   dependencies_total: number;
 }
 
-export interface ImpactAnalysisResult {
-  component: string;
-  version: string;
-  affected_projects: number;
-  total_findings: number;
-  findings_by_severity: SeverityBreakdown;
-  fix_impact_score: number;
-  affected_project_names: string[];
-  max_epss_score?: number;
-  epss_percentile?: number;
-  has_kev?: boolean;
-  kev_count?: number;
-  kev_ransomware_use?: boolean;
-  kev_due_date?: string;
-  days_until_due?: number; 
-  exploit_maturity?: string;
-  max_risk_score?: number;
-  days_known?: number;
-  has_fix?: boolean;
-  fix_versions?: string[];
-  fix_version_count?: number;
-  priority_reasons?: string[];
-}
-
-export interface VulnerabilityHotspot {
-  component: string;
-  version: string;
-  type: string;
-  finding_count: number;
-  severity_breakdown: SeverityBreakdown;
-  affected_projects: string[];
-  affected_project_count?: number;
-  fix_version_count?: number;
-  cve_count?: number;
-  first_seen: string;
+export interface ThreatIntelFields {
   max_epss_score?: number;
   epss_percentile?: number;
   has_kev?: boolean;
@@ -100,8 +67,33 @@ export interface VulnerabilityHotspot {
   days_known?: number;
   has_fix?: boolean;
   fix_versions?: string[];
+  fix_version_count?: number;
+  priority_reasons?: string[];
+  // Live KEV/EPSS sources that could not be read, so their signals and the scores they raise may be missing.
+  threat_intel_unavailable?: string[];
+}
+
+export interface ImpactAnalysisResult extends ThreatIntelFields {
+  component: string;
+  version: string;
+  affected_projects: number;
+  total_findings: number;
+  findings_by_severity: SeverityBreakdown;
+  fix_impact_score: number;
+  affected_project_names: string[];
+}
+
+export interface VulnerabilityHotspot extends ThreatIntelFields {
+  component: string;
+  version: string;
+  type: string;
+  finding_count: number;
+  severity_breakdown: SeverityBreakdown;
+  affected_projects: string[];
+  affected_project_count?: number;
+  cve_count?: number;
+  first_seen: string;
   top_cves?: string[];
-  priority_reasons?: string[]; 
 }
 
 export interface DependencyTypeStats {
@@ -243,7 +235,7 @@ export interface DependencyMetadata {
     links?: Record<string, string>;
   };
   project_count: number;
-  affected_projects: Array<{ id: string; name: string; direct: boolean; direct_inferred?: boolean }>;
+  affected_projects: Array<{ id: string; name: string; direct: boolean }>;
   total_vulnerability_count: number;
   enrichment_sources?: string[];
 }
@@ -287,6 +279,7 @@ export interface RecommendationAction {
   rule_ids?: string[];
   packages?: Array<{
     name: string;
+    type?: string;
     versions?: string[];
     suggestion?: string;
     version_count?: number;
@@ -345,19 +338,24 @@ export interface RecommendationsSummary {
   fragmentation_issues?: number;
   trend_alerts?: number;
   cross_project_issues?: number;
+  crypto_issues?: number;
 }
 
 export interface RecommendationsResponse {
   project_id: string;
   project_name: string;
   scan_id: string;
+  // Findings the engine reasoned over (total_findings) against what the scan holds (findings_total).
   total_findings: number;
+  findings_total: number;
   total_vulnerabilities: number;
   recommendations: Recommendation[];
   summary: RecommendationsSummary;
   // Dependency rows the engine reasoned over against what the scan holds.
   dependencies_read: number;
   dependencies_total: number;
+  // Live KEV/EPSS sources that could not be read; the advice then rests on the scores stored at scan time.
+  threat_intel_unavailable?: string[];
 }
 
 export interface AdvancedSearchOptions {

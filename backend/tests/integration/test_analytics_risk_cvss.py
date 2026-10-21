@@ -72,8 +72,9 @@ _EXPECTED = [
 
 
 @pytest.mark.asyncio
-async def test_hotspots_sorted_by_risk_follow_each_advisory_s_cvss(client, seeded):
-    resp = await client.get("/api/v1/analytics/hotspots", params={"sort_by": "risk"}, headers=seeded)
+@pytest.mark.parametrize("params", [{"sort_by": "risk"}, {}], ids=["asked for", "by default"])
+async def test_hotspots_sorted_by_risk_follow_each_advisory_s_cvss(client, seeded, params):
+    resp = await client.get("/api/v1/analytics/hotspots", params=params, headers=seeded)
 
     assert resp.status_code == 200, resp.text
     assert [(h["component"], h["max_risk_score"]) for h in resp.json()] == _EXPECTED
