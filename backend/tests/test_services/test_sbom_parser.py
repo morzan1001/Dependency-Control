@@ -149,7 +149,7 @@ class TestDirectnessOfRealGraphs:
             ),
         ],
     )
-    def test_each_format_resolves_the_same_direct_set(self, fixture, expected, skipped_roots):
+    def test_each_format_resolves_its_direct_set(self, fixture, expected, skipped_roots):
         result = parse_sbom(_fixture(fixture))
 
         assert _directness(result) == expected
