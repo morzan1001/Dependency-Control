@@ -3,9 +3,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
+from prometheus_client import REGISTRY
 
 from app.core.constants import COUNTED_UPDATE_KINDS
-from app.core.metrics import update_frequency_delta_writes_total
 from app.services.update_frequency_rollup import record_scan_update_delta
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -92,7 +92,7 @@ async def _delta(db: FakeDatabase, scan_id: str) -> dict[str, Any] | None:
 
 
 def _counter(result: str) -> float:
-    return update_frequency_delta_writes_total.labels(result=result)._value.get()
+    return REGISTRY.get_sample_value("update_frequency_delta_writes_total", {"result": result}) or 0.0
 
 
 class TestBaseline:

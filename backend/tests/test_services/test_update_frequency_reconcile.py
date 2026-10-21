@@ -5,10 +5,10 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from prometheus_client import REGISTRY
 
 from app.core import housekeeping
 from app.core.config import settings
-from app.core.metrics import update_frequency_reconcile_drift_total
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.update_frequency import ScanUpdateDeltaRepository
 from app.services import update_frequency_reconcile as reconcile_module, update_frequency_rollup as rollup_module
@@ -112,7 +112,9 @@ def _no_pause(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _metric(kind: str, outcome: str) -> float:
-    return update_frequency_reconcile_drift_total.labels(kind=kind, outcome=outcome)._value.get()
+    return (
+        REGISTRY.get_sample_value("update_frequency_reconcile_drift_total", {"kind": kind, "outcome": outcome}) or 0.0
+    )
 
 
 async def _delta(db: FakeDatabase, scan_id: str) -> dict[str, Any] | None:

@@ -4,14 +4,9 @@ import time
 
 import httpx
 import pytest
+from prometheus_client import REGISTRY
 
 from app.core.http_utils import InstrumentedAsyncClient, quota_lifts_at
-from app.core.metrics import (
-    external_api_duration_seconds,
-    external_api_errors_total,
-    external_api_rate_limit_hits_total,
-    external_api_requests_total,
-)
 
 
 class _FakeHttpxClient:
@@ -29,12 +24,8 @@ class _FakeHttpxClient:
         return httpx.Response(200, request=httpx.Request(method, url))
 
 
-def _counter_value(counter, service: str) -> float:
-    return counter.labels(service=service)._value.get()
-
-
-def _histogram_sum(histogram, service: str) -> float:
-    return histogram.labels(service=service)._sum.get()
+def _sample(name: str, service: str) -> float:
+    return REGISTRY.get_sample_value(name, {"service": service}) or 0.0
 
 
 def _answering(status: int, headers: dict[str, str] | None = None) -> httpx.MockTransport:
@@ -75,28 +66,28 @@ async def test_verbs_raise_when_not_started():
 @pytest.mark.asyncio
 async def test_success_records_request_metric():
     service = "MetricSuccess"
-    before = _counter_value(external_api_requests_total, service)
+    before = _sample("external_api_requests_total", service)
     client = InstrumentedAsyncClient(service)
     client._client = _FakeHttpxClient()  # type: ignore[assignment]
 
     await client.get("https://example.test")
 
-    assert _counter_value(external_api_requests_total, service) == before + 1
+    assert _sample("external_api_requests_total", service) == before + 1
 
 
 @pytest.mark.asyncio
 async def test_error_records_error_metric_and_reraises():
     service = "MetricError"
-    req_before = _counter_value(external_api_requests_total, service)
-    err_before = _counter_value(external_api_errors_total, service)
+    req_before = _sample("external_api_requests_total", service)
+    err_before = _sample("external_api_errors_total", service)
     client = InstrumentedAsyncClient(service)
     client._client = _FakeHttpxClient(exc=httpx.ConnectError("boom"))  # type: ignore[assignment]
 
     with pytest.raises(httpx.ConnectError):
         await client.post("https://example.test", json={})
 
-    assert _counter_value(external_api_requests_total, service) == req_before + 1
-    assert _counter_value(external_api_errors_total, service) == err_before + 1
+    assert _sample("external_api_requests_total", service) == req_before + 1
+    assert _sample("external_api_errors_total", service) == err_before + 1
 
 
 @pytest.mark.asyncio
@@ -120,19 +111,19 @@ async def test_started_client_carries_the_configured_timeout():
 @pytest.mark.asyncio
 async def test_success_observes_the_elapsed_duration_in_the_histogram():
     service = "MetricDuration"
-    before = _histogram_sum(external_api_duration_seconds, service)
+    before = _sample("external_api_duration_seconds_sum", service)
     client = InstrumentedAsyncClient(service)
     client._client = _FakeHttpxClient(delay=0.05)  # type: ignore[assignment]
 
     await client.get("https://example.test")
 
-    assert _histogram_sum(external_api_duration_seconds, service) - before >= 0.04
+    assert _sample("external_api_duration_seconds_sum", service) - before >= 0.04
 
 
 @pytest.mark.asyncio
 async def test_stream_yields_the_open_response_and_records_request_metrics():
     service = "MetricStream"
-    req_before = _counter_value(external_api_requests_total, service)
+    req_before = _sample("external_api_requests_total", service)
     transport = httpx.MockTransport(lambda request: httpx.Response(202, content=b"accepted"))
 
     async with (
@@ -143,13 +134,13 @@ async def test_stream_yields_the_open_response_and_records_request_metrics():
         assert response.request.content == b"{}"
         assert await response.aread() == b"accepted"
 
-    assert _counter_value(external_api_requests_total, service) == req_before + 1
+    assert _sample("external_api_requests_total", service) == req_before + 1
 
 
 @pytest.mark.asyncio
 async def test_stream_error_records_error_metric_and_reraises():
     service = "MetricStreamError"
-    err_before = _counter_value(external_api_errors_total, service)
+    err_before = _sample("external_api_errors_total", service)
 
     def refuse(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("boom", request=request)
@@ -159,7 +150,7 @@ async def test_stream_error_records_error_metric_and_reraises():
             async with client.stream("POST", "https://example.test/x"):
                 pass
 
-    assert _counter_value(external_api_errors_total, service) == err_before + 1
+    assert _sample("external_api_errors_total", service) == err_before + 1
 
 
 @pytest.mark.asyncio
@@ -168,14 +159,14 @@ async def test_stream_error_records_error_metric_and_reraises():
 )
 async def test_failing_answers_count_as_errors_and_expected_ones_do_not(status, errors):
     service = f"MetricStatus{status}"
-    err_before = _counter_value(external_api_errors_total, service)
+    err_before = _sample("external_api_errors_total", service)
 
     async with InstrumentedAsyncClient(service, transport=_answering(status)) as client:
         await client.get("https://example.test")
         async with client.stream("GET", "https://example.test"):
             pass
 
-    assert _counter_value(external_api_errors_total, service) == err_before + 2 * errors
+    assert _sample("external_api_errors_total", service) == err_before + 2 * errors
 
 
 @pytest.mark.asyncio
@@ -191,12 +182,12 @@ async def test_failing_answers_count_as_errors_and_expected_ones_do_not(status, 
 )
 async def test_each_rate_limited_answer_counts_one_hit(status, headers, hits):
     service = f"MetricRateLimit{status}{sorted(headers)}"
-    before = _counter_value(external_api_rate_limit_hits_total, service)
+    before = _sample("external_api_rate_limit_hits_total", service)
 
     async with InstrumentedAsyncClient(service, transport=_answering(status, headers)) as client:
         await client.get("https://example.test")
 
-    assert _counter_value(external_api_rate_limit_hits_total, service) == before + hits
+    assert _sample("external_api_rate_limit_hits_total", service) == before + hits
 
 
 _RESET = 1_900_000_000
@@ -247,20 +238,20 @@ def test_a_quota_refusal_names_when_it_lifts(monkeypatch, status, headers, lifts
 @pytest.mark.asyncio
 async def test_a_failed_request_observes_how_long_it_took():
     service = "MetricErrorDuration"
-    before = _histogram_sum(external_api_duration_seconds, service)
+    before = _sample("external_api_duration_seconds_sum", service)
     client = InstrumentedAsyncClient(service)
     client._client = _FakeHttpxClient(exc=httpx.ReadTimeout("slow"), delay=0.05)  # type: ignore[assignment]
 
     with pytest.raises(httpx.ReadTimeout):
         await client.get("https://example.test")
 
-    assert _histogram_sum(external_api_duration_seconds, service) - before >= 0.04
+    assert _sample("external_api_duration_seconds_sum", service) - before >= 0.04
 
 
 @pytest.mark.asyncio
 async def test_a_failed_stream_observes_how_long_it_took():
     service = "MetricStreamErrorDuration"
-    before = _histogram_sum(external_api_duration_seconds, service)
+    before = _sample("external_api_duration_seconds_sum", service)
 
     async def refuse_slowly(request: httpx.Request) -> httpx.Response:
         await asyncio.sleep(0.05)
@@ -271,7 +262,7 @@ async def test_a_failed_stream_observes_how_long_it_took():
             async with client.stream("POST", "https://example.test/x"):
                 pass
 
-    assert _histogram_sum(external_api_duration_seconds, service) - before >= 0.04
+    assert _sample("external_api_duration_seconds_sum", service) - before >= 0.04
 
 
 @pytest.mark.asyncio
@@ -324,7 +315,7 @@ class TestSendWithBackoff:
     @pytest.mark.asyncio
     async def test_429_and_5xx_are_retried_until_the_answer(self, sleeps):
         service = "BackoffRetry"
-        hits_before = _counter_value(external_api_rate_limit_hits_total, service)
+        hits_before = _sample("external_api_rate_limit_hits_total", service)
         seen: list[str] = []
 
         async with InstrumentedAsyncClient(service, transport=_scripted([429, 500, 200], seen)) as client:
@@ -333,7 +324,7 @@ class TestSendWithBackoff:
         assert response.status_code == 200
         assert seen == ["POST"] * 3
         assert sleeps == [2.0, 4.0]
-        assert _counter_value(external_api_rate_limit_hits_total, service) == hits_before + 1
+        assert _sample("external_api_rate_limit_hits_total", service) == hits_before + 1
 
     @pytest.mark.asyncio
     async def test_attempts_counts_every_try_and_the_last_answer_is_returned_without_a_sleep(self, sleeps):
@@ -365,7 +356,7 @@ class TestSendWithBackoff:
     )
     async def test_a_quota_that_outlasts_the_longest_wait_is_not_retried(self, sleeps, headers):
         service = f"BackoffSpentQuota{sorted(headers)}"
-        hits_before = _counter_value(external_api_rate_limit_hits_total, service)
+        hits_before = _sample("external_api_rate_limit_hits_total", service)
         seen: list[str] = []
 
         def refuse(request: httpx.Request) -> httpx.Response:
@@ -377,7 +368,7 @@ class TestSendWithBackoff:
 
         assert response.status_code == 429
         assert (len(seen), sleeps) == (1, [])
-        assert _counter_value(external_api_rate_limit_hits_total, service) == hits_before + 1
+        assert _sample("external_api_rate_limit_hits_total", service) == hits_before + 1
 
     @pytest.mark.asyncio
     async def test_a_zero_retry_after_retries_without_waiting(self, sleeps):

@@ -18,6 +18,7 @@ from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
 from app.services.github import GitHubService
 from app.services.gitlab import GitLabService
+from tests.conftest import cache_ttl
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 from tests.mocks.gitlab import make_gitlab_instance, make_project_details, sync_team
@@ -378,5 +379,5 @@ class TestGitLabTeamSyncWithoutListedEmails:
         with patch.object(service, "_api_get", new=AsyncMock(return_value=answer)):
             await service._with_public_emails([GitLabMember(id=7, username="ada-gl", access_level=30)])
 
-        key = gitlab_cache._make_key(service._get_cache_key("user_email:7"))
-        assert await gitlab_cache._client.ttl(key) >= members / answers_per_window * window_seconds
+        ttl = await cache_ttl(gitlab_cache, service._get_cache_key("user_email:7"))
+        assert ttl >= members / answers_per_window * window_seconds

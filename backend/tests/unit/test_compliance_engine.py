@@ -7,10 +7,10 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from prometheus_client import REGISTRY
 
 from app.core.config import settings
 from app.core.constants import COMPLIANCE_REPORT_SLOTS, SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
-from app.core.metrics import compliance_reports_total
 from app.core.permissions import Permissions
 from app.models.compliance_report import ComplianceReport, ReportFormat, ReportFramework, ReportStatus
 from app.models.crypto_asset import CryptoAsset, CryptoAssetType, CryptoPrimitive
@@ -170,7 +170,8 @@ async def test_no_more_reports_evaluate_at_once_than_there_are_slots(monkeypatch
 
 
 def _reports_counted(status: str) -> float:
-    return compliance_reports_total.labels(framework=ReportFramework.NIST_SP_800_131A.value, status=status)._value.get()
+    labels = {"framework": ReportFramework.NIST_SP_800_131A.value, "status": status}
+    return REGISTRY.get_sample_value("compliance_reports_total", labels) or 0.0
 
 
 @pytest.mark.asyncio

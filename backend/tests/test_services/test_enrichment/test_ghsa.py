@@ -3,11 +3,12 @@ import time
 
 import httpx
 import pytest
+from prometheus_client import REGISTRY
 
 from app.core.cache import CacheKeys, CacheTTL
-from app.core.metrics import external_api_rate_limit_hits_total
 from app.schemas.enrichment import GHSAData
 from app.services.enrichment.service import vulnerability_enrichment_service
+from tests.conftest import cache_ttl
 from tests.helpers.enrichment import Upstreams, github_advisory, serve_enrichment
 
 _LOG4SHELL = "GHSA-jfh8-c2jp-5v3q"
@@ -23,6 +24,10 @@ def _finding(*ghsa_ids: str) -> dict:
         "version": "2.14.1",
         "details": {"vulnerabilities": [{"id": i} for i in ghsa_ids]},
     }
+
+
+def _rate_limit_hits() -> float:
+    return REGISTRY.get_sample_value("external_api_rate_limit_hits_total", {"service": _ADVISORY_API_LABEL}) or 0.0
 
 
 async def _resolve(*ghsa_ids: str, token: str | None = None) -> dict[str, GHSAData]:
@@ -95,7 +100,7 @@ async def test_a_404_is_cached_as_unresolved_for_the_ghsa_ttl(fake_cache, monkey
 
     assert resolved.cve_id is None
     assert (await fake_cache.get(CacheKeys.ghsa(_UNKNOWN)))["ghsa_id"] == _UNKNOWN
-    assert await fake_cache._client.ttl(fake_cache._make_key(CacheKeys.ghsa(_UNKNOWN))) > CacheTTL.NEGATIVE_RESULT
+    assert await cache_ttl(fake_cache, CacheKeys.ghsa(_UNKNOWN)) > CacheTTL.NEGATIVE_RESULT
 
 
 @pytest.mark.asyncio
@@ -140,7 +145,7 @@ async def test_a_failed_lookup_is_retried_on_the_next_run(fake_cache, monkeypatc
 async def test_an_exhausted_quota_stops_every_lookup_until_it_resets(fake_cache, monkeypatch):
     seen = serve_enrichment(monkeypatch, fake_cache, _exhausted)
     ids = [f"GHSA-aaaa-bbbb-{n:04d}" for n in range(6)]
-    hits_before = external_api_rate_limit_hits_total.labels(service=_ADVISORY_API_LABEL)._value.get()
+    hits_before = _rate_limit_hits()
 
     first = await _resolve(*ids)
     second = await _resolve(*ids)
@@ -149,7 +154,7 @@ async def test_an_exhausted_quota_stops_every_lookup_until_it_resets(fake_cache,
     assert len(seen) == 2
     assert all(first[i].cve_id is None and second[i].cve_id is None for i in ids)
     assert list((await fake_cache.mget([CacheKeys.ghsa(i) for i in ids])).values()) == [None] * len(ids)
-    assert external_api_rate_limit_hits_total.labels(service=_ADVISORY_API_LABEL)._value.get() == hits_before + 2
+    assert _rate_limit_hits() == hits_before + 2
 
 
 @pytest.mark.asyncio

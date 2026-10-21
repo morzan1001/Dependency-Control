@@ -13,6 +13,7 @@ from app.core.constants import GITHUB_API_URL, GITHUB_TEAM_SYNC_CACHE_TTL
 from app.repositories.users import UserRepository
 from app.services.git_provider import _REQUEST_CONCURRENCY, request_gate
 from app.services.github import _REPOSITORY_ACCEPT, GitHubService, _HolderBinding, build_team_slug_map
+from tests.conftest import cache_ttl
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 
@@ -1210,7 +1211,7 @@ class TestMemberResolution:
         with patch.object(service, "_api_client", new=api.client):
             await service._resolve_holder_members(await self._users(), "acme", "widgets", self._HOLDER)
 
-        assert await fake_cache._client.ttl(fake_cache._make_key(service._get_cache_key("user_email:bob"))) > 3600
+        assert await cache_ttl(fake_cache, service._get_cache_key("user_email:bob")) > 3600
 
 
 # 2026-09-09 15:04:00 UTC, the shape GitHub sends: seconds since the epoch.

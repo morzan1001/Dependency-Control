@@ -6,6 +6,7 @@ import pytest
 from app.core.cache import CacheKeys, CacheTTL
 from app.schemas.enrichment import EPSSData
 from app.services.enrichment.service import vulnerability_enrichment_service
+from tests.conftest import cache_ttl
 from tests.helpers.enrichment import FIRST_HOST, Upstreams, epss_page, serve_enrichment
 
 _SCORED = "CVE-2021-44228"
@@ -14,10 +15,6 @@ _UNSCORED = "CVE-2026-99999"
 
 async def _load(*cves: str) -> tuple[dict[str, EPSSData], bool]:
     return await vulnerability_enrichment_service._epss_provider.load_epss_scores(list(cves))
-
-
-async def _ttl(cache, cve: str) -> int:
-    return await cache._client.ttl(cache._make_key(CacheKeys.epss(cve)))
 
 
 @pytest.mark.asyncio
@@ -32,8 +29,12 @@ async def test_a_cve_without_a_score_is_not_asked_for_again_within_the_hour(fake
     scores, complete = second
     assert complete is True
     assert list(scores) == [_SCORED]
-    assert CacheTTL.NEGATIVE_RESULT - 5 < await _ttl(fake_cache, _UNSCORED) <= CacheTTL.NEGATIVE_RESULT
-    assert await _ttl(fake_cache, _SCORED) > CacheTTL.NEGATIVE_RESULT
+    assert (
+        CacheTTL.NEGATIVE_RESULT - 5
+        < await cache_ttl(fake_cache, CacheKeys.epss(_UNSCORED))
+        <= CacheTTL.NEGATIVE_RESULT
+    )
+    assert await cache_ttl(fake_cache, CacheKeys.epss(_SCORED)) > CacheTTL.NEGATIVE_RESULT
 
 
 @pytest.mark.asyncio

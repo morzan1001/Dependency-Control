@@ -1,9 +1,9 @@
 from datetime import datetime, timezone
 
 import pytest
+from prometheus_client import REGISTRY
 
 from app.core.init_db import create_indexes
-from app.core.metrics import analysis_waivers_applied_total
 from app.models.finding import Finding, FindingType, Severity
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
@@ -422,7 +422,9 @@ _ROUTES = ("query", "vulnerability", "signature")
 
 
 def _applied_by_route() -> dict[str, float]:
-    return {route: analysis_waivers_applied_total.labels(type=route)._value.get() for route in _ROUTES}
+    return {
+        route: REGISTRY.get_sample_value("analysis_waivers_applied_total", {"type": route}) or 0.0 for route in _ROUTES
+    }
 
 
 async def test_the_applied_metric_counts_each_waiver_that_matched_by_the_path_it_took():

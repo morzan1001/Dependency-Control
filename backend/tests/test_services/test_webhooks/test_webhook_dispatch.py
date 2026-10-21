@@ -13,16 +13,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from prometheus_client import REGISTRY
 
 from app.core.config import settings
 from app.core.constants import WEBHOOK_USER_AGENT_VALUE
-from app.core.metrics import webhooks_failed_total
 from app.models.webhook import Webhook
 from tests.mocks.fake_mongo import FakeDatabase
 
 ws_module = importlib.import_module("app.services.webhooks.webhook_service")
 
 _EVENT = "scan.completed"
+
+
+def _failures() -> float:
+    return REGISTRY.get_sample_value("webhooks_failed_total", {"event_type": _EVENT}) or 0.0
 
 
 async def _seed_hook(db: FakeDatabase, hook_id: str, **overrides) -> None:
@@ -121,14 +125,13 @@ class TestWebhookScope:
         await _seed_hook(db, "global")
         await _seed_hook(db, "project", project_id="p1")
         db.projects.find_one = AsyncMock(side_effect=RuntimeError("primary stepped down"))
-        failed = webhooks_failed_total.labels(event_type=_EVENT)
-        before = failed._value.get()
+        before = _failures()
 
         with caplog.at_level(logging.ERROR, logger=ws_module.__name__):
             hooks = await ws_module.WebhookService()._get_webhooks_for_event(db, "p1", _EVENT)
 
         assert {hook.id for hook in hooks} == {"global", "project"}
-        assert failed._value.get() == before + 1
+        assert _failures() == before + 1
         assert [r.levelno for r in caplog.records] == [logging.ERROR]
 
 

@@ -33,6 +33,7 @@ from app.schemas.gitlab_instance import (
 )
 from app.services import oidc_utils
 from app.services.oidc_utils import discover_jwks_uri, fetch_jwks, find_jwks_key, validate_oidc_token
+from tests.conftest import cache_ttl
 
 ISSUER = "https://gitlab.example.com"
 KID = "test-signing-key"
@@ -272,10 +273,6 @@ def oidc_cache(fake_cache, monkeypatch):
     return fake_cache
 
 
-async def _ttl(cache, key):
-    return await cache._client.ttl(cache._make_key(key))
-
-
 async def _stored_keys(cache):
     return await cache._client.keys("*")
 
@@ -311,7 +308,7 @@ class TestFetchJwks:
         assert await fetch_jwks("jwks-key", _uris(_JWKS_A, _JWKS_B), "GitLab") is None
         assert requested == [_JWKS_A, _JWKS_B]
         assert await oidc_cache.get("jwks-key") is None
-        assert await _ttl(oidc_cache, "jwks-key:fetch_failed") == 30
+        assert await cache_ttl(oidc_cache, "jwks-key:fetch_failed") == 30
 
         candidates = _uris(_JWKS_A, _JWKS_B)
         assert await fetch_jwks("jwks-key", candidates, "GitLab") is None
@@ -329,7 +326,7 @@ class TestFetchJwks:
         assert await fetch_jwks("jwks-key", _uris(_JWKS_A, _JWKS_B), "GitLab") == jwks
         assert requested == [_JWKS_A, _JWKS_B]
         assert await oidc_cache.get("jwks-key") == jwks
-        assert await _ttl(oidc_cache, "jwks-key") == JWKS_CACHE_TTL
+        assert await cache_ttl(oidc_cache, "jwks-key") == JWKS_CACHE_TTL
 
     async def test_a_body_without_a_key_list_is_not_a_key_set(self, monkeypatch, oidc_cache):
         async def handler(request):
@@ -363,7 +360,7 @@ class TestFetchJwks:
         started = time.monotonic()
         assert await fetch_jwks("jwks-key", _uris(_JWKS_A, _JWKS_B), "GitLab") is None
         assert time.monotonic() - started < 1
-        assert await _ttl(oidc_cache, "jwks-key:fetch_failed") == 30
+        assert await cache_ttl(oidc_cache, "jwks-key:fetch_failed") == 30
 
 
 @pytest.mark.asyncio
@@ -377,7 +374,7 @@ class TestDiscoverJwksUri:
         assert await discover_jwks_uri(ISSUER, "uri-key") == _JWKS_A
         assert requested == [f"{ISSUER}/.well-known/openid-configuration"]
         assert await oidc_cache.get("uri-key") == _JWKS_A
-        assert await _ttl(oidc_cache, "uri-key") == JWKS_URI_CACHE_TTL
+        assert await cache_ttl(oidc_cache, "uri-key") == JWKS_URI_CACHE_TTL
 
     async def test_a_failed_discovery_caches_no_guess(self, monkeypatch, oidc_cache):
         async def handler(request):

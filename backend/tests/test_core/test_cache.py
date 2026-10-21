@@ -20,6 +20,7 @@ from app.core.cache import (
     suppress_cache_writes,
 )
 from app.core.constants import ANALYZER_TIMEOUTS
+from tests.conftest import cache_ttl
 
 _TTL = 60
 
@@ -315,7 +316,7 @@ class TestStampedeNegativeCaching:
 
         assert await fake_cache.get_or_fetch_with_lock(key, fetch, ttl_seconds=callers_ttl) is None
 
-        stored_ttl = await fake_cache._client.ttl(fake_cache._make_key(key))
+        stored_ttl = await cache_ttl(fake_cache, key)
         assert stored_ttl <= CacheTTL.NEGATIVE_RESULT
         assert stored_ttl > CacheTTL.NEGATIVE_RESULT - 60
         assert callers_ttl > CacheTTL.NEGATIVE_RESULT
@@ -335,7 +336,7 @@ class TestStampedeNegativeCaching:
         # An empty real answer must not read back as the {} marker that means the fetch failed.
         assert await fake_cache.get_or_fetch_with_lock(key, fetch, ttl_seconds=callers_ttl) == []
         assert fetches == [key]
-        assert await fake_cache._client.ttl(fake_cache._make_key(key)) > CacheTTL.NEGATIVE_RESULT
+        assert await cache_ttl(fake_cache, key) > CacheTTL.NEGATIVE_RESULT
 
 
 class TestGetManyOrFetch:
@@ -360,7 +361,7 @@ class TestGetManyOrFetch:
 
         assert values == {"k:hit": {"v": 1}, "k:miss": {"v": "k:miss"}}
         assert (reads, fetched) == ([["k:hit", "k:miss"]], ["k:miss"])
-        assert 0 < await fake_cache._client.ttl(fake_cache._make_key("k:miss")) <= 60
+        assert 0 < await cache_ttl(fake_cache, "k:miss") <= 60
 
     @pytest.mark.asyncio
     async def test_a_failed_fetch_leaves_its_exception_and_caches_nothing(self, fake_cache):
@@ -693,7 +694,7 @@ class TestAtomicPrimitives:
         await fake_cache._client.expire(full_key, 5)
 
         assert await fake_cache.incr("rate_limit:k", 60) == 2
-        assert await fake_cache._client.ttl(full_key) <= 5
+        assert await cache_ttl(fake_cache, "rate_limit:k") <= 5
 
     @pytest.mark.asyncio
     async def test_incr_continues_a_count_the_json_cache_wrote(self, fake_cache):

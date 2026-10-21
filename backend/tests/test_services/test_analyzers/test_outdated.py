@@ -10,6 +10,7 @@ from typing_extensions import Self
 from app.core.cache import CacheTTL
 from app.services.analyzers.outdated import OutdatedAnalyzer
 from app.services.release_history import DepsDevReleaseHistoryFetcher, ReleaseInfo
+from tests.conftest import cache_ttl
 
 _API = "https://api.deps.dev/v3alpha/systems"
 
@@ -139,7 +140,7 @@ class TestDepsDevStatusPolicy:
 
         assert result == {"outdated_dependencies": [], "ahead_of_default": []}
         assert await fake_cache.get("latest3:pypi:typo-pkg") == {}
-        assert 0 < await fake_cache._client.ttl(fake_cache._make_key("latest3:pypi:typo-pkg")) <= 3600
+        assert 0 < await cache_ttl(fake_cache, "latest3:pypi:typo-pkg") <= 3600
 
 
 class TestDefaultVersionSelection:

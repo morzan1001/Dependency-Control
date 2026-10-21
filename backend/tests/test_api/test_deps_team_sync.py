@@ -15,6 +15,7 @@ from app.core.constants import (
 from app.models.project import Project
 from app.models.team import TeamSyncResult
 from app.repositories.projects import ProjectRepository
+from tests.conftest import cache_ttl
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 from tests.mocks.gitlab import make_gitlab_instance
@@ -340,7 +341,7 @@ async def _resolutions(cache, monkeypatch, ingests: int) -> int:
 @pytest.mark.asyncio
 async def test_the_ingests_of_one_window_resolve_gitlab_ownership_once(fake_cache, monkeypatch):
     assert await _resolutions(fake_cache, monkeypatch, ingests=3) == 1
-    window = await fake_cache._client.ttl(fake_cache._make_key(f"gitlab_team_sync:{_GITLAB}:100"))
+    window = await cache_ttl(fake_cache, f"gitlab_team_sync:{_GITLAB}:100")
     assert 0 < window <= GITLAB_TEAM_SYNC_WINDOW_SECONDS
 
 

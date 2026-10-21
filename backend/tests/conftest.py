@@ -18,6 +18,7 @@ os.environ["DATABASE_NAME"] = "test_dependency_control"
 import pytest
 from bson import ObjectId
 
+from app.core.cache import CacheService
 from app.models.user import User
 from tests.helpers.auth import make_admin
 from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER, PRESET_VIEWER
@@ -174,13 +175,15 @@ def archive_env(monkeypatch):
 def fake_cache():
     import fakeredis.aioredis
 
-    from app.core.cache import CacheService
-
     svc = CacheService()
     svc._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
     svc._pool = object()  # non-None so get_client() short-circuits to the fake
     svc._available = True
     return svc
+
+
+async def cache_ttl(cache: CacheService, key: str) -> int:
+    return await cache._client.ttl(cache._make_key(key))
 
 
 @pytest.fixture

@@ -2,8 +2,8 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from prometheus_client import REGISTRY
 
-from app.core.metrics import update_frequency_reconcile_drift_total
 from app.services.scan_cascade import delete_scans_and_related_data
 from app.services.update_frequency_reconcile import run_update_frequency_reconcile
 from app.services.update_frequency_rollup import record_scan_update_delta
@@ -16,7 +16,10 @@ T0 = datetime.now(tz=timezone.utc) - timedelta(days=10)
 
 
 def _severed_metric() -> float:
-    return update_frequency_reconcile_drift_total.labels(kind="severed", outcome="resolved")._value.get()
+    return (
+        REGISTRY.get_sample_value("update_frequency_reconcile_drift_total", {"kind": "severed", "outcome": "resolved"})
+        or 0.0
+    )
 
 
 async def _seed(db: FakeDatabase, scan_id: str) -> None:
