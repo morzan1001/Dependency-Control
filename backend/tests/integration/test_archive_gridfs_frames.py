@@ -7,7 +7,6 @@ import zlib
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -176,7 +175,6 @@ def _replay_with(monkeypatch, before_event) -> None:
 async def test_a_scan_whose_sbom_file_is_already_gone_archives_and_restores_without_it(
     db, archive_env, caplog, monkeypatch
 ):
-    monkeypatch.setattr("app.db.mongodb.asyncio", SimpleNamespace(sleep=AsyncMock()))
     scan = await _seed_scan(db, _sbom_fixture())
     gone = ObjectId(scan.sbom_refs[0]["gridfs_id"])
     await AsyncIOMotorGridFSBucket(db).delete(gone)

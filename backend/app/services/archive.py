@@ -51,7 +51,6 @@ from app.core.s3 import (
     list_objects,
     upload_stream,
 )
-from app.db.mongodb import open_gridfs_download_with_retry
 from app.models.archive import ArchiveMetadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import (
@@ -158,7 +157,7 @@ async def _stream_gridfs_chunks(db: Any, scan_doc: dict[str, Any]) -> AsyncItera
     for gid in file_ids:
         try:
             file_id = ObjectId(gid)
-            stream = await open_gridfs_download_with_retry(AsyncIOMotorGridFSBucket(db), file_id)
+            stream = await AsyncIOMotorGridFSBucket(db).open_download_stream(file_id)
             n = 0
             async for chunk in iter_gridfs_chunks(stream):
                 yield {"_id": file_id, "n": n, "filename": stream.filename, "data": Binary(chunk)}
