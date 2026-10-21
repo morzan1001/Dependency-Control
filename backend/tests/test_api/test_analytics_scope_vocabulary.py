@@ -34,6 +34,7 @@ async def test_an_unknown_scope_is_rejected_before_resolution(route):
         response = await client.get(f"{route}scope=everything")
 
     assert response.status_code == 422
+    assert [error["loc"] for error in response.json()["detail"]] == [["query", "scope"]]
 
 
 def test_the_chat_tool_offers_exactly_the_api_scopes():
