@@ -102,9 +102,9 @@ from app.services.reachability_enrichment import (
     ComponentLanguages,
     apply_reachability,
     fetch_callgraphs,
-    run_pending_reachability_for_scan,
 )
 from app.services.sbom_parser import parse_sbom, sbom_parser
+from app.services.stats import run_pending_reachability_for_scan
 from app.services.update_frequency_rollup import record_scan_update_delta
 from app.services.waivers.apply import restamp_waivers, waiver_fingerprint
 from app.services.waivers.matching import route_waiver

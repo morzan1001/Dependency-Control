@@ -9,7 +9,8 @@ from app.services.analysis.engine import (
     _unwaived_findings,
 )
 from app.services.analysis.registry import CRYPTO_ANALYZERS
-from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary
+from app.services.analysis.stats import build_epss_kev_summary
+from app.services.reachability_enrichment import build_reachability_summary
 from tests.mocks.fake_mongo import FakeDatabase
 
 

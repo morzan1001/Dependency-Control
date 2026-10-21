@@ -11,12 +11,15 @@ from app.services.analysis.stats import (
     _HIGH_RISK_SAMPLE_CAP,
     _numeric,
     build_epss_kev_summary,
-    build_reachability_summary,
     calculate_comprehensive_stats,
     compute_stats,
 )
 from app.services.enrichment.service import _build_enrichment, apply_enrichments
-from app.services.reachability_enrichment import component_language_map, enrich_findings_with_reachability
+from app.services.reachability_enrichment import (
+    build_reachability_summary,
+    component_language_map,
+    enrich_findings_with_reachability,
+)
 from tests.mocks.fake_mongo import FakeDatabase
 
 _HIGH_RISK_POPULATION = _HIGH_RISK_SAMPLE_CAP + 5

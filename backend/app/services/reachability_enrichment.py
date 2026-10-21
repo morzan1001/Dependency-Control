@@ -3,7 +3,8 @@
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, cast
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -21,18 +22,17 @@ from app.core.constants import (
     REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_NONE,
     REACHABILITY_LEVEL_SYMBOL,
-    REACHABILITY_LOCK_TEMPLATE,
-    SCAN_ACTIVE_STATUSES,
+    sort_by_severity,
 )
 from app.core.metrics import analysis_enrichment_total, analysis_reachable_vulnerabilities_total
 from app.core.purl import get_purl_type
+from app.core.risk_scoring import reachability_display_tier
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.callgraphs import CallgraphRepository
-from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
-from app.repositories.findings import FindingRepository
 from app.repositories.projections import CallgraphMinimal
 from app.repositories.scans import ScanRepository
 from app.schemas.finding_details import ReachabilityInfo
+from app.services.analysis.types import CallgraphInfo, ReachabilityLevelCounts, ReachabilitySummary, VulnerabilityInfo
 from app.services.component_identity import (
     JVM_LANGUAGES,
     build_component_index,
@@ -40,24 +40,10 @@ from app.services.component_identity import (
     lookup_component,
 )
 from app.services.enrichment.scoring import calculate_adjusted_risk_score
-from app.services.recommendation.common import name_some
+from app.services.recommendation.common import display_vulnerability_id, name_some
 from app.services.vulnerable_symbols import get_symbols_for_finding
 
 logger = logging.getLogger(__name__)
-
-# Upper bound on findings held in memory for one enrichment run; the upload reports what it cuts off.
-_MAX_FINDINGS_PER_RUN = 100_000
-# What the verdict and the scan summary read of a stored finding; reachability_set_fields writes dotted paths.
-_STORED_FINDING_PROJECTION = {
-    **dict.fromkeys(
-        ("type", "component", "version", "severity", "details.risk_score", f"details.{DETAILS_KEY_IN_KEV}"), 1
-    ),
-    **{f"details.vulnerabilities.{field}": 1 for field in ("id", "aliases", "resolved_cve", "ecosystem_specific")},
-}
-# The holder never renews, so this outlasts a pass over _MAX_FINDINGS_PER_RUN findings plus the stats refresh.
-_LOCK_TTL_SECONDS = 600
-# An analysis in flight replaces the findings, so it applies the callgraphs itself once final.
-_REQUESTED = {"reachability_pending": True, "status": {"$nin": SCAN_ACTIVE_STATUSES}}
 
 # Purl type -> the callgraph language(s) that can analyze it; another known ecosystem has no producer.
 _ECOSYSTEM_TO_CALLGRAPH_LANGUAGES: dict[str, frozenset[str]] = {
@@ -430,14 +416,85 @@ def _match_symbols(vulnerable_symbols: list[str], used_symbols: list[str]) -> li
     return matched
 
 
+# The vulnerability lists are UI samples; reachable_total / unreachable_total carry the real counts.
+_VULNERABILITY_SAMPLE_CAP = 30
+
+
+def build_reachability_summary(
+    findings: list[dict[str, Any]],
+    callgraphs: Sequence[CallgraphMinimal],
+) -> ReachabilitySummary:
+    reachability_levels: ReachabilityLevelCounts = {
+        "confirmed": 0,
+        "likely": 0,
+        "unknown": 0,
+        "unreachable": 0,
+    }
+
+    callgraph_info: list[CallgraphInfo] = [
+        {
+            "language": cg.language or "unknown",
+            "total_modules": len(cg.module_usage or {}),
+            "total_imports": cg.total_imports,
+            "coverage_modules": len(cg.analyzed_modules),
+            "generated_at": cg.created_at.isoformat() if cg.created_at else None,
+        }
+        for cg in callgraphs
+    ]
+
+    summary: ReachabilitySummary = {
+        "total_vulnerabilities": len(findings),
+        "analyzed": 0,
+        "reachability_levels": reachability_levels,
+        "callgraph_info": callgraph_info,
+        "languages": [info["language"] for info in callgraph_info],
+        "reachable_total": 0,
+        "unreachable_total": 0,
+        "reachable_vulnerabilities": [],
+        "unreachable_vulnerabilities": [],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    for finding in findings:
+        reachability_data = finding.get("details", {}).get("reachability", {})
+        reachable = reachability_data.get("is_reachable")
+        tier = reachability_display_tier(reachable, reachability_data.get("analysis_level"))
+
+        vuln_info: VulnerabilityInfo = {
+            "cve": display_vulnerability_id(finding.get("details")) or "",
+            "component": finding.get("component", ""),
+            "version": finding.get("version") or "",
+            "severity": finding.get("severity", "unknown"),
+            "reachability_level": tier,
+            "reachable_functions": reachability_data.get("matched_symbols", [])[:5],
+            "is_high_confidence": is_high_confidence_reachable(reachable, reachability_data.get("confidence_score")),
+        }
+
+        reachability_counts = cast(dict[str, int], summary["reachability_levels"])
+        if tier in reachability_counts:
+            reachability_counts[tier] += 1
+
+        if reachable is True:
+            summary["reachable_vulnerabilities"].append(vuln_info)
+        elif reachable is False:
+            summary["unreachable_vulnerabilities"].append(vuln_info)
+
+    summary["reachable_total"] = len(summary["reachable_vulnerabilities"])
+    summary["unreachable_total"] = len(summary["unreachable_vulnerabilities"])
+    summary["analyzed"] = summary["reachable_total"] + summary["unreachable_total"]
+
+    for sample in ("reachable_vulnerabilities", "unreachable_vulnerabilities"):
+        summary[sample] = sort_by_severity(summary[sample])[:_VULNERABILITY_SAMPLE_CAP]
+
+    return summary
+
+
 async def apply_reachability(
     db: AsyncIOMotorDatabase,
     scan_id: str,
     findings: list[dict[str, Any]],
     callgraphs: Sequence[CallgraphMinimal],
 ) -> tuple[ComponentLanguages, int]:
-    from app.services.analysis.stats import build_reachability_summary  # stats imports this module
-
     component_languages = await build_component_language_map(db, scan_id)
     enriched = enrich_findings_with_reachability(findings, callgraphs, component_languages)
     summary = build_reachability_summary(findings, callgraphs)
@@ -450,67 +507,3 @@ async def apply_reachability(
             analysis_reachable_vulnerabilities_total.labels(reachability_level=level).inc()
     logger.info(f"[reachability] Enriched {enriched} findings for scan {scan_id}")
     return component_languages, enriched
-
-
-async def _load_vulnerability_findings(
-    finding_repo: FindingRepository, scan_id: str
-) -> tuple[list[dict[str, Any]], int]:
-    query = {"scan_id": scan_id, "type": "vulnerability"}
-    findings = await finding_repo.find_many_raw(
-        query, limit=_MAX_FINDINGS_PER_RUN, projection=_STORED_FINDING_PROJECTION
-    )
-    if len(findings) < _MAX_FINDINGS_PER_RUN:
-        return findings, 0
-    return findings, max(await finding_repo.count(query) - len(findings), 0)
-
-
-async def _apply_to_stored_findings(
-    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, callgraphs: list[CallgraphMinimal]
-) -> int:
-    from app.services.stats import refresh_scan_stats  # stats imports this module
-
-    finding_repo = FindingRepository(db)
-    findings, dropped = await _load_vulnerability_findings(finding_repo, scan_id)
-    if dropped:
-        logger.warning(
-            "[reachability] Scan %s has more than %d vulnerability findings; %d left unenriched",
-            scan_id,
-            _MAX_FINDINGS_PER_RUN,
-            dropped,
-        )
-    if findings:
-        component_languages, _enriched = await apply_reachability(db, scan_id, findings, callgraphs)
-        judged = {f["_id"]: reachability_set_fields(f) for f in findings if "reachability" in f.get("details", {})}
-        await finding_repo.set_fields(scan_id, judged)
-        # Tells a retention batch that archived the scan before these verdicts to keep it and archive it anew.
-        await ScanRepository(db).touch(scan_id)
-        # The scan's stats were frozen at completion, before any reachability verdict existed.
-        await refresh_scan_stats(db, project_id, scan_id, component_languages)
-    return dropped
-
-
-async def run_pending_reachability_for_scan(scan_id: str, project_id: str, db: AsyncIOMotorDatabase) -> int:
-    scan_repo = ScanRepository(db)
-    lock_repo = DistributedLocksRepository(db)
-    lock_name, holder_id = REACHABILITY_LOCK_TEMPLATE.format(scan_id=scan_id), new_lock_holder()
-    dropped = 0
-    while await lock_repo.acquire_lock(lock_name, holder_id, _LOCK_TTL_SECONDS):
-        try:
-            claimed = await scan_repo.update_raw(scan_id, {"$unset": {"reachability_pending": ""}}, guard=_REQUESTED)
-            callgraphs = await fetch_callgraphs(project_id, scan_id, db) if claimed else []
-            if callgraphs:
-                dropped = await _apply_to_stored_findings(db, project_id, scan_id, callgraphs)
-        except Exception:
-            # Stay flagged, so the next upload or analysis retries the scan.
-            await scan_repo.update_raw(scan_id, {"$set": {"reachability_pending": True}})
-            raise
-        finally:
-            await lock_repo.release_lock(lock_name, holder_id)
-        if claimed and not callgraphs:
-            # Keep waiting for a callgraph, unless an upload flagged the scan again after the snapshot.
-            waiting = {"$set": {"reachability_pending": True}}
-            if await scan_repo.update_raw(scan_id, waiting, guard={"reachability_pending": {"$ne": True}}):
-                return dropped
-        elif not await scan_repo.count({"_id": scan_id, **_REQUESTED}, limit=1):
-            return dropped
-    return dropped

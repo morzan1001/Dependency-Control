@@ -46,7 +46,7 @@ from app.services.analysis.runner import (
     sbom_label,
     sbom_name,
 )
-from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
+from app.services.analysis.stats import build_epss_kev_summary, compute_stats
 from app.services.analysis.types import Database
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.analyzers.malware import MISSING_API_KEY
@@ -55,6 +55,7 @@ from app.services.enrichment.service import sends_ids, vulnerability_enrichment_
 from app.services.github import installation_github_token
 from app.services.reachability_enrichment import (
     ComponentLanguages,
+    build_reachability_summary,
     component_language_map,
     enrich_findings_with_reachability,
 )

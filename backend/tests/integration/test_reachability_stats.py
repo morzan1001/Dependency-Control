@@ -14,8 +14,8 @@ from app.services.reachability_enrichment import (
     build_component_language_map,
     enrich_findings_with_reachability,
     fetch_callgraphs,
-    run_pending_reachability_for_scan,
 )
+from app.services.stats import run_pending_reachability_for_scan
 from tests.helpers.profiler import profiled
 
 _PROJECT_ID = "proj-reach"

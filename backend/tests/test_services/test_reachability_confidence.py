@@ -7,12 +7,12 @@ from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD, REACHABIL
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.projections import CallgraphMinimal
 from app.schemas.finding_details import ReachabilityInfo
-from app.services.analysis.stats import build_reachability_summary
 from app.services.reachability_enrichment import (
     _enrich_finding_from_callgraphs,
     _match_symbols,
     _prepare_callgraph,
     build_component_language_map,
+    build_reachability_summary,
     enrich_findings_with_reachability,
     is_high_confidence_reachable,
     reachability_set_fields,
@@ -407,7 +407,7 @@ class TestReachabilitySetFields:
 class TestRunPendingBulkPersist:
     @pytest.mark.asyncio
     async def test_persists_via_bulk_write_and_writes_summary(self, monkeypatch, fake_gridfs):
-        from app.services.reachability_enrichment import run_pending_reachability_for_scan
+        from app.services.stats import run_pending_reachability_for_scan
         from tests.mocks.fake_mongo import FakeDatabase
 
         db = FakeDatabase()
@@ -474,7 +474,7 @@ class TestRunPendingBulkPersist:
     @pytest.mark.asyncio
     async def test_second_language_callgraph_still_runs(self, fake_gridfs):
         """A multi-language repo uploads one callgraph per language; the later ones must not be ignored."""
-        from app.services.reachability_enrichment import run_pending_reachability_for_scan
+        from app.services.stats import run_pending_reachability_for_scan
         from tests.mocks.fake_mongo import FakeDatabase
 
         db = FakeDatabase()

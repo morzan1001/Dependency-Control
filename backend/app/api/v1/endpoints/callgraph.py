@@ -21,8 +21,8 @@ from app.schemas.callgraph import (
     DeleteCallgraphResponse,
 )
 from app.services.gridfs_maintenance import upload_gridfs_json
-from app.services.reachability_enrichment import run_pending_reachability_for_scan
 from app.services.scan_manager import deterministic_scan_id
+from app.services.stats import run_pending_reachability_for_scan
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)

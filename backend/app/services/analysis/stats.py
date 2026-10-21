@@ -1,4 +1,4 @@
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from typing import Any, ClassVar, NamedTuple, cast
 
@@ -7,7 +7,6 @@ from app.core.constants import (
     DETAILS_KEY_KEV_RANSOMWARE,
     FINDINGS_SCAN_TYPE_INDEX,
     HIGH_RISK_SCORE_THRESHOLD,
-    sort_by_severity,
 )
 from app.core.cve import canonical_cve, entry_cves
 from app.core.epss import bucket_epss
@@ -32,18 +31,13 @@ from app.models.stats import (
     Stats,
     ThreatIntelligenceStats,
 )
-from app.repositories.projections import CallgraphMinimal
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.services.analysis.types import (
-    CallgraphInfo,
     Database,
     EPSSKEVSummary,
     EPSSScoreCounts,
     ExploitMaturityCounts,
     KEVDetail,
-    ReachabilityLevelCounts,
-    ReachabilitySummary,
-    VulnerabilityInfo,
 )
 from app.services.component_identity import lookup_component
 from app.services.enrichment.scoring import kev_member
@@ -52,7 +46,7 @@ from app.services.reachability_enrichment import (
     build_component_language_map,
     is_high_confidence_reachable,
 )
-from app.services.recommendation.common import display_vulnerability_id, live_advisories
+from app.services.recommendation.common import live_advisories
 
 
 def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss_scores: list[float]) -> None:
@@ -180,79 +174,6 @@ def build_epss_kev_summary(
     summary["high_risk_cves"].sort(key=lambda x: x["risk_score"], reverse=True)
     summary["high_risk_total"] = len(summary["high_risk_cves"])
     summary["high_risk_cves"] = summary["high_risk_cves"][:_HIGH_RISK_SAMPLE_CAP]
-
-    return summary
-
-
-# The vulnerability lists are UI samples; reachable_total / unreachable_total carry the real counts.
-_VULNERABILITY_SAMPLE_CAP = 30
-
-
-def build_reachability_summary(
-    findings: list[dict[str, Any]],
-    callgraphs: Sequence[CallgraphMinimal],
-) -> ReachabilitySummary:
-    reachability_levels: ReachabilityLevelCounts = {
-        "confirmed": 0,
-        "likely": 0,
-        "unknown": 0,
-        "unreachable": 0,
-    }
-
-    callgraph_info: list[CallgraphInfo] = [
-        {
-            "language": cg.language or "unknown",
-            "total_modules": len(cg.module_usage or {}),
-            "total_imports": cg.total_imports,
-            "coverage_modules": len(cg.analyzed_modules),
-            "generated_at": cg.created_at.isoformat() if cg.created_at else None,
-        }
-        for cg in callgraphs
-    ]
-
-    summary: ReachabilitySummary = {
-        "total_vulnerabilities": len(findings),
-        "analyzed": 0,
-        "reachability_levels": reachability_levels,
-        "callgraph_info": callgraph_info,
-        "languages": [info["language"] for info in callgraph_info],
-        "reachable_total": 0,
-        "unreachable_total": 0,
-        "reachable_vulnerabilities": [],
-        "unreachable_vulnerabilities": [],
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-
-    for finding in findings:
-        reachability_data = finding.get("details", {}).get("reachability", {})
-        reachable = reachability_data.get("is_reachable")
-        tier = reachability_display_tier(reachable, reachability_data.get("analysis_level"))
-
-        vuln_info: VulnerabilityInfo = {
-            "cve": display_vulnerability_id(finding.get("details")) or "",
-            "component": finding.get("component", ""),
-            "version": finding.get("version") or "",
-            "severity": finding.get("severity", "unknown"),
-            "reachability_level": tier,
-            "reachable_functions": reachability_data.get("matched_symbols", [])[:5],
-            "is_high_confidence": is_high_confidence_reachable(reachable, reachability_data.get("confidence_score")),
-        }
-
-        reachability_counts = cast(dict[str, int], summary["reachability_levels"])
-        if tier in reachability_counts:
-            reachability_counts[tier] += 1
-
-        if reachable is True:
-            summary["reachable_vulnerabilities"].append(vuln_info)
-        elif reachable is False:
-            summary["unreachable_vulnerabilities"].append(vuln_info)
-
-    summary["reachable_total"] = len(summary["reachable_vulnerabilities"])
-    summary["unreachable_total"] = len(summary["unreachable_vulnerabilities"])
-    summary["analyzed"] = summary["reachable_total"] + summary["unreachable_total"]
-
-    for sample in ("reachable_vulnerabilities", "unreachable_vulnerabilities"):
-        summary[sample] = sort_by_severity(summary[sample])[:_VULNERABILITY_SAMPLE_CAP]
 
     return summary
 

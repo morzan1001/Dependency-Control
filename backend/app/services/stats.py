@@ -8,19 +8,31 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError
 from pymongo.errors import ConnectionFailure
 
-from app.core.constants import SCANS_TIP_SORT, WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS
+from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    REACHABILITY_LOCK_TEMPLATE,
+    SCAN_ACTIVE_STATUSES,
+    SCANS_TIP_SORT,
+    WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS,
+)
 from app.core.log_utils import sanitize_for_log
 from app.models.project import Project
 from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.repositories.findings import FindingRepository
+from app.repositories.projections import CallgraphMinimal
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.services.analysis.stats import calculate_comprehensive_stats
 from app.services.analytics.cache import get_analytics_cache
-from app.services.reachability_enrichment import ComponentLanguages
+from app.services.reachability_enrichment import (
+    ComponentLanguages,
+    apply_reachability,
+    fetch_callgraphs,
+    reachability_set_fields,
+)
 from app.services.releases import released_scan_ids
 from app.services.waivers.apply import restamp_waivers, waiver_fingerprint
 from app.services.waivers.matching import waiver_reach_filter
@@ -38,6 +50,20 @@ _HEAD_PASSES = 3
 _RECALC_LOCK = "waiver_recalc"
 _EXPIRY_SWEEP = "expiry_sweep"
 _QUEUED = {"waiver": {"$exists": True}}
+
+# Upper bound on findings held in memory for one enrichment run; the upload reports what it cuts off.
+_MAX_FINDINGS_PER_RUN = 100_000
+# What the verdict and the scan summary read of a stored finding; reachability_set_fields writes dotted paths.
+_STORED_FINDING_PROJECTION = {
+    **dict.fromkeys(
+        ("type", "component", "version", "severity", "details.risk_score", f"details.{DETAILS_KEY_IN_KEV}"), 1
+    ),
+    **{f"details.vulnerabilities.{field}": 1 for field in ("id", "aliases", "resolved_cve", "ecosystem_specific")},
+}
+# The holder never renews, so this outlasts a pass over _MAX_FINDINGS_PER_RUN findings plus the stats refresh.
+_REACHABILITY_LOCK_TTL_SECONDS = 600
+# An analysis in flight replaces the findings, so it applies the callgraphs itself once final.
+_REQUESTED = {"reachability_pending": True, "status": {"$nin": SCAN_ACTIVE_STATUSES}}
 
 
 async def _restamp_scan(
@@ -208,6 +234,68 @@ async def refresh_scan_stats(
         await scan_repo.sync_project_head(project_id)
     finally:
         await lock_repo.release_lock(lock_name, holder_id)
+
+
+async def _load_vulnerability_findings(
+    finding_repo: FindingRepository, scan_id: str
+) -> tuple[list[dict[str, Any]], int]:
+    query = {"scan_id": scan_id, "type": "vulnerability"}
+    findings = await finding_repo.find_many_raw(
+        query, limit=_MAX_FINDINGS_PER_RUN, projection=_STORED_FINDING_PROJECTION
+    )
+    if len(findings) < _MAX_FINDINGS_PER_RUN:
+        return findings, 0
+    return findings, max(await finding_repo.count(query) - len(findings), 0)
+
+
+async def _apply_to_stored_findings(
+    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, callgraphs: list[CallgraphMinimal]
+) -> int:
+    finding_repo = FindingRepository(db)
+    findings, dropped = await _load_vulnerability_findings(finding_repo, scan_id)
+    if dropped:
+        logger.warning(
+            "[reachability] Scan %s has more than %d vulnerability findings; %d left unenriched",
+            scan_id,
+            _MAX_FINDINGS_PER_RUN,
+            dropped,
+        )
+    if findings:
+        component_languages, _enriched = await apply_reachability(db, scan_id, findings, callgraphs)
+        judged = {f["_id"]: reachability_set_fields(f) for f in findings if "reachability" in f.get("details", {})}
+        await finding_repo.set_fields(scan_id, judged)
+        # Tells a retention batch that archived the scan before these verdicts to keep it and archive it anew.
+        await ScanRepository(db).touch(scan_id)
+        # The scan's stats were frozen at completion, before any reachability verdict existed.
+        await refresh_scan_stats(db, project_id, scan_id, component_languages)
+    return dropped
+
+
+async def run_pending_reachability_for_scan(scan_id: str, project_id: str, db: AsyncIOMotorDatabase) -> int:
+    scan_repo = ScanRepository(db)
+    lock_repo = DistributedLocksRepository(db)
+    lock_name, holder_id = REACHABILITY_LOCK_TEMPLATE.format(scan_id=scan_id), new_lock_holder()
+    dropped = 0
+    while await lock_repo.acquire_lock(lock_name, holder_id, _REACHABILITY_LOCK_TTL_SECONDS):
+        try:
+            claimed = await scan_repo.update_raw(scan_id, {"$unset": {"reachability_pending": ""}}, guard=_REQUESTED)
+            callgraphs = await fetch_callgraphs(project_id, scan_id, db) if claimed else []
+            if callgraphs:
+                dropped = await _apply_to_stored_findings(db, project_id, scan_id, callgraphs)
+        except Exception:
+            # Stay flagged, so the next upload or analysis retries the scan.
+            await scan_repo.update_raw(scan_id, {"$set": {"reachability_pending": True}})
+            raise
+        finally:
+            await lock_repo.release_lock(lock_name, holder_id)
+        if claimed and not callgraphs:
+            # Keep waiting for a callgraph, unless an upload flagged the scan again after the snapshot.
+            waiting = {"$set": {"reachability_pending": True}}
+            if await scan_repo.update_raw(scan_id, waiting, guard={"reachability_pending": {"$ne": True}}):
+                return dropped
+        elif not await scan_repo.count({"_id": scan_id, **_REQUESTED}, limit=1):
+            return dropped
+    return dropped
 
 
 async def request_waiver_recalc(db: AsyncIOMotorDatabase, waiver: Waiver, restamp: Sequence[str] = ()) -> None:
