@@ -1,9 +1,9 @@
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers import get_available_channels
 from app.api.v1.helpers.projects import reject_unknown_analyzers
 from app.api.v1.helpers.responses import RESP_AUTH
+from app.api.v1.helpers.system import get_available_channels
 from app.core.config import settings as app_settings
 from app.core.constants import (
     NOTIFICATION_CHANNEL_EMAIL,

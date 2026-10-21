@@ -44,9 +44,11 @@ from app.repositories.scans import ScanRepository
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.projections import ProjectWithScanId
 from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
+from app.services.analytics.scopes import ScopeResolver
 from app.services.enrichment.scoring import fold_enrichments
 from app.services.enrichment.service import advisory_enrichment
 from app.services.recommendation.common import live_advisories, live_cves
+from app.services.releases import resolve_scan_ids
 
 MONGO_MATCH = "$match"
 MONGO_GROUP = "$group"
@@ -100,8 +102,6 @@ async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> list[str
 
 
 async def get_user_projects(user: User, db: AsyncIOMotorDatabase) -> list[ProjectWithScanId]:
-    from app.services.analytics.scopes import ScopeResolver
-
     return await ScopeResolver(db, user).list_user_projects()
 
 
@@ -111,8 +111,6 @@ async def get_latest_scan_ids(
     *,
     release_environment: str | None = None,
 ) -> list[str]:
-    from app.services.releases import resolve_scan_ids
-
     resolved = await resolve_scan_ids(
         db, [p.id for p in projects], release_environment=release_environment, projects=projects
     )

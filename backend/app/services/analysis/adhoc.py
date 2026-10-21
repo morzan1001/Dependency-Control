@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ValidationError
 
+from app.api.v1.helpers.callgraph import resolve_callgraph_payload
 from app.core.cache import suppress_cache_writes
 from app.core.constants import (
     DEPS_DEV_API_URL,
@@ -403,8 +404,6 @@ async def _enrich_vulnerabilities(
 
 
 def _prepare_posted_callgraph(payload: dict[str, Any]) -> CallgraphMinimal:
-    from app.api.v1.helpers.callgraph import resolve_callgraph_payload
-
     data = {key: value for key, value in payload.items() if key not in ("format", "language")}
     posted_language = payload.get("language")
     _, language, parser = resolve_callgraph_payload(

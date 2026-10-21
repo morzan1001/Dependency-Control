@@ -13,11 +13,6 @@ from fastapi import BackgroundTasks, Depends, HTTPException, Query, status
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers import (
-    check_admin_or_self,
-    ensure_can_manage_target,
-    get_user_or_404,
-)
 from app.api.v1.helpers.auth import (
     require_email_configured,
     send_2fa_disabled_email,
@@ -35,6 +30,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
 )
 from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, parse_sort_direction
+from app.api.v1.helpers.users import check_admin_or_self, ensure_can_manage_target, get_user_or_404
 from app.core import security
 from app.core.constants import AUTH_PROVIDER_LOCAL
 from app.core.permissions import Permissions, has_permission
@@ -42,7 +38,6 @@ from app.models.user import User, is_local_account
 from app.repositories.projects import ProjectRepository
 from app.repositories.teams import TeamRepository
 from app.repositories.users import IdentityTakenError, UserRepository
-from app.schemas.user import UserResponse
 from app.schemas.user import (
     EmailChangeResponse,
     User2FADisable,
@@ -52,6 +47,7 @@ from app.schemas.user import (
     UserEmailChange,
     UserMigrateToLocal,
     UserPasswordUpdate,
+    UserResponse,
     UserUpdate,
     UserUpdateMe,
     check_new_username,

@@ -7,15 +7,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers import (
-    authorize_waiver_read,
-    build_pagination_response,
-    check_project_access,
-    get_user_project_ids,
-    parse_sort_direction,
-)
+from app.api.v1.helpers.analytics import get_user_project_ids
+from app.api.v1.helpers.pagination import build_pagination_response
+from app.api.v1.helpers.projects import authorize_waiver_read, check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
-from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery
+from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, parse_sort_direction
 from app.api.v1.helpers.users import resolve_usernames
 from app.core.constants import PROJECT_ROLE_ADMIN, PROJECT_ROLE_EDITOR, WAIVER_SCOPE_FILE, WAIVER_SCOPE_FINDING
 from app.core.permissions import Permissions, has_permission
@@ -33,7 +29,6 @@ from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
 from app.services.normalizers.utils import UNKNOWN_RULE_ID, FindingIdPrefix
 from app.services.stats import request_waiver_recalc, restamp_single_scan, run_waiver_recalc
 from app.services.waivers.matching import finding_rule_id, waiver_query
-
 
 _MSG_NO_CRITERIA = "A waiver names a finding, package, type, rule or vulnerability to match"
 _MSG_NO_MATCHING_FINDING = (

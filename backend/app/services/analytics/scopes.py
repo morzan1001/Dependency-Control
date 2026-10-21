@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api.v1.helpers.projects import build_user_project_query, check_project_access, may_read_projects
 from app.core.constants import ANALYTICS_MAX_SCOPE_PROJECTS, ScopeName
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
@@ -54,8 +55,6 @@ def may_query_global(user: User) -> bool:
 
 def team_scope_filter(user: User) -> dict[str, Any] | None:
     """None means no team; team:read_all opens team metadata, not project data."""
-    from app.api.v1.helpers.projects import may_read_projects
-
     if may_query_global(user) or has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
         return {}
     if may_read_projects(user) and has_permission(user.permissions, [Permissions.TEAM_READ, Permissions.TEAM_READ_ALL]):
@@ -115,8 +114,6 @@ class ScopeResolver:
         return ResolvedScope(scope="user", scope_id=None, project_ids=[p.id for p in projects], projects=projects)
 
     async def _check_project_member(self, project_id: str) -> bool:
-        from app.api.v1.helpers.projects import check_project_access
-
         try:
             await check_project_access(project_id, self.user, self.db)
         except HTTPException:
@@ -124,6 +121,4 @@ class ScopeResolver:
         return True
 
     async def list_user_projects(self) -> list[ProjectWithScanId]:
-        from app.api.v1.helpers.projects import build_user_project_query
-
         return await read_scope_projects(self.db, await build_user_project_query(self.user, TeamRepository(self.db)))

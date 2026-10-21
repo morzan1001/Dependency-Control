@@ -11,6 +11,7 @@ from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api.v1.helpers.projects import check_project_access
 from app.core import security
 from app.core.cache import cache_service
 from app.core.config import settings
@@ -466,8 +467,6 @@ async def authorize_project_write(
     token: str | None = Depends(optional_oauth2_scheme),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> str:
-    from app.api.v1.helpers.projects import check_project_access
-
     if project := await _authenticate_ci(x_api_key, oidc_token, db, create_missing=False):
         if str(project.id) != project_id:
             raise HTTPException(status_code=403, detail=_MSG_CI_PROJECT_MISMATCH)

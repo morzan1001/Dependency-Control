@@ -5,12 +5,9 @@ from fastapi import HTTPException, Query
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers import (
-    build_pagination_response,
-    check_webhook_permission,
-    get_webhook_or_404,
-)
+from app.api.v1.helpers.pagination import build_pagination_response
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_404, RESP_AUTH_404
+from app.api.v1.helpers.webhooks import check_webhook_permission, get_webhook_or_404
 from app.core.permissions import Permissions
 from app.models.webhook import Webhook
 from app.repositories.webhooks import DELIVERY_FIELDS, GLOBAL_WEBHOOK_SCOPE, WebhookRepository

@@ -9,14 +9,6 @@ from pymongo.errors import DuplicateKeyError
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers import (
-    check_team_access,
-    fetch_and_enrich_team,
-    get_team_with_access,
-    visible_teams_filter,
-)
-from app.api.v1.helpers.teams import enrich_teams_with_usernames, mark_sync_owned_members, syncing_sources
-from app.api.v1.helpers.vcs_instances import get_or_404, refused_listing
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
@@ -25,6 +17,16 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
 )
 from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, parse_sort_direction
+from app.api.v1.helpers.teams import (
+    check_team_access,
+    enrich_teams_with_usernames,
+    fetch_and_enrich_team,
+    get_team_with_access,
+    mark_sync_owned_members,
+    syncing_sources,
+    visible_teams_filter,
+)
+from app.api.v1.helpers.vcs_instances import get_or_404, refused_listing
 from app.core.constants import TEAM_ROLE_ADMIN, team_source
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions

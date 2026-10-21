@@ -20,31 +20,24 @@ from starlette.background import BackgroundTask
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers import (
-    aggregate_stats_by_category,
+from app.api.v1.helpers.auth import send_project_member_added_email
+from app.api.v1.helpers.findings import aggregate_stats_by_category, get_category_type_filter
+from app.api.v1.helpers.pagination import build_pagination_response
+from app.api.v1.helpers.projects import (
     apply_system_settings_enforcement,
-    build_pagination_response,
+    authorize_project_read,
     build_user_project_query,
     check_project_access,
-    generate_project_api_key,
-    get_category_type_filter,
-    get_sort_field,
-    is_write_superuser,
-    last_admin_guard,
-    may_read_projects,
-    parse_sort_direction,
-    team_refs,
-)
-from app.api.v1.helpers.auth import send_project_member_added_email
-from app.api.v1.helpers.projects import (
-    authorize_project_read,
     direct_member_role,
     effective_project_role,
+    generate_project_api_key,
+    is_write_superuser,
+    last_admin_guard,
     load_project_with_members,
+    may_read_projects,
     project_access,
     reject_unknown_analyzers,
 )
-from app.api.v1.helpers.sorting import CASE_INSENSITIVE, SortOrderQuery, case_insensitive_key, case_insensitive_sort
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
@@ -57,6 +50,15 @@ from app.api.v1.helpers.responses import (
     csv_response,
     export_filename,
 )
+from app.api.v1.helpers.sorting import (
+    CASE_INSENSITIVE,
+    SortOrderQuery,
+    case_insensitive_key,
+    case_insensitive_sort,
+    get_sort_field,
+    parse_sort_direction,
+)
+from app.api.v1.helpers.teams import team_refs
 from app.core.constants import (
     ARCHIVE_BATCH_SIZE,
     MAX_PROJECT_TEAMS,
@@ -81,20 +83,19 @@ from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.github_instances import GitHubInstanceRepository
-from app.repositories.projects import ProjectRepository
+from app.repositories.gitlab_instances import GitLabInstanceRepository
+from app.repositories.projects import (
+    ProjectRepository,
+    ownership_fields,
+    set_owners_pipeline,
+)
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
 from app.repositories.waivers import WaiverRepository
 from app.repositories.webhooks import WebhookRepository
-from app.repositories.gitlab_instances import GitLabInstanceRepository
-from app.repositories.projects import (
-    ownership_fields,
-    set_owners_pipeline,
-)
 from app.schemas.pagination import Page
-from app.schemas.projections import ScanMinimal
 from app.schemas.project import (
     BranchInfo,
     BranchTip,
@@ -115,6 +116,7 @@ from app.schemas.project import (
     ScanReleaseRef,
     ScanWithReleases,
 )
+from app.schemas.projections import ScanMinimal
 from app.services.analytics.scopes import read_scope_projects
 from app.services.audit.history import record_license_policy_change
 from app.services.branch_sync import sync_project_branches
