@@ -1,5 +1,6 @@
 import pytest
 from pymongo import UpdateOne
+from pymongo.errors import BulkWriteError
 
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -104,3 +105,33 @@ async def test_bulk_write_does_not_count_an_update_that_changed_nothing():
         _NOTHING_LEFT,
         _NO_UPSERT,
     )
+
+
+@pytest.mark.asyncio
+async def test_a_bulk_upsert_inserts_the_filters_equality_fields():
+    db = FakeDatabase()
+
+    await db.findings.bulk_write([UpdateOne({"_id": "b", "scan_id": "s"}, {"$set": {"n": 20}}, upsert=True)])
+
+    assert await db.findings.find_one({"_id": "b"}) == {"_id": "b", "scan_id": "s", "n": 20}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("ordered", "kept"), [(True, ["a"]), (False, ["a", "c"])])
+async def test_a_bulk_upsert_colliding_on_a_unique_index_is_a_bulk_write_error(ordered, kept):
+    db = FakeDatabase()
+    await db.findings.create_index([("key", 1)], unique=True)
+    await db.findings.insert_one({"_id": "a", "key": "k", "stamp": 2})
+
+    with pytest.raises(BulkWriteError) as raised:
+        await db.findings.bulk_write(
+            [
+                UpdateOne({"key": "k", "stamp": {"$lt": 1}}, {"$set": {"stamp": 1}}, upsert=True),
+                UpdateOne({"_id": "c", "key": "other"}, {"$set": {"stamp": 1}}, upsert=True),
+            ],
+            ordered=ordered,
+        )
+
+    assert [(error["index"], error["code"]) for error in raised.value.details["writeErrors"]] == [(0, 11000)]
+    assert raised.value.details["nUpserted"] == len(kept) - 1
+    assert sorted(doc["_id"] for doc in await db.findings.find({}).to_list(None)) == kept

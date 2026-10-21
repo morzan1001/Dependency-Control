@@ -13,6 +13,7 @@ from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
 from app.services import dependency_store
 from app.services.dependency_store import store_scan_dependencies
 from app.services.sbom_parser import parse_sbom
+from tests.helpers.databases import DATABASES
 from tests.helpers.profiler import inserts_and_upserts, profiled
 
 _PROJECT_ID = "test-project-id"
@@ -256,9 +257,9 @@ async def test_rows_a_concurrent_store_inserted_first_are_written_over_once(db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.live_mongo
+@pytest.mark.parametrize("database", DATABASES)
 @pytest.mark.parametrize("fresh", [True, False])
-async def test_an_earlier_store_landing_after_a_later_one_leaves_the_later_rows(db, fresh):
+async def test_an_earlier_store_landing_after_a_later_one_leaves_the_later_rows(db, fresh, database):
     await create_indexes(db)
     repo = DependencyRepository(db)
     earlier_at = datetime.now(timezone.utc).replace(microsecond=0)

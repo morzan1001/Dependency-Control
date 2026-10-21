@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from bson import ObjectId
-from pymongo.errors import OperationFailure
+from pymongo.errors import BulkWriteError, DuplicateKeyError, OperationFailure
 
 from app.repositories.releases import RELEASES_UPSERT_KEY_FIELDS
 
@@ -1223,8 +1223,6 @@ def _add_to_set_values(value: Any) -> list:
 
 def _duplicate_key_error(collision: str) -> Exception:
     """Carries keyPattern like the driver's error, which is how callers tell the colliding index apart."""
-    from pymongo.errors import DuplicateKeyError
-
     key_pattern = {field: 1 for field in collision.split(", ")}
     return DuplicateKeyError(f"E11000 duplicate key error: {collision}", details={"keyPattern": key_pattern})
 
@@ -1283,8 +1281,6 @@ class FakeCollection:
         return result
 
     async def insert_many(self, docs: list, ordered: bool = True):
-        from pymongo.errors import BulkWriteError
-
         inserted = []
         write_errors = []
         for index, doc in enumerate(docs):
@@ -1541,7 +1537,8 @@ class FakeCollection:
         modified = 0
         matched = 0
         upserted = 0
-        for op in ops:
+        write_errors = []
+        for index, op in enumerate(ops):
             flt = op._filter
             upd = op._doc
             upsert = op._upsert
@@ -1568,11 +1565,18 @@ class FakeCollection:
                     self._apply_update(self._docs[key], upd)
                     modified += not _bson_identical(self._docs[key], before)
             elif upsert:
-                upserted += 1
-                doc: dict = dict(upd.get(_SET_ON_INSERT, {}))
-                self._apply_update(doc, upd, skip_set_on_insert=True)
-                doc.setdefault("_id", ObjectId())
-                self._docs[doc["_id"]] = _bsonify(doc)
+                try:
+                    self._insert_upserted(flt, upd)
+                except DuplicateKeyError as error:
+                    write_errors.append({"index": index, "code": 11000, "errmsg": str(error)})
+                    if ordered:
+                        break
+                else:
+                    upserted += 1
+        if write_errors:
+            raise BulkWriteError(
+                {"writeErrors": write_errors, "nUpserted": upserted, "nMatched": matched, "nModified": modified}
+            )
         result = MagicMock()
         result.modified_count = modified
         result.matched_count = matched
