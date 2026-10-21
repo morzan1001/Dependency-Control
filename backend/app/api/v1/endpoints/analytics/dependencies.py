@@ -262,7 +262,6 @@ async def get_component_findings(
     if not projects:
         return []
 
-    # Resolved like the tables that link here, or a release hotspot is looked up on the branch tip and shows none.
     project_name_map, scan_ids = await get_projects_with_scans(projects, db, release_environment=release_environment)
 
     if not scan_ids:
@@ -270,7 +269,6 @@ async def get_component_findings(
 
     finding_repo = FindingRepository(db)
 
-    # Waived findings are excluded, as everywhere else, so this list agrees with the severity tiles and hotspots.
     query = await _package_finding_query(finding_repo, scan_ids, component, version)
     response.headers["X-Total-Count"] = str(await finding_repo.count(query))
     docs = await finding_repo.aggregate(
