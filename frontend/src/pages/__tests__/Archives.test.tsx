@@ -185,14 +185,21 @@ describe('ArchivesPage filter bar', () => {
     expect(screen.queryByLabelText('From')).not.toBeInTheDocument()
   })
 
-  it('keeps the filters and the empty state when the instance configuration fails to load', () => {
+  it('still asks the server for archives and keeps the filters when the instance configuration fails to load', () => {
     useAppConfigMock.mockReturnValue({ data: undefined, isPending: false })
-    mockUseAdminArchives.mockReturnValue({ data: undefined, isLoading: false })
 
     renderPage()
 
+    expect(mockUseAdminArchives).toHaveBeenLastCalledWith(1, 20, undefined, true)
     expect(screen.getByLabelText('Branch')).toBeInTheDocument()
-    expect(screen.getByText('No archived scans found.')).toBeInTheDocument()
+  })
+
+  it('waits for the instance configuration before asking for archives', () => {
+    useAppConfigMock.mockReturnValue({ data: undefined, isPending: true })
+
+    renderPage()
+
+    expect(mockUseAdminArchives).toHaveBeenLastCalledWith(1, 20, undefined, false)
   })
 })
 

@@ -38,8 +38,8 @@ export default function ArchivesPage() {
   }
 
   const { data: appConfig, isPending: configPending } = useAppConfig()
-  const storageConfigured = appConfig?.archive_enabled === true
-  const { data, isLoading } = useAdminArchives(page, size, filters, storageConfigured)
+  const storageOff = appConfig?.archive_enabled === false
+  const { data, isLoading } = useAdminArchives(page, size, filters, !configPending && !storageOff)
 
   const items = data?.items || []
   const totalPages = data?.pages || 1
@@ -56,7 +56,7 @@ export default function ArchivesPage() {
       )
     }
 
-    if (appConfig && !storageConfigured) {
+    if (storageOff) {
       return <ArchiveEmptyState hint="Archive storage is not configured." />
     }
 
@@ -129,7 +129,7 @@ export default function ArchivesPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {appConfig?.archive_enabled !== false && (
+          {!storageOff && (
             <ArchiveFilterBar value={filter} onChange={updateFilter}>
               <div>
                 <label htmlFor="admin-branch-filter" className="text-xs font-medium text-muted-foreground mb-1 block">Branch</label>
