@@ -52,7 +52,7 @@ from app.services.aggregation.versions import (
     version_covered,
 )
 from app.services.analytics.scopes import ScopeResolver, read_scope_project_ids
-from app.services.component_identity import build_component_index, lookup_component
+from app.services.component_identity import build_component_index, finding_component_name, lookup_component
 from app.services.enrichment.scoring import fold_enrichments
 from app.services.enrichment.service import advisory_enrichment
 from app.services.recommendation.common import live_advisories, live_cves
@@ -477,7 +477,8 @@ async def gather_cross_project_data(
         )
         vulnerable_index = build_component_index(vulnerable_by_component)
         for package in shared_packages:
-            vulnerable = lookup_component(vulnerable_index, package["name"]) or set()
+            name = finding_component_name(package["type"], package["name"])
+            vulnerable = lookup_component(vulnerable_index, name) or set()
             package["vulnerable_versions"] = [v for v in package["versions"] if version_covered(vulnerable, v)]
         cross_project_data["shared_packages"] = shared_packages
 

@@ -109,6 +109,17 @@ async def test_a_shared_package_names_the_versions_a_compared_project_holds_a_vu
             {"scan_id": "s-p2", "project_id": "p2", "name": "lodash", "version": "4.17.21"},
             {"scan_id": "s-current", "project_id": "current", "name": "flask", "version": "2.0.0"},
             {"scan_id": "s-p1", "project_id": "p1", "name": "flask", "version": "3.0.0"},
+            *(
+                {
+                    "scan_id": f"s-{project_id}",
+                    "project_id": project_id,
+                    "name": package.split("/")[1],
+                    "version": version,
+                    "purl": f"pkg:maven/{package}@{version}",
+                }
+                for package in ("org.apache.logging.log4j/log4j-core", "com.fasterxml.jackson.core/jackson-databind")
+                for project_id, version in (("current", "2.14.1"), ("p1", "2.17.1"))
+            ),
         ]
     )
     await db.findings.insert_many(
@@ -116,6 +127,13 @@ async def test_a_shared_package_names_the_versions_a_compared_project_holds_a_vu
             {**_finding("f1", "p2", [{"id": _LODASH_CVE}]), "version": "v4.17.21"},
             {**_finding("f2", "p1", [{"id": "CVE-2026-0001"}], waived=True), "version": "4.17.15"},
             {**_finding("f3", "current", [{"id": "CVE-2026-0002"}]), "component": "flask"},
+            # Trivy names a Maven package group:artifact, grype only its artifact.
+            {
+                **_finding("f4", "current", [{"id": "CVE-2021-44228"}]),
+                "component": "org.apache.logging.log4j:log4j-core",
+                "version": "2.14.1",
+            },
+            {**_finding("f5", "p1", [{"id": "CVE-2020-36518"}]), "component": "jackson-databind", "version": "2.17.1"},
         ]
     )
 
@@ -123,8 +141,10 @@ async def test_a_shared_package_names_the_versions_a_compared_project_holds_a_vu
 
     assert data is not None
     assert {p["name"]: sorted(p["vulnerable_versions"]) for p in data["shared_packages"]} == {
+        "com.fasterxml.jackson.core/jackson-databind": ["2.17.1"],
         "flask": ["2.0.0", "3.0.0"],
         "lodash": ["4.17.21"],
+        "org.apache.logging.log4j/log4j-core": ["2.14.1"],
     }
 
 

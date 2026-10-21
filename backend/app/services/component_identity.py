@@ -146,6 +146,11 @@ def lookup_component(index: Mapping[str, _T], component: str, default: _T | None
     return default if found is None else found
 
 
+def finding_component_name(package_type: str, path: str) -> str:
+    """Scanners name a Maven package group:artifact, where its purl path reads group/artifact."""
+    return path.replace("/", ":") if package_type == "maven" else path
+
+
 def component_match_query(component: str) -> dict[str, Any]:
     """@scope/component is another npm package, not a qualified form."""
     escaped = re.escape(component)
