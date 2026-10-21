@@ -37,6 +37,11 @@ import {
 import { priorityConfig, typeConfig, effortConfig } from './config'
 
 const FILES_LISTED = 5
+const NO_CLEAN_VERSION = (
+  <div className="mt-1">
+    <WarningHint>No version in use is free of known vulnerabilities</WarningHint>
+  </div>
+)
 const SEVERITY_CHIPS = [
   ['critical', 'Critical'],
   ['high', 'High'],
@@ -283,11 +288,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                         → {pkg.suggestion}
                       </div>
                     )}
-                    {pkg.suggestion === null && (
-                      <div className="mt-1">
-                        <WarningHint>No version in use is free of known vulnerabilities</WarningHint>
-                      </div>
-                    )}
+                    {pkg.suggestion === null && NO_CLEAN_VERSION}
                   </div>
                 ))}
               </ActionSection>
@@ -425,11 +426,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                         Recommended: <span className="font-mono">{pkg.suggestion}</span>
                       </div>
                     )}
-                    {pkg.suggestion === null && (
-                      <div className="mt-1">
-                        <WarningHint>No version in use is free of known vulnerabilities</WarningHint>
-                      </div>
-                    )}
+                    {pkg.suggestion === null && NO_CLEAN_VERSION}
                   </div>
                 ))}
               </ActionSection>
