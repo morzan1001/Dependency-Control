@@ -1,5 +1,7 @@
 """OSV ecosystem_specific must survive normalization and aggregation, or the symbol tier is unreachable."""
 
+import pytest
+
 from app.api.v1.helpers.callgraph import parse_generic_format
 from app.core.constants import REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO, REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
 from app.repositories.projections import CallgraphMinimal
@@ -40,9 +42,9 @@ def _aggregated_finding_dict():
     return findings[0].model_dump()
 
 
-def _enriched(finding: dict, module_usage: dict) -> dict:
+def _enriched(finding: dict, module_usage: dict, language: str = "go") -> dict:
     callgraph = CallgraphMinimal(
-        _id="cg-go", language="go", module_usage=module_usage, analyzed_modules=list(module_usage)
+        _id=f"cg-{language}", language=language, module_usage=module_usage, analyzed_modules=list(module_usage)
     )
     enrich_findings_with_reachability([finding], [callgraph], {})
     return finding["details"]["reachability"]
@@ -159,13 +161,19 @@ def test_symbols_searched_and_not_used_rank_below_every_import_verdict():
     assert compute_stats([finding], {}).reachability.reachable_count_high_confidence == 0
 
 
-def test_a_stored_call_only_usage_is_worded_from_its_call_edges():
-    module = "github.com/sirupsen/logrus"
+@pytest.mark.parametrize(
+    ("language", "module", "component"),
+    [
+        pytest.param("go", "github.com/sirupsen/logrus", "github.com/sirupsen/logrus", id="go-module"),
+        pytest.param("python", "requests.sessions", "requests", id="python-submodule-folds-into-its-package"),
+    ],
+)
+def test_a_stored_call_only_usage_is_worded_from_its_call_edges(language, module, component):
     stored = {
         module: {"module": module, "import_count": 0, "call_count": 3, "import_locations": [], "used_symbols": ["Info"]}
     }
 
-    reach = _enriched({"type": "vulnerability", "component": module, "details": {}}, stored)
+    reach = _enriched({"type": "vulnerability", "component": component, "details": {}}, stored, language)
 
     assert reach["is_reachable"] is True
     assert "3 call edge(s)" in reach["message"]
