@@ -422,7 +422,7 @@ async def test_a_globally_waived_cve_counts_in_neither_the_kev_nor_the_reachabil
     from app.schemas.enrichment import VulnerabilityEnrichment
     from app.services.enrichment.service import apply_enrichments, vulnerability_enrichment_service
 
-    in_kev = {_FIRST_CVE: VulnerabilityEnrichment(cve=_FIRST_CVE, risk_score=40.0, is_kev=True)}
+    in_kev = {_FIRST_CVE: VulnerabilityEnrichment(cve=_FIRST_CVE, risk_score=40.0, in_kev=True)}
 
     async def enrich_findings(findings, github_token=None):
         for finding in findings:
