@@ -130,7 +130,7 @@ class Scan(MongoDocument, CreatedAtModel):
     # Archive metadata written before this restore is stale: the scan is live again.
     restored_at: datetime | None = None
 
-    # Monotone: ingest only ever promotes it. Where the artefact runs lives in the releases collection.
+    # Denormalised 'has a releases row' flag for the scans_released_list index; db.releases is authoritative.
     is_release: bool = False
 
     is_rescan: bool = False
