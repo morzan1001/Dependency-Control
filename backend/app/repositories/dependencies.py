@@ -8,6 +8,13 @@ from app.models.dependency import Dependency
 from app.repositories.base import DUPLICATE_KEY_ERROR, BaseRepository
 
 
+def _duplicate_indexes(error: BulkWriteError) -> list[int]:
+    errors = error.details["writeErrors"]
+    if error.details.get("writeConcernErrors") or any(err["code"] != DUPLICATE_KEY_ERROR for err in errors):
+        raise error
+    return [err["index"] for err in errors]
+
+
 class DependencyRepository(BaseRepository[Dependency]):
     collection_name = "dependencies"
     model_class = Dependency
@@ -18,25 +25,28 @@ class DependencyRepository(BaseRepository[Dependency]):
                 await self.collection.insert_many([d.model_dump(by_alias=True) for d in dependencies], ordered=False)
                 return
             except BulkWriteError as e:
-                errors = e.details["writeErrors"]
-                if e.details.get("writeConcernErrors") or any(err["code"] != DUPLICATE_KEY_ERROR for err in errors):
-                    raise
-                dependencies = [dependencies[err["index"]] for err in errors]
-        await self.collection.bulk_write(
-            [
-                UpdateOne(
-                    {"scan_id": d.scan_id, "name": d.name, "version": d.version, "purl": d.purl},
-                    {
-                        "$set": d.model_dump(by_alias=True, exclude={"id", "created_at"}),
-                        "$max": {"created_at": d.created_at},
-                        "$setOnInsert": {"_id": d.id},
-                    },
-                    upsert=True,
-                )
-                for d in dependencies
-            ],
-            ordered=False,
-        )
+                dependencies = [dependencies[index] for index in _duplicate_indexes(e)]
+        try:
+            await self.collection.bulk_write(
+                [
+                    UpdateOne(
+                        {
+                            "scan_id": d.scan_id,
+                            "name": d.name,
+                            "version": d.version,
+                            "purl": d.purl,
+                            "$nor": [{"created_at": {"$gt": d.created_at}}],
+                        },
+                        {"$set": d.model_dump(by_alias=True, exclude={"id"}), "$setOnInsert": {"_id": d.id}},
+                        upsert=True,
+                    )
+                    for d in dependencies
+                ],
+                ordered=False,
+            )
+        except BulkWriteError as e:
+            # A row a later store wrote misses the filter, and its upsert collides on the unique index instead.
+            _duplicate_indexes(e)
 
     async def get_unique_packages(self, scan_ids: list[str]) -> int:
         pipeline: list[dict[str, Any]] = [

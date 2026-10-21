@@ -257,6 +257,30 @@ async def test_rows_a_concurrent_store_inserted_first_are_written_over_once(db):
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
+@pytest.mark.parametrize("fresh", [True, False])
+async def test_an_earlier_store_landing_after_a_later_one_leaves_the_later_rows(db, fresh):
+    await create_indexes(db)
+    repo = DependencyRepository(db)
+    earlier_at = datetime.now(timezone.utc).replace(microsecond=0)
+    later_at = earlier_at + timedelta(seconds=1)
+    later = dependency_store._parsed_dep_to_dependency(_dep("a", scope="runtime"), _PROJECT_ID, _SCAN_ID, later_at, {})
+    earlier = [dependency_store._parsed_dep_to_dependency(_dep(n), _PROJECT_ID, _SCAN_ID, earlier_at, {}) for n in "ab"]
+
+    await repo.upsert_many([later], fresh=True)
+    await repo.upsert_many(earlier, fresh=fresh)
+
+    inventory = await _inventory(db)
+    assert sorted(inventory) == ["a", "b"]
+    assert (inventory["a"]["_id"], inventory["a"]["scope"], inventory["a"]["created_at"]) == (
+        later.id,
+        "runtime",
+        later_at,
+    )
+    assert inventory["b"]["created_at"] == earlier_at
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_first_store_that_fails_part_way_is_completed_by_its_retry(db, monkeypatch):
     await create_indexes(db)
     repo = DependencyRepository(db)
