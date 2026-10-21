@@ -106,9 +106,11 @@ async def _stamp_advisories(
     scoped = [(waiver, waiver_criteria(waiver)) for waiver in waivers]
     waived: dict[str, str | None] = {}
     for doc in await finding_repo.find_advisory_state(scan_id, clause):
-        stored = (doc.get("details") or {}).get("vulnerabilities") or []
+        details = doc.get("details") or {}
+        stored = details.get("vulnerabilities") or []
         entries = [{**entry, "waived": False, "waiver_reason": None} for entry in stored]
-        record = {**doc, "waived": False, "details": {"vulnerabilities": entries}}
+        rollup = {key: details[key] for key in ADVISORY_ENRICHMENT_KEYS if key in details}
+        record = {**doc, "waived": False, "details": {**rollup, "vulnerabilities": entries}}
         for waiver, criteria in scoped:
             if record_matches(record, criteria) and waive_advisories(record, waiver):
                 counts[waiver.id] += 1

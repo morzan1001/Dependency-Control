@@ -136,7 +136,11 @@ def roll_up_advisories(record: dict[str, Any]) -> None:
     severity = max((entry.get("severity") for entry in live), key=get_severity_value)
     if severity:
         record["severity"] = severity
+    # Only advisories enriched before maturity was written per advisory all lack it; their document keeps its own.
+    kept_maturity = None if any(entry.get("exploit_maturity") for entry in entries) else details.get("exploit_maturity")
     roll_up_stored_enrichments(details, live)
+    if kept_maturity:
+        details["exploit_maturity"] = kept_maturity
     if not record.get("waived") and all(entry.get("waived") for entry in entries):
         record["waived"] = True
         record["waiver_reason"] = entries[0].get("waiver_reason")
