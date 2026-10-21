@@ -454,6 +454,7 @@ class TestMongoDocumentIdConsolidation:
             "asset_type": "algorithm",
             "primitive": "hash",
         },
+        "app.models.crypto_policy:CryptoPolicy": {"scope": "system"},
         "app.models.compliance_report:ComplianceReport": {
             "scope": "user",
             "framework": "bsi-tr-02102",
