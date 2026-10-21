@@ -897,7 +897,7 @@ GITLAB_TEAM_SYNC_WINDOW_SECONDS = 600
 # Profile emails rarely change, and each is a request per member of every holding team.
 GITHUB_USER_EMAIL_CACHE_TTL = 21600
 
-# One request per organisation team: at an hour the map spends ~313 of the token's 5000 hourly requests.
+# One request per organisation team; a shorter TTL spends the token's hourly budget.
 GITHUB_ORG_REPO_MAP_CACHE_TTL = 3600
 
 # calculate_risk_score of a CVSS 9.0 CVE at EPSS_HIGH_THRESHOLD; a CVE outside KEV scores at most 65.
@@ -918,7 +918,7 @@ HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS: int = 24
 
 HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS: int = 6
 
-# Night in europe-west1, so the reconcile's repair writes stay out of the working day.
+# UTC hour of the nightly reconcile, outside working hours.
 HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC: int = 2
 
 # Rescans each build keeps, failed ones included; older runs are near-identical full copies of the same SBOM.
