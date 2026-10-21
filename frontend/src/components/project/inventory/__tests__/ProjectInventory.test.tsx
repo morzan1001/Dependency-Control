@@ -80,12 +80,12 @@ describe('ProjectInventory', () => {
     api.getStats.mockResolvedValue(stats)
     api.getLicenses.mockResolvedValue({ scan: stats.scan, items: [] })
     api.getComponents.mockImplementation(async (_, params) => ({
-      scan: stats.scan, total: 50, page: params?.page ?? 1, page_size: 25,
+      scan: stats.scan, total: 50, page: params?.page ?? 1, size: 25, pages: 2, page_size: 25,
       items: [{ name: `lodash-${params?.branch}-${params?.page}`, version: '1', latest_version: null, ecosystem: 'npm',
         license: null, license_category: null, direct: true, eol: false, outdated: false, purl: null }],
     }))
     api.getCrypto.mockImplementation(async (_, params) => ({
-      scan: stats.scan, total: 50, page: params?.page ?? 1, page_size: 25,
+      scan: stats.scan, total: 50, page: params?.page ?? 1, size: 25, pages: 2, page_size: 25,
       items: [{ name: `rsa-${params?.branch}-${params?.page}`, asset_type: 'algorithm', primitive: 'pke', variant: 'RSA',
         key_size_bits: 2048, location_count: 1, locations: [] }],
     }))
@@ -130,8 +130,8 @@ describe('ProjectInventory', () => {
     const api = vi.mocked(inventoryApiModule.inventoryApi)
     api.getStats.mockResolvedValue({ ...stats, crypto_asset_count: 0, cbom_evaluated: false })
     api.getLicenses.mockResolvedValue({ scan: stats.scan, items: [] })
-    api.getComponents.mockResolvedValue({ scan: stats.scan, total: 0, page: 1, page_size: 25, items: [] })
-    api.getCrypto.mockResolvedValue({ scan: stats.scan, total: 0, page: 1, page_size: 25, items: [] })
+    api.getComponents.mockResolvedValue({ scan: stats.scan, total: 0, page: 1, size: 25, pages: 1, page_size: 25, items: [] })
+    api.getCrypto.mockResolvedValue({ scan: stats.scan, total: 0, page: 1, size: 25, pages: 1, page_size: 25, items: [] })
 
     renderInventory()
 
@@ -146,8 +146,8 @@ describe('ProjectInventory', () => {
     const api = vi.mocked(inventoryApiModule.inventoryApi)
     api.getStats.mockResolvedValue(stats)
     api.getLicenses.mockResolvedValue({ scan: stats.scan, items: [] })
-    api.getComponents.mockResolvedValue({ scan: stats.scan, total: 0, page: 1, page_size: 25, items: [] })
-    api.getCrypto.mockResolvedValue({ scan: stats.scan, total: 0, page: 1, page_size: 25, items: [] })
+    api.getComponents.mockResolvedValue({ scan: stats.scan, total: 0, page: 1, size: 25, pages: 1, page_size: 25, items: [] })
+    api.getCrypto.mockResolvedValue({ scan: stats.scan, total: 0, page: 1, size: 25, pages: 1, page_size: 25, items: [] })
 
     renderInventory()
 

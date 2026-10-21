@@ -1,3 +1,5 @@
+import type { PaginatedResponse } from './common';
+
 export interface InventoryScanContext {
   scan_id: string;
   branch: string;
@@ -30,11 +32,8 @@ export interface ComponentItem {
   purl?: string | null;
 }
 
-export interface ComponentsPage {
+export interface ComponentsPage extends PaginatedResponse<ComponentItem> {
   scan: InventoryScanContext;
-  items: ComponentItem[];
-  total: number;
-  page: number;
   page_size: number;
 }
 
@@ -61,11 +60,8 @@ export interface CryptoItem {
   locations: string[];
 }
 
-export interface CryptoPage {
+export interface CryptoPage extends PaginatedResponse<CryptoItem> {
   scan: InventoryScanContext;
-  items: CryptoItem[];
-  total: number;
-  page: number;
   page_size: number;
 }
 

@@ -6,6 +6,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, csv_response, export_filename
 from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
@@ -90,7 +91,9 @@ async def inventory_components(
         sort_by=sort_by,
         direction=parse_sort_direction(sort_order),
     )
-    return ComponentsPageResponse(scan=scan_context(scan), items=items, total=total, page=page, page_size=page_size)
+    return ComponentsPageResponse(
+        scan=scan_context(scan), items=items, page_size=page_size, **page_meta(total, (page - 1) * page_size, page_size)
+    )
 
 
 @router.get("/projects/{project_id}/inventory/components/export", responses=RESP_AUTH_404)
@@ -132,7 +135,9 @@ async def inventory_crypto(
 ) -> CryptoPageResponse:
     project, scan = scope
     items, total = await get_crypto_page(db, project.id, scan.id, page=page, page_size=page_size, search=search)
-    return CryptoPageResponse(scan=scan_context(scan), items=items, total=total, page=page, page_size=page_size)
+    return CryptoPageResponse(
+        scan=scan_context(scan), items=items, page_size=page_size, **page_meta(total, (page - 1) * page_size, page_size)
+    )
 
 
 @router.get("/projects/{project_id}/inventory/crypto/export", responses=RESP_AUTH_404)

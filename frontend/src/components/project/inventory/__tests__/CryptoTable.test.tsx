@@ -14,7 +14,7 @@ const page = {
     { name: 'TLS handshake', asset_type: 'protocol', primitive: 'RSA', variant: 'RSA-2048', key_size_bits: 2048, location_count: 3, locations: ['a.py:10', 'b.py:20', 'c.py:30'] },
     { name: 'hash.py:5', asset_type: 'algorithm', primitive: 'MD5', variant: null, key_size_bits: null, location_count: 1, locations: ['hash.py:5'] },
   ],
-  total: 2, page: 1, page_size: 25,
+  total: 2, page: 1, size: 25, pages: 1, page_size: 25,
 }
 
 function renderTable(cbomEvaluated?: boolean) {
@@ -88,6 +88,13 @@ describe('CryptoTable', () => {
     const header = screen.getByRole('heading', { name: 'Cryptography' }).parentElement?.parentElement
     expect(header).toHaveClass('flex-col', 'sm:flex-row', 'sm:items-center', 'sm:justify-between')
     expect(header).toContainElement(screen.getByRole('button', { name: /download csv/i }))
+  })
+
+  it('counts its pages as the response does', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getCrypto).mockResolvedValue({ ...page, pages: 3 })
+    renderTable()
+
+    expect(await screen.findByText('Page 1 of 3')).toBeInTheDocument()
   })
 
   it("names an empty table under it, where a phone shows the message, instead of in a row centred on the scrolling table", async () => {

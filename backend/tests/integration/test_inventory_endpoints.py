@@ -247,12 +247,18 @@ async def test_components_search_and_pagination(client, db, member_auth_headers)
 
     resp = await client.get(
         f"/api/v1/projects/{_PID}/inventory/components",
-        params={"search": "pkg-", "page": 1, "page_size": 2},
+        params={"search": "pkg-", "page": 2, "page_size": 2},
         headers=member_auth_headers,
     )
     body = resp.json()
-    assert body["total"] == 3
-    assert len(body["items"]) == 2
+    assert {key: body[key] for key in ("total", "page", "size", "pages", "page_size")} == {
+        "total": 3,
+        "page": 2,
+        "size": 2,
+        "pages": 2,
+        "page_size": 2,
+    }
+    assert len(body["items"]) == 1
 
 
 @pytest.mark.asyncio
@@ -669,7 +675,13 @@ async def test_crypto_search_respects_total_count(client, db, member_auth_header
         headers=member_auth_headers,
     )
     body = resp.json()
-    assert body["total"] == 2
+    assert {key: body[key] for key in ("total", "page", "size", "pages", "page_size")} == {
+        "total": 2,
+        "page": 1,
+        "size": 1,
+        "pages": 2,
+        "page_size": 1,
+    }
     assert len(body["items"]) == 1
 
 

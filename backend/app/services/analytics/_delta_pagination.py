@@ -5,6 +5,7 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable
 from typing import TypeVar
 
+from app.api.v1.helpers.pagination import page_meta
 from app.schemas.scan_delta import ScanDeltaResponse
 
 # Component items split `changed` into two kinds; the filter vocabulary keeps one.
@@ -30,7 +31,7 @@ def page_of(comparison: ScanDeltaResponse, change: str | None, page: int, page_s
             "items": items[start : start + page_size],
             "page": page,
             "page_size": page_size,
-            "total_pages": max(1, -(-len(items) // page_size)),
+            "total_pages": page_meta(len(items), start, page_size)["pages"],
         }
     )
 

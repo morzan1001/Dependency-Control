@@ -49,8 +49,6 @@ export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableP
     page, pageSize: DEFAULT_PAGE_SIZE, search: debouncedSearch || undefined, sortBy, sortOrder,
   })
 
-  const totalPages = data ? Math.max(1, Math.ceil(data.total / data.page_size)) : 1
-
   const handleDownload = () => downloadServerFile(
     () => inventoryApi.exportTable(projectId, 'components', branch),
     'components.csv',
@@ -123,7 +121,7 @@ export function ComponentsTable({ projectId, branch }: Readonly<ComponentsTableP
             <p className="px-4 py-8 text-center text-sm text-muted-foreground">No components found.</p>
           )}
         </div>
-        <Pagination page={page} totalPages={totalPages} nextDisabled={isPlaceholderData} onChange={setPage} />
+        <Pagination page={page} totalPages={data?.pages ?? 1} nextDisabled={isPlaceholderData} onChange={setPage} />
       </CardContent>
     </Card>
   )

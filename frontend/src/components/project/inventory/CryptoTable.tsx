@@ -36,8 +36,6 @@ export function CryptoTable({ projectId, branch, cbomEvaluated }: Readonly<Crypt
     page, pageSize: DEFAULT_PAGE_SIZE,
   })
 
-  const totalPages = data ? Math.max(1, Math.ceil(data.total / data.page_size)) : 1
-
   const handleDownload = () => downloadServerFile(
     () => inventoryApi.exportTable(projectId, 'crypto', branch),
     'crypto.csv',
@@ -99,7 +97,7 @@ export function CryptoTable({ projectId, branch, cbomEvaluated }: Readonly<Crypt
             <p className="px-4 py-8 text-center text-sm text-muted-foreground">{cbomEvaluated ? NO_CRYPTO_IN_CBOM : NO_CBOM}.</p>
           )}
         </div>
-        <Pagination page={page} totalPages={totalPages} nextDisabled={isPlaceholderData} onChange={setPage} />
+        <Pagination page={page} totalPages={data?.pages ?? 1} nextDisabled={isPlaceholderData} onChange={setPage} />
       </CardContent>
     </Card>
   )

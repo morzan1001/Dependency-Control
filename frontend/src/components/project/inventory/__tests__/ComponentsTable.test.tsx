@@ -16,7 +16,7 @@ const page = {
     { name: 'leftpad', version: '0.9.0', latest_version: null, ecosystem: 'npm',
       license: null, license_category: null, direct: false, eol: true, outdated: false, purl: null },
   ],
-  total: 2, page: 1, page_size: 25,
+  total: 2, page: 1, size: 25, pages: 1, page_size: 25,
 }
 
 function renderTable() {
@@ -74,7 +74,7 @@ describe('ComponentsTable', () => {
 
   it('sends one search request after typing stops, on the first page', async () => {
     vi.mocked(inventoryApiModule.inventoryApi.getComponents).mockImplementation(
-      async (_, params) => ({ ...page, total: 50, page: params?.page ?? 1 }),
+      async (_, params) => ({ ...page, total: 50, pages: 2, page: params?.page ?? 1 }),
     )
     renderTable()
     await waitFor(() => expect(screen.getByText('lodash')).toBeInTheDocument())
@@ -92,7 +92,7 @@ describe('ComponentsTable', () => {
 
   it('sorts a clicked column ascending from the first page, and flips it on the next click', async () => {
     vi.mocked(inventoryApiModule.inventoryApi.getComponents).mockImplementation(
-      async (_, params) => ({ ...page, total: 50, page: params?.page ?? 1 }),
+      async (_, params) => ({ ...page, total: 50, pages: 2, page: params?.page ?? 1 }),
     )
     renderTable()
     await waitFor(() => expect(screen.getByText('lodash')).toBeInTheDocument())
@@ -130,6 +130,13 @@ describe('ComponentsTable', () => {
     const controls = screen.getByRole('button', { name: /download csv/i }).parentElement
     expect(controls).toHaveClass('flex-col', 'sm:flex-row')
     expect(screen.getByPlaceholderText('Search components…')).toHaveClass('w-full', 'sm:w-[220px]')
+  })
+
+  it('counts its pages as the response does', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getComponents).mockResolvedValue({ ...page, pages: 3 })
+    renderTable()
+
+    expect(await screen.findByText('Page 1 of 3')).toBeInTheDocument()
   })
 
   it("names an empty table under it, where a phone shows the message, instead of in a row centred on the scrolling table", async () => {

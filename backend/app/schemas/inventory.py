@@ -2,6 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.schemas.pagination import Page
+
 
 class InventoryScanContext(BaseModel):
     scan_id: str
@@ -35,11 +37,8 @@ class ComponentItem(BaseModel):
     purl: str | None = None
 
 
-class ComponentsPageResponse(BaseModel):
+class ComponentsPageResponse(Page[ComponentItem]):
     scan: InventoryScanContext
-    items: list[ComponentItem]
-    total: int
-    page: int
     page_size: int
 
 
@@ -66,9 +65,6 @@ class CryptoItem(BaseModel):
     locations: list[str] = Field(default_factory=list)
 
 
-class CryptoPageResponse(BaseModel):
+class CryptoPageResponse(Page[CryptoItem]):
     scan: InventoryScanContext
-    items: list[CryptoItem]
-    total: int
-    page: int
     page_size: int
