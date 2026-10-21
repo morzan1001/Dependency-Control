@@ -242,12 +242,10 @@ class ScanRepository:
     async def find_one(
         self, query: dict[str, Any], sort: list[tuple] | None = None, projection: dict[str, int] | None = None
     ) -> dict[str, Any] | None:
-        if sort:
-            return await self.collection.find_one(query, projection, sort=sort)
-        return await self.collection.find_one(query, projection)
+        return await self.collection.find_one(query, projection, sort=sort)
 
     async def _tip(self, match: dict[str, Any], projection: dict[str, int] | None = _TIP_PROJECTION) -> dict | None:
-        """A match that folds tiers into one query, as the rescan scheduler's does, runs that query once."""
+        """A match that folds several tiers into one query runs that query once."""
         tried: list[dict[str, Any]] = []
         for tier in _TIP_TIERS:
             query = {**match, **tier}
