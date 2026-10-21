@@ -16,7 +16,7 @@ from app.models.project import Scan
 from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine
 from app.services.analysis.runner import AnalyzerInput
-from tests.helpers.analyzers import run_context, serve_analyzer
+from tests.helpers.analyzers import analyse_scan, run_context, serve_analyzer
 from tests.mocks.fake_mongo import FakeDatabase
 
 _WORKER = "pod-a/worker-0"
@@ -93,9 +93,7 @@ async def test_the_stats_refresh_sets_the_cache_gauges_and_a_health_check_leaves
 
 
 @pytest.mark.asyncio
-async def test_the_worker_gauges_follow_the_queue_and_the_running_workers(monkeypatch):
-    monkeypatch.setattr("app.core.worker.housekeeping_loop", AsyncMock())
-    monkeypatch.setattr("app.core.worker.stale_scan_loop", AsyncMock())
+async def test_the_queue_gauge_follows_the_queue(monkeypatch):
     monkeypatch.setattr("app.core.worker.get_database", AsyncMock(return_value=FakeDatabase()))
     queued = AnalysisWorkerManager(num_workers=3)
     await queued.add_job("a")
@@ -106,11 +104,36 @@ async def test_the_worker_gauges_follow_the_queue_and_the_running_workers(monkey
     await queued.stop()
     assert _sample("worker_queue_size") == 0
 
-    running = AnalysisWorkerManager(num_workers=3)
-    await running.start()
-    assert _sample("worker_active_count") == 3
-    await running.stop()
-    assert _sample("worker_active_count") == 0
+
+@pytest.mark.asyncio
+async def test_the_active_worker_gauge_counts_the_workers_busy_with_a_job(monkeypatch):
+    db = FakeDatabase()
+    await db.projects.insert_one({"_id": "proj-1", "active_analyzers": []})
+    await db.scans.insert_one({"_id": "scan-1", "project_id": "proj-1", "status": "pending", "sbom_refs": []})
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def _held_analysis(**_kwargs):
+        started.set()
+        await release.wait()
+        return SCAN_STATUS_COMPLETED
+
+    monkeypatch.setattr("app.core.worker.housekeeping_loop", AsyncMock())
+    monkeypatch.setattr("app.core.worker.stale_scan_loop", AsyncMock())
+    monkeypatch.setattr("app.core.worker.get_database", AsyncMock(return_value=db))
+    monkeypatch.setattr("app.core.worker.run_analysis", _held_analysis)
+    manager = AnalysisWorkerManager(num_workers=3)
+    await manager.start()
+    try:
+        assert _sample("worker_active_count") == 0
+        await manager.add_job("scan-1")
+        await asyncio.wait_for(started.wait(), timeout=5)
+        assert _sample("worker_active_count") == 1
+        release.set()
+        await asyncio.wait_for(manager.queue.join(), timeout=5)
+        assert _sample("worker_active_count") == 0
+    finally:
+        release.set()
+        await manager.stop()
 
 
 @pytest.mark.asyncio
@@ -193,28 +216,35 @@ async def test_sbom_downloads_count_their_attempt_success_and_failure():
 
 
 def test_findings_are_counted_by_type_and_by_scanner():
-    finding = Finding(
-        id="CVE-1",
-        type=FindingType.VULNERABILITY,
-        severity=Severity.HIGH,
-        component="c",
-        description="d",
-        scanners=["trivy", "grype"],
-    )
+    def finding(finding_id, finding_type, severity, *scanners):
+        return Finding(
+            id=finding_id, type=finding_type, severity=severity, component="c", description="d", scanners=list(scanners)
+        )
+
     moved = _deltas(
         [
             ("analysis_findings_by_type_total", {"type": "vulnerability", "severity": "HIGH"}),
+            ("analysis_findings_by_type_total", {"type": "license", "severity": "MEDIUM"}),
             ("analysis_findings_total", {"analyzer": "trivy", "severity": "HIGH"}),
             ("analysis_findings_total", {"analyzer": "grype", "severity": "HIGH"}),
+            ("analysis_findings_total", {"analyzer": "license_compliance", "severity": "MEDIUM"}),
         ]
     )
-    engine._track_findings_metrics([finding])
-    assert moved() == [1, 1, 1]
+    engine._track_findings_metrics(
+        [
+            finding("CVE-1", FindingType.VULNERABILITY, Severity.HIGH, "trivy", "grype"),
+            finding("CVE-2", FindingType.VULNERABILITY, Severity.HIGH, "trivy"),
+            finding("LIC-GPL", FindingType.LICENSE, Severity.MEDIUM, "license_compliance"),
+        ]
+    )
+    assert moved() == [2, 1, 2, 1, 1]
 
 
 @pytest.mark.asyncio
 async def test_epss_kev_enrichment_counts_the_enriched_findings_their_scores_and_kev_hits(monkeypatch):
-    monkeypatch.setattr(engine.vulnerability_enrichment_service, "enrich_findings", AsyncMock(return_value=(None, [])))
+    monkeypatch.setattr(
+        engine.vulnerability_enrichment_service, "enrich_findings", AsyncMock(return_value=(None, None))
+    )
     monkeypatch.setattr(engine, "AnalysisResultRepository", lambda _db: MagicMock(save_result=AsyncMock()))
     moved = _deltas(
         [
@@ -250,6 +280,6 @@ async def test_a_rescan_run_counts_the_rescan_and_its_aggregation_time(db, monke
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     moved = _deltas([("analysis_rescan_operations_total", {}), ("analysis_aggregation_duration_seconds_count", {})])
 
-    assert await engine.run_analysis(scan.id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan.id, [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert moved() == [1, 1]

@@ -1,5 +1,8 @@
+from collections.abc import Mapping
 from datetime import datetime, timezone
+from typing import Any
 
+from app.core.purl import CopyKey, dependency_copy_key
 from app.models.dependency import Dependency
 from app.repositories.dependencies import DependencyRepository
 from app.schemas.sbom import ParsedDependency, ParsedSBOM
@@ -11,10 +14,17 @@ _CLIP = ("license", "license_url", "description", "author", "publisher", "homepa
 
 
 def _parsed_dep_to_dependency(
-    parsed_dep: ParsedDependency, project_id: str, scan_id: str, written_at: datetime
+    parsed_dep: ParsedDependency,
+    project_id: str,
+    scan_id: str,
+    written_at: datetime,
+    copies: Mapping[CopyKey, dict[str, Any]],
 ) -> Dependency:
     fields = parsed_dep.model_dump()
     fields.update({name: text[:_FREE_TEXT_MAX_CHARS] for name in _CLIP if (text := fields[name])})
+    copied = copies.get(dependency_copy_key(fields["purl"], fields["name"], fields["version"]), {})
+    # The SBOM-declared license is authoritative; a copied one only fills a dependency that lacks it.
+    fields.update({key: value for key, value in copied.items() if key != "license" or not fields["license"]})
     return Dependency(**fields, project_id=project_id, scan_id=scan_id, created_at=written_at)
 
 
@@ -23,6 +33,7 @@ async def store_scan_dependencies(
     project_id: str,
     scan_id: str,
     dep_repo: DependencyRepository,
+    copies: Mapping[CopyKey, dict[str, Any]],
 ) -> int | None:
     """Writes nothing when an SBOM failed (None) so a re-run cannot replace a complete inventory with a partial one."""
     sboms = [sbom for sbom in parsed_sboms if sbom is not None]
@@ -35,7 +46,7 @@ async def store_scan_dependencies(
     for start in range(0, len(merged), _DEP_CHUNK_SIZE):
         chunk = merged[start : start + _DEP_CHUNK_SIZE]
         await dep_repo.upsert_many(
-            [_parsed_dep_to_dependency(dep, project_id, scan_id, written_at) for dep in chunk], fresh
+            [_parsed_dep_to_dependency(dep, project_id, scan_id, written_at, copies) for dep in chunk], fresh
         )
     await dep_repo.delete_older_writes({"scan_id": scan_id}, written_at)
     return len(merged)

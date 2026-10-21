@@ -12,6 +12,7 @@ from app.core.init_db import create_indexes
 from app.models.project import Scan
 from app.services.analysis import engine
 from app.services.analyzers.trivy import TrivyAnalyzer
+from tests.helpers.analyzers import analyse_scan
 from tests.helpers.sboms import store_sbom
 
 _FIXTURES = Path(__file__).parents[1] / "fixtures" / "sbom"
@@ -89,7 +90,7 @@ async def test_each_sbom_is_scanned_from_one_file_of_its_stored_bytes_before_the
     ]
     scan_id, refs = await _stored_scan(db, *stored)
 
-    assert await engine.run_analysis(scan_id, refs, _SCANNERS, db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, refs, _SCANNERS, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     events = await _events(scanners)
     assert [event[0] for event in events[::3]] == ["download", "download"]
@@ -110,7 +111,7 @@ async def test_a_syft_json_sbom_reaches_trivy_converted_and_grype_as_stored(db, 
     converted = await asyncio.to_thread((_FIXTURES / "uvdev.syft.cdx.json").read_bytes)
     scan_id, refs = await _stored_scan(db, stored)
 
-    assert await engine.run_analysis(scan_id, refs, _SCANNERS, db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, refs, _SCANNERS, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     download, *scans = await _events(scanners)
     assert download == ["download", refs[0]["gridfs_id"]]
@@ -140,7 +141,7 @@ async def test_a_trivy_that_outlives_cli_timeout_runs_once_and_the_scan_names_it
     stored = await asyncio.to_thread((_FIXTURES / "cargo.trivy.cdx.json").read_bytes)
     scan_id, refs = await _stored_scan(db, stored)
 
-    status = await engine.run_analysis(scan_id, refs, ["trivy"], db, worker_id=_WORKER)
+    status = await analyse_scan(db, scan_id, refs, ["trivy"], worker_id=_WORKER)
 
     assert status == SCAN_STATUS_COMPLETED_WITH_ERRORS
     assert await _events(scanners) == [["download", refs[0]["gridfs_id"]], ["trivy"]]

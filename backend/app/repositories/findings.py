@@ -25,7 +25,7 @@ FindingIdentity = tuple[Any, Any, Any, Any]
 
 _ADVISORY_PAYLOAD_FIELDS = ("description", "references", "details", "cvss_vector", "ecosystem_specific")
 
-# Every field earliest_detections reads, so it never fetches a document.
+# Every field the fallback over every copy reads, so it never fetches a document.
 FIRST_DETECTION_INDEX = [
     ("project_id", ASCENDING),
     ("component", ASCENDING),
@@ -36,8 +36,17 @@ FIRST_DETECTION_INDEX = [
     ("scan_created_at", ASCENDING),
 ]
 
-# A vulnerability's finding_id names its component@version, so each version's newest copy is one seek.
-NEWEST_VULNERABILITY_INDEX = [("project_id", ASCENDING), ("finding_id", ASCENDING), ("created_at", DESCENDING)]
+# The newest copy per (type, finding_id) is one seek, covered for the fields earliest_detections reads.
+# The server skips ahead only for a single grouped field behind equalities, so each type is its own query.
+NEWEST_COPY_INDEX = [
+    ("project_id", ASCENDING),
+    ("type", ASCENDING),
+    ("finding_id", ASCENDING),
+    ("created_at", DESCENDING),
+    ("component", ASCENDING),
+    ("version", ASCENDING),
+    ("first_seen_at", ASCENDING),
+]
 VULNERABILITIES_ONLY = {"type": FindingType.VULNERABILITY.value}
 
 # KEV advisories are rare, so a partial index over them lets a KEV read skip every other finding of the scan.
@@ -70,6 +79,10 @@ _ADVISORY_WAIVER_FIELDS = ("id", "aliases", "resolved_cve", "severity", "waived"
 def finding_identity(doc: Mapping[str, Any]) -> FindingIdentity:
     """What makes the findings of two scans of one project the same finding."""
     return doc.get("type"), doc.get("component"), doc.get("version"), doc.get("finding_id")
+
+
+def _same_copy(copy: Mapping[str, Any], record: Mapping[str, Any]) -> bool:
+    return copy.get("component") == record.get("component") and copy.get("version") == record.get("version")
 
 
 class FindingRepository(BaseRepository[FindingRecord]):
@@ -123,9 +136,45 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def earliest_detections(
         self, project_id: str, records: Sequence[Mapping[str, Any]]
     ) -> dict[FindingIdentity, datetime]:
-        """Runs on every persist, so it reads only FIRST_DETECTION_INDEX keys."""
+        """Every persist dates its copies with the earliest detection, so an identity's newest copy answers for it."""
+        by_type: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+        for record in records:
+            by_type[record["type"]].append(record)
         earliest: dict[FindingIdentity, datetime] = {}
-        # One $match naming every finding outgrows the 16 MiB command limit on large scans.
+        undated: list[Mapping[str, Any]] = []
+        for finding_type, typed in by_type.items():
+            # One $match naming every finding outgrows the 16 MiB command limit on large scans.
+            for start in range(0, len(typed), _DETECTION_CHUNK):
+                asked = typed[start : start + _DETECTION_CHUNK]
+                newest = await self._newest_copies(project_id, finding_type, {r["finding_id"] for r in asked})
+                for record in asked:
+                    copy = newest.get(record["finding_id"])
+                    # A finding_id shared by several components or versions answers only for its newest copy's.
+                    if copy and copy.get("first_seen_at") and _same_copy(copy, record):
+                        earliest[finding_identity(record)] = copy["first_seen_at"]
+                    else:
+                        undated.append(record)
+        earliest.update(await self._earliest_over_every_copy(project_id, undated))
+        return earliest
+
+    async def _newest_copies(self, project_id: str, finding_type: str, finding_ids: set[str]) -> dict[str, Any]:
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"project_id": project_id, "type": finding_type, "finding_id": {"$in": list(finding_ids)}}},
+            {"$sort": dict(NEWEST_COPY_INDEX)},
+            {
+                "$group": {
+                    "_id": "$finding_id",
+                    **{field: {"$first": f"${field}"} for field in ("component", "version", "first_seen_at")},
+                }
+            },
+        ]
+        return {row["_id"]: row async for row in self.collection.aggregate(pipeline, hint=dict(NEWEST_COPY_INDEX))}
+
+    async def _earliest_over_every_copy(
+        self, project_id: str, records: Sequence[Mapping[str, Any]]
+    ) -> dict[FindingIdentity, datetime]:
+        """Every copy's date, for the identities no newest copy dates."""
+        earliest: dict[FindingIdentity, datetime] = {}
         for start in range(0, len(records), _DETECTION_CHUNK):
             asked = records[start : start + _DETECTION_CHUNK]
             pipeline: list[dict[str, Any]] = [
@@ -172,15 +221,16 @@ class FindingRepository(BaseRepository[FindingRecord]):
         earliest: dict[tuple[str, str], datetime] = {}
         for start in range(0, len(components), _DETECTION_CHUNK):
             chunk = components[start : start + _DETECTION_CHUNK]
+            # A vulnerability's finding_id names its component@version, so its newest copy is that version's.
             versions = await self.collection.distinct(
                 "finding_id", {"project_id": project_id, "component": {"$in": chunk}, **VULNERABILITIES_ONLY}
             )
             newest: list[dict[str, Any]] = [
                 {"$match": {"project_id": project_id, "finding_id": {"$in": versions}, **VULNERABILITIES_ONLY}},
-                {"$sort": dict(NEWEST_VULNERABILITY_INDEX)},
+                {"$sort": dict(NEWEST_COPY_INDEX)},
                 {"$group": {"_id": "$finding_id", **{key: {"$first": value} for key, value in _COPY_DATES.items()}}},
             ]
-            await self._fold_advisory_dates(earliest, newest, NEWEST_VULNERABILITY_INDEX)
+            await self._fold_advisory_dates(earliest, newest, NEWEST_COPY_INDEX)
             # A scan whose analyzer failed or came back partial stores a newest copy that misses advisories.
             if undated := {(c, i) for c in chunk for i in asked[c] if (c, i) not in earliest}:
                 every = [

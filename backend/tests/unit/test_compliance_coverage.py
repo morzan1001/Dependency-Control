@@ -2,11 +2,9 @@
 
 import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.crypto_asset import CryptoAsset
@@ -24,7 +22,6 @@ from app.schemas.compliance import (
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.cbom_parser import parse_cbom
 from app.services.analytics.scopes import ResolvedScope
-from app.services.compliance import engine as engine_module
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.frameworks.base import (
@@ -37,7 +34,7 @@ from app.services.compliance.frameworks.cve_remediation_sla import CveRemediatio
 from app.services.compliance.renderers.base import coverage_statement
 from app.services.compliance.renderers.csv_renderer import CsvRenderer
 from app.services.compliance.renderers.json_renderer import JsonRenderer
-from app.services.compliance.renderers.pdf_renderer import build_template_context
+from app.services.compliance.renderers.pdf_renderer import report_html
 from app.services.compliance.renderers.sarif_renderer import SarifRenderer
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from tests.helpers.cbom import cbom_of, filler_components
@@ -47,7 +44,6 @@ from tests.unit.test_renderer_json import _evaluation, _report
 _PROJECT = "p1"
 _SCAN = "s1"
 _POPULATION = 6
-_TEMPLATE_DIR = Path(engine_module.__file__).resolve().parent / "templates"
 
 _WITHHELD_STATEMENT = "would have rested on finding no match in a capped input"
 _PLAN_ITEM_CAP = 1000
@@ -87,12 +83,6 @@ def _evaluation_with(coverage: EvaluationCoverage):
     evaluation = _evaluation()
     evaluation.coverage = coverage
     return evaluation
-
-
-def _render_report(evaluation, disclaimer: str | None = None) -> str:
-    """The page the PDF renderer renders, built through its own context so the two cannot diverge."""
-    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=select_autoescape(["html"]))
-    return env.get_template("base_report.html").render(**build_template_context(evaluation, _report(), disclaimer))
 
 
 @pytest.mark.asyncio
@@ -187,7 +177,7 @@ def test_sarif_carries_the_statement_on_the_run():
 )
 def test_the_pdf_cover_prints_the_coverage_banner(coverage, expects_alarm):
     """WeasyPrint's native stack is not needed to see what the page says."""
-    html = _render_report(_evaluation_with(coverage))
+    html = report_html(_evaluation_with(coverage), _report())
 
     assert "Coverage:" in html
     assert ('class="coverage-partial"' in html) is expects_alarm
@@ -371,7 +361,7 @@ async def test_csv_and_json_carry_the_reason_beside_the_withheld_status():
 async def test_the_pdf_prints_the_withheld_count_and_the_per_control_reason():
     evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _with_gaps(_GAP)))
 
-    html = _render_report(evaluation)
+    html = report_html(evaluation, _report())
 
     assert "Not Evaluated" in html
     assert 'class="status-reason"' in html
@@ -488,7 +478,7 @@ def test_the_pdf_draws_no_passed_bar_for_a_report_without_controls():
     evaluation.controls = []
     evaluation.summary = build_summary([])
 
-    html = _render_report(evaluation)
+    html = report_html(evaluation, _report())
 
     assert "No controls were evaluated for this scope." in html
     assert 'class="seg passed"' not in html

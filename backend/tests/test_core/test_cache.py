@@ -393,6 +393,13 @@ _SUPPRESSED_KEY = "deps:pypi:acme-private:1.0.0"
 _SUPPRESSED_VALUE = {"scorecard": 4.2}
 _SEEDED_KEY = "popular:npm"
 _SEEDED_VALUE = ["express"]
+_UPSTREAM_VALUE = {"published": "2021-12-10"}
+_UPSTREAM_ID_KEYS = (
+    CacheKeys.osv_vuln("GHSA-jfh8-c2jp-5v3q", "2024-06-01T00:00:00Z"),
+    CacheKeys.epss("CVE-2021-44228"),
+    CacheKeys.ghsa("GHSA-jfh8-c2jp-5v3q"),
+    CacheKeys.kev_catalog(),
+)
 
 
 class TestSuppressCacheWrites:
@@ -409,6 +416,39 @@ class TestSuppressCacheWrites:
             assert await fake_cache.mset({_SUPPRESSED_KEY: _SUPPRESSED_VALUE}, _TTL) is False
 
         assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("key", _UPSTREAM_ID_KEYS)
+    async def test_a_key_named_by_a_public_upstream_id_alone_is_still_written(self, fake_cache, key):
+        with suppress_cache_writes():
+            assert await fake_cache.set(key, _UPSTREAM_VALUE) is True
+
+        assert await fake_cache.get(key) == _UPSTREAM_VALUE
+
+    @pytest.mark.asyncio
+    async def test_mset_writes_only_the_entries_named_by_upstream_ids(self, fake_cache):
+        upstream_key = CacheKeys.epss("CVE-2021-44228")
+
+        with suppress_cache_writes():
+            await fake_cache.mset({_SUPPRESSED_KEY: _SUPPRESSED_VALUE, upstream_key: _UPSTREAM_VALUE})
+
+        assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0
+        assert await fake_cache.get(upstream_key) == _UPSTREAM_VALUE
+
+    @pytest.mark.asyncio
+    async def test_an_upstream_id_fetch_is_cached_behind_the_stampede_lock(self, fake_cache):
+        upstream_key = CacheKeys.ghsa("GHSA-jfh8-c2jp-5v3q")
+        locks: list[str] = []
+
+        async def fetch():
+            locks.extend(await fake_cache._client.keys("*lock*"))
+            return _UPSTREAM_VALUE
+
+        with suppress_cache_writes():
+            assert await fake_cache.get_or_fetch_with_lock(upstream_key, fetch) == _UPSTREAM_VALUE
+
+        assert locks == [fake_cache._make_key(f"lock:{upstream_key}")]
+        assert await fake_cache.get(upstream_key) == _UPSTREAM_VALUE
 
     @pytest.mark.asyncio
     async def test_reads_still_hit_the_shared_cache(self, fake_cache):

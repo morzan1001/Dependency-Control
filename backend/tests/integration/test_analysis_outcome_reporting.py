@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -16,7 +17,7 @@ from app.services.analysis import engine
 from app.services.analysis.registry import CRYPTO_ANALYZERS, crypto_evaluators
 from app.services.notifications import notification_service
 from app.services.webhooks import webhook_service
-from tests.helpers.analyzers import serve_analyzer
+from tests.helpers.analyzers import analyse_scan, serve_analyzer
 from tests.helpers.sboms import store_sbom
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
@@ -87,7 +88,7 @@ async def _run(
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     for name, result in (external or {}).items():
         await db.analysis_results.insert_one({"scan_id": scan.id, "analyzer_name": name, "result": result})
-    await engine.run_analysis(scan.id, refs, analyzers, db, worker_id=_WORKER)
+    await analyse_scan(db, scan.id, refs, analyzers, worker_id=_WORKER)
     return scan.id
 
 
@@ -98,7 +99,7 @@ async def _mixed_run(db, monkeypatch) -> str:
     serve_analyzer(monkeypatch, "osv", _Scripted({}, _OSV_PARTIAL))
     serve_analyzer(monkeypatch, "trivy", _Scripted(_TRIVY_TIMEOUT, _TRIVY_TIMEOUT))
     monkeypatch.setattr(
-        engine.vulnerability_enrichment_service, "enrich_findings", AsyncMock(return_value=({}, ["KEV"]))
+        engine.vulnerability_enrichment_service, "enrich_findings", AsyncMock(return_value=({}, "KEV unavailable"))
     )
     external = {"trufflehog": {"error": "scanner container OOM-killed"}, "kics": {"queries": []}}
     return await _run(db, [*_SBOM_ANALYZERS, "epss_kev"], external=external)
@@ -218,6 +219,29 @@ async def test_a_crypto_result_that_cannot_be_stored_fails_its_analyzer_with_a_s
     assert _results_lines(sent) == [f"{name}: Failed" for name in names]
     scan_errors = {doc["finding_id"]: doc["description"] async for doc in db.findings.find({"scan_id": scan_id})}
     assert scan_errors == {f"SCAN-ERROR-{name}": f"Scanner '{name}' failed: row rejected" for name in names}
+
+
+async def test_a_failing_crypto_evaluator_is_logged_once_with_its_traceback(db, monkeypatch, sent, caplog):
+    from app.services.crypto_policy.seeder import seed_crypto_policies
+
+    await seed_crypto_policies(db)
+    real_evaluators = engine.crypto_evaluators
+
+    def _weak_key_broken(catalog):
+        def _raise(_assets, _policy):
+            raise RuntimeError("key table gone")
+
+        return {**real_evaluators(catalog), "crypto_weak_key": _raise}
+
+    monkeypatch.setattr(engine, "crypto_evaluators", _weak_key_broken)
+
+    with caplog.at_level(logging.WARNING, logger=engine.__name__):
+        scan_id = await _run(db, [], sboms=0, scan_type="cbom")
+
+    (report,) = [r for r in caplog.records if r.getMessage().startswith("Analysis crypto_weak_key ")]
+    assert report.exc_info is not None
+    scan_errors = {doc["finding_id"]: doc["description"] async for doc in db.findings.find({"scan_id": scan_id})}
+    assert scan_errors == {"SCAN-ERROR-crypto_weak_key": "Scanner 'crypto_weak_key' failed: key table gone"}
 
 
 async def _reachability_run(db, monkeypatch, apply_reachability: AsyncMock, callgraphs: list) -> str:

@@ -4,6 +4,8 @@ import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from prometheus_client import REGISTRY
+
 from app.core import worker
 from app.core.worker import AnalysisWorkerManager
 from app.services.analysis.notifications import notify_analysis_failed
@@ -16,63 +18,54 @@ def _build_manager() -> AnalysisWorkerManager:
     return mgr
 
 
-def _build_db_with_scans(update_one: AsyncMock, project: dict | None = None) -> MagicMock:
+def _build_db(project: dict | None = None) -> MagicMock:
     db = MagicMock()
-    db.scans = MagicMock()
-    db.scans.update_one = update_one
     db.projects = MagicMock()
     db.projects.find_one = AsyncMock(return_value=project)
     return db
 
 
-def _db_with_requeued_scan() -> FakeDatabase:
-    db = FakeDatabase()
-    asyncio.run(db.scans.insert_one({"_id": "scan-1", "project_id": "proj-1", "status": "pending"}))
-    return db
-
-
 class TestHandleRescheduled:
-    def test_under_limit_requeues_without_writing_retry_count(self):
+    def test_under_limit_requeues(self):
         mgr = _build_manager()
-        update_one = AsyncMock()
-        db = _build_db_with_scans(update_one)
-        scan = {"_id": "scan-1", "retry_count": 1}
 
-        asyncio.run(mgr._handle_rescheduled(scan, db, time.time()))
+        asyncio.run(mgr._handle_rescheduled({"_id": "scan-1", "retry_count": 1}))
 
-        assert mgr.queue.qsize() == 1
         assert mgr.queue.get_nowait() == "scan-1"
-        update_one.assert_not_awaited()
+        assert mgr.queue.empty()
 
-    def test_at_limit_marks_failed_and_does_not_requeue(self):
+    def test_a_reschedule_during_shutdown_is_left_pending_in_the_db(self):
         mgr = _build_manager()
-        db = _db_with_requeued_scan()
+        mgr._shutting_down = True
+
+        asyncio.run(mgr._handle_rescheduled({"_id": "scan-1", "retry_count": 1}))
+
+        assert mgr.queue.empty()
+
+    def test_a_requeue_updates_the_queue_gauge(self):
+        mgr = _build_manager()
+        worker.worker_queue_size.set(0)
+
+        asyncio.run(mgr._handle_rescheduled({"_id": "scan-1", "retry_count": 1}))
+
+        assert REGISTRY.get_sample_value("worker_queue_size") == 1
+
+    def test_at_limit_leaves_the_scan_to_the_stale_loop(self):
+        """Late scanner results reschedule a completed scan; failing it would drop it out of head."""
+        mgr = _build_manager()
+
         # retry_count=4 in snapshot + 1 (engine inc) = 5, hits ceiling.
-        scan = {"_id": "scan-1", "retry_count": 4}
+        asyncio.run(mgr._handle_rescheduled({"_id": "scan-1", "retry_count": 4}))
 
-        asyncio.run(mgr._handle_rescheduled(scan, db, time.time()))
+        assert mgr.queue.empty()
 
-        assert mgr.queue.qsize() == 0
-        assert asyncio.run(db.scans.find_one({"_id": "scan-1"}))["status"] == "failed"
 
-    def test_at_limit_announces_the_failure(self):
-        mgr = _build_manager()
-        db = _db_with_requeued_scan()
-        scan = {"_id": "scan-1", "project_id": "proj-1", "retry_count": 4}
-
-        with patch("app.core.worker.notify_analysis_failed", new=AsyncMock()) as notify:
-            asyncio.run(mgr._handle_rescheduled(scan, db, time.time()))
-
-        notify.assert_called_once()
-        _, scan_id, project_id, error = notify.call_args.args
-        assert (scan_id, project_id) == ("scan-1", "proj-1")
-        assert "retry attempts" in error
-
+class TestFailScan:
     def test_the_worker_moves_on_while_the_failure_is_still_being_announced(self):
         """A blackholed webhook host holds its delivery for tens of seconds; the analysis slot must not wait."""
-        mgr = _build_manager()
-        db = _db_with_requeued_scan()
-        scan = {"_id": "scan-1", "project_id": "proj-1", "retry_count": 4}
+        db = FakeDatabase()
+        asyncio.run(db.scans.insert_one({"_id": "scan-1", "project_id": "proj-1", "status": "processing"}))
+        scan = {"_id": "scan-1", "project_id": "proj-1"}
         delivered: list[str] = []
 
         async def _run() -> None:
@@ -83,7 +76,7 @@ class TestHandleRescheduled:
                 delivered.append(scan_id)
 
             with patch("app.core.worker.notify_analysis_failed", _slow_notice):
-                await asyncio.wait_for(mgr._handle_rescheduled(scan, db, time.time()), timeout=1)
+                await asyncio.wait_for(worker._fail_scan(db, scan, "boom", time.time()), timeout=1)
                 assert delivered == []
                 release.set()
                 await asyncio.gather(*worker._failure_notices)
@@ -96,7 +89,7 @@ class TestHandleRescheduled:
 
 class TestNotifyAnalysisFailed:
     def test_sends_the_webhook_and_the_member_notification(self):
-        db = _build_db_with_scans(AsyncMock(), project={"_id": "proj-1", "name": "My Project"})
+        db = _build_db(project={"_id": "proj-1", "name": "My Project"})
 
         with (
             patch(
@@ -116,7 +109,7 @@ class TestNotifyAnalysisFailed:
         assert notify.await_args.kwargs["event_type"] == "analysis_failed"
 
     def test_swallows_errors_and_skips_a_missing_project(self):
-        db = _build_db_with_scans(AsyncMock(), project=None)
+        db = _build_db(project=None)
 
         with (
             patch(

@@ -54,6 +54,19 @@ def run_context(db: Any, scan: Scan | str, active_analyzers: Iterable[str] = (),
     return engine._RunContext(**(fields | overrides))
 
 
+async def analyse_scan(
+    db: Any, scan_id: str, sboms: list[Any], active_analyzers: Iterable[str] = (), **kwargs: Any
+) -> ScanStatus | None:
+    """The engine runs the analyzers its project names, so the scan's project is configured first."""
+    scan = await db.scans.find_one({"_id": scan_id}, {"project_id": 1})
+    await db.projects.update_one(
+        {"_id": scan["project_id"]},
+        {"$set": {"active_analyzers": list(active_analyzers)}, "$setOnInsert": {"name": scan["project_id"]}},
+        upsert=True,
+    )
+    return await engine.run_analysis(scan_id, sboms, db, **kwargs)
+
+
 def verdict(status: ScanStatus = SCAN_STATUS_COMPLETED, stats: Stats | None = None, **fields: Any) -> Any:
     defaults = {
         "status": status,
@@ -105,8 +118,6 @@ async def ingest_and_analyze_cbom(
     scan = await db.scans.find_one_and_update(
         {"_id": scan_id}, {"$set": {"status": "processing", "worker_id": "pod-a/worker-0"}}, return_document=True
     )
-    status = await engine.run_analysis(
-        scan_id, [], [], db, worker_id="pod-a/worker-0", sbom_generation=scan["sbom_generation"]
-    )
+    status = await analyse_scan(db, scan_id, [], worker_id="pod-a/worker-0", sbom_generation=scan["sbom_generation"])
     assert status == SCAN_STATUS_COMPLETED
     return scan_id

@@ -142,7 +142,7 @@ async def test_ghsa_resolution_collapses_cve_and_ghsa_entries(monkeypatch):
         return {"GHSA-3pjw-73gf-8qr5": GHSAData(ghsa_id="GHSA-3pjw-73gf-8qr5", cve_id="CVE-2026-59888")}
 
     async def fake_enrich_cves(cves):
-        return {}, []
+        return {}, None
 
     monkeypatch.setattr(service._ghsa_provider, "resolve_ghsa_to_cve", fake_resolve)
     monkeypatch.setattr(service, "_enrich_cves", fake_enrich_cves)

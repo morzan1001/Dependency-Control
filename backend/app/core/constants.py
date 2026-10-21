@@ -736,6 +736,8 @@ SCAN_STATUS_COMPLETED: ScanStatus = "completed"
 SCAN_STATUS_COMPLETED_WITH_ERRORS: ScanStatus = "completed_with_errors"
 SCAN_STATUS_FAILED: ScanStatus = "failed"
 
+SCAN_TYPE_CBOM = "cbom"
+
 # Scans a worker still owns or will claim; housekeeping neither rescans nor deletes them.
 SCAN_ACTIVE_STATUSES = [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]
 

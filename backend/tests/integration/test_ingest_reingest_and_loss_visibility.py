@@ -140,10 +140,10 @@ async def test_a_recognized_sbom_that_does_not_parse_is_accepted_and_its_scan_co
 async def test_a_payload_with_an_unparsed_sbom_keeps_the_previous_inventory(db):
     repo = DependencyRepository(db)
     previous = parse_sbom(_fixture("sbom/mono.syft.json"))
-    await store_scan_dependencies([previous], _PROJECT_ID, _SCAN_ID, repo)
+    await store_scan_dependencies([previous], _PROJECT_ID, _SCAN_ID, repo, {})
 
     stored = await store_scan_dependencies(
-        [parse_sbom(_fixture("sbom/uvdev.syft.cdx.json")), None], _PROJECT_ID, _SCAN_ID, repo
+        [parse_sbom(_fixture("sbom/uvdev.syft.cdx.json")), None], _PROJECT_ID, _SCAN_ID, repo, {}
     )
 
     assert stored is None

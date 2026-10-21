@@ -1,9 +1,12 @@
 """CBOM-ingested assets have no SBOM in GridFS, so a rescan cannot re-derive them and must carry them over."""
 
+from unittest.mock import AsyncMock
+
 import pytest
+from pymongo.errors import AutoReconnect
 
 from app.api.v1.helpers.ingest import process_findings_ingest
-from app.core.constants import SCAN_STATUS_COMPLETED
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
 from app.models.project import Project, Scan
@@ -11,11 +14,11 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.trufflehog import TruffleHogIngest
 from app.services.analysis import engine
-from app.services.analysis.engine import run_analysis
 from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.rescan import RESCAN_SOURCE_PROJECTION, build_rescan
 from app.services.scan_manager import ScanManager
+from tests.helpers.analyzers import analyse_scan
 from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, store_cbom
 from tests.helpers.sboms import sbom_ref, store_sbom
 
@@ -63,11 +66,13 @@ async def _ingest_assets(db, scan_id: str) -> None:
     )
 
 
-async def _seed_lineage(db) -> tuple[str, str]:
+async def _seed_lineage(db, scan_type: str | None = None) -> tuple[str, str]:
     await create_indexes(db)
     await store_sbom(db, _SBOM, _FILE_ID)
     await db.projects.insert_one(Project(id=_PROJECT_ID, name="cbom-rescan").model_dump(by_alias=True))
-    original = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[sbom_ref(_FILE_ID)], status="completed")
+    original = Scan(
+        project_id=_PROJECT_ID, branch="main", sbom_refs=[sbom_ref(_FILE_ID)], status="completed", scan_type=scan_type
+    )
     await db.scans.insert_one(original.model_dump(by_alias=True))
     rescan = Scan(
         project_id=_PROJECT_ID,
@@ -77,6 +82,7 @@ async def _seed_lineage(db) -> tuple[str, str]:
         worker_id=_WORKER,
         is_rescan=True,
         original_scan_id=original.id,
+        scan_type=scan_type,
     )
     await db.scans.insert_one(rescan.model_dump(by_alias=True))
 
@@ -87,7 +93,7 @@ async def _seed_lineage(db) -> tuple[str, str]:
 async def _rescan_and_list(db) -> list[str]:
     original_id, rescan_id = await _seed_lineage(db)
     assert (
-        await run_analysis(rescan_id, [sbom_ref(_FILE_ID)], _NO_ANALYZERS, db, worker_id=_WORKER)
+        await analyse_scan(db, rescan_id, [sbom_ref(_FILE_ID)], _NO_ANALYZERS, worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED
     )
 
@@ -100,6 +106,29 @@ async def _rescan_and_list(db) -> list[str]:
 @pytest.mark.asyncio
 async def test_rescan_keeps_the_ingested_crypto_assets(db):
     assert await _rescan_and_list(db) == ["MD5", "RSA-1024"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("scan_type", "status", "failed"),
+    [
+        pytest.param("cbom", SCAN_STATUS_COMPLETED_WITH_ERRORS, sorted(CRYPTO_ANALYZERS), id="crypto-graded"),
+        pytest.param(None, SCAN_STATUS_COMPLETED, None, id="no-crypto-graded"),
+    ],
+)
+async def test_a_failed_carry_over_fails_the_crypto_analyzers_that_grade_the_rescan(
+    db, monkeypatch, scan_type, status, failed
+):
+    await seed_crypto_policies(db)
+    _, rescan_id = await _seed_lineage(db, scan_type=scan_type)
+    monkeypatch.setattr(
+        CryptoAssetRepository, "carry_over_to_scan", AsyncMock(side_effect=AutoReconnect("primary stepped down"))
+    )
+
+    assert await analyse_scan(db, rescan_id, [sbom_ref(_FILE_ID)], _NO_ANALYZERS, worker_id=_WORKER) == status
+
+    assert (await db.scans.find_one({"_id": rescan_id}))["failed_analyzers"] == failed
 
 
 async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], list[str]]:
@@ -125,12 +154,12 @@ async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], lis
     await db.scans.insert_one(original.model_dump(by_alias=True))
     await _ingest_assets(db, original.id)
     await process_findings_ingest(manager, "trufflehog", trufflehog)
-    assert await run_analysis(original.id, [], _NO_ANALYZERS, db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, original.id, [], _NO_ANALYZERS, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     source = await db.scans.find_one({"_id": original.id}, RESCAN_SOURCE_PROJECTION)
     rescan = build_rescan(source).model_copy(update={"status": "processing", "worker_id": _WORKER})
     await db.scans.insert_one(rescan.model_dump(by_alias=True))
-    assert await run_analysis(rescan.id, [], _NO_ANALYZERS, db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, rescan.id, [], _NO_ANALYZERS, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     rows = await db.analysis_results.find({"scan_id": rescan.id}).to_list(None)
     return sorted(row["analyzer_name"] for row in rows), announced[-1]

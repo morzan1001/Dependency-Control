@@ -41,9 +41,15 @@ def test_findings_declare_only_the_indexes_a_read_needs():
             ("first_seen_at", ASCENDING),
             ("scan_created_at", ASCENDING),
         ): {},
-        (("project_id", ASCENDING), ("finding_id", ASCENDING), ("created_at", DESCENDING)): {
-            "partialFilterExpression": {"type": "vulnerability"}
-        },
+        (
+            ("project_id", ASCENDING),
+            ("type", ASCENDING),
+            ("finding_id", ASCENDING),
+            ("created_at", DESCENDING),
+            ("component", ASCENDING),
+            ("version", ASCENDING),
+            ("first_seen_at", ASCENDING),
+        ): {},
         (("type", ASCENDING), ("scan_created_at", ASCENDING)): {},
         (("scan_id", ASCENDING), ("severity", ASCENDING)): {
             "name": "findings_kev_scan_severity",

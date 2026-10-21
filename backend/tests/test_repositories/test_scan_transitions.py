@@ -1,7 +1,5 @@
 """Each transition is a conditional write, so a stale writer changes nothing instead of overwriting a newer run."""
 
-import asyncio
-import time
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -16,7 +14,6 @@ from app.core.constants import (
     SCAN_USABLE_STATUSES,
 )
 from app.core.housekeeping import recover_stuck_scans
-from app.core.worker import AnalysisWorkerManager
 from app.repositories.scans import ScanRepository
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -181,19 +178,6 @@ async def test_a_failed_scan_reopens_only_for_a_caller_that_allows_it():
     assert await ScanRepository(failed).reopen_finished(_SCAN, statuses=[*SCAN_USABLE_STATUSES, SCAN_STATUS_FAILED])
     reopened = await _stored(failed)
     assert (reopened["status"], reopened["retry_count"], reopened["stuck_retry_count"]) == (SCAN_STATUS_PENDING, 0, 0)
-
-
-def test_the_retry_ceiling_does_not_fail_or_announce_a_scan_another_worker_holds():
-    """The engine requeued the scan to pending; once another worker has claimed it, it is not ours."""
-    db = asyncio.run(_seeded(status=SCAN_STATUS_PROCESSING, worker_id=_WORKER_B))
-    manager = AnalysisWorkerManager(num_workers=1)
-    manager.queue = asyncio.Queue()
-
-    with patch("app.core.worker.notify_analysis_failed", AsyncMock()) as notify:
-        asyncio.run(manager._handle_rescheduled({"_id": _SCAN, "retry_count": 4}, db, time.time()))
-
-    notify.assert_not_called()
-    assert asyncio.run(_stored(db))["status"] == SCAN_STATUS_PROCESSING
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import ctypes
 import gc
 import logging
@@ -21,7 +20,6 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
-    ScanStatus,
 )
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.core.metrics import (
@@ -39,9 +37,6 @@ from app.services.analysis.notifications import notify_analysis_failed
 from app.services.gridfs_maintenance import read_gridfs_file
 
 logger = logging.getLogger(__name__)
-
-# Below the pod's terminationGracePeriodSeconds, so shutdown finishes before Kubernetes kills it.
-DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 25
 
 # Far below HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS, so a live run is never taken for a stuck one.
 _CLAIM_RENEW_SECONDS = 60
@@ -84,11 +79,17 @@ async def _run_adhoc_job(db: AsyncIOMotorDatabase, job: dict[str, Any]) -> dict[
     return {"status": SCAN_STATUS_COMPLETED, "result_file_id": str(result_file_id)}
 
 
-def _release_memory_to_os() -> None:
+try:
+    _malloc_trim: Callable[[int], int] | None = ctypes.CDLL("libc.so.6").malloc_trim
+except (OSError, AttributeError):
+    _malloc_trim = None
+
+
+async def _release_memory_to_os() -> None:
     """glibc keeps freed heap pages unless malloc_trim returns them; elsewhere this is a plain gc."""
     gc.collect()
-    with contextlib.suppress(OSError, AttributeError):
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    if _malloc_trim is not None:
+        await asyncio.to_thread(_malloc_trim, 0)
 
 
 def _record_job(status: str, started: float) -> None:
@@ -97,15 +98,9 @@ def _record_job(status: str, started: float) -> None:
 
 
 async def _fail_scan(
-    db: AsyncIOMotorDatabase,
-    scan: dict[str, Any],
-    error: str,
-    started: float,
-    *,
-    status: ScanStatus = SCAN_STATUS_PROCESSING,
-    worker_id: str | None = None,
+    db: AsyncIOMotorDatabase, scan: dict[str, Any], error: str, started: float, *, worker_id: str | None = None
 ) -> None:
-    if await ScanRepository(db).mark_failed(scan["_id"], error, status=status, worker_id=worker_id):
+    if await ScanRepository(db).mark_failed(scan["_id"], error, worker_id=worker_id):
         _record_job("failed", started)
         notice = asyncio.create_task(notify_analysis_failed(db, scan["_id"], scan.get("project_id"), error))
         _failure_notices.add(notice)
@@ -136,8 +131,6 @@ class AnalysisWorkerManager:
             task = asyncio.create_task(self.worker(f"worker-{i}"))
             self.workers.append(task)
 
-        worker_active_count.set(self.num_workers)
-
         self.housekeeping_task = asyncio.create_task(housekeeping_loop(self))
         logger.info("Housekeeping task started.")
 
@@ -153,33 +146,22 @@ class AnalysisWorkerManager:
             await asyncio.wait(background, timeout=3)
             logger.info("Background tasks cancelled.")
 
-    def _drain_queue(self) -> None:
-        queue_size = self.queue.qsize()
-        if queue_size == 0:
-            return
-
-        logger.info(f"Dropping {queue_size} queued items; they stay pending in the DB for the stale loop of any pod.")
-        while not self.queue.empty():
-            try:
-                self.queue.get_nowait()
-                self.queue.task_done()
-            except asyncio.QueueEmpty:
-                break
-
     def _track_scan(self, scan_id: str) -> None:
         self._active_scans.add(scan_id)
         self._no_active_scans.clear()
+        worker_active_count.set(len(self._active_scans))
 
     def _untrack_scan(self, scan_id: str) -> None:
         self._active_scans.discard(scan_id)
         if not self._active_scans:
             self._no_active_scans.set()
+        worker_active_count.set(len(self._active_scans))
 
     async def _await_active_scans(self) -> None:
         if not self._active_scans:
             return
 
-        timeout = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
+        timeout = settings.WORKER_SHUTDOWN_TIMEOUT_SECONDS
         logger.info(f"Waiting for {len(self._active_scans)} active scan(s) to complete: {self._active_scans}")
         try:
             async with asyncio.timeout(timeout):
@@ -194,7 +176,7 @@ class AnalysisWorkerManager:
             )
 
     async def stop(self) -> None:
-        timeout = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
+        timeout = settings.WORKER_SHUTDOWN_TIMEOUT_SECONDS
 
         logger.info(
             f"Initiating graceful shutdown (timeout: {timeout}s, "
@@ -206,8 +188,6 @@ class AnalysisWorkerManager:
 
         await self._stop_background_tasks()
 
-        self._drain_queue()
-
         await self._await_active_scans()
 
         for task in self.workers:
@@ -217,18 +197,17 @@ class AnalysisWorkerManager:
         if self.workers:
             await asyncio.gather(*self.workers, return_exceptions=True)
 
-        worker_active_count.set(0)
         worker_queue_size.set(0)
 
         logger.info("Graceful shutdown complete.")
 
-    async def add_job(self, scan_id: str) -> bool:
+    async def add_job(self, scan_id: str) -> None:
         if self._shutting_down:
             logger.warning(
                 f"Job {scan_id} rejected - worker manager is shutting down. "
                 f"Scan remains 'pending' in DB and will be processed by another pod."
             )
-            return False
+            return
 
         await self.queue.put(scan_id)
         queue_size = self.queue.qsize()
@@ -236,24 +215,19 @@ class AnalysisWorkerManager:
 
         worker_queue_size.set(queue_size)
 
-        return True
+    async def add_adhoc_job(self, job_id: str) -> None:
+        await self.add_job(_ADHOC_JOB + job_id)
 
-    async def add_adhoc_job(self, job_id: str) -> bool:
-        return await self.add_job(_ADHOC_JOB + job_id)
-
-    async def _handle_rescheduled(self, scan: dict[str, Any], db: AsyncIOMotorDatabase, started: float) -> None:
+    async def _handle_rescheduled(self, scan: dict[str, Any]) -> None:
         scan_id = scan["_id"]
         # Every reschedule follows exactly one engine requeue, which added one to the claimed retry_count.
         retry_count = scan.get("retry_count", 0) + 1
-        if retry_count < ANALYSIS_MAX_RETRIES:
-            logger.info(f"Scan {scan_id} was rescheduled. Re-queueing (attempt {retry_count}/{ANALYSIS_MAX_RETRIES}).")
-            await self.queue.put(scan_id)
+        if retry_count >= ANALYSIS_MAX_RETRIES:
+            # A completed scan reopened by late results must not fail; the stale loop re-runs it once they stop.
+            logger.warning(f"Scan {scan_id} was rescheduled {retry_count} times; leaving it to the stale loop.")
             return
-
-        logger.error(f"Scan {scan_id} was rescheduled {retry_count} times. Marking as failed.")
-        error = f"Analysis failed after {retry_count} retry attempts: new input kept arriving or an SBOM failed to load"
-        # The engine sent it back to pending, so a scan another worker has claimed since is left alone.
-        await _fail_scan(db, scan, error, started, status=SCAN_STATUS_PENDING)
+        logger.info(f"Scan {scan_id} was rescheduled. Re-queueing (attempt {retry_count}/{ANALYSIS_MAX_RETRIES}).")
+        await self.add_job(scan_id)
 
     async def _process(self, scan_id: str, worker_id: str) -> None:
         logger.info(f"Worker {worker_id} picked up scan {scan_id}")
@@ -272,22 +246,15 @@ class AnalysisWorkerManager:
             _keep_claim(partial(scan_repo.renew_claim, scan_id, worker_id), f"scan {scan_id}")
         )
         try:
-            project = await db.projects.find_one({"_id": scan["project_id"]})
-            if not project:
-                logger.error(f"Project for scan {scan_id} not found, skipping.")
-                await _fail_scan(db, scan, "Project not found", started, worker_id=worker_id)
-                return
-
             outcome = await run_analysis(
                 scan_id=scan_id,
                 sboms=scan.get("sbom_refs", []),
-                active_analyzers=project.get("active_analyzers", []),
                 db=db,
                 worker_id=worker_id,
                 sbom_generation=scan.get("sbom_generation"),
             )
             if outcome == SCAN_STATUS_PENDING:
-                await self._handle_rescheduled(scan, db, started)
+                await self._handle_rescheduled(scan)
             elif outcome is not None:
                 _record_job("failed" if outcome == SCAN_STATUS_FAILED else "success", started)
         except Exception as e:
@@ -296,8 +263,8 @@ class AnalysisWorkerManager:
         finally:
             claim_keeper.cancel()
             self._untrack_scan(scan_id)
-            _release_memory_to_os()
-        logger.info(f"Worker {worker_id} finished scan {scan_id}")
+            logger.info(f"Worker {worker_id} finished scan {scan_id}")
+            await _release_memory_to_os()
 
     async def _process_adhoc(self, job_id: str, worker_id: str) -> None:
         started = time.time()
@@ -331,7 +298,7 @@ class AnalysisWorkerManager:
         finally:
             claim_keeper.cancel()
             self._untrack_scan(job_id)
-            _release_memory_to_os()
+            await _release_memory_to_os()
 
     async def worker(self, name: str) -> None:
         worker_id = f"{INSTANCE_ID}/{name}"
@@ -339,23 +306,17 @@ class AnalysisWorkerManager:
 
         while True:
             try:
-                if self._shutting_down and self.queue.empty():
-                    logger.info(f"Worker {worker_id} exiting - shutdown signaled and queue empty")
-                    break
-
                 # 1s timeout so we can periodically re-check the shutdown flag.
                 try:
                     scan_id = await asyncio.wait_for(self.queue.get(), timeout=1.0)
                 except asyncio.TimeoutError:
                     if self._shutting_down:
-                        logger.info(f"Worker {worker_id} exiting - shutdown signaled")
                         break
                     continue
 
                 try:
                     if self._shutting_down:
-                        # Leave the scan as 'pending' in DB so other pods can pick it up.
-                        logger.info(f"Worker {worker_id} returning scan {scan_id} to queue - shutting down")
+                        logger.info(f"Worker {worker_id} dropping scan {scan_id}; it stays pending in the DB")
                         break
                     if scan_id.startswith(_ADHOC_JOB):
                         await self._process_adhoc(scan_id.removeprefix(_ADHOC_JOB), worker_id)
@@ -370,6 +331,7 @@ class AnalysisWorkerManager:
             except Exception as e:
                 logger.exception("Worker %s crashed: %s", worker_id, e)
                 await asyncio.sleep(1)  # Prevents tight loop on persistent failure.
+        logger.info(f"Worker {worker_id} exiting - shutdown signaled")
 
 
 worker_manager = AnalysisWorkerManager(num_workers=settings.WORKER_COUNT)

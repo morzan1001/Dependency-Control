@@ -24,7 +24,7 @@ from app.services.analysis import engine
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.notifications import notification_service
 from app.services.webhooks import webhook_service
-from tests.helpers.analyzers import serve_analyzer
+from tests.helpers.analyzers import analyse_scan, serve_analyzer
 from tests.helpers.enrichment import Upstreams, serve_enrichment
 from tests.helpers.sboms import store_sbom
 
@@ -77,7 +77,7 @@ async def test_an_analysis_stamps_only_its_own_scan_and_notifies_its_own_stats(d
 
     monkeypatch.setattr("app.services.stats.recalculate_project_stats", _recalculate)
 
-    assert await engine.run_analysis(await _seed_scan(db), [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, await _seed_scan(db), [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert calls == []
     assert notified == [Stats()]
@@ -89,7 +89,7 @@ async def test_a_clean_re_analysis_clears_the_error_of_the_earlier_run(db, notif
     scan_id = await _seed_scan(db)
     await db.scans.update_one({"_id": scan_id}, {"$set": {"error": "Analyzer failed: bearer", "completed_at": _T0}})
 
-    assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert "error" not in await db.scans.find_one({"_id": scan_id})
 
@@ -104,10 +104,26 @@ async def test_a_re_analysis_purges_the_row_of_an_analyzer_the_project_no_longer
         + [{"scan_id": "other-scan", "analyzer_name": "typosquatting", "result": {"marker": "keep"}}]
     )
 
-    await engine.run_analysis(scan_id, [], ["trivy"], db, worker_id=_WORKER)
+    await analyse_scan(db, scan_id, [], ["trivy"], worker_id=_WORKER)
 
     assert set(await db.analysis_results.distinct("analyzer_name", {"scan_id": scan_id})) == {"trufflehog"}
     assert await db.analysis_results.count_documents({"scan_id": "other-scan"}) == 1
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_re_analysis_keeps_the_rows_its_analyzers_wrote_and_purges_the_dated_older_ones(
+    db, notified, monkeypatch, stored_sbom
+):
+    serve_analyzer(monkeypatch, "maintainer_risk", _SettingsProbe())
+    scan_id = await _seed_scan(db)
+    await db.analysis_results.insert_one(
+        {"scan_id": scan_id, "analyzer_name": "typosquatting", "result": {"marker": "stale"}, "created_at": _T0}
+    )
+
+    await analyse_scan(db, scan_id, [stored_sbom], ["maintainer_risk"], worker_id=_WORKER)
+
+    assert await db.analysis_results.distinct("analyzer_name", {"scan_id": scan_id}) == ["maintainer_risk"]
 
 
 @pytest.mark.asyncio
@@ -117,7 +133,7 @@ async def test_a_scan_that_is_not_finalized_is_not_notified(db, notified, monkey
 
     monkeypatch.setattr(engine, "_finalize_scan_and_project", _rescheduled)
 
-    assert await engine.run_analysis(await _seed_scan(db), [], [], db, worker_id=_WORKER) == SCAN_STATUS_PENDING
+    assert await analyse_scan(db, await _seed_scan(db), [], [], worker_id=_WORKER) == SCAN_STATUS_PENDING
 
     assert notified == []
 
@@ -137,16 +153,16 @@ def _gridfs_outage(monkeypatch, while_listing=lambda: asyncio.sleep(0)) -> dict:
 async def test_a_result_that_arrives_during_a_failing_run_reschedules_it_instead_of_failing_it(
     db, notified, monkeypatch
 ):
-    ref = _gridfs_outage(monkeypatch)
-    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER)
-    await db.scans.insert_one(scan.model_dump(by_alias=True))
+    scan = Scan(project_id=_PROJECT_ID, branch="main", status="processing", worker_id=_WORKER)
 
-    async def _late_result(*_args):
+    async def _late_result():
         await db.scans.update_one({"_id": scan.id}, {"$set": {"last_result_at": datetime.now(timezone.utc)}})
+        await asyncio.sleep(0.01)
 
-    monkeypatch.setattr(engine, "_run_vuln_enrichments", _late_result)
+    ref = _gridfs_outage(monkeypatch, _late_result)
+    await db.scans.insert_one(scan.model_dump(by_alias=True) | {"sbom_refs": [ref]})
 
-    assert await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_PENDING
+    assert await analyse_scan(db, scan.id, [ref], [], worker_id=_WORKER) == SCAN_STATUS_PENDING
 
     assert (await db.scans.find_one({"_id": scan.id}))["status"] == SCAN_STATUS_PENDING
     assert notified == []
@@ -159,7 +175,7 @@ async def test_a_run_that_lost_its_claim_keeps_the_findings_and_announces_nothin
     await db.scans.update_one({"_id": scan_id}, {"$set": {"worker_id": "pod-b/worker-0"}})
     await db.findings.insert_one({"_id": "f1", "scan_id": scan_id, "project_id": _PROJECT_ID})
 
-    assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) is None
+    assert await analyse_scan(db, scan_id, [], [], worker_id=_WORKER) is None
 
     assert (await db.scans.find_one({"_id": scan_id}))["status"] == "processing"
     assert await db.findings.count_documents({"scan_id": scan_id}) == 1
@@ -171,7 +187,7 @@ async def test_a_failing_notification_leaves_the_finalized_scan_completed(db, mo
     monkeypatch.setattr(engine, "_send_integrations_and_notifications", AsyncMock(side_effect=RuntimeError("smtp")))
     scan_id = await _seed_scan(db)
 
-    assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert (await db.scans.find_one({"_id": scan_id}))["status"] == SCAN_STATUS_COMPLETED
 
@@ -189,7 +205,7 @@ async def test_a_failing_head_waiver_bookkeeping_still_announces_the_completed_s
     monkeypatch.setattr(engine, "restamp_waivers", _failing_on_head)
     scan_id = await _seed_scan(db)
 
-    assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert (await db.scans.find_one({"_id": scan_id}))["status"] == SCAN_STATUS_COMPLETED
     assert notified == [Stats()]
@@ -216,7 +232,7 @@ async def test_a_cbom_scan_runs_the_crypto_analyzers_once_beside_the_configured_
     )
     await db.scans.insert_one(scan.model_dump(by_alias=True))
 
-    assert await engine.run_analysis(scan.id, [], ["osv"], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan.id, [], ["osv"], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert enrichment_inputs["analyzers"] == ["osv"]
     rows = await db.analysis_results.find({"scan_id": scan.id}).to_list(None)
@@ -228,7 +244,7 @@ async def test_the_settings_github_token_is_used_before_any_instance_token(db, n
     await db.system_settings.insert_one({"_id": "current", "github_token": "settings-token"})
     await db.github_instances.insert_one({"_id": "gh", "is_active": True, "access_token": "instance-token"})
 
-    assert await engine.run_analysis(await _seed_scan(db), [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, await _seed_scan(db), [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert enrichment_inputs["github_token"] == "settings-token"
 
@@ -252,7 +268,7 @@ def _github_instance(_id: str, created_at: datetime, **fields) -> dict:
 async def test_without_a_settings_token_the_github_com_instance_token_is_used(db, notified, enrichment_inputs):
     await db.github_instances.insert_one(_github_instance("gh", _T0, access_token="instance-token"))
 
-    assert await engine.run_analysis(await _seed_scan(db), [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, await _seed_scan(db), [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert enrichment_inputs["github_token"] == "instance-token"
 
@@ -274,7 +290,7 @@ async def test_the_instance_token_reaches_the_analyzers_too(db, notified, enrich
     await db.github_instances.insert_one(_github_instance("gh", _T0, access_token="instance-token"))
     probe = serve_analyzer(monkeypatch, "maintainer_risk", _SettingsProbe())
 
-    await engine.run_analysis(await _seed_scan(db), [stored_sbom], ["maintainer_risk"], db, worker_id=_WORKER)
+    await analyse_scan(db, await _seed_scan(db), [stored_sbom], ["maintainer_risk"], worker_id=_WORKER)
 
     assert probe.settings["github_token"] == "instance-token"
 
@@ -293,7 +309,7 @@ async def test_a_ghes_instance_token_is_never_sent_to_github_com(db, notified, e
         {"_id": "ghes", "is_active": True, "created_at": _T0, "access_token": "ghes-pat", **ghes_fields}
     )
 
-    assert await engine.run_analysis(await _seed_scan(db), [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, await _seed_scan(db), [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert enrichment_inputs["github_token"] is None
 
@@ -305,7 +321,7 @@ async def test_the_github_com_token_is_chosen_over_an_older_ghes_instance(db, no
     )
     await db.github_instances.insert_one(_github_instance("gh", _T0 + timedelta(days=1), access_token="gh-token"))
 
-    assert await engine.run_analysis(await _seed_scan(db), [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, await _seed_scan(db), [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert enrichment_inputs["github_token"] == "gh-token"
 
@@ -315,7 +331,7 @@ async def test_of_several_github_com_instances_the_oldest_token_is_used(db, noti
     await db.github_instances.insert_one(_github_instance("newer", _T0 + timedelta(days=1), access_token="newer"))
     await db.github_instances.insert_one(_github_instance("older", _T0, access_token="older"))
 
-    assert await engine.run_analysis(await _seed_scan(db), [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, await _seed_scan(db), [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert enrichment_inputs["github_token"] == "older"
 
@@ -331,7 +347,7 @@ async def test_of_several_github_com_instances_the_oldest_token_is_used(db, noti
 async def test_without_a_usable_instance_token_ghsa_runs_unauthenticated(db, notified, enrichment_inputs, fields):
     await db.github_instances.insert_one(_github_instance("gh", _T0, **fields))
 
-    assert await engine.run_analysis(await _seed_scan(db), [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, await _seed_scan(db), [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert enrichment_inputs["github_token"] is None
 
@@ -344,7 +360,7 @@ async def test_a_run_whose_sboms_all_fail_to_load_is_failed_and_announced_as_fai
     failure_notice = AsyncMock()
     monkeypatch.setattr(engine, "notify_analysis_failed", failure_notice)
 
-    assert await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_FAILED
+    assert await analyse_scan(db, scan.id, [ref], [], worker_id=_WORKER) == SCAN_STATUS_FAILED
 
     stored = await db.scans.find_one({"_id": scan.id})
     assert (stored["status"], stored["error"]) == ("failed", "SBOM could not be loaded or parsed for analysis")
@@ -358,7 +374,7 @@ async def test_a_run_whose_sbom_was_replaced_meanwhile_is_rescheduled_before_fin
     scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[], status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True) | {"sbom_generation": 2})
 
-    assert await engine.run_analysis(scan.id, [], [], db, worker_id=_WORKER, sbom_generation=1) == SCAN_STATUS_PENDING
+    assert await analyse_scan(db, scan.id, [], [], worker_id=_WORKER, sbom_generation=1) == SCAN_STATUS_PENDING
 
     assert (await db.scans.find_one({"_id": scan.id}))["status"] == "pending"
     assert notified == []
@@ -370,9 +386,7 @@ async def test_a_run_whose_old_sbom_failed_to_load_after_a_replace_is_reschedule
     scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True) | {"sbom_generation": 2})
 
-    assert (
-        await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER, sbom_generation=1) == SCAN_STATUS_PENDING
-    )
+    assert await analyse_scan(db, scan.id, [ref], [], worker_id=_WORKER, sbom_generation=1) == SCAN_STATUS_PENDING
 
     assert (await db.scans.find_one({"_id": scan.id}))["status"] == "pending"
 
@@ -407,7 +421,7 @@ async def test_a_re_analysis_whose_sbom_fails_to_load_is_retried_with_the_earlie
     ref = _gridfs_outage(monkeypatch)
     scan_id = await _finished_scan_with_an_analysis(db, ref, retry_count=0)
 
-    assert await engine.run_analysis(scan_id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_PENDING
+    assert await analyse_scan(db, scan_id, [ref], [], worker_id=_WORKER) == SCAN_STATUS_PENDING
 
     stored = await db.scans.find_one({"_id": scan_id})
     assert (stored["status"], stored["retry_count"], stored["worker_id"]) == (SCAN_STATUS_PENDING, 1, None)
@@ -436,6 +450,23 @@ async def test_the_worker_retries_an_unreadable_re_analysis_before_keeping_the_e
     failure_notice.assert_not_called()
 
 
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("retry_count", "status"), [(0, SCAN_STATUS_PENDING), (_LAST_ATTEMPT, SCAN_STATUS_COMPLETED_WITH_ERRORS)]
+)
+async def test_a_re_analysis_whose_sbom_fails_to_stream_keeps_the_earlier_findings(
+    db, notified, stored_sbom, monkeypatch, retry_count, status
+):
+    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", AsyncMock(side_effect=OSError("gridfs outage")))
+    scan_id = await _finished_scan_with_an_analysis(db, stored_sbom, retry_count)
+
+    assert await analyse_scan(db, scan_id, [stored_sbom], [], worker_id=_WORKER) == status
+
+    await _assert_the_earlier_analysis_is_intact(db, scan_id)
+    assert notified == []
+
+
 @pytest.mark.asyncio
 async def test_a_re_analysis_whose_sbom_fails_to_load_on_its_last_attempt_keeps_the_earlier_analysis(
     db, notified, monkeypatch
@@ -443,7 +474,7 @@ async def test_a_re_analysis_whose_sbom_fails_to_load_on_its_last_attempt_keeps_
     ref = _gridfs_outage(monkeypatch)
     scan_id = await _finished_scan_with_an_analysis(db, ref, retry_count=_LAST_ATTEMPT)
 
-    assert await engine.run_analysis(scan_id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    assert await analyse_scan(db, scan_id, [ref], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     stored = await db.scans.find_one({"_id": scan_id})
     assert stored["status"] == SCAN_STATUS_COMPLETED_WITH_ERRORS
@@ -463,7 +494,7 @@ async def test_a_result_that_arrives_while_the_last_attempt_loads_its_sbom_resch
     ref = _gridfs_outage(monkeypatch, _result_lands_while_the_files_are_listed)
     scan_id = await _finished_scan_with_an_analysis(db, ref, retry_count=_LAST_ATTEMPT)
 
-    assert await engine.run_analysis(scan_id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_PENDING
+    assert await analyse_scan(db, scan_id, [ref], [], worker_id=_WORKER) == SCAN_STATUS_PENDING
 
     assert (await db.scans.find_one({"_id": scan_id}))["status"] == SCAN_STATUS_PENDING
     await _assert_the_earlier_analysis_is_intact(db, scan_id)
@@ -483,7 +514,7 @@ async def test_a_re_analysis_whose_sbom_was_replaced_meanwhile_is_rescheduled(db
     )
     await db.scans.insert_one(scan.model_dump(by_alias=True) | {"sbom_generation": 2})
 
-    outcome = await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER, sbom_generation=1)
+    outcome = await analyse_scan(db, scan.id, [ref], [], worker_id=_WORKER, sbom_generation=1)
 
     assert outcome == SCAN_STATUS_PENDING
     assert (await db.scans.find_one({"_id": scan.id}))["status"] == "pending"
@@ -509,7 +540,7 @@ async def test_a_re_analysis_that_keeps_the_earlier_analysis_heads_the_project_a
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     await db.projects.insert_one({"_id": _PROJECT_ID, "name": "proj", "latest_scan_id": "older"})
 
-    await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER)
+    await analyse_scan(db, scan.id, [ref], [], worker_id=_WORKER)
 
     assert (await db.projects.find_one({"_id": _PROJECT_ID}))["latest_scan_id"] == scan.id
 
@@ -537,7 +568,7 @@ async def test_a_callgraph_uploaded_during_the_run_is_applied_once_the_scan_is_f
 
     monkeypatch.setattr(engine, "_run_vuln_enrichments", _upload_after_the_callgraph_lookup)
 
-    assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     handed_over.assert_awaited_once_with(scan_id, _PROJECT_ID, db)
 
@@ -548,7 +579,7 @@ async def test_a_failing_hand_over_is_logged_and_the_final_scan_is_still_announc
     await _callgraph_upload(db, scan_id)
     handed_over.side_effect = RuntimeError("mongo down")
 
-    assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert (await db.scans.find_one({"_id": scan_id}))["status"] == SCAN_STATUS_COMPLETED
     assert len(notified) == 1
@@ -560,7 +591,7 @@ async def test_a_pending_marker_without_a_callgraph_is_left_for_the_upload(db, n
     scan_id = await _seed_scan(db)
     await db.scans.update_one({"_id": scan_id}, {"$set": {"reachability_pending": True}})
 
-    assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan_id, [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert (await db.scans.find_one({"_id": scan_id}))["reachability_pending"] is True
 
@@ -582,7 +613,7 @@ async def test_a_re_analysis_that_keeps_the_earlier_analysis_applies_a_callgraph
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     await _callgraph_upload(db, scan.id)
 
-    assert await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    assert await analyse_scan(db, scan.id, [ref], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     handed_over.assert_awaited_once_with(scan.id, _PROJECT_ID, db)
 
@@ -596,7 +627,7 @@ async def test_a_failing_hand_over_after_keeping_the_earlier_analysis_still_retu
     await _callgraph_upload(db, scan_id)
     handed_over.side_effect = RuntimeError("mongo down")
 
-    assert await engine.run_analysis(scan_id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    assert await analyse_scan(db, scan_id, [ref], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     assert "mongo down" in caplog.text
 
@@ -650,7 +681,7 @@ async def test_the_vulnerability_alert_carries_the_enrichment_and_leaves_out_wai
     monkeypatch.setattr(webhook_service, "trigger_webhooks", delivered)
     monkeypatch.setattr(notification_service, "notify_project_members", AsyncMock())
 
-    await engine.run_analysis(scan_id, [stored_sbom], ["trivy", "epss_kev"], db, worker_id=_WORKER)
+    await analyse_scan(db, scan_id, [stored_sbom], ["trivy", "epss_kev"], worker_id=_WORKER)
 
     alerts = {c.kwargs["event_type"]: c.kwargs["payload"] for c in delivered.await_args_list}
     vulnerabilities = alerts[WEBHOOK_EVENT_VULNERABILITY_FOUND]["vulnerabilities"]
@@ -685,7 +716,7 @@ async def test_a_cve_waived_on_its_own_is_not_alerted_while_its_package_has_othe
     monkeypatch.setattr(webhook_service, "trigger_webhooks", delivered)
     monkeypatch.setattr(notification_service, "notify_project_members", AsyncMock())
 
-    await engine.run_analysis(scan_id, [stored_sbom], ["trivy", "epss_kev"], db, worker_id=_WORKER)
+    await analyse_scan(db, scan_id, [stored_sbom], ["trivy", "epss_kev"], worker_id=_WORKER)
 
     assert [c.kwargs["event_type"] for c in delivered.await_args_list] == [WEBHOOK_EVENT_SCAN_COMPLETED]
 
@@ -746,6 +777,6 @@ async def test_sboms_sharing_a_base_image_retain_one_entry_per_advisory(
     monkeypatch.setattr(engine, "_process_sbom", _count_retained)
     sboms = [stored_sbom, *[await store_sbom(db, _EMPTY_SBOM) for _ in range(2)]]
 
-    await engine.run_analysis(await _seed_scan(db), sboms, ["grype", "trivy"], db, worker_id=_WORKER)
+    await analyse_scan(db, await _seed_scan(db), sboms, ["grype", "trivy"], worker_id=_WORKER)
 
     assert retained == [0, len(_BASE_IMAGE_CVES), len(_BASE_IMAGE_CVES)]

@@ -7,6 +7,9 @@ from app.models.stats import Stats
 from app.schemas.project import LicensePolicySchema
 
 
+WaiversApplied = Literal["global", "none"]
+
+
 class AdhocScannerPayloads(BaseModel):
     """Inner scanner results, not the ingest envelopes: TruffleHog, OpenGrep and Bearer carry findings, KICS queries."""
 
@@ -61,7 +64,7 @@ class AdhocAnalyzeResponse(BaseModel):
     reachability_summary: dict[str, Any] | None = None
     recommendations: list[dict[str, Any]] = Field(default_factory=list)
     analyzers: AnalyzerReport = Field(default_factory=AnalyzerReport)
-    waivers_applied: Literal["global", "none"] = "none"
+    waivers_applied: WaiversApplied = "none"
     waived_count: int = 0
 
 

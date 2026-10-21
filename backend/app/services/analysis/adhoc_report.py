@@ -1,11 +1,14 @@
+from collections import defaultdict
 from datetime import datetime, timezone
+from itertools import chain, zip_longest
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from app.core.constants import sort_by_severity
+from app.core.constants import get_severity_value
 from app.core.cve import canonical_cves
+from app.models.finding import FindingType
 from app.schemas.adhoc import AdhocAnalyzeResponse
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
@@ -21,24 +24,50 @@ _DERIVED_FIELDS = frozenset({"findings", "dependencies", "recommendations"})
 _FINDING_ROW_CAP = 500
 _RECOMMENDATION_ROW_CAP = 50
 _DESCRIPTION_CHARS = 300
-_UNKNOWN_SEVERITY = "UNKNOWN"
+_NO_KNOWN_FIX = "No known fix"
+_VARIES_BY_ADVISORY = "Varies by advisory"
+
+
+def _fixed_version(finding: dict[str, Any]) -> str:
+    if finding["type"] != FindingType.VULNERABILITY:
+        return ""
+    details = finding["details"]
+    if details.get("fixed_version"):
+        return str(details["fixed_version"])
+    # No single version fixes every advisory, though some advisories name their own fix.
+    if any(entry.get("fixed_version") for entry in details.get("vulnerabilities") or []):
+        return _VARIES_BY_ADVISORY
+    return _NO_KNOWN_FIX
 
 
 def _row(finding: dict[str, Any]) -> dict[str, str | bool]:
     return {
-        "type": str(finding.get("type", "")),
-        "severity": str(finding.get("severity") or _UNKNOWN_SEVERITY),
-        "component": str(finding.get("component", "")),
-        "version": str(finding.get("version") or ""),
-        "description": str(finding.get("description") or "")[:_DESCRIPTION_CHARS]
-        or ", ".join(canonical_cves([finding.get("details")])),
-        "scanners": ", ".join(str(scanner) for scanner in (finding.get("scanners") or [])),
-        "waived": bool(finding.get("waived")),
+        "type": finding["type"],
+        "severity": finding["severity"],
+        "component": finding["component"],
+        "version": finding["version"] or "",
+        "fixed_version": _fixed_version(finding),
+        "description": finding["description"][:_DESCRIPTION_CHARS] or ", ".join(canonical_cves([finding["details"]])),
+        "scanners": ", ".join(finding["scanners"]),
+        "waived": finding["waived"],
     }
 
 
+def _cap_order(rows: list[dict[str, str | bool]]) -> list[dict[str, str | bool]]:
+    """Live findings first, most severe first; types alternate within a tier so none fills the row cap alone."""
+    tiers: dict[tuple[bool, int], dict[str, list[dict[str, str | bool]]]] = defaultdict(lambda: defaultdict(list))
+    for row in rows:
+        tiers[(bool(row["waived"]), -get_severity_value(str(row["severity"])))][str(row["type"])].append(row)
+    return [
+        row
+        for tier in sorted(tiers)
+        for row in chain.from_iterable(zip_longest(*tiers[tier].values()))
+        if row is not None
+    ]
+
+
 def report_context(result: AdhocAnalyzeResponse) -> dict[str, Any]:
-    rows = sort_by_severity([_row(finding) for finding in result.findings])
+    rows = _cap_order([_row(finding) for finding in result.findings])
     context: dict[str, Any] = {
         name: getattr(result, name) for name in AdhocAnalyzeResponse.model_fields if name not in _DERIVED_FIELDS
     }

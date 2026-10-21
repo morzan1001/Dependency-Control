@@ -57,13 +57,14 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
         return row["result"]
 
     async def carry_over(self, from_scan_id: str, to_scan_id: str, exclude_names: list[str]) -> None:
-        """The derived _id makes a repeated copy onto the rescan a no-op."""
+        """Keyed as save_result keys a row, so a repeated copy, or one of a since re-keyed legacy row, is a no-op."""
+        source_suffix = {"$cond": [{"$gt": [{"$ifNull": ["$source", ""]}, ""]}, {"$concat": [":", "$source"]}, ""]}
         await self.aggregate(
             [
                 {"$match": {"scan_id": from_scan_id, "analyzer_name": {"$nin": exclude_names}}},
                 {
                     "$set": {
-                        "_id": {"$concat": [to_scan_id, ":", {"$toString": "$_id"}]},
+                        "_id": {"$concat": [to_scan_id, ":", "$analyzer_name", source_suffix]},
                         "scan_id": to_scan_id,
                         "created_at": datetime.now(timezone.utc),
                     }

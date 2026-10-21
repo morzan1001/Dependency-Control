@@ -13,7 +13,7 @@ from app.services.analysis.adhoc_report import (
     render_adhoc_html,
     report_context,
 )
-from tests.helpers.findings import grype_findings
+from tests.helpers.findings import aggregated_vulnerability, grype_findings
 
 _HOSTILE_COMPONENT = "<script>alert('xss')</script>"
 _HOSTILE_DESCRIPTION = "<img src=x onerror=alert(1)>"
@@ -26,21 +26,14 @@ _PARSE_FAILURE = "could not be parsed: unsupported document"
 _WAIVED_COUNT = 2
 _OVER_THE_CAP = _FINDING_ROW_CAP + 1
 _RECOMMENDATIONS_OVER_THE_CAP = _RECOMMENDATION_ROW_CAP + 3
+_CVE = "CVE-2023-32681"
+_OTHER_CVE = "CVE-2024-35195"
+_FIX = "2.32.0"
 
 
-def _finding(**overrides):
-    base = {
-        "id": "requests:2.31.0",
-        "type": "vulnerability",
-        "severity": "CRITICAL",
-        "component": "requests",
-        "version": "2.31.0",
-        "description": "demo advisory",
-        "scanners": ["osv"],
-        "waived": False,
-    }
-    base.update(overrides)
-    return base
+def _finding(*advisories, **overrides):
+    advisories = advisories or ({"id": _CVE, "severity": "CRITICAL", "fixed_version": _FIX},)
+    return {**aggregated_vulnerability("requests", "2.31.0", *advisories).model_dump(), **overrides}
 
 
 def _result(**overrides):
@@ -169,6 +162,26 @@ def test_findings_are_ordered_most_severe_first():
     assert html.index("critical-component") < html.index("low-component")
 
 
+def test_waived_findings_cannot_push_a_live_finding_out_of_the_capped_table():
+    waived = [_finding(id=f"w{i}", component=f"waived-{i}", waived=True) for i in range(_FINDING_ROW_CAP)]
+    live = _finding(id="live", severity="LOW", component="live-component")
+
+    rows = report_context(_result(findings=[*waived, live]))["findings"]
+
+    assert rows[0]["component"] == "live-component"
+
+
+def test_one_finding_type_cannot_fill_the_capped_table_for_its_severity():
+    secrets = [
+        _finding(id=f"s{i}", type="secret", severity="HIGH", component=f"secret-{i}") for i in range(_OVER_THE_CAP)
+    ]
+    vulnerability = _finding(id="v", severity="HIGH", component="vulnerable-component")
+
+    rows = report_context(_result(findings=[*secrets, vulnerability]))["findings"]
+
+    assert [row["type"] for row in rows[:2]] == ["secret", "vulnerability"]
+
+
 def test_a_waived_finding_is_marked_as_waived_in_its_row():
     """The stylesheet strikes tr.waived through; without the class a waived finding reads like a live one."""
     result = _result(findings=[_finding(waived=True), _finding(id="live", component="live-component")])
@@ -191,14 +204,37 @@ def test_a_vulnerability_row_lists_every_cve_of_the_finding():
     assert f"<td>{listed}</td>" in html
 
 
-def test_a_finding_without_a_severity_is_labelled_unknown():
-    """UNKNOWN is the label the rest of the app uses for an ungraded finding."""
-    result = _result(findings=[_finding(severity=None)])
+def test_a_vulnerability_row_names_the_version_that_fixes_it():
+    html = render_adhoc_html(_result())
 
-    html = render_adhoc_html(result)
+    header = html.split("<h2>Findings")[1].split("</thead>")[0]
+    assert "<th>Version</th><th>Fixed Version</th>" in header
+    assert f"<td>2.31.0</td>\n      <td>{_FIX}</td>" in html
 
-    assert '<td class="severity">UNKNOWN</td>' in html
-    assert '<tr class="sev-UNKNOWN">' in html
+
+@pytest.mark.parametrize(
+    ("advisories", "shown"),
+    [
+        ([{"id": _CVE, "severity": "HIGH"}], "No known fix"),
+        (
+            [
+                {"id": _CVE, "severity": "HIGH", "fixed_version": "2.32.0"},
+                {"id": _OTHER_CVE, "severity": "HIGH", "fixed_version": "3.0.0"},
+            ],
+            "Varies by advisory",
+        ),
+    ],
+)
+def test_a_vulnerability_without_one_fix_for_every_advisory_says_so_as_the_finding_view_does(advisories, shown):
+    [row] = report_context(_result(findings=[_finding(*advisories)]))["findings"]
+
+    assert row["fixed_version"] == shown
+
+
+def test_a_finding_of_another_type_leaves_the_fixed_version_empty():
+    [row] = report_context(_result(findings=[_finding(type="secret")]))["findings"]
+
+    assert row["fixed_version"] == ""
 
 
 def test_sbom_content_is_html_escaped():

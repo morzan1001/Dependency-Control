@@ -412,3 +412,40 @@ def test_a_global_rule_waiver_waives_only_the_records_of_its_rule():
         == 1
     )
     assert records[0]["waived"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("apply_global_waivers", "counted"), [(False, 1), (True, 0)])
+async def test_a_globally_waived_cve_counts_in_neither_the_kev_nor_the_reachability_summary(
+    _osv, monkeypatch, apply_global_waivers, counted
+):
+    from app.schemas.enrichment import VulnerabilityEnrichment
+    from app.services.enrichment.service import apply_enrichments, vulnerability_enrichment_service
+
+    in_kev = {_FIRST_CVE: VulnerabilityEnrichment(cve=_FIRST_CVE, risk_score=40.0, is_kev=True)}
+
+    async def enrich_findings(findings, github_token=None):
+        for finding in findings:
+            apply_enrichments(finding["details"], in_kev)
+        return in_kev, None
+
+    monkeypatch.setattr(vulnerability_enrichment_service, "enrich_findings", enrich_findings)
+    db = FakeDatabase()
+    await _seed_waiver(db, vulnerability_id=_FIRST_CVE)
+    callgraph = {
+        "language": "python",
+        "format": "generic",
+        "analyzed_modules": [_COMPONENT],
+        "imports": [{"module": _COMPONENT, "file": "app/client.py", "line": 1, "symbols": ["get"]}],
+    }
+
+    request = AdhocAnalyzeRequest(
+        sboms=[_SBOM], analyzers=[_OSV], callgraph=callgraph, apply_global_waivers=apply_global_waivers
+    )
+    response = await run_adhoc_analysis(request, db)
+
+    assert response.stats.high == counted
+    assert response.epss_kev_summary["total_vulnerabilities"] == counted
+    assert response.epss_kev_summary["kev_matches"] == counted
+    assert response.reachability_summary["total_vulnerabilities"] == counted
+    assert response.reachability_summary["reachable_total"] == counted

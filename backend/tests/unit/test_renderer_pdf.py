@@ -41,3 +41,20 @@ def test_pdf_includes_disclaimer_when_provided():
     rep.format = ReportFormat.PDF
     out = r.render(_evaluation(), rep, disclaimer="Module-level CMVP out of scope")
     assert out[:4] == b"%PDF"
+
+
+def test_a_name_the_report_page_is_not_given_fails_the_render(monkeypatch):
+    from jinja2 import UndefinedError
+
+    from app.services.compliance.renderers import pdf_renderer
+    from tests.unit.test_renderer_json import _evaluation, _report
+
+    build = pdf_renderer.build_template_context
+
+    def _without_residual_risks(*args):
+        return {key: value for key, value in build(*args).items() if key != "residual_risks"}
+
+    monkeypatch.setattr(pdf_renderer, "build_template_context", _without_residual_risks)
+
+    with pytest.raises(UndefinedError):
+        pdf_renderer.PdfRenderer().render(_evaluation(), _report())

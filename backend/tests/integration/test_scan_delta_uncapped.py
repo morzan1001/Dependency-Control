@@ -41,7 +41,7 @@ def _sbom(versions: dict[int, str]) -> dict:
 
 async def _store(db, scan_id: str, versions: dict[int, str] | None = None) -> None:
     stored = await store_scan_dependencies(
-        [parse_sbom(_sbom(versions or {}))], _PROJECT, scan_id, DependencyRepository(db)
+        [parse_sbom(_sbom(versions or {}))], _PROJECT, scan_id, DependencyRepository(db), {}
     )
     assert stored == _DEPENDENCIES
 

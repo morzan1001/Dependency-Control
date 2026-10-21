@@ -112,7 +112,7 @@
 <h2>Findings ({{ findings_shown }} of {{ findings_total }})</h2>
 <table class="data">
   <thead>
-    <tr><th>Severity</th><th>Type</th><th>Component</th><th>Version</th><th>Description</th><th>Scanners</th></tr>
+    <tr><th>Severity</th><th>Type</th><th>Component</th><th>Version</th><th>Fixed Version</th><th>Description</th><th>Scanners</th></tr>
   </thead>
   <tbody>
     {% for f in findings %}
@@ -121,6 +121,7 @@
       <td>{{ f.type }}</td>
       <td>{{ f.component }}</td>
       <td>{{ f.version }}</td>
+      <td>{{ f.fixed_version }}</td>
       <td>{{ f.description }}</td>
       <td>{{ f.scanners }}</td>
     </tr>

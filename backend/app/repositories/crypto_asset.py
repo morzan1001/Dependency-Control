@@ -6,7 +6,7 @@ from typing import Any
 from pymongo import UpdateOne
 
 from app.api.v1.helpers.sorting import case_insensitive_sort
-from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE
+from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE, SCAN_TYPE_CBOM
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.base import BaseRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
@@ -117,7 +117,7 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         with_assets = await self.collection.distinct(
             "scan_id", {"project_id": {"$in": project_ids}, "scan_id": {"$in": scan_ids}}
         )
-        with_cbom = await self.db.scans.distinct("_id", {"_id": {"$in": scan_ids}, "scan_type": "cbom"})
+        with_cbom = await self.db.scans.distinct("_id", {"_id": {"$in": scan_ids}, "scan_type": SCAN_TYPE_CBOM})
         return {*with_assets, *with_cbom}
 
     async def summary_for_scan(self, project_id: str, scan_id: str) -> dict[str, Any]:

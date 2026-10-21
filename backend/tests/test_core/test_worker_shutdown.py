@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import pytest_asyncio
 
+from app.core.config import settings
 from app.core.worker import AnalysisWorkerManager
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -55,7 +56,7 @@ async def test_stop_returns_as_soon_as_the_running_scan_finishes(running_scan):
 async def test_stop_gives_up_on_a_scan_that_outlives_the_grace_period(running_scan, caplog):
     manager, _release = running_scan
 
-    with patch("app.core.worker.DEFAULT_SHUTDOWN_TIMEOUT_SECONDS", 0.1), caplog.at_level(logging.WARNING):
+    with patch.object(settings, "WORKER_SHUTDOWN_TIMEOUT_SECONDS", 0.1), caplog.at_level(logging.WARNING):
         await asyncio.wait_for(manager.stop(), timeout=5)
 
     assert all(task.done() for task in manager.workers)
@@ -65,20 +66,18 @@ async def test_stop_gives_up_on_a_scan_that_outlives_the_grace_period(running_sc
 @pytest.mark.asyncio
 async def test_a_scan_whose_project_is_gone_does_not_hold_up_shutdown():
     db = FakeDatabase()
-    await db.scans.insert_one({"_id": "scan-1", "project_id": "gone", "status": "pending", "sbom_refs": []})
+    await db.scans.insert_one(
+        {"_id": "scan-1", "project_id": "gone", "branch": "main", "status": "pending", "sbom_refs": []}
+    )
     manager = AnalysisWorkerManager(num_workers=1)
     manager.queue = asyncio.Queue()
     manager.queue.put_nowait("scan-1")
 
-    with (
-        patch("app.core.worker.get_database", AsyncMock(return_value=db)),
-        patch("app.core.worker.run_analysis", AsyncMock()) as run_analysis,
-    ):
+    with patch("app.core.worker.get_database", AsyncMock(return_value=db)):
         manager.workers.append(asyncio.create_task(manager.worker("worker-1")))
         await asyncio.wait_for(manager.queue.join(), timeout=5)
         await asyncio.wait_for(manager.stop(), timeout=1)
 
-    run_analysis.assert_not_awaited()
     scan = await db.scans.find_one({"_id": "scan-1"})
     assert (scan["status"], scan["error"]) == ("failed", "Project not found")
 

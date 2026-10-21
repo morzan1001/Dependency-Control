@@ -33,8 +33,7 @@ from app.repositories.findings import (
     KEV_FINDINGS_INDEX,
     KEV_FINDINGS_INDEX_NAME,
     KEV_FINDINGS_ONLY,
-    NEWEST_VULNERABILITY_INDEX,
-    VULNERABILITIES_ONLY,
+    NEWEST_COPY_INDEX,
     FindingRepository,
 )
 from app.repositories.github_instances import GitHubInstanceRepository
@@ -301,7 +300,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await findings.create_index(FINDINGS_SCAN_COMPONENT_INDEX)
     # Both detection lookups hint these keys; an unsatisfiable hint errors, so every persist needs them.
     await findings.create_index(FIRST_DETECTION_INDEX)
-    await findings.create_index(NEWEST_VULNERABILITY_INDEX, partialFilterExpression=VULNERABILITIES_ONLY)
+    await findings.create_index(NEWEST_COPY_INDEX)
     await findings.create_index(
         KEV_FINDINGS_INDEX, name=KEV_FINDINGS_INDEX_NAME, partialFilterExpression=KEV_FINDINGS_ONLY
     )

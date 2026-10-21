@@ -7,6 +7,7 @@ import re
 import tempfile
 import time
 import uuid
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -29,6 +30,7 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
+    SCAN_TYPE_CBOM,
     ScanStatus,
     SCAN_USABLE_STATUSES,
 )
@@ -51,6 +53,7 @@ from app.core.metrics import (
     analysis_scans_total,
     analysis_waivers_applied_total,
 )
+from app.core.purl import CopyKey, dependency_copy_key
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import Finding, FindingType
 from app.models.project import Scan
@@ -94,7 +97,7 @@ from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, load
 from app.services.crypto_policy.resolver import CryptoPolicyResolver, EffectivePolicy
 from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment.service import vulnerability_enrichment_service
-from app.services.github import is_public_github
+from app.services.github import installation_github_token
 from app.services.gridfs_maintenance import gridfs_ref_id, read_gridfs_file
 from app.services.reachability_enrichment import (
     ComponentLanguages,
@@ -160,28 +163,14 @@ class _Verdict:
     enrichment_failures: list[str]
 
 
-async def _get_github_instance_token(db: Database) -> str | None:
-    """A github.com instance's token, since GHSA lookups send it to api.github.com."""
-    cursor = db.github_instances.find(
-        {"is_active": True, "access_token": {"$nin": [None, ""]}},
-        {"access_token": 1, "github_url": 1, "url": 1},
-    ).sort([("created_at", 1), ("_id", 1)])
-    async for doc in cursor:
-        if is_public_github(doc.get("github_url"), doc["url"]):
-            return str(doc["access_token"])
-    return None
-
-
-async def _run_context(
-    scan: Scan, db: Database, worker_id: str, sbom_generation: int | None, active_analyzers: list[str]
-) -> _RunContext:
-    system_settings = await SystemSettingsRepository(db).get()
-    github_token = system_settings.github_token or await _get_github_instance_token(db)
+async def _run_context(scan: Scan, db: Database, worker_id: str, sbom_generation: int | None) -> _RunContext | None:
     project = await ProjectRepository(db).get_by_id(scan.project_id)
-    settings_for = build_settings_resolver(
-        system_settings, project.analyzer_settings if project else None, github_token
-    )
-    return _RunContext(scan, db, worker_id, sbom_generation, active_analyzers, github_token, settings_for)
+    if project is None:
+        return None
+    system_settings = await SystemSettingsRepository(db).get()
+    github_token = await installation_github_token(db, system_settings.github_token)
+    settings_for = build_settings_resolver(system_settings, project.analyzer_settings, github_token)
+    return _RunContext(scan, db, worker_id, sbom_generation, project.active_analyzers, github_token, settings_for)
 
 
 async def _carry_over_external_results(scan_id: str, scan_doc: Scan, db: Database) -> None:
@@ -199,13 +188,8 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Scan, db: Databas
 
 async def _carry_over_crypto_assets(scan_id: str, scan_doc: Scan, db: Database) -> None:
     """A CBOM posted to /ingest/cbom is not in GridFS, so a rescan cannot re-derive its assets."""
-    if not (scan_doc.is_rescan and scan_doc.original_scan_id):
-        return
-
-    try:
+    if scan_doc.is_rescan and scan_doc.original_scan_id:
         await CryptoAssetRepository(db).carry_over_to_scan(scan_doc.project_id, scan_doc.original_scan_id, scan_id)
-    except Exception as e:
-        logger.exception("Failed to carry over crypto assets to rescan %s: %s", scan_id, e)
 
 
 async def _keep_result(
@@ -256,19 +240,22 @@ async def process_analyzer(
 
 def _evaluate_crypto(
     docs: list[dict[str, Any]], policy: EffectivePolicy, catalog: dict[str, CipherSuiteEntry]
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, dict[str, Any] | Exception]:
     assets = [CryptoAsset.model_validate(d) for d in docs]
-    results: dict[str, dict[str, Any]] = {}
+    results: dict[str, dict[str, Any] | Exception] = {}
     for name, evaluate in crypto_evaluators(catalog).items():
         started = time.time()
         analysis_scans_total.labels(analyzer=name).inc()
         try:
             results[name] = evaluate(assets, policy)
         except Exception as e:
-            logger.exception("Analysis %s failed: %s", name, e)
-            results[name] = {"error": str(e), "findings": []}
+            results[name] = e
         analysis_duration_seconds.labels(analyzer=name).observe(time.time() - started)
     return results
+
+
+def _crypto_analyzers_failed(ctx: _RunContext, aggregator: ResultAggregator, error: Exception) -> list[AnalyzerOutcome]:
+    return [_account(ctx, aggregator, AnalyzerOutcome.from_error(name, error)) for name in sorted(CRYPTO_ANALYZERS)]
 
 
 async def _run_crypto_analyzers(ctx: _RunContext, aggregator: ResultAggregator) -> list[AnalyzerOutcome]:
@@ -280,12 +267,16 @@ async def _run_crypto_analyzers(ctx: _RunContext, aggregator: ResultAggregator) 
         catalog = await load_iana_catalog() if has_protocols else {}
         results = await asyncio.to_thread(_evaluate_crypto, docs, policy, catalog)
     except Exception as e:
-        return [_account(ctx, aggregator, AnalyzerOutcome.from_error(name, e)) for name in sorted(CRYPTO_ANALYZERS)]
+        return _crypto_analyzers_failed(ctx, aggregator, e)
 
     outcomes: list[AnalyzerOutcome] = []
     for name, result in results.items():
-        keep = partial(_keep_result, ctx, aggregator, name, source=_CRYPTO_SOURCE)
-        outcomes.append(_account(ctx, aggregator, await record_result(name, result, keep)))
+        if isinstance(result, Exception):
+            outcome = AnalyzerOutcome.from_error(name, result)
+        else:
+            keep = partial(_keep_result, ctx, aggregator, name, source=_CRYPTO_SOURCE)
+            outcome = await record_result(name, result, keep)
+        outcomes.append(_account(ctx, aggregator, outcome))
     return outcomes
 
 
@@ -373,30 +364,19 @@ def _parse_and_track_sbom(
 
 
 async def _persist_embedded_crypto_assets(parsed_sbom: Any, project_id: str, scan_id: str, db: Database) -> None:
-    try:
-        crypto_assets = [
-            CryptoAsset(project_id=project_id, scan_id=scan_id, **a.model_dump()) for a in parsed_sbom.crypto_assets
-        ]
-        persisted = await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
-        logger.info(
-            "engine: persisted %d crypto assets from embedded CBOM (scan=%s)",
-            persisted,
-            scan_id,
-        )
-    except Exception as cbom_err:
-        logger.warning(
-            "engine: failed to persist embedded CBOM crypto assets for scan %s: %s",
-            scan_id,
-            cbom_err,
-        )
+    crypto_assets = [
+        CryptoAsset(project_id=project_id, scan_id=scan_id, **a.model_dump()) for a in parsed_sbom.crypto_assets
+    ]
+    persisted = await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
+    logger.info("engine: persisted %d crypto assets from embedded CBOM (scan=%s)", persisted, scan_id)
 
 
 def _resolve_effective_analyzers(
-    active_analyzers: list[str], parsed_sbom: Any, parsed_components: list[dict[str, Any]], scan_type: str | None
+    active_analyzers: list[str], parsed_sbom: ParsedSBOM | None, parsed_components: list[dict[str, Any]]
 ) -> list[str]:
     if parsed_sbom is None:
-        active_analyzers = [n for n in active_analyzers if n in RAW_SBOM_ANALYZERS]
-    if not parsed_components and scan_type == "cbom":
+        return sorted(n for n in active_analyzers if n in RAW_SBOM_ANALYZERS)
+    if parsed_sbom.crypto_assets and not parsed_components:
         return sorted(n for n in active_analyzers if n not in VULNERABILITY_ANALYZERS)
     return sorted(active_analyzers)
 
@@ -404,11 +384,15 @@ def _resolve_effective_analyzers(
 async def _process_sbom(
     ctx: _RunContext, aggregator: ResultAggregator, parsed_sbom: ParsedSBOM | None, sbom: AnalyzerInput
 ) -> list[AnalyzerOutcome]:
+    outcomes: list[AnalyzerOutcome] = []
     if parsed_sbom is not None and parsed_sbom.crypto_assets:
-        await _persist_embedded_crypto_assets(parsed_sbom, ctx.project_id, ctx.scan_id, ctx.db)
-    names = _resolve_effective_analyzers(ctx.active_analyzers, parsed_sbom, sbom.components, ctx.scan.scan_type)
+        try:
+            await _persist_embedded_crypto_assets(parsed_sbom, ctx.project_id, ctx.scan_id, ctx.db)
+        except Exception as e:
+            outcomes = _crypto_analyzers_failed(ctx, aggregator, e)
+    names = _resolve_effective_analyzers(ctx.active_analyzers, parsed_sbom, sbom.components)
     tasks = [process_analyzer(ctx, aggregator, name, sbom) for name in names if name in analyzer_factories]
-    return list(await asyncio.gather(*tasks))
+    return [*outcomes, *await asyncio.gather(*tasks)]
 
 
 async def _analyse_sboms(
@@ -452,62 +436,61 @@ async def _analyse_sboms(
 
 
 def _track_findings_metrics(aggregated_findings: list[Finding]) -> None:
-    for finding in aggregated_findings:
-        analysis_findings_by_type_total.labels(type=finding.type, severity=finding.severity).inc()
-        for scanner_name in finding.scanners:
-            analysis_findings_total.labels(analyzer=scanner_name, severity=finding.severity).inc()
+    by_type = Counter((finding.type, finding.severity) for finding in aggregated_findings)
+    by_scanner = Counter((name, finding.severity) for finding in aggregated_findings for name in finding.scanners)
+    for (finding_type, severity), count in by_type.items():
+        analysis_findings_by_type_total.labels(type=finding_type, severity=severity).inc(count)
+    for (scanner_name, severity), count in by_scanner.items():
+        analysis_findings_total.labels(analyzer=scanner_name, severity=severity).inc(count)
 
 
 _DEP_ENRICHMENT_COPY_KEYS = ("license", "license_expression", "license_category", "license_risks")
-_LICENSE_MISSING = {"$in": [None, ""]}
-_LICENSE_PRESENT = {"$nin": [None, ""]}
 
 
-def _dependency_update_ops(scan_id: str, entry: dict[str, Any]) -> list[UpdateMany]:
-    slim = {key: entry["data"][key] for key in _DEP_ENRICHMENT_COPY_KEYS if key in entry["data"]}
-    if not slim:
-        return []
+def _dependency_copies(enrichment_entries: list[dict[str, Any]]) -> dict[CopyKey, dict[str, Any]]:
+    copies: dict[CopyKey, dict[str, Any]] = {}
+    for entry in enrichment_entries:
+        if copied := {key: entry["data"][key] for key in _DEP_ENRICHMENT_COPY_KEYS if key in entry["data"]}:
+            copies[dependency_copy_key(entry["purl"], entry["name"], entry["version"])] = copied
+    return copies
 
-    if entry["purl"]:
+
+def _dependency_update(scan_id: str, copy_key: CopyKey, copied: dict[str, Any]) -> UpdateMany:
+    if isinstance(copy_key, str):
         # Prefix match keeps qualifier variants; a lookahead, unlike an alternation, keeps the index range tight.
-        dep_filter: dict[str, Any] = {"scan_id": scan_id, "purl": {"$regex": f"^{re.escape(entry['purl'])}(?![^?#])"}}
+        dep_filter: dict[str, Any] = {"scan_id": scan_id, "purl": {"$regex": f"^{re.escape(copy_key)}(?![^?#])"}}
     else:
+        name, version = copy_key
         # Purl-less docs only, so it cannot stamp a same-named package of another ecosystem with its licence.
-        dep_filter = {
-            "scan_id": scan_id,
-            "name": entry["name"],
-            "version": entry["version"],
-            "purl": {"$in": [None, ""]},
-        }
-
-    if "license" not in slim:
-        return [UpdateMany(dep_filter, {"$set": slim})]
-
-    # The SBOM-declared license is authoritative; enrichment only fills docs that lack one.
-    ops = [UpdateMany({**dep_filter, "license": _LICENSE_MISSING}, {"$set": slim})]
-    without_license = {key: value for key, value in slim.items() if key != "license"}
-    if without_license:
-        ops.append(UpdateMany({**dep_filter, "license": _LICENSE_PRESENT}, {"$set": without_license}))
-    return ops
+        dep_filter = {"scan_id": scan_id, "name": name, "version": version, "purl": {"$in": [None, ""]}}
+    fields: dict[str, Any] = {key: {"$literal": value} for key, value in copied.items()}
+    if "license" in fields:
+        # The SBOM-declared license is authoritative; enrichment only fills docs that lack one.
+        declared = {"$ifNull": ["$license", ""]}
+        fields["license"] = {"$cond": [{"$eq": [declared, ""]}, fields["license"], "$license"]}
+    return UpdateMany(dep_filter, [{"$set": fields}])
 
 
-async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id: str, db: Database) -> None:
-    if not enrichment_entries:
-        return
-
-    logger.info(f"Enriching {len(enrichment_entries)} dependencies with aggregated metadata")
-
-    ops = (op for entry in enrichment_entries for op in _dependency_update_ops(scan_id, entry))
-    total_updated = 0
-    for chunk in batched(ops, _BULK_CHUNK_SIZE, strict=False):
-        try:
-            await db.dependencies.bulk_write(list(chunk), ordered=False)
-            total_updated += len(chunk)
-        except Exception as e:
-            logger.exception("Failed to bulk update dependencies: %s", e)
-
+async def _store_dependencies(
+    payload: list[ParsedSBOM | None],
+    project_id: str,
+    scan_id: str,
+    db: Database,
+    enrichment_entries: list[dict[str, Any]],
+) -> None:
+    copies = _dependency_copies(enrichment_entries)
+    stored = await store_scan_dependencies(payload, project_id, scan_id, DependencyRepository(db), copies)
+    if stored is not None:
+        logger.info(f"Stored {stored} dependencies for scan {scan_id}")
+    else:
+        # The inventory an earlier write left in place takes the copies as updates.
+        ops = (_dependency_update(scan_id, copy_key, copied) for copy_key, copied in copies.items())
+        for chunk in batched(ops, _BULK_CHUNK_SIZE, strict=False):
+            try:
+                await db.dependencies.bulk_write(list(chunk), ordered=False)
+            except Exception as e:
+                logger.exception("Failed to bulk update dependencies: %s", e)
     persisted = await DependencyEnrichmentRepository(db).upsert_many(enrichment_entries)
-    logger.info(f"Bulk updated {total_updated} dependencies.")
     logger.info(f"Upserted {persisted} dependency enrichments.")
 
 
@@ -521,8 +504,9 @@ async def _run_epss_kev_enrichment(
         epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
         await AnalysisResultRepository(ctx.db).save_result(ctx.scan_id, "epss_kev", epss_kev_summary)
         status = OutcomeStatus.PARTIAL if unavailable else OutcomeStatus.SUCCESS
-        reason = f"{' and '.join(unavailable)} unavailable" if unavailable else ""
-        outcomes.append(AnalyzerOutcome("epss_kev", status, reason, f"{len(vulnerability_findings)} enriched"))
+        outcomes.append(
+            AnalyzerOutcome("epss_kev", status, unavailable or "", f"{len(vulnerability_findings)} enriched")
+        )
         logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
 
         analysis_enrichment_total.labels(type="epss_kev").inc(len(vulnerability_findings))
@@ -833,9 +817,7 @@ def _partial_run_reasons(
     return reasons
 
 
-def _final_scan_status(scan_id: str, sboms_unusable: bool, partial_reasons: list[str]) -> tuple[ScanStatus, str | None]:
-    if sboms_unusable:
-        return SCAN_STATUS_FAILED, "SBOM could not be loaded or parsed for analysis"
+def _final_scan_status(scan_id: str, partial_reasons: list[str]) -> tuple[ScanStatus, str | None]:
     if partial_reasons:
         error = "; ".join(partial_reasons)
         logger.warning("Scan %s completed with errors: %s", scan_id, error)
@@ -859,11 +841,13 @@ async def _keep_previous_analysis(ctx: _RunContext, load_start: datetime) -> Sca
     scan_repo = ScanRepository(ctx.db)
     # Retried while the worker still re-queues, so the input that reopened the scan gets analysed.
     if ctx.scan.retry_count + 1 < ANALYSIS_MAX_RETRIES:
-        logger.warning("Scan %s: an SBOM failed to load; retrying the re-analysis", ctx.scan_id)
+        logger.warning("Scan %s: an SBOM failed to load or parse; retrying the re-analysis", ctx.scan_id)
         requeued = await scan_repo.requeue(ctx.scan_id, ctx.worker_id, counter="retry_count")
         return SCAN_STATUS_PENDING if requeued else None
-    logger.warning("Scan %s: an SBOM failed to load on the last attempt; keeping the previous analysis", ctx.scan_id)
-    error = "SBOM could not be loaded for re-analysis; findings are from the previous analysis"
+    logger.warning(
+        "Scan %s: an SBOM failed to load or parse on the last attempt; keeping the previous analysis", ctx.scan_id
+    )
+    error = "SBOM could not be loaded or parsed for re-analysis; findings are from the previous analysis"
     outcome = await _write_final_state(
         ctx,
         SCAN_STATUS_COMPLETED_WITH_ERRORS,
@@ -873,6 +857,19 @@ async def _keep_previous_analysis(ctx: _RunContext, load_start: datetime) -> Sca
     if outcome == SCAN_STATUS_COMPLETED_WITH_ERRORS:
         await scan_repo.sync_project_head(ctx.project_id)
         await _apply_handed_over_callgraphs(ctx.scan_id, ctx.project_id, ctx.db)
+    return outcome
+
+
+async def _conclude(
+    ctx: _RunContext, verdict: _Verdict, external_load_start: datetime, started: float
+) -> ScanStatus | None:
+    analysis_aggregation_duration_seconds.observe(time.time() - started)
+    outcome = await _finalize_scan_and_project(ctx, verdict, external_load_start)
+    if outcome != verdict.status:
+        return outcome
+    await _announce_outcome(ctx, verdict)
+    # Runs on the released findings: the rollup holds two dependency maps of its own.
+    await record_scan_update_delta(ctx.db, ctx.scan_id)
     return outcome
 
 
@@ -886,7 +883,6 @@ async def _still_claimed(ctx: _RunContext) -> bool:
 async def run_analysis(
     scan_id: str,
     sboms: list[dict[str, Any]],
-    active_analyzers: list[str],
     db: Database,
     *,
     worker_id: str,
@@ -896,42 +892,82 @@ async def run_analysis(
     logger.info(f"Starting analysis for scan {scan_id}")
     aggregation_start_time = time.time()
 
-    scan_doc = await ScanRepository(db).get_by_id(scan_id)
+    scan_repo = ScanRepository(db)
+    scan_doc = await scan_repo.get_by_id(scan_id)
     if not scan_doc:
         logger.error(f"Scan {scan_id} not found")
         return None
-    ctx = await _run_context(scan_doc, db, worker_id, sbom_generation, active_analyzers)
+    ctx = await _run_context(scan_doc, db, worker_id, sbom_generation)
+    if ctx is None:
+        logger.error(f"Project for scan {scan_id} not found")
+        # No failure notice: it is addressed through the project, which is gone.
+        failed = await scan_repo.mark_failed(scan_id, "Project not found", worker_id=worker_id)
+        return SCAN_STATUS_FAILED if failed else None
 
     aggregator = ResultAggregator()
     fs = AsyncIOMotorGridFSBucket(db)
     load_start = datetime.now(timezone.utc)
-    # Checked before the first delete, so an SBOM that is gone leaves the stored analysis intact.
+    # Checked before any write, so an SBOM that is gone leaves the stored analysis intact.
     stored_ids = await _stored_sbom_ids(fs, sboms, aggregator)
     if None in stored_ids and scan_doc.completed_at is not None:
         return await _keep_previous_analysis(ctx, load_start)
-
-    result_repo = AnalysisResultRepository(db)
-    await result_repo.delete_many({"scan_id": scan_id, "analyzer_name": {"$in": list(_ENGINE_RESULT_NAMES)}})
 
     if scan_doc.is_rescan:
         analysis_rescan_operations_total.inc()
 
     # Before the SBOM loop: an embedded CBOM re-persists over the carried copy of the same asset.
     await _carry_over_external_results(scan_id, scan_doc, db)
-    await _carry_over_crypto_assets(scan_id, scan_doc, db)
+    carry_over_error: Exception | None = None
+    try:
+        await _carry_over_crypto_assets(scan_id, scan_doc, db)
+    except Exception as e:
+        carry_over_error = e
 
     payload, sbom_load_failures, outcomes = await _analyse_sboms(ctx, fs, stored_ids, aggregator)
+    sbom_parse_failures = payload.count(None) - sbom_load_failures
 
-    if scan_doc.scan_type == "cbom" or any(p is not None and p.crypto_assets for p in payload):
+    # A rescan has no stored inventory to fall back on, so a partial payload would leave it without one.
+    if (scan_doc.is_rescan and sbom_load_failures + sbom_parse_failures > 0) or (
+        sbom_load_failures > 0 and sbom_load_failures == len(stored_ids)
+    ):
+        del payload, aggregator
+        logger.error(
+            "Scan %s: %d/%d SBOMs failed to load and %d failed to parse; storing no findings or dependencies",
+            scan_id,
+            sbom_load_failures,
+            len(stored_ids),
+            sbom_parse_failures,
+        )
+        if scan_doc.completed_at is not None:
+            return await _keep_previous_analysis(ctx, load_start)
+        analyzer_outcomes = _worst_outcomes(outcomes)
+        verdict = _Verdict(
+            SCAN_STATUS_FAILED,
+            "SBOM could not be loaded or parsed for analysis",
+            Stats(),
+            0,
+            0,
+            analyzer_outcomes,
+            *_failed_analyzer_names(analyzer_outcomes),
+        )
+        return await _conclude(ctx, verdict, load_start, aggregation_start_time)
+
+    result_repo = AnalysisResultRepository(db)
+    # Deferred past the unusable check so a kept analysis keeps its rows; this run's rows postdate load_start.
+    await result_repo.delete_older_writes(
+        {"scan_id": scan_id, "analyzer_name": {"$in": list(_ENGINE_RESULT_NAMES)}}, load_start
+    )
+
+    if scan_doc.scan_type == SCAN_TYPE_CBOM or any(p is not None and p.crypto_assets for p in payload):
         outcomes.extend(await _run_crypto_analyzers(ctx, aggregator))
+        if carry_over_error is not None:
+            outcomes.extend(_crypto_analyzers_failed(ctx, aggregator, carry_over_error))
 
     if not await _still_claimed(ctx):
         return None
 
-    sbom_parse_failures = payload.count(None) - sbom_load_failures
-    stored = await store_scan_dependencies(payload, ctx.project_id, scan_id, DependencyRepository(db))
-    if stored is not None:
-        logger.info(f"Stored {stored} dependencies for scan {scan_id}")
+    # External results enrich no dependency, so the enrichments are complete here.
+    await _store_dependencies(payload, ctx.project_id, scan_id, db, aggregator.get_dependency_enrichments())
     del payload
 
     external_load_start = datetime.now(timezone.utc)
@@ -939,11 +975,7 @@ async def run_analysis(
 
     aggregated_findings = aggregator.get_findings()
     _track_findings_metrics(aggregated_findings)
-    dependency_enrichments = aggregator.get_dependency_enrichments()
     del aggregator
-
-    await _enrich_dependencies(dependency_enrichments, scan_id, db)
-    del dependency_enrichments
 
     findings_to_insert, vulnerability_findings = _prepare_finding_records(
         aggregated_findings, scan_id, ctx.project_id, scan_doc.created_at
@@ -961,19 +993,6 @@ async def run_analysis(
     del findings_to_insert, vulnerability_findings
     stats, ignored_count = await calculate_comprehensive_stats(db, scan_id, component_languages)
 
-    # A rescan has no stored inventory to fall back on, so a partial payload would leave it without one.
-    sboms_unusable = (scan_doc.is_rescan and sbom_load_failures + sbom_parse_failures > 0) or (
-        sbom_load_failures > 0 and sbom_load_failures == len(stored_ids)
-    )
-    if sboms_unusable:
-        logger.error(
-            "Scan %s: %d/%d SBOMs failed to load and %d failed to parse; marking failed",
-            scan_id,
-            sbom_load_failures,
-            len(stored_ids),
-            sbom_parse_failures,
-        )
-
     analyzer_outcomes = _worst_outcomes(outcomes)
     failed_analyzers, enrichment_failures = _failed_analyzer_names(analyzer_outcomes)
     partial_reasons = _partial_run_reasons(
@@ -984,7 +1003,7 @@ async def run_analysis(
         persisted_findings_count,
         total_findings_count,
     )
-    final_status, final_error = _final_scan_status(scan_id, sboms_unusable, partial_reasons)
+    final_status, final_error = _final_scan_status(scan_id, partial_reasons)
     verdict = _Verdict(
         final_status,
         final_error,
@@ -995,16 +1014,4 @@ async def run_analysis(
         failed_analyzers,
         enrichment_failures,
     )
-
-    analysis_aggregation_duration_seconds.observe(time.time() - aggregation_start_time)
-
-    outcome = await _finalize_scan_and_project(ctx, verdict, external_load_start)
-    if outcome != final_status:
-        return outcome
-
-    await _announce_outcome(ctx, verdict)
-
-    # Runs on the released findings: the rollup holds two dependency maps of its own.
-    await record_scan_update_delta(db, scan_id)
-
-    return outcome
+    return await _conclude(ctx, verdict, external_load_start, aggregation_start_time)

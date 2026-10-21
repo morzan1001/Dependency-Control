@@ -40,7 +40,7 @@ from app.services.analyzers.license_compliance.normalizer import (
 from app.services.analyzers.license_compliance.normalizer import (
     tokenize_license_string,
 )
-from app.core.purl import canonical_purl
+from app.core.purl import CopyKey, dependency_copy_key
 from app.services.normalizers.crypto import normalize_crypto
 from app.services.normalizers.iac import normalize_kics
 from app.services.normalizers.license import normalize_license
@@ -146,11 +146,11 @@ class ResultAggregator:
     def __init__(self) -> None:
         self.findings: dict[str, Finding] = {}
         self._unfolded: set[str] = set()
-        self._dependency_enrichments: dict[str, DependencyEnrichment] = {}
+        self._dependency_enrichments: dict[CopyKey, DependencyEnrichment] = {}
 
     def _get_or_create_enrichment(self, name: str, version: str, purl: str | None = None) -> DependencyEnrichment:
         """Keyed by canonical purl: qualifier variants merge, same-named packages of different ecosystems stay apart."""
-        key = canonical_purl(purl) if purl else f"{name}@{version}"
+        key = dependency_copy_key(purl, name, version)
         if key not in self._dependency_enrichments:
             self._dependency_enrichments[key] = DependencyEnrichment(
                 name=name, version=version, purl=key if purl else None

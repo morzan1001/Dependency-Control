@@ -19,10 +19,11 @@ from app.core.constants import (
     PYPI_API_URL,
     TOP_PYPI_PACKAGES_URL,
 )
-from app.models.crypto_asset import CryptoAsset
-from app.models.system import SystemSettings
+from app.models.finding import FindingType
 from app.models.waiver import Waiver
-from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport
+from app.repositories.system_settings import SystemSettingsRepository
+from app.repositories.waivers import WaiverRepository
+from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport, WaiversApplied
 from app.schemas.bearer import BearerFinding
 from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
 from app.schemas.enrichment import VulnerabilityEnrichment
@@ -49,6 +50,7 @@ from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.analyzers.malware import MISSING_API_KEY
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import sends_ids, vulnerability_enrichment_service
+from app.services.github import installation_github_token
 from app.services.normalizers.sast import bearer_entries
 from app.services.reachability_enrichment import (
     ComponentLanguages,
@@ -73,7 +75,6 @@ _PARTIAL_COVERAGE = "partial coverage: {reason}"
 _ENRICHMENT = "epss_kev"
 _NO_ENRICHABLE_IDS = "no CVE or GHSA id to look up"
 _REACHABILITY = "reachability"
-_VULNERABILITY = "vulnerability"
 _NO_COMPONENTS = "no components could be parsed (detected format: {sbom_format})"
 _DROPPED_COMPONENTS = "{count} component(s) dropped by the parser ({reasons})"
 
@@ -102,13 +103,14 @@ ADHOC_DEFAULT_ANALYZERS: tuple[str, ...] = (_OSV, "license_compliance")
 _NOT_REQUESTED = "not requested"
 _NO_PACKAGE_COMPONENTS = "no package components to analyse"
 _UNCACHED_FANOUT = (
-    "off by default: this path publishes nothing to the shared cache, so every run re-queries "
+    "off by default: this path caches nothing keyed on the posted packages, so every run re-queries "
     "the upstream registry for each package it recognises"
 )
+_CLI_SCANNER = "off by default: runs a CLI scanner process, which takes minutes on large SBOMs"
 
 ADHOC_SKIP_REASONS: dict[str, str] = {
-    "trivy": "off by default: CLI scanner, may run up to 300 s",
-    "grype": "off by default: CLI scanner, may run up to 600 s",
+    "trivy": _CLI_SCANNER,
+    "grype": _CLI_SCANNER,
     "deps_dev": _UNCACHED_FANOUT,
     "outdated_packages": _UNCACHED_FANOUT,
     "hash_verification": _UNCACHED_FANOUT,
@@ -122,8 +124,6 @@ _CRYPTO_RULES = "crypto_rules"
 _NO_CRYPTO_ASSETS = "no readable cryptographic-asset components in the SBOM"
 # normalize_crypto keeps each finding's own type, so one dispatch key covers every crypto finding type.
 _CRYPTO_DISPATCH_KEY = "crypto_weak_algorithm"
-# Names the assets within this request only; nothing here is stored or looked up by it.
-_ADHOC_SCOPE = "adhoc"
 
 _CRYPTO_ANALYZER_REPLACED = (
     "replaced ad-hoc by the 'crypto_rules' stage: the registered analyzer reads stored crypto "
@@ -178,9 +178,6 @@ _ADHOC_CRYPTO_RULES = tuple(r for r in load_seed_rules() if r.enabled and r.find
 _NO_CALLGRAPH = "no callgraph supplied"
 # Identifies the graph within this request only; nothing here is stored or looked up by it.
 _POSTED_CALLGRAPH_ID = "posted"
-
-_WAIVERS_GLOBAL = "global"
-_WAIVERS_NONE = "none"
 
 
 def _posted_entries(name: str, payload: dict[str, Any], key: str) -> list[Any] | None:
@@ -366,11 +363,9 @@ def _aggregate_crypto_rules(
         return
 
     for parsed_input in parsed_inputs:
-        assets = [
-            CryptoAsset(project_id=_ADHOC_SCOPE, scan_id=_ADHOC_SCOPE, **asset.model_dump())
-            for asset in parsed_input.parsed.crypto_assets
-        ]
-        findings = crypto_findings_for_assets(assets, _ADHOC_CRYPTO_RULES, scanner=_CRYPTO_RULES)
+        findings = crypto_findings_for_assets(
+            parsed_input.parsed.crypto_assets, _ADHOC_CRYPTO_RULES, scanner=_CRYPTO_RULES
+        )
         if findings:
             aggregator.aggregate(
                 _CRYPTO_DISPATCH_KEY,
@@ -381,25 +376,27 @@ def _aggregate_crypto_rules(
 
 
 async def _enrich_vulnerabilities(
-    records: list[dict[str, Any]], report: AnalyzerReport
-) -> tuple[dict[str, Any], dict[str, VulnerabilityEnrichment]]:
-    vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
+    records: list[dict[str, Any]], vulnerabilities: list[dict[str, Any]], report: AnalyzerReport, db: Database
+) -> dict[str, VulnerabilityEnrichment]:
     threat_intel: dict[str, VulnerabilityEnrichment] = {}
     sends = sends_ids(vulnerabilities)
     try:
-        threat_intel, unavailable = await vulnerability_enrichment_service.enrich_findings(vulnerabilities)
+        github_token = await installation_github_token(db, (await SystemSettingsRepository(db).get()).github_token)
+        threat_intel, unavailable = await vulnerability_enrichment_service.enrich_findings(
+            vulnerabilities, github_token=github_token
+        )
     except Exception as exc:
         logger.warning("adhoc: EPSS/KEV enrichment failed: %s", exc)
         _record_errored(report, _ENRICHMENT, str(exc))
     else:
         if unavailable:
-            _record_errored(report, _ENRICHMENT, f"{' and '.join(unavailable)} unavailable")
+            _record_errored(report, _ENRICHMENT, unavailable)
         elif sends:
             _record_ran(report, _ENRICHMENT)
         else:
             report.skipped[_ENRICHMENT] = _NO_ENRICHABLE_IDS
     refresh_vulnerability_info(records)
-    return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
+    return threat_intel
 
 
 def _prepare_posted_callgraph(payload: dict[str, Any]) -> CallgraphMinimal:
@@ -421,11 +418,11 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> CallgraphMinimal:
 
 
 def _run_reachability(
-    records: list[dict[str, Any]],
+    vulnerabilities: list[dict[str, Any]],
     callgraph_payload: dict[str, Any] | None,
     languages: ComponentLanguages,
     report: AnalyzerReport,
-) -> dict[str, Any] | None:
+) -> CallgraphMinimal | None:
     if callgraph_payload is None:
         report.skipped[_REACHABILITY] = _NO_CALLGRAPH
         return None
@@ -437,17 +434,19 @@ def _run_reachability(
         _record_errored(report, _REACHABILITY, str(exc))
         return None
 
-    # Same dict objects as records, so store_reachability's in-place mirroring reaches every later stage.
-    vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
     enrich_findings_with_reachability(vulnerabilities, [callgraph], languages)
     _record_ran(report, _REACHABILITY)
-    return dict(build_reachability_summary(vulnerabilities, [callgraph]))
+    return callgraph
 
 
 def _apply_vulnerability_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:
     scope = waiver_criteria(waiver)
     for record in records:
-        if record.get("type") == _VULNERABILITY and record_matches(record, scope) and waive_advisories(record, waiver):
+        if (
+            record.get("type") == FindingType.VULNERABILITY
+            and record_matches(record, scope)
+            and waive_advisories(record, waiver)
+        ):
             roll_up_advisories(record)
 
 
@@ -472,7 +471,7 @@ def apply_global_waivers_in_memory(records: list[dict[str, Any]], waivers: list[
 
 
 async def run_adhoc_analysis(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeResponse:
-    """Writes nothing, not even to the analyzers' Redis cache it shares with the scan pipeline."""
+    """Writes nothing; of the Redis cache it shares with the scans, only advisory data named by its upstream id."""
     with suppress_cache_writes():
         return await _analyze(request, db)
 
@@ -484,7 +483,8 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     parsed_inputs = await asyncio.to_thread(_parse_sboms, request, report)
 
     license_settings = {"license_compliance": request.license_policy.model_dump()} if request.license_policy else None
-    settings_for = build_settings_resolver(SystemSettings(), license_settings)
+    # Analyzers get none of the installation's settings or credentials; its GitHub token serves the GHSA lookups only.
+    settings_for = build_settings_resolver(None, license_settings)
 
     requested = resolve_adhoc_analyzers(request.analyzers, report)
     # An input without package components must not be analysed into a clean bill of health.
@@ -493,9 +493,16 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         report.skipped.update(dict.fromkeys(requested, _NO_PACKAGE_COMPONENTS))
 
     for sbom in package_inputs:
-        for name in requested:
-            keep = partial(_aggregate_unless_errored, aggregator, name, sbom.source)
-            _record_outcome(report, await run_analyzer(name, sbom, settings_for(name), keep), sbom.label)
+        outcomes = await asyncio.gather(
+            *(
+                run_analyzer(
+                    name, sbom, settings_for(name), partial(_aggregate_unless_errored, aggregator, name, sbom.source)
+                )
+                for name in requested
+            )
+        )
+        for outcome in outcomes:
+            _record_outcome(report, outcome, sbom.label)
 
     _aggregate_crypto_rules(parsed_inputs, aggregator, report)
     _aggregate_posted_scanners(request, aggregator, report)
@@ -504,25 +511,26 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     for record in records:
         # Findings are addressed by ``finding_id`` everywhere the scan-backed API exposes them.
         record["finding_id"] = record["id"]
+    # Same dict objects as records, so every stage's in-place enrichment reaches the response.
+    vulnerabilities = [record for record in records if record["type"] == FindingType.VULNERABILITY]
 
-    epss_kev_summary, threat_intel = await _enrich_vulnerabilities(records, report)
+    threat_intel = await _enrich_vulnerabilities(records, vulnerabilities, report, db)
 
     # One row per package across every posted SBOM, the invariant a stored scan's inventory holds.
     merged, _ = merge_duplicate_dependencies([dep for pi in parsed_inputs for dep in pi.parsed.dependencies])
     components = [dep.model_dump() for dep in merged]
     languages = component_language_map(components)
-    reachability_summary = await asyncio.to_thread(_run_reachability, records, request.callgraph, languages, report)
+    callgraph = await asyncio.to_thread(_run_reachability, vulnerabilities, request.callgraph, languages, report)
 
     waived_count = 0
-    waivers_applied = _WAIVERS_NONE
+    waivers_applied: WaiversApplied = "none"
     if request.apply_global_waivers:
-        from app.repositories.waivers import WaiverRepository
-
         waived_count = apply_global_waivers_in_memory(records, await WaiverRepository(db).find_active_global())
-        waivers_applied = _WAIVERS_GLOBAL
+        waivers_applied = "global"
 
-    # After the waivers, so an accepted risk neither scores nor generates work to do.
+    # After the waivers, so an accepted risk neither scores, counts in a summary nor generates work to do.
     stats = compute_stats(records, languages)
+    live_vulnerabilities = [record for record in vulnerabilities if not record.get("waived")]
     recommendations = await asyncio.to_thread(
         generate_recommendations,
         findings=[record for record in records if not record.get("waived")],
@@ -542,8 +550,8 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         findings=records,
         stats=stats,
         dependencies=aggregator.get_dependency_enrichments(),
-        epss_kev_summary=epss_kev_summary,
-        reachability_summary=reachability_summary,
+        epss_kev_summary=dict(build_epss_kev_summary(live_vulnerabilities)),
+        reachability_summary=dict(build_reachability_summary(live_vulnerabilities, [callgraph])) if callgraph else None,
         recommendations=[recommendation.to_dict() for recommendation in recommendations],
         analyzers=report,
         waivers_applied=waivers_applied,

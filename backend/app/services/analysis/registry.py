@@ -47,7 +47,7 @@ POST_PROCESSOR_ANALYZERS: frozenset[str] = frozenset({"epss_kev", "reachability"
 # Vulnerability scanners — post-processors depend on these.
 VULNERABILITY_ANALYZERS: set[str] = {"trivy", "grype", "osv", "deps_dev"}
 
-# The only analyzers that read the posted document itself; every other one grades the parser's components.
+# The only SBOM analyzers that read the posted document itself; the rest grade the parser's components.
 RAW_SBOM_ANALYZERS: set[str] = {"trivy", "grype"}
 
 CryptoEvaluator = Callable[[list[CryptoAsset], EffectivePolicy], dict[str, Any]]

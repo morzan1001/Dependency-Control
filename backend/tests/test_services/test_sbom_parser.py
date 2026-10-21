@@ -2696,7 +2696,7 @@ class TestCycloneDXParentRefs:
         from app.services.dependency_store import _parsed_dep_to_dependency
 
         now = datetime.now(timezone.utc)
-        dependencies = [_parsed_dep_to_dependency(d, "p", "s", now) for d in parse_sbom(sbom).dependencies]
+        dependencies = [_parsed_dep_to_dependency(d, "p", "s", now, {}) for d in parse_sbom(sbom).dependencies]
         graph = _build_dependency_graph(dependencies, {}, len(dependencies))
 
         nodes = {node.name: node for node in graph.nodes}
@@ -2730,10 +2730,11 @@ class TestCycloneDXParentRefs:
         )
         now = datetime.now(timezone.utc)
 
-        stored = _parsed_dep_to_dependency(parsed, "p", "s", now).model_dump(exclude={"id"})
+        stored = _parsed_dep_to_dependency(parsed, "p", "s", now, {}).model_dump(exclude={"id"})
 
         expected = {**parsed.model_dump(), **dict.fromkeys((*clipped, "download_url"), "x" * 2048)}
-        assert stored == {**expected, "project_id": "p", "scan_id": "s", "created_at": now, "license_category": None}
+        copied = dict.fromkeys(("license_category", "license_expression", "license_risks"))
+        assert stored == {**expected, "project_id": "p", "scan_id": "s", "created_at": now, **copied}
 
     def test_chain_and_cycle_analysis_read_a_syft_cyclonedx_graph(self):
         import itertools

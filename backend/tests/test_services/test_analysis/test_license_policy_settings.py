@@ -33,7 +33,7 @@ async def test_a_stored_legacy_license_policy_does_not_override_the_saved_settin
     ).model_dump(by_alias=True)
     db.projects._docs["p1"] = {**doc, "license_policy": {"distribution_model": "internal_only"}}
 
-    ctx = await _run_context(Scan(project_id="p1", branch="main"), db, "pod-a/worker-0", None, [])
+    ctx = await _run_context(Scan(project_id="p1", branch="main"), db, "pod-a/worker-0", None)
     settings = ctx.settings_for("license_compliance")
     parsed = [dep.model_dump() for dep in parse_sbom(_GPL_SBOM).dependencies]
     result = await LicenseAnalyzer().analyze(_GPL_SBOM, settings, parsed)

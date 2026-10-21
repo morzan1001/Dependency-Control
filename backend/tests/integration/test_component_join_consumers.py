@@ -393,7 +393,7 @@ async def _analytics(client, path: str, headers: dict, **params):
 
 async def _store_cyclonedx(db, *components: dict) -> None:
     sbom = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": list(components)}
-    await store_scan_dependencies([parse_sbom(sbom)], "p", SCAN_ID, DependencyRepository(db))
+    await store_scan_dependencies([parse_sbom(sbom)], "p", SCAN_ID, DependencyRepository(db), {})
 
 
 @pytest.mark.asyncio

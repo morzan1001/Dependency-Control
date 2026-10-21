@@ -11,8 +11,7 @@ from app.models.finding import Finding, FindingType, Severity
 from app.models.waiver import Waiver
 from app.repositories.findings import (
     _DETECTION_CHUNK,
-    NEWEST_VULNERABILITY_INDEX,
-    VULNERABILITIES_ONLY,
+    NEWEST_COPY_INDEX,
     FindingRepository,
 )
 from app.repositories.waivers import WaiverRepository
@@ -170,6 +169,45 @@ async def test_a_versionless_finding_inherits_like_any_other(db, database):
     docs = await _persist(db, "scan-2", _NOW, _versionless_sast())
 
     assert _first_seen(docs) == [_days_ago(40)]
+
+
+def _gpl(component: str) -> Finding:
+    return Finding(
+        id="LICENSE-GPL-3.0",
+        type=FindingType.LICENSE,
+        severity=Severity.HIGH,
+        component=component,
+        version="1.0",
+        description="strong copyleft",
+        scanners=["license_compliance"],
+    )
+
+
+@pytest.mark.parametrize("database", DATABASES)
+@pytest.mark.asyncio
+async def test_a_finding_id_other_components_share_keeps_each_components_own_first_detection(db, database):
+    await _persist(db, "scan-1", _days_ago(100), _gpl("readline"))
+    await _persist(db, "scan-2", _days_ago(50), _gpl("ghostscript"))
+
+    docs = await _persist(db, "scan-3", _NOW, _gpl("readline"), _gpl("ghostscript"))
+
+    assert {doc["component"]: ensure_utc(doc["first_seen_at"]) for doc in docs} == {
+        "readline": _days_ago(100),
+        "ghostscript": _days_ago(50),
+    }
+
+
+@pytest.mark.parametrize("database", DATABASES)
+@pytest.mark.asyncio
+async def test_copies_stored_without_first_seen_at_count_from_the_earliest_of_their_scans(db, database):
+    for days in (150, 30):
+        await _store_copy(
+            db, f"legacy-{days}", _days_ago(days), _outdated("left-pad", "1.0"), created_at=_days_ago(days)
+        )
+
+    docs = await _persist(db, "scan-1", _NOW, _outdated("left-pad", "1.0"))
+
+    assert _first_seen(docs) == [_days_ago(150)]
 
 
 @pytest.mark.parametrize("database", DATABASES)
@@ -454,6 +492,46 @@ async def test_the_first_detection_lookup_reads_index_keys_of_the_dated_findings
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
+async def test_the_first_detection_lookup_reads_one_key_per_finding_however_many_scans_kept_it(db):
+    kept_scans = 30
+    for scan in range(kept_scans):
+        await _persist(db, f"scan-{scan}", _days_ago(60 - scan), _outdated("left-pad", "1.0"), _versionless_sast())
+    current = [_outdated("left-pad", "1.0"), _versionless_sast()]
+    records, _ = _prepare_finding_records(current, "scan-now", _PROJECT, _NOW)
+    await _cold_plan_cache(db)
+
+    commands = await _profiled(db, _stamp_first_seen(records, _PROJECT, FindingRepository(db)))
+
+    assert not any(command.get("fromMultiPlanner") for command in commands)
+    assert sum(command["docsExamined"] for command in commands) == 0
+    assert sum(command["keysExamined"] for command in commands) <= 2 * len(records)
+    assert {record["component"]: ensure_utc(record["first_seen_at"]) for record in records} == {
+        "left-pad": _days_ago(60),
+        "src/app.py": _days_ago(60),
+    }
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_first_detection_lookup_reads_every_kept_copy_of_a_finding_id_several_components_share(db):
+    components = ["bash", "coreutils", "ghostscript", "grep", "readline"]
+    kept_scans = 30
+    for scan in range(kept_scans):
+        await _persist(db, f"scan-{scan}", _days_ago(60 - scan), *map(_gpl, components))
+    records, _ = _prepare_finding_records(list(map(_gpl, components)), "scan-now", _PROJECT, _NOW)
+    await _cold_plan_cache(db)
+
+    commands = await _profiled(db, _stamp_first_seen(records, _PROJECT, FindingRepository(db)))
+
+    # The newest copy dates only its own component; the others fall back to the $min over every kept copy.
+    assert sum(command["keysExamined"] for command in commands) >= (len(components) - 1) * kept_scans
+    assert {record["component"]: ensure_utc(record["first_seen_at"]) for record in records} == dict.fromkeys(
+        components, _days_ago(60)
+    )
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
 async def test_the_advisory_lookup_reads_one_copy_per_stored_version(db):
     for scan in range(4):
         await _persist(db, f"old-{scan}", _days_ago(90 - scan), _log4j_advisories(_LOG4SHELL, version="2.14.1"))
@@ -576,6 +654,6 @@ async def test_advisories_across_two_lookup_chunks_give_the_single_chunk_dates(d
 @pytest.mark.asyncio
 async def test_startup_accepts_the_newest_copy_index_built_ahead_of_the_rollout(db):
     await db.findings.drop_indexes()
-    await db.findings.create_index(NEWEST_VULNERABILITY_INDEX, partialFilterExpression=VULNERABILITIES_ONLY)
+    await db.findings.create_index(NEWEST_COPY_INDEX)
 
     await create_indexes(db)

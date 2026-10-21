@@ -1,3 +1,6 @@
+import asyncio
+from unittest.mock import AsyncMock
+
 import pytest
 
 from app.schemas.adhoc import AdhocAnalyzeRequest
@@ -5,6 +8,7 @@ from app.schemas.project import LicensePolicySchema
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.adhoc import _aggregate_atomically, run_adhoc_analysis
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories
+from app.services.enrichment.service import vulnerability_enrichment_service
 from tests.helpers.analyzers import serve_analyzer
 from tests.helpers.osv import FakeOsv
 from tests.mocks.fake_mongo import FakeDatabase
@@ -879,3 +883,35 @@ def test_staged_aggregation_matches_a_direct_one_for_vulnerability_aggregates():
     [finding] = staged.get_findings()
     assert [entry["id"] for entry in finding.details["vulnerabilities"]] == ["CVE-2024-1", "CVE-2024-2"]
     assert [f.model_dump() for f in staged.get_findings()] == [f.model_dump() for f in direct.get_findings()]
+
+
+class _Rendezvous:
+    """Answers only once every analyzer of the input is running, so a one-at-a-time run times out."""
+
+    def __init__(self, inner, barrier: asyncio.Barrier) -> None:
+        self.name = inner.name
+        self._inner = inner
+        self._barrier = barrier
+
+    async def analyze(self, sbom, settings=None, parsed_components=None):
+        await asyncio.wait_for(self._barrier.wait(), timeout=1)
+        return await self._inner.analyze(sbom, settings=settings, parsed_components=parsed_components)
+
+
+@pytest.mark.asyncio
+async def test_the_requested_analyzers_run_side_by_side_on_each_input(monkeypatch):
+    monkeypatch.setattr(vulnerability_enrichment_service, "enrich_findings", AsyncMock(return_value=({}, None)))
+    barrier = asyncio.Barrier(2)
+    license_analyzer = analyzer_factories["license_compliance"]()
+    serve_analyzer(monkeypatch, _OSV_NAME, _Rendezvous(FakeOsv({"id": _PARTIAL_CVE, "severity": "HIGH"}), barrier))
+    serve_analyzer(monkeypatch, "license_compliance", _Rendezvous(license_analyzer, barrier))
+    request = AdhocAnalyzeRequest(
+        sboms=[_SBOM], analyzers=[_OSV_NAME, "license_compliance"], apply_global_waivers=False
+    )
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.errored == {}
+    assert {"license_compliance", _OSV_NAME} <= set(response.analyzers.ran)
+    assert _findings_of_type(response, _TYPE_VULNERABILITY)
+    assert _findings_of_type(response, _TYPE_LICENSE)

@@ -13,8 +13,8 @@ from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.compliance.frameworks.base import default_evaluator
 from app.services.compliance.renderers.csv_renderer import CsvRenderer
+from app.services.compliance.renderers.pdf_renderer import report_html
 from tests.helpers.compliance import evaluation_input
-from tests.unit.test_compliance_coverage import _render_report
 from tests.unit.test_renderer_json import _evaluation, _report
 
 _RSA_RULE = CryptoRule(
@@ -72,7 +72,7 @@ def _csv_count(control: ControlResult) -> str:
 def _pdf_count(control: ControlResult) -> str:
     evaluation = _evaluation()
     evaluation.controls = [control]
-    (cell,) = _PDF_EVIDENCE_CELL.findall(_render_report(evaluation))
+    (cell,) = _PDF_EVIDENCE_CELL.findall(report_html(evaluation, _report()))
     return cell.strip()
 
 

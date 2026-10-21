@@ -3,17 +3,26 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from pymongo.errors import AutoReconnect
 
-from app.core.constants import SCAN_STATUS_COMPLETED
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 from app.core.init_db import create_indexes
 from app.models.crypto_policy import CryptoPolicy
+from app.models.finding import FindingType
 from app.models.project import Scan
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine
 from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.crypto_policy.seeder import load_seed_rules
-from tests.helpers.analyzers import bundled_iana_catalog, process_sbom_document, run_context
+from tests.helpers.analyzers import (
+    analyse_scan,
+    bundled_iana_catalog,
+    process_sbom_document,
+    run_context,
+    serve_analyzer,
+)
 from tests.helpers.cbom import content_ref, fixture_component
 from tests.helpers.sboms import store_sbom
 
@@ -96,6 +105,40 @@ async def test_a_json_number_in_a_crypto_text_field_keeps_every_asset_of_the_sbo
     ]
 
 
+class _Graded:
+    async def analyze(self, sbom, settings=None, parsed_components=None):
+        return {}
+
+
+_MD5 = {
+    "type": "cryptographic-asset",
+    "bom-ref": "algo-md5",
+    "name": "MD5",
+    "cryptoProperties": {"assetType": "algorithm", "algorithmProperties": {"primitive": "hash"}},
+}
+_REQUESTS = {"type": "library", "name": "requests", "version": "2.31.0", "purl": "pkg:pypi/requests@2.31.0"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("components", "graded"),
+    [
+        pytest.param([_MD5], ["license_compliance"], id="crypto-only"),
+        pytest.param([_MD5, _REQUESTS], ["license_compliance", "osv"], id="crypto-and-packages"),
+    ],
+)
+async def test_an_sbom_listing_only_crypto_assets_runs_no_vulnerability_scanner(db, monkeypatch, components, graded):
+    for name in ("osv", "license_compliance"):
+        serve_analyzer(monkeypatch, name, _Graded())
+    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": components}
+    ctx = run_context(db, "scan-sbom-crypto-only", ["osv", "license_compliance"])
+
+    outcomes = await process_sbom_document(ctx, ResultAggregator(), sbom)
+
+    assert sorted(outcome.name for outcome in outcomes) == graded
+
+
 _PROJECT_ID = "embedded-cbom-project"
 _WORKER = "pod-a/worker-0"
 
@@ -119,7 +162,7 @@ async def _analyze(db, sboms: list[dict]) -> tuple[str, str | None]:
     refs = [await store_sbom(db, sbom) for sbom in sboms]
     scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True))
-    return scan.id, await engine.run_analysis(scan.id, refs, [], db, worker_id=_WORKER)
+    return scan.id, await analyse_scan(db, scan.id, refs, [], worker_id=_WORKER)
 
 
 @pytest.mark.asyncio
@@ -158,3 +201,21 @@ async def test_a_scan_without_protocol_assets_never_loads_the_cipher_catalog(db,
     assert status == SCAN_STATUS_COMPLETED
     assert [f["type"] for f in await db.findings.find({"scan_id": scan_id}).to_list(None)] == ["crypto_weak_algorithm"]
     catalog_loader.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_failed_embedded_crypto_persist_fails_the_crypto_analyzers_instead_of_grading_no_assets(
+    db, catalog_loader, monkeypatch
+):
+    await create_indexes(db)
+    monkeypatch.setattr(
+        CryptoAssetRepository, "bulk_upsert", AsyncMock(side_effect=AutoReconnect("primary stepped down"))
+    )
+
+    scan_id, status = await _analyze(db, [_sbom_embedding("cyclonedx_1_6_with_crypto_assets.json", "app")])
+
+    assert status == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    assert (await db.scans.find_one({"_id": scan_id}))["failed_analyzers"] == sorted(CRYPTO_ANALYZERS)
+    findings = await db.findings.find({"scan_id": scan_id}).to_list(None)
+    assert {f["type"] for f in findings} == {FindingType.SYSTEM_WARNING}
