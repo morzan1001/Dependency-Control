@@ -4,7 +4,6 @@ from typing import Annotated, Any
 
 from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import BaseModel
 
 from app.api.v1.helpers.projects import build_user_project_query
 from app.api.v1.helpers.sorting import case_insensitive_sort
@@ -31,7 +30,6 @@ from app.core.constants import (
     RELEASE_ENVIRONMENT_PATTERN,
     REMEDIATION_SLA_DAYS,
     SEVERITY_ORDER,
-    ExploitMaturity,
     get_severity_value,
 )
 from app.core.cve import counted_cves
@@ -44,6 +42,7 @@ from app.repositories.findings import FindingRepository
 from app.repositories.projections import ProjectWithScanId
 from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
+from app.schemas.analytics import ThreatIntelFields
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
 from app.services.analytics.scopes import ScopeResolver, read_scope_project_ids
@@ -157,31 +156,19 @@ def extract_fix_versions(details_list: list[Any], installed_version: str | None)
     return {part for vuln in advisories for part in split_fixed_versions(vuln.get("fixed_version"))}
 
 
-class CVEEnrichmentResult(BaseModel):
-    max_epss: float | None = None
-    max_percentile: float | None = None
-    max_risk: float | None = None
-    has_kev: bool = False
-    kev_count: int = 0
-    kev_ransomware_use: bool = False
-    kev_due_date: str | None = None
-    exploit_maturity: ExploitMaturity = "unknown"
-    days_until_due: int | None = None
-
-
 def process_cve_enrichments(
     details_list: list[Any], enrichments: Mapping[str, VulnerabilityEnrichment]
-) -> CVEEnrichmentResult:
+) -> ThreatIntelFields:
     """The worst case across a group's live advisories, each scored on its own CVSS as at scan time."""
     advisories = [vuln for details in details_list for vuln in live_advisories(details)]
     worst = fold_enrichments(advisory_enrichment(vuln, enrichments) for vuln in advisories)
     if worst is None:
-        return CVEEnrichmentResult()
+        return ThreatIntelFields()
     matched = [enrichments[cve] for cve in live_cves(details_list) if cve in enrichments]
-    return CVEEnrichmentResult(
-        max_epss=worst.epss_score,
-        max_percentile=worst.epss_percentile,
-        max_risk=worst.risk_score,
+    return ThreatIntelFields(
+        max_epss_score=worst.epss_score,
+        epss_percentile=worst.epss_percentile,
+        max_risk_score=worst.risk_score,
         has_kev=worst.in_kev,
         kev_count=sum(1 for enr in matched if enr.in_kev),
         kev_ransomware_use=worst.kev_ransomware_use,
@@ -191,7 +178,7 @@ def process_cve_enrichments(
     )
 
 
-def _calculate_kev_boost(enrichment_data: CVEEnrichmentResult) -> float:
+def _calculate_kev_boost(enrichment_data: ThreatIntelFields) -> float:
     if not enrichment_data.has_kev:
         return 1.0
 
@@ -258,14 +245,14 @@ def _missed_sla(severity_counts: dict[str, int], days_known: int | None) -> tupl
 def calculate_impact_score(
     severity_counts: dict[str, int],
     affected_projects: int,
-    enrichment_data: CVEEnrichmentResult,
+    enrichment_data: ThreatIntelFields,
     has_fix: bool,
     days_known: int | None,
 ) -> float:
     base_impact = impact_pre_score(severity_counts, affected_projects)
 
     base_impact *= _calculate_kev_boost(enrichment_data)
-    base_impact *= _calculate_epss_boost(enrichment_data.max_epss)
+    base_impact *= _calculate_epss_boost(enrichment_data.max_epss_score)
     base_impact *= EXPLOIT_MATURITY_BOOST.get(enrichment_data.exploit_maturity, 1.0)
 
     if has_fix:
@@ -279,14 +266,14 @@ def calculate_impact_score(
 
 def build_priority_reasons(
     severity_counts: dict[str, int],
-    enrichment_data: CVEEnrichmentResult,
+    enrichment_data: ThreatIntelFields,
     affected_projects: int,
     has_fix: bool,
     days_known: int | None,
 ) -> list[str]:
     reasons = []
     days_until_due = enrichment_data.days_until_due
-    max_epss = enrichment_data.max_epss
+    max_epss = enrichment_data.max_epss_score
 
     if enrichment_data.kev_ransomware_use:
         reasons.append("ransomware:Used in ransomware campaigns - fix immediately")

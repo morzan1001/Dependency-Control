@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.api.v1.helpers.analytics import (
-    CVEEnrichmentResult,
     build_priority_reasons,
     calculate_impact_score,
     impact_pre_score,
@@ -21,7 +20,7 @@ from app.core.constants import (
 )
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
-from app.schemas.analytics import SeverityBreakdown
+from app.schemas.analytics import SeverityBreakdown, ThreatIntelFields
 from app.schemas.enrichment import VulnerabilityEnrichment
 from tests.helpers.analytics_scope import projections
 
@@ -694,7 +693,7 @@ class TestImpactPreScoreIsScoreBase:
         counts = {"critical": 2, "high": 3, "medium": 1, "low": 4}
         for ap in (0, 1, 5, 10, 50):
             assert impact_pre_score(counts, ap) == calculate_impact_score(
-                counts, ap, CVEEnrichmentResult(), has_fix=False, days_known=None
+                counts, ap, ThreatIntelFields(), has_fix=False, days_known=None
             ), f"pre-score must equal the un-boosted impact score (ap={ap})"
 
     def test_the_boost_ceiling_is_the_highest_boost_any_enrichment_reaches(self):
@@ -711,7 +710,7 @@ class TestImpactPreScoreIsScoreBase:
             calculate_impact_score(
                 counts,
                 1,
-                CVEEnrichmentResult(**kev, max_epss=epss, exploit_maturity=maturity),
+                ThreatIntelFields(**kev, max_epss_score=epss, exploit_maturity=maturity),
                 has_fix=has_fix,
                 days_known=days_known,
             )
@@ -783,7 +782,7 @@ class TestPriorityReasons:
     def _reasons(self, affected_projects: int) -> list[str]:
         return build_priority_reasons(
             {"critical": 0, "high": 1, "medium": 0, "low": 0},
-            CVEEnrichmentResult(),
+            ThreatIntelFields(),
             affected_projects,
             has_fix=False,
             days_known=None,
@@ -791,9 +790,7 @@ class TestPriorityReasons:
 
     @staticmethod
     def _overdue(severity_counts: dict[str, int], days_known: int | None) -> bool:
-        reasons = build_priority_reasons(
-            severity_counts, CVEEnrichmentResult(), 1, has_fix=False, days_known=days_known
-        )
+        reasons = build_priority_reasons(severity_counts, ThreatIntelFields(), 1, has_fix=False, days_known=days_known)
         return any(r.startswith("overdue:") for r in reasons)
 
     @pytest.mark.parametrize(("severity", "sla_days"), [("critical", 7), ("high", 30), ("medium", 90)])
@@ -808,7 +805,7 @@ class TestPriorityReasons:
 
     def test_the_age_boost_starts_where_the_sla_ends(self):
         def score(days_known: int | None) -> float:
-            return calculate_impact_score({"critical": 1}, 1, CVEEnrichmentResult(), False, days_known)
+            return calculate_impact_score({"critical": 1}, 1, ThreatIntelFields(), False, days_known)
 
         assert (score(6), score(7)) == (score(None), score(None) * IMPACT_AGE_BOOST)
 
@@ -837,7 +834,7 @@ class TestPriorityReasons:
         hotspot = _build_hotspot(group, {}, [], {}, {}, {})
 
         assert hotspot.priority_reasons == build_priority_reasons(
-            {"critical": 1}, CVEEnrichmentResult(), len(projects), has_fix=True, days_known=hotspot.days_known
+            {"critical": 1}, ThreatIntelFields(), len(projects), has_fix=True, days_known=hotspot.days_known
         )
 
 
