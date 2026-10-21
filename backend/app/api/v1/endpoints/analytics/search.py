@@ -304,9 +304,11 @@ def _build_vuln_query(
         advisory_row["fixed_version"] = finding_row["details.fixed_version"] = fix
         unfixed = {"$in": [{"$ifNull": ["$$v.fixed_version", None]}, [None, ""]]}
         row_conds.append({"$not": [unfixed]} if has_fix else unfixed)
-    if in_kev or has_fix is not None:
-        # An outdated finding's fixed_version is its latest release, not a fix for an advisory.
+    if in_kev:
         finding_row["type"] = FindingType.VULNERABILITY.value
+    elif has_fix is not None:
+        # An outdated finding's fixed_version is its latest release, not a fix.
+        finding_row["type"] = {"$ne": FindingType.OUTDATED.value}
     if not include_waived:
         advisory_row["waived"] = {"$ne": True}
         row_conds.append({"$ne": ["$$v.waived", True]})

@@ -848,7 +848,15 @@ async def _insert_one_finding_of_each_kind(db, fixed_version: str | None) -> Non
         "description": "frob-old 1.0.0 is outdated",
         "details": {"fixed_version": "2.0.0"},
     }
-    await db.findings.insert_many([vulnerability, outdated, _low_license()])
+    # normalize_eol stores the recommended supported release as the fix.
+    end_of_life = {
+        **_vulnerability("frob-eol"),
+        "type": "eol",
+        "severity": "HIGH",
+        "description": "frob-eol 1.0 reached its end of life",
+        "details": {"fixed_version": "3.0"},
+    }
+    await db.findings.insert_many([vulnerability, outdated, end_of_life, _low_license()])
 
 
 async def _listed_components(client, headers, **params) -> list[str]:
@@ -861,11 +869,15 @@ async def _listed_components(client, headers, **params) -> list[str]:
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-@pytest.mark.parametrize(("value", "fixed_version"), [("true", "1.0.1"), ("false", None)])
-async def test_the_fix_filter_lists_only_vulnerability_findings(client, db, scanned, value, fixed_version):
+@pytest.mark.parametrize(
+    ("value", "fixed_version", "listed"),
+    [("true", "1.0.1", ["frob-eol", "frob-vuln"]), ("false", None, ["frob-vuln", "gpl-pkg"])],
+)
+async def test_the_fix_filter_leaves_out_only_the_outdated_findings(client, db, scanned, value, fixed_version, listed):
+    """An outdated finding's fixed_version is its latest release, not a fix."""
     await _insert_one_finding_of_each_kind(db, fixed_version)
 
-    assert await _listed_components(client, scanned, has_fix=value) == ["frob-vuln"]
+    assert await _listed_components(client, scanned, has_fix=value) == listed
 
 
 @pytest.mark.asyncio
@@ -873,4 +885,4 @@ async def test_the_fix_filter_lists_only_vulnerability_findings(client, db, scan
 async def test_kev_no_lists_every_finding_without_a_kev_mark(client, db, scanned):
     await _insert_one_finding_of_each_kind(db, None)
 
-    assert await _listed_components(client, scanned, in_kev="false") == ["frob-old", "frob-vuln", "gpl-pkg"]
+    assert await _listed_components(client, scanned, in_kev="false") == ["frob-eol", "frob-old", "frob-vuln", "gpl-pkg"]
