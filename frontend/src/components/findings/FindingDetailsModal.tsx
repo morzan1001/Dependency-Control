@@ -91,6 +91,7 @@ const DETAIL_VIEWS: Partial<Record<FindingType, (props: DetailsViewProps) => Rea
     secret: ({ finding, scanContext }) => <SecretDetailsView finding={finding} scanContext={scanContext} />,
     sast: ({ finding, scanContext }) => <SastDetailsView finding={finding} scanContext={scanContext} />,
     iac: ({ finding, scanContext }) => <SastDetailsView finding={finding} scanContext={scanContext} />,
+    crypto_key_management: ({ finding, scanContext }) => <SastDetailsView finding={finding} scanContext={scanContext} />,
     license: ({ finding }) => finding.details && (
         <>
             <ContextBannersSection finding={finding} />
@@ -114,7 +115,7 @@ const DETAIL_VIEWS: Partial<Record<FindingType, (props: DetailsViewProps) => Rea
 }
 
 // Their views describe each advisory or rule on its own, so the finding-level text would repeat it.
-const OWN_DESCRIPTION_TYPES = new Set<string>(['vulnerability', 'sast', 'iac'])
+const OWN_DESCRIPTION_TYPES = new Set<string>(['vulnerability', 'sast', 'iac', 'crypto_key_management'])
 
 interface FindingDetailsModalProps {
     finding: Finding

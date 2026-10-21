@@ -173,6 +173,29 @@ describe("FindingDetailsModal type sections", () => {
     expect(screen.getByText("R-1")).toBeInTheDocument();
   });
 
+  it("lays out an OpenGrep crypto-misuse finding like the SAST findings it is listed with", () => {
+    renderModal(finding({
+      id: "OPENGREP-crypto-misuse-ecb-mode-python-src/app/crypto.py-17",
+      type: "crypto_key_management",
+      component: "src/app/crypto.py",
+      version: undefined,
+      description: "ECB mode leaks patterns in plaintext.",
+      scanners: ["opengrep"],
+      details: {
+        rule_id: "crypto-misuse-ecb-mode-python",
+        start: { line: 17, column: 9 },
+        end: { line: 17, column: 45 },
+        additional_locations: [{ start: { line: 58, column: 9 }, end: { line: 58, column: 45 } }],
+      },
+    }));
+
+    expect(screen.getByText("Line 17 (Col 9-45)")).toBeInTheDocument();
+    expect(screen.getByText("Additional Locations")).toBeInTheDocument();
+    expect(screen.getByText("Rule ID")).toBeInTheDocument();
+    expect(screen.queryByText("Additional Details")).not.toBeInTheDocument();
+    expect(screen.getAllByText("ECB mode leaks patterns in plaintext.")).toHaveLength(1);
+  });
+
   it.each(["outdated", "eol"])("shows the context banners of a %s finding", (type) => {
     renderModal(finding({ type: type as Finding["type"], details: { eol_info: { is_eol: true, cycle: "4" } } }));
 
