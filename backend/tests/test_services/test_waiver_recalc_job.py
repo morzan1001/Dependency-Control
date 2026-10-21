@@ -192,6 +192,33 @@ async def test_a_run_that_lost_its_lock_partway_leaves_the_change_queued_for_the
     assert (await db.findings.find_one({"_id": "f-p-1"}))["waived"] is True
 
 
+async def test_each_pass_takes_the_lock_under_its_own_holder(monkeypatch):
+    db = FakeDatabase()
+    await _seed_project(db, "p-1", _GPL)
+    await request_waiver_recalc(db, await _store(db, _gpl_waiver()))
+    holders: list[str] = []
+    acquire, release = DistributedLocksRepository.acquire_lock, DistributedLocksRepository.release_lock
+
+    async def recording_acquire(self, lock_name, holder_id, ttl_seconds):
+        if lock_name == "waiver_recalc":
+            holders.append(holder_id)
+        return await acquire(self, lock_name, holder_id, ttl_seconds)
+
+    async def release_then_queue(self, lock_name, holder_id):
+        released = await release(self, lock_name, holder_id)
+        if lock_name == "waiver_recalc" and len(holders) == 1:
+            await request_waiver_recalc(db, _gpl_waiver())
+        return released
+
+    monkeypatch.setattr(DistributedLocksRepository, "acquire_lock", recording_acquire)
+    monkeypatch.setattr(DistributedLocksRepository, "release_lock", release_then_queue)
+
+    await run_waiver_recalc(db)
+
+    assert len(holders) == len(set(holders)) == 2
+    assert await _queued(db) == 0
+
+
 async def test_a_project_whose_stats_lock_stays_taken_keeps_its_change_queued(monkeypatch):
     db = FakeDatabase()
     await _seed_project(db, "p-1", _GPL)

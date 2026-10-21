@@ -274,9 +274,9 @@ async def _apply_to_stored_findings(
 async def run_pending_reachability_for_scan(scan_id: str, project_id: str, db: AsyncIOMotorDatabase) -> int:
     scan_repo = ScanRepository(db)
     lock_repo = DistributedLocksRepository(db)
-    lock_name, holder_id = REACHABILITY_LOCK_TEMPLATE.format(scan_id=scan_id), new_lock_holder()
+    lock_name = REACHABILITY_LOCK_TEMPLATE.format(scan_id=scan_id)
     dropped = 0
-    while await lock_repo.acquire_lock(lock_name, holder_id, _REACHABILITY_LOCK_TTL_SECONDS):
+    while await lock_repo.acquire_lock(lock_name, holder_id := new_lock_holder(), _REACHABILITY_LOCK_TTL_SECONDS):
         try:
             claimed = await scan_repo.update_raw(scan_id, {"$unset": {"reachability_pending": ""}}, guard=_REQUESTED)
             callgraphs = await fetch_callgraphs(project_id, scan_id, db) if claimed else []
@@ -305,8 +305,7 @@ async def request_waiver_recalc(db: AsyncIOMotorDatabase, waiver: Waiver, restam
 async def run_waiver_recalc(db: AsyncIOMotorDatabase) -> None:
     """A change stays queued until its pass is done."""
     lock_repo = DistributedLocksRepository(db)
-    holder_id = new_lock_holder()
-    while await lock_repo.acquire_lock(_RECALC_LOCK, holder_id, _LOCK_TTL_SECONDS):
+    while await lock_repo.acquire_lock(_RECALC_LOCK, holder_id := new_lock_holder(), _LOCK_TTL_SECONDS):
         try:
             await _queue_expired_waivers(db)
             while queued := await db.waiver_recalc.find(_QUEUED).to_list(None):

@@ -5,6 +5,7 @@ import pytest
 from app.api.v1.helpers.callgraph import parse_generic_format
 from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD, REACHABILITY_LEVEL_IMPORT
 from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.projections import CallgraphMinimal
 from app.schemas.finding_details import ReachabilityInfo
 from app.services.reachability_enrichment import (
@@ -18,6 +19,8 @@ from app.services.reachability_enrichment import (
     reachability_set_fields,
     store_reachability,
 )
+from app.services.stats import run_pending_reachability_for_scan
+from tests.mocks.fake_mongo import FakeDatabase
 
 
 class TestIsHighConfidenceReachable:
@@ -149,8 +152,6 @@ class TestEcosystemFromDependencyMap:
 
     @pytest.mark.asyncio
     async def test_build_component_language_map_from_deps(self):
-        from tests.mocks.fake_mongo import FakeDatabase
-
         db = FakeDatabase()
         await db.dependencies.insert_one({"scan_id": "s1", "name": "requests", "version": "2.31.0", "type": "pypi"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "left-pad", "version": "1.3.0", "type": "npm"})
@@ -407,9 +408,6 @@ class TestReachabilitySetFields:
 class TestRunPendingBulkPersist:
     @pytest.mark.asyncio
     async def test_persists_via_bulk_write_and_writes_summary(self, monkeypatch, fake_gridfs):
-        from app.services.stats import run_pending_reachability_for_scan
-        from tests.mocks.fake_mongo import FakeDatabase
-
         db = FakeDatabase()
         pid, sid = "p1", "s1"
         await db.scans.insert_one({"_id": sid, "project_id": pid, "branch": "main", "reachability_pending": True})
@@ -474,9 +472,6 @@ class TestRunPendingBulkPersist:
     @pytest.mark.asyncio
     async def test_second_language_callgraph_still_runs(self, fake_gridfs):
         """A multi-language repo uploads one callgraph per language; the later ones must not be ignored."""
-        from app.services.stats import run_pending_reachability_for_scan
-        from tests.mocks.fake_mongo import FakeDatabase
-
         db = FakeDatabase()
         pid, sid = "p1", "s1"
         # Every upload flags the scan again, even after the first language cleared it.
@@ -513,3 +508,27 @@ class TestRunPendingBulkPersist:
 
         doc = await db.findings.find_one({"_id": "f0"})
         assert doc["reachable"] is True
+
+    @pytest.mark.asyncio
+    async def test_each_pass_takes_the_lock_under_its_own_holder(self, monkeypatch):
+        db = FakeDatabase()
+        await db.scans.insert_one({"_id": "s1", "project_id": "p1", "branch": "main", "reachability_pending": True})
+        holders: list[str] = []
+        acquire, release = DistributedLocksRepository.acquire_lock, DistributedLocksRepository.release_lock
+
+        async def recording_acquire(self, lock_name, holder_id, ttl_seconds):
+            holders.append(holder_id)
+            return await acquire(self, lock_name, holder_id, ttl_seconds)
+
+        async def release_then_upload(self, lock_name, holder_id):
+            released = await release(self, lock_name, holder_id)
+            if len(holders) == 1:
+                await db.scans.update_one({"_id": "s1"}, {"$set": {"reachability_pending": True}})
+            return released
+
+        monkeypatch.setattr(DistributedLocksRepository, "acquire_lock", recording_acquire)
+        monkeypatch.setattr(DistributedLocksRepository, "release_lock", release_then_upload)
+
+        await run_pending_reachability_for_scan("s1", "p1", db)
+
+        assert len(holders) == len(set(holders)) == 2
