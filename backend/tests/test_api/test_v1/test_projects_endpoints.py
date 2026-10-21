@@ -684,7 +684,7 @@ class TestTheLicensePolicyAuditRunsAfterTheResponse:
             record.assert_not_awaited()
             await background_tasks()
 
-        assert record.await_args.kwargs["new_policy"]["distribution_model"] == "internal_only"
+        assert record.await_args.kwargs["new_entry"]["distribution_model"] == "internal_only"
 
     @pytest.mark.asyncio
     async def test_a_create_queues_the_audit_instead_of_awaiting_it(self):
@@ -705,4 +705,4 @@ class TestTheLicensePolicyAuditRunsAfterTheResponse:
             record.assert_not_awaited()
             await background_tasks()
 
-        assert record.await_args.kwargs["new_policy"]["distribution_model"] == "internal_only"
+        assert record.await_args.kwargs["new_entry"]["distribution_model"] == "internal_only"
