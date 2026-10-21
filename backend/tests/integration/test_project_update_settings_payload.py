@@ -96,5 +96,5 @@ async def test_the_project_update_cannot_switch_on_enforcement_without_the_prefe
         "/api/v1/projects/p", json={"enforce_notification_settings": True}, headers=owner_auth_headers_proj
     )
 
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 422, resp.text
     assert (await db.projects.find_one({"_id": "p"}))["enforce_notification_settings"] is False

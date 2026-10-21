@@ -51,3 +51,9 @@ def test_retention_days_stay_where_housekeeping_can_compute_a_cutoff(days):
 def test_the_largest_retention_is_accepted():
     assert ProjectCreate(name="p", retention_days=36500).retention_days == 36500
     assert ProjectUpdate(retention_days=36500).retention_days == 36500
+
+
+@pytest.mark.parametrize("key", ["license_policy", "defualt_branch"])
+def test_an_update_naming_a_field_projects_do_not_have_is_refused_rather_than_ignored(key):
+    with pytest.raises(ValidationError):
+        ProjectUpdate(**{key: {"distribution_model": "internal_only"}})

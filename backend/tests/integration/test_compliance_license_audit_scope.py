@@ -61,4 +61,4 @@ async def test_a_team_audit_fails_only_the_project_whose_policy_forbids_gpl(db):
 
     strong = next(c for c in evaluation.controls if c.control_id == "LICENSE-AUDIT-STRONG-COPYLEFT")
     assert strong.status == ControlStatus.FAILED.value
-    assert strong.evidence_finding_ids == [shipped["_id"]]
+    assert strong.evidence_finding_ids == [shipped["finding_id"]]

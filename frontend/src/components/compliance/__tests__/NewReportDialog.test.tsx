@@ -16,10 +16,12 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/api/teams", () => ({
   teamApi: {
     getAll: vi.fn().mockResolvedValue([
-      { id: "t-9", name: "Payments", members: [], bindings: [], created_at: "", updated_at: "" },
+      { id: "t-9", name: "Payments", members: [{ user_id: "u1", role: "member" }], bindings: [], created_at: "", updated_at: "" },
+      { id: "t-7", name: "Platform", members: [{ user_id: "u2", role: "admin" }], bindings: [], created_at: "", updated_at: "" },
     ]),
   },
 }));
+vi.mock("@/hooks/queries/use-users", () => ({ useCurrentUser: () => ({ data: { id: "u1" } }) }));
 vi.mock("@/api/projects", () => ({
   projectApi: {
     getAll: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 50, pages: 0 }),
@@ -117,11 +119,22 @@ describe("NewReportDialog", () => {
     permissionSet.add("team:read_all");
     withClient(<NewReportDialog onClose={vi.fn()} />);
     await pickOption(screen.getAllByRole("combobox")[0], "Team");
-    await pickOption(screen.getAllByRole("combobox")[1], "Payments");
+    await pickOption(screen.getAllByRole("combobox")[1], "Platform");
     fireEvent.click(screen.getByRole("button", { name: "Generate" }));
 
-    await waitFor(() => expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ scope: "team", scope_id: "t-9" })));
+    await waitFor(() => expect(createReport).toHaveBeenCalledWith(expect.objectContaining({ scope: "team", scope_id: "t-7" })));
     expect(screen.queryByPlaceholderText("Team ID")).not.toBeInTheDocument();
+  });
+
+  it("offers a team:read_all holder who reads only member projects just the teams the report gate admits", async () => {
+    permissionSet.add("team:read_all");
+    permissionSet.add("project:read");
+    withClient(<NewReportDialog onClose={vi.fn()} />);
+    await pickOption(screen.getAllByRole("combobox")[0], "Team");
+    fireEvent.click(screen.getAllByRole("combobox")[1]);
+
+    expect(await screen.findByRole("option", { name: "Payments" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Platform" })).not.toBeInTheDocument();
   });
 
   it("lets a project:update holder without project:read type the id of any project", async () => {

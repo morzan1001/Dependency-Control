@@ -386,6 +386,138 @@ class TestRecalculateReachesTheReleasedBuild:
         assert (await released_db.findings.find_one({"_id": "loc-shipped"}))["waived"] is True
 
 
+NEWER_HEAD_SCAN_ID = "scan-w4-newer"
+
+
+class TestRecalculateFindsTheHeadOffTheBuilds:
+    @pytest.mark.asyncio
+    async def test_a_pointer_left_on_an_older_build_does_not_keep_the_outcomes_off_the_head(self, seeded_db):
+        """The older build is stamped and owns the outcomes, so a pointer-seeded head would look current."""
+        await recalculate_project_stats(PROJECT_ID, seeded_db)
+        await seeded_db.scans.insert_one(
+            {
+                "_id": NEWER_HEAD_SCAN_ID,
+                "project_id": PROJECT_ID,
+                "branch": "main",
+                "status": "completed",
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+        newer = _finding("f-newer", "CRITICAL", cvss_score=9.0, risk_score=90.0)
+        newer.update(scan_id=NEWER_HEAD_SCAN_ID, finding_id="f-waived")
+        await seeded_db.findings.insert_one(newer)
+
+        await recalculate_project_stats(PROJECT_ID, seeded_db)
+
+        assert (await seeded_db.findings.find_one({"_id": "f-newer"}))["waived"] is True
+        assert (await seeded_db.waivers.find_one({"_id": "w-1"}))["last_eval_scan_id"] == NEWER_HEAD_SCAN_ID
+        assert (await seeded_db.projects.find_one({"_id": PROJECT_ID}))["latest_scan_id"] == NEWER_HEAD_SCAN_ID
+
+
+class TestRecalculateWithoutAHead:
+    """Every branch is gone, so only the shipped builds are stamped and one of them must own the outcomes."""
+
+    SHIPPED = (("scan-rel-1", "production", 30), ("scan-rel-2", "staging", 2))
+
+    @pytest_asyncio.fixture
+    async def headless_db(self, seeded_db):
+        await seeded_db.projects.update_one({"_id": PROJECT_ID}, {"$set": {"deleted_branches": ["main"]}})
+        now = datetime.now(timezone.utc)
+        for scan_id, environment, age in self.SHIPPED:
+            created = now - timedelta(days=age)
+            await seeded_db.scans.insert_one(
+                {
+                    "_id": scan_id,
+                    "project_id": PROJECT_ID,
+                    "branch": "main",
+                    "status": "completed",
+                    "created_at": created,
+                }
+            )
+            shipped = _finding(f"f-{scan_id}", "CRITICAL", cvss_score=9.0)
+            shipped.update(scan_id=scan_id, finding_id="f-waived")
+            await seeded_db.findings.insert_one(shipped)
+            await seeded_db.releases.insert_one(
+                {
+                    "_id": f"rel-{scan_id}",
+                    "project_id": PROJECT_ID,
+                    "environment": environment,
+                    "scan_id": scan_id,
+                    "released_at": created,
+                }
+            )
+        return seeded_db
+
+    @pytest.mark.asyncio
+    async def test_the_newest_released_build_records_the_outcomes(self, headless_db, monkeypatch):
+        await recalculate_project_stats(PROJECT_ID, headless_db)
+
+        for scan_id, _, _ in self.SHIPPED:
+            assert (await headless_db.findings.find_one({"_id": f"f-{scan_id}"}))["waived"] is True
+        assert (await headless_db.waivers.find_one({"_id": "w-1"})).get("last_eval_scan_id") == "scan-rel-2"
+        restamped = _record_restamps(monkeypatch)
+        await recalculate_project_stats(PROJECT_ID, headless_db)
+        assert restamped == []
+
+    @pytest.mark.asyncio
+    async def test_a_build_stamped_without_outcomes_still_gets_them(self, headless_db):
+        """A waiver written from a shipped build restamps it at once, without outcomes, before the queued recalc."""
+        for scan_id, _, _ in self.SHIPPED:
+            await stats.restamp_single_scan(headless_db, PROJECT_ID, scan_id)
+
+        await recalculate_project_stats(PROJECT_ID, headless_db)
+
+        assert (await headless_db.waivers.find_one({"_id": "w-1"})).get("last_eval_scan_id") == "scan-rel-2"
+
+
+class TestOneScanFailingItsRestamp:
+    @pytest_asyncio.fixture
+    async def two_named_db(self, seeded_db):
+        now = datetime.now(timezone.utc)
+        for scan_id, age in (("scan-w4-broken", 1), ("scan-w4-older", 5)):
+            await seeded_db.scans.insert_one(
+                {
+                    "_id": scan_id,
+                    "project_id": PROJECT_ID,
+                    "status": "completed",
+                    "created_at": now - timedelta(days=400 + age),
+                }
+            )
+            named = _finding(f"f-{scan_id}", "CRITICAL", cvss_score=9.0)
+            named.update(scan_id=scan_id, finding_id="f-waived")
+            await seeded_db.findings.insert_one(named)
+        return seeded_db
+
+    @staticmethod
+    def _fail_on(monkeypatch, failing_scan: str, error: Exception) -> None:
+        original = stats._restamp_scan
+
+        async def restamp(scan_id, *args):
+            if scan_id == failing_scan:
+                raise error
+            return await original(scan_id, *args)
+
+        monkeypatch.setattr(stats, "_restamp_scan", restamp)
+
+    @pytest.mark.asyncio
+    async def test_the_projects_other_scans_are_still_restamped(self, two_named_db, monkeypatch):
+        self._fail_on(monkeypatch, "scan-w4-broken", RuntimeError("legacy document"))
+
+        await recalculate_project_stats(PROJECT_ID, two_named_db, restamp=["scan-w4-broken", "scan-w4-older"])
+
+        assert (await two_named_db.findings.find_one({"_id": "f-scan-w4-older"}))["waived"] is True
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_server_still_ends_the_recalculation(self, two_named_db, monkeypatch):
+        """The queued change then stays for the next run rather than being dropped with scans unstamped."""
+        from pymongo.errors import AutoReconnect
+
+        self._fail_on(monkeypatch, "scan-w4-broken", AutoReconnect("connection reset"))
+
+        with pytest.raises(AutoReconnect):
+            await recalculate_project_stats(PROJECT_ID, two_named_db, restamp=["scan-w4-broken", "scan-w4-older"])
+
+
 BRANCH_SCAN_ID = "scan-w4-feature"
 
 

@@ -6,8 +6,9 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError
+from pymongo.errors import ConnectionFailure
 
-from app.core.constants import WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS
+from app.core.constants import SCANS_TIP_SORT, WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS
 from app.core.log_utils import sanitize_for_log
 from app.models.project import Project
 from app.models.stats import Stats
@@ -108,7 +109,8 @@ async def recalculate_project_stats(
     if not project:
         return None
 
-    scan_id = await scan_repo.get_latest_active_scan_id(project)
+    # Derived off the builds, as a stale pointer to a stamped scan would pass for a current head.
+    scan_id = await scan_repo.get_latest_active_scan_id(project.model_copy(update={"latest_scan_id": None}))
     others = {*await _released_analysis_ids(db, project_id), *await _branch_tip_ids(scan_repo, project), *restamp}
     other_ids = sorted(others - {scan_id})
     scan_ids = [*([scan_id] if scan_id else []), *other_ids]
@@ -123,19 +125,24 @@ async def recalculate_project_stats(
     try:
         waivers = await waiver_repo.find_active_for_project(project_id)
         fingerprint = waiver_fingerprint(waivers)
-        stamped = await scan_repo.find_many_raw(
-            {"_id": {"$in": scan_ids}, "waiver_fingerprint": fingerprint}, projection={"_id": 1}
+        stamps = await scan_repo.find_many_raw(
+            {"_id": {"$in": scan_ids}}, sort=SCANS_TIP_SORT, projection={"waiver_fingerprint": 1}
         )
-        current = {doc["_id"] for doc in stamped}
-        # Head also records each project waiver's outcome there, which a pass on another scan does not.
-        head_current = scan_id in current and all(w.last_eval_scan_id == scan_id for w in waivers if w.project_id)
-        stale = [sid for sid in other_ids if sid not in current]
+        current = {doc["_id"] for doc in stamps if doc.get("waiver_fingerprint") == fingerprint}
+        # Only one pass records each project waiver's outcome: head's, or with no head the newest scan's.
+        owner = scan_id or next((doc["_id"] for doc in stamps), None)
+        owner_current = owner in current and all(w.last_eval_scan_id == owner for w in waivers if w.project_id)
+        stale = [
+            doc["_id"]
+            for doc in stamps
+            if doc["_id"] != scan_id and (doc["_id"] not in current or (doc["_id"] == owner and not owner_current))
+        ]
         logger.info(
             f"Recalculating project {project_id} with lock {lock_name}: head {scan_id} "
-            f"{'current' if head_current else 'stale'}, {len(stale)} of {len(other_ids)} other scans stale"
+            f"{'current' if owner_current else 'stale'}, {len(stale)} of {len(other_ids)} other scans stale"
         )
         stats = None
-        head = None if head_current else scan_id
+        head = None if owner_current else scan_id
         # Each pass binds unsigned waivers to its scan in memory, so each takes its own copy.
         for _ in range(_HEAD_PASSES):
             if not head:
@@ -149,7 +156,14 @@ async def recalculate_project_stats(
             if not await lock_repo.renew_lock(lock_name, holder_id, _LOCK_TTL_SECONDS):
                 logger.warning(f"Lost lock {lock_name} partway; the recalculation holding it now stamps the rest")
                 break
-            await _restamp_scan(other_id, db, _copy(waivers), fingerprint, finding_repo, None)
+            outcomes = waiver_repo if other_id == owner else None
+            try:
+                await _restamp_scan(other_id, db, _copy(waivers), fingerprint, finding_repo, outcomes)
+            # An unreachable server ends the recalculation instead, so the change stays queued.
+            except ConnectionFailure:
+                raise
+            except Exception:
+                logger.exception("Waiver restamp failed for scan %s", other_id)
         return stats
 
     finally:
@@ -157,8 +171,10 @@ async def recalculate_project_stats(
         logger.debug(f"Released lock {lock_name} for project {project_id}")
 
 
-async def restamp_single_scan(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) -> None:
-    """While the project's stats lock is taken, the queued waiver recalc restamps the scan instead."""
+async def restamp_single_scan(
+    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, waiver_repo: WaiverRepository | None = None
+) -> None:
+    """Skips a scan stamped with the active waivers; while the stats lock is taken, the queued recalc restamps it."""
     lock_repo = DistributedLocksRepository(db)
     lock_name = f"stats_recalc:{project_id}"
     holder_id = new_lock_holder()
@@ -166,7 +182,12 @@ async def restamp_single_scan(db: AsyncIOMotorDatabase, project_id: str, scan_id
         return
     try:
         waivers = await WaiverRepository(db).find_active_for_project(project_id)
-        await _restamp_scan(scan_id, db, waivers, waiver_fingerprint(waivers), FindingRepository(db), None)
+        fingerprint = waiver_fingerprint(waivers)
+        scan_repo = ScanRepository(db)
+        if not await scan_repo.count({"_id": scan_id, "waiver_fingerprint": fingerprint}):
+            await _restamp_scan(scan_id, db, waivers, fingerprint, FindingRepository(db), waiver_repo)
+            # The queued recalc skips a head stamped current, so only this write can copy its stats to the project.
+            await scan_repo.sync_project_head(project_id)
     finally:
         await lock_repo.release_lock(lock_name, holder_id)
 
@@ -254,7 +275,8 @@ async def _recalculate_changed(
             return False
         try:
             await recalculate_project_stats(project_id, db, project_reach, restamp=restamps.get(project_id, ()))
-        except TimeoutError:
+        # Unlike a write refused for one project's data, an unreachable server leaves the change queued for a retry.
+        except (TimeoutError, ConnectionFailure):
             return False
         except Exception:
             failed += 1

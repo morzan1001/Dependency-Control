@@ -1,12 +1,17 @@
 import csv
+import io
 
 from app.schemas.compliance import ControlStatus, ReportFormat
 from app.services.compliance.renderers.csv_renderer import CsvRenderer
 from tests.unit.test_renderer_json import _evaluation, _report
 
 
+def _text(out: bytes) -> str:
+    return out.decode("utf-8-sig")
+
+
 def _table(out: bytes) -> list[str]:
-    return [ln for ln in out.decode("utf-8").splitlines() if not ln.startswith("#")]
+    return [ln for ln in _text(out).splitlines() if not ln.startswith("#")]
 
 
 def test_csv_renderer_outputs_rows_per_control():
@@ -56,7 +61,7 @@ def test_csv_renderer_includes_disclaimer_comment():
         "Algorithm-level conformance only. Module-level CMVP (FIPS 140-3) validation is out of scope of this tool."
     )
     out = r.render(_evaluation(), rep, disclaimer=disclaimer)
-    text = out.decode("utf-8")
+    text = _text(out)
     lines = text.splitlines()
     assert lines[0].startswith("# Disclaimer:")
     assert "Algorithm-level conformance only" in lines[0]
@@ -73,4 +78,47 @@ def test_csv_renderer_omits_disclaimer_when_none():
     rep = _report()
     rep.format = ReportFormat.CSV
     out = r.render(_evaluation(), rep, disclaimer=None)
-    assert "# Disclaimer:" not in out.decode("utf-8")
+    assert "# Disclaimer:" not in _text(out)
+
+
+def test_the_csv_starts_with_the_byte_order_mark_excel_needs_to_read_it_as_utf8():
+    out = CsvRenderer().render(_evaluation(), _report())
+
+    assert out.startswith("\ufeff".encode())
+    assert CsvRenderer.mime_type == "text/csv; charset=utf-8"
+
+
+def test_a_cell_a_spreadsheet_would_run_as_a_formula_is_escaped():
+    evaluation = _evaluation()
+    evaluation.controls = [evaluation.controls[0].model_copy(update={"title": '=HYPERLINK("http://x")'})]
+
+    [row] = list(csv.DictReader(_table(CsvRenderer().render(evaluation, _report()))))
+
+    assert row["title"] == '\'=HYPERLINK("http://x")'
+
+
+def _notes(out: bytes) -> list[list[str]]:
+    return [row for row in csv.reader(io.StringIO(_text(out))) if row and row[0].startswith("#")]
+
+
+def test_a_framework_without_a_disclaimer_still_names_what_the_export_covers():
+    notes = _notes(CsvRenderer().render(_evaluation(), _report(), disclaimer=None))
+
+    assert [note[0].split(":")[0] for note in notes] == [
+        "# Framework",
+        "# Generated",
+        "# Scope",
+        "# Fingerprint",
+        "# Coverage",
+    ]
+    assert ["# Scope: project 'x'"] in notes
+    assert ["# Fingerprint: sha256:abc"] in notes
+
+
+def test_a_comma_in_a_scope_name_cannot_split_its_note_into_a_formula_cell():
+    evaluation = _evaluation()
+    evaluation.scope_description = "project 'a,=1+1'"
+
+    notes = _notes(CsvRenderer().render(evaluation, _report()))
+
+    assert ["# Scope: project 'a,=1+1'"] in notes

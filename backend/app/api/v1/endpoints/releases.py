@@ -2,7 +2,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
-import pymongo
 from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -19,17 +18,19 @@ from app.core.constants import (
     SCANS_TIP_SORT,
 )
 from app.core.log_utils import sanitize_for_log
-from app.models.release import Release, release_identity
+from app.models.release import Release
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import LineageAnalysis, ScanRepository
 from app.schemas.pagination import Page
 from app.schemas.release import ReleaseItem, ReleaseMarkRequest, ReleaseUnmarkResponse
+from app.services.stats import restamp_single_scan
 
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
 _SCAN_FIELDS = {"_id": 1, "commit_hash": 1, "branch": 1, "status": 1}
+_MARKED_SCAN_FIELDS = {**_SCAN_FIELDS, "commit_tag": 1}
 _DEFAULT_PAGE_SIZE = 20
 _MAX_PAGE_SIZE = 100
 
@@ -82,23 +83,24 @@ async def mark_release(
     builds = {"project_id": project_id, "commit_hash": payload.commit_hash, "is_rescan": {"$ne": True}}
     scan_repo = ScanRepository(db)
     scan = await scan_repo.find_one(
-        {**builds, "status": {"$ne": SCAN_STATUS_FAILED}}, sort=SCANS_TIP_SORT
-    ) or await scan_repo.find_one(builds, sort=SCANS_TIP_SORT)
+        {**builds, "status": {"$ne": SCAN_STATUS_FAILED}}, sort=SCANS_TIP_SORT, projection=_MARKED_SCAN_FIELDS
+    ) or await scan_repo.find_one(builds, sort=SCANS_TIP_SORT, projection=_MARKED_SCAN_FIELDS)
     if not scan:
         raise HTTPException(status_code=404, detail=f"No scan found for commit {payload.commit_hash}")
 
     scan_id = str(scan["_id"])
-    environment, version = release_identity(payload.environment, payload.version, scan.get("commit_tag"))
+    environment = payload.environment or DEFAULT_RELEASE_ENVIRONMENT
     released_at = ensure_utc(payload.released_at) or datetime.now(timezone.utc)
 
     row = await ReleaseRepository(db).record(
         Release(
             project_id=project_id,
             environment=environment,
-            version=version,
+            version=payload.version,
             scan_id=scan_id,
             released_at=released_at,
-        )
+        ),
+        scan.get("commit_tag"),
     )
     await db.scans.update_one({"_id": scan_id}, {"$set": {"is_release": True}})
     logger.info("release.mark project_id=%s scan_id=%s environment=%s", project_id, scan_id, environment)
@@ -106,7 +108,11 @@ async def mark_release(
     # The stored row, not an echo: an unversioned re-mark keeps the recorded version, a fallback the repository owns.
     if row is None:
         raise HTTPException(status_code=409, detail=f"The release of {scan_id} to {environment} was withdrawn")
-    return _to_item(row, scan, (await scan_repo.freshest_in_lineage([scan_id])).get(scan_id))
+    analysis = (await scan_repo.freshest_in_lineage([scan_id])).get(scan_id)
+    # A waiver holds now, not for the build it was analysed under, so a build marked late takes today's waivers.
+    if analysis:
+        await restamp_single_scan(db, project_id, analysis.scan_id)
+    return _to_item(row, scan, analysis)
 
 
 @router.delete(
@@ -167,10 +173,7 @@ async def list_releases(
 
     release_repo = ReleaseRepository(db)
     total = await release_repo.count(query)
-    # The paged find breaks released_at ties on _id ascending, as RELEASES_LATEST_SORT does.
-    rows = await release_repo.find_many_raw(
-        query, skip=skip, limit=limit, sort_by="released_at", sort_order=pymongo.DESCENDING
-    )
+    rows = await release_repo.page(query, skip, limit)
     return Page[ReleaseItem](items=await _to_items(db, rows), **page_meta(total, skip, limit))
 
 

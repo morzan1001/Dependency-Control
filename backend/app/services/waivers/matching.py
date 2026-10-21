@@ -12,6 +12,8 @@ from app.core.cve import advisory_ids, advisory_match
 from app.models.finding import LOCATION_FINDING_TYPES
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
+from app.services.enrichment.service import roll_up_stored_enrichments
+from app.services.normalizers.utils import UNKNOWN_RULE_ID
 
 REANCHOR_WINDOW = 50  # max line distance to consider a candidate the moved instance
 REANCHOR_MARGIN = 3  # nearest must beat second-nearest by this many lines to be unambiguous
@@ -24,7 +26,8 @@ _RULE_ID_PATHS = ("details.sast_findings.id", "details.rule_id", "details.detect
 def finding_rule_id(details: Mapping[str, Any] | None) -> str | None:
     details = details or {}
     entries = details.get("sast_findings") or []
-    return (entries[0].get("id") if entries else None) or details.get("rule_id") or details.get("detector")
+    rule_id = (entries[0].get("id") if entries else None) or details.get("rule_id") or details.get("detector")
+    return None if rule_id == UNKNOWN_RULE_ID else rule_id
 
 
 def waiver_criteria(waiver: Waiver) -> dict[str, Any]:
@@ -124,14 +127,20 @@ def waive_advisories(record: dict[str, Any], waiver: Waiver) -> bool:
 
 def roll_up_advisories(record: dict[str, Any]) -> None:
     """Never un-waives the document."""
-    entries = (record.get("details") or {}).get("vulnerabilities") or []
+    details = record.get("details") or {}
+    entries = details.get("vulnerabilities") or []
     if not entries:
         return
-    # A fully waived document keeps the severity of its advisories, so dropping the waiver restores it.
+    # A fully waived document keeps its advisories' severity and threat intel, so dropping the waiver restores them.
     live = [entry for entry in entries if not entry.get("waived")] or entries
     severity = max((entry.get("severity") for entry in live), key=get_severity_value)
     if severity:
         record["severity"] = severity
+    # Only advisories enriched before maturity was written per advisory all lack it; their document keeps its own.
+    kept_maturity = None if any(entry.get("exploit_maturity") for entry in entries) else details.get("exploit_maturity")
+    roll_up_stored_enrichments(details, live)
+    if kept_maturity:
+        details["exploit_maturity"] = kept_maturity
     if not record.get("waived") and all(entry.get("waived") for entry in entries):
         record["waived"] = True
         record["waiver_reason"] = entries[0].get("waiver_reason")
@@ -227,7 +236,7 @@ def _refresh(app: WaiverApplication, w: Waiver, wsig: MatchSignature, finding: M
 
 
 def _pass2_reanchor(app: WaiverApplication, unmatched: list[_Signed], findings: Sequence[MatchFinding]) -> None:
-    """A taken best candidate shadows the waiver; it never falls back to the next one."""
+    """A taken best candidate shadows the waiver, which never binds the next one; a lapse marks the nearest free one."""
     by_file: dict[str, list[MatchFinding]] = {}
     for f in findings:
         by_file.setdefault(f.sig.file_key, []).append(f)
@@ -291,4 +300,9 @@ def _mark_lapsed(app: WaiverApplication, candidates: list[MatchFinding], last_li
     if not in_window:
         app.dormant[waiver_id] = "no_candidate_in_window"
         return
-    app.lapsed[min(in_window, key=lambda f: _line_distance(f, last_line)).id] = waiver_id
+    # A finding another waiver holds is not this waiver's, and waived wins over lapsed anyway.
+    free = [f for f in in_window if f.id not in app.waived]
+    if not free:
+        app.dormant[waiver_id] = "shadowed"
+        return
+    app.lapsed[min(free, key=lambda f: _line_distance(f, last_line)).id] = waiver_id

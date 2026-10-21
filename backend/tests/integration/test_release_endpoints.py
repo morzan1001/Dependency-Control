@@ -210,6 +210,18 @@ async def test_a_blank_version_falls_back_to_the_commit_tag(client, db, api_key_
 
 
 @pytest.mark.asyncio
+async def test_an_unversioned_re_mark_of_a_tagged_build_keeps_the_recorded_version(client, db, api_key_headers):
+    await _seed_scan(db, "tagged", commit_tag=_OTHER_VERSION)
+    assert (await _mark(client, api_key_headers, commit_hash=_COMMIT, version=_VERSION)).status_code == 201
+
+    resp = await _mark(client, api_key_headers, commit_hash=_COMMIT)
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["version"] == _VERSION
+    assert (await db.releases.find_one({"scan_id": "tagged"}))["version"] == _VERSION
+
+
+@pytest.mark.asyncio
 async def test_mark_of_an_unknown_commit_is_404_naming_it(client, db, api_key_headers):
     resp = await _mark(client, api_key_headers, commit_hash=_MISSING_COMMIT)
 

@@ -3,6 +3,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.api.v1.helpers.analytics import (
     build_priority_reasons,
     calculate_impact_score,
@@ -10,7 +12,7 @@ from app.api.v1.helpers.analytics import (
     select_impact_candidates,
     severity_counts_from_details,
 )
-from app.core.constants import BLAST_RADIUS_THRESHOLD, DAYS_KNOWN_OVERDUE_THRESHOLD, IMPACT_MAX_SCORE_BOOST
+from app.core.constants import BLAST_RADIUS_THRESHOLD, IMPACT_AGE_BOOST, IMPACT_MAX_SCORE_BOOST
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
 from app.schemas.analytics import CVEEnrichmentResult, SeverityBreakdown
@@ -608,7 +610,9 @@ class TestFirstSeenPrefersFirstSeenAt:
             "low": 0,
             "finding_ids": ["CVE-2021-1"],
             "first_seen": datetime.now(timezone.utc) - timedelta(days=120),
-            "details_list": [{"fixed_version": "4.17.21", "vulnerabilities": []}],
+            "details_list": [
+                {"fixed_version": "4.17.21", "vulnerabilities": [{"id": "CVE-2021-1", "severity": "CRITICAL"}]}
+            ],
             "affected_projects": 1,
         }
         response, _, _ = _run_impact(agg_results=[row])
@@ -741,6 +745,29 @@ class TestPriorityReasons:
             days_known=None,
         )
 
+    @staticmethod
+    def _overdue(severity_counts: dict[str, int], days_known: int | None) -> bool:
+        reasons = build_priority_reasons(
+            severity_counts, CVEEnrichmentResult(), 1, has_fix=False, days_known=days_known
+        )
+        return any(r.startswith("overdue:") for r in reasons)
+
+    @pytest.mark.parametrize(("severity", "sla_days"), [("critical", 7), ("high", 30), ("medium", 90)])
+    def test_overdue_follows_the_remediation_sla_of_the_most_severe_cve(self, severity, sla_days):
+        """The CVE-SLA report holds each severity to its own deadline, so the impact analysis must not use one."""
+        counts = {"critical": 0, "high": 0, "medium": 1, "low": 3, severity: 1}
+
+        assert (self._overdue(counts, sla_days - 1), self._overdue(counts, sla_days)) == (False, True)
+
+    def test_a_component_with_only_low_cves_has_no_deadline_to_be_overdue_on(self):
+        assert not self._overdue({"critical": 0, "high": 0, "medium": 0, "low": 4}, 3650)
+
+    def test_the_age_boost_starts_where_the_sla_ends(self):
+        def score(days_known: int | None) -> float:
+            return calculate_impact_score({"critical": 1}, 1, CVEEnrichmentResult(), False, days_known)
+
+        assert (score(6), score(7)) == (score(None), score(None) * IMPACT_AGE_BOOST)
+
     def test_a_fix_reaching_exactly_the_blast_radius_threshold_is_labelled(self):
         reasons = self._reasons(BLAST_RADIUS_THRESHOLD)
 
@@ -760,7 +787,7 @@ class TestPriorityReasons:
             "_id": {"component": "left-pad", "version": "1.0.0"},
             "details_list": [{"vulnerabilities": [advisory]}],
             "project_ids": projects,
-            "first_seen": datetime.now(timezone.utc) - timedelta(days=DAYS_KNOWN_OVERDUE_THRESHOLD + 30),
+            "first_seen": datetime.now(timezone.utc) - timedelta(days=120),
         }
 
         hotspot = _build_hotspot(group, {}, {}, {}, {})

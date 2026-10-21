@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
@@ -30,7 +31,7 @@ from app.models.project import Project, ProjectMember
 from app.models.system import SystemSettings
 from app.models.team import TeamSyncResult
 from app.models.user import User
-from app.repositories.api_keys import ApiKeyRepository
+from app.repositories.api_keys import ApiKeyRepository, hash_token
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.repositories.projects import (
@@ -49,6 +50,8 @@ from app.services.gitlab import GitLabService
 logger = logging.getLogger(__name__)
 
 _MSG_INVALID_API_KEY = "Invalid API Key"
+# Live project keys issued under argon2 keep that hash until their first verification rewrites it.
+_ARGON2_PREFIX = "$argon2"
 _MSG_CI_PROJECT_MISMATCH = "CI credentials do not match the target project"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")
@@ -382,10 +385,17 @@ async def _authenticate_via_api_key(x_api_key: str, project_repo: ProjectReposit
     if "." not in x_api_key:
         raise HTTPException(status_code=403, detail="Invalid API Key format")
     project_id, secret = x_api_key.split(".", 1)
-    project_data = await project_repo.get_raw_by_id(project_id)
-    if not project_data or not project_data.get("api_key_hash"):
+    project_data = await project_repo.get_raw_by_id(project_id) or {}
+    stored = project_data.get("api_key_hash")
+    if not stored:
         raise HTTPException(status_code=403, detail=_MSG_INVALID_API_KEY)
-    if not await asyncio.to_thread(security.verify_password, secret, project_data["api_key_hash"]):
+    digest = hash_token(secret)
+    if stored.startswith(_ARGON2_PREFIX):
+        if not await asyncio.to_thread(security.verify_password, secret, stored):
+            raise HTTPException(status_code=403, detail=_MSG_INVALID_API_KEY)
+        # Guarded on the old hash, so a rotation that landed meanwhile is not overwritten with the old key.
+        await project_repo.update_raw(project_id, {"$set": {"api_key_hash": digest}}, guard={"api_key_hash": stored})
+    elif not hmac.compare_digest(digest, stored):
         raise HTTPException(status_code=403, detail=_MSG_INVALID_API_KEY)
     return Project(**project_data)
 

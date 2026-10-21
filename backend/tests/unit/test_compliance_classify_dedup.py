@@ -17,10 +17,10 @@ def test_waiver_reasons_is_shared_from_base():
 def test_classify_behavior_preserved():
     assert base._classify([], _COMPLETE) == (ControlStatus.PASSED, [], None)
 
-    active = [{"_id": "a1", "waived": False}]
+    active = [{"finding_id": "a1", "waived": False}]
     assert base._classify(active, _COMPLETE) == (ControlStatus.FAILED, ["a1"], None)
 
-    waived = [{"id": "w1", "waived": True}]
+    waived = [{"finding_id": "w1", "waived": True}]
     assert base._classify(waived, _COMPLETE) == (ControlStatus.WAIVED, ["w1"], None)
 
 

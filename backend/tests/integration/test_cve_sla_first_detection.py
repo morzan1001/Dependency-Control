@@ -229,7 +229,7 @@ async def test_a_critical_cve_first_seen_200_days_ago_fails_its_sla(db, database
     critical = (await _sla_controls(db, "scan-2"))["CVE-SLA-CRITICAL"]
 
     assert critical.status == ControlStatus.FAILED.value
-    assert critical.evidence_finding_ids == [current[0]["_id"]]
+    assert critical.evidence_finding_ids == [current[0]["finding_id"]]
 
 
 @pytest.mark.parametrize("database", DATABASES)
@@ -256,7 +256,7 @@ async def test_each_cve_of_a_finding_is_held_to_its_own_severitys_sla(db, databa
 
     assert controls["CVE-SLA-CRITICAL"].status == ControlStatus.FAILED.value
     assert controls["CVE-SLA-HIGH"].status == ControlStatus.FAILED.value
-    assert controls["CVE-SLA-HIGH"].evidence_finding_ids == [doc["_id"]]
+    assert controls["CVE-SLA-HIGH"].evidence_finding_ids == [doc["finding_id"]]
     assert controls["CVE-SLA-MEDIUM"].status == ControlStatus.PASSED.value
 
 
@@ -320,7 +320,7 @@ async def test_a_critical_cve_kept_across_a_version_bump_stays_overdue(db, datab
     critical = (await _sla_controls(db, "scan-2"))["CVE-SLA-CRITICAL"]
 
     assert critical.status == ControlStatus.FAILED.value
-    assert critical.evidence_finding_ids == [doc["_id"]]
+    assert critical.evidence_finding_ids == [doc["finding_id"]]
 
 
 @pytest.mark.parametrize("database", DATABASES)

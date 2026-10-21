@@ -12,6 +12,7 @@ _SWEEPS = {
     "sweep_expired_compliance_reports": "Housekeeping: compliance report sweep",
     "reap_stale_metadata": "Stale archive metadata reaper",
     "reap_orphan_s3_objects": "Orphan reaper",
+    "_reap_orphan_scans": "Scan orphan reaper",
     "_reap_orphan_callgraphs": "Callgraph orphan reaper",
     "reap_orphan_gridfs_files": "GridFS orphan reaper",
 }

@@ -6,7 +6,6 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.v1.helpers.sorting import case_insensitive_key
 from app.api.v1.helpers.teams import team_refs
-from app.core import security
 from app.core.constants import (
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
@@ -19,6 +18,7 @@ from app.core.constants import (
 from app.core.permissions import Permissions, has_permission
 from app.models.project import Project
 from app.models.user import User
+from app.repositories.api_keys import hash_token
 from app.repositories.projects import ProjectRepository, surviving_admin_filter
 from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
@@ -150,6 +150,41 @@ async def last_admin_guard(
     return {}
 
 
+def _admitted_without_role(user: User, required_role: ProjectRole | None, write: bool, global_permission: str) -> bool:
+    if has_permission(user.permissions, global_permission):
+        return True
+    return not (write or required_role in _WRITE_ROLES) and has_permission(
+        user.permissions, Permissions.PROJECT_READ_ALL
+    )
+
+
+def _require_role(user: User, role: ProjectRole | None, required_role: ProjectRole | None) -> None:
+    if role is None or not may_read_projects(user):
+        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
+    if required_role and PROJECT_ROLES.index(role) < PROJECT_ROLES.index(required_role):
+        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
+
+
+async def project_access(
+    project_id: str,
+    user: User,
+    db: AsyncIOMotorDatabase,
+    required_role: ProjectRole | None = None,
+    *,
+    write: bool = False,
+    global_permission: str = Permissions.PROJECT_UPDATE,
+) -> tuple[Project, ProjectRole | None]:
+    """The role is None when a permission admitted the user without deriving one."""
+    project = await ProjectRepository(db).get_by_id(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if _admitted_without_role(user, required_role, write, global_permission):
+        return project, None
+    role = await effective_project_role(project, user, TeamRepository(db))
+    _require_role(user, role, required_role)
+    return project, role
+
+
 async def check_project_access(
     project_id: str,
     user: User,
@@ -159,24 +194,18 @@ async def check_project_access(
     write: bool = False,
     global_permission: str = Permissions.PROJECT_UPDATE,
 ) -> Project:
-    project = await ProjectRepository(db).get_by_id(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    if has_permission(user.permissions, global_permission):
-        return project
-
-    if not (write or required_role in _WRITE_ROLES) and has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
-        return project
-
-    effective_role = await effective_project_role(project, user, TeamRepository(db))
-    if effective_role is None or not may_read_projects(user):
-        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
-
-    if required_role and PROJECT_ROLES.index(effective_role) < PROJECT_ROLES.index(required_role):
-        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
-
+    project, _ = await project_access(
+        project_id, user, db, required_role, write=write, global_permission=global_permission
+    )
     return project
+
+
+def authorize_project_read(data: dict[str, Any], user: User) -> None:
+    """check_project_access's read gate, on load_project_with_members' members and their effective roles."""
+    if _admitted_without_role(user, None, False, Permissions.PROJECT_UPDATE):
+        return
+    user_id = str(user.id)
+    _require_role(user, next((m["effective_role"] for m in data["members"] if m["user_id"] == user_id), None), None)
 
 
 async def authorize_waiver_read(project_id: str | None, user: User, db: AsyncIOMotorDatabase) -> None:
@@ -240,9 +269,7 @@ async def ensure_crypto_overrides_writable(db: AsyncIOMotorDatabase) -> None:
 
 def generate_project_api_key(project_id: str) -> tuple[str, str]:
     secret = secrets.token_urlsafe(32)
-    api_key = f"{project_id}.{secret}"
-    api_key_hash = security.get_password_hash(secret)
-    return api_key, api_key_hash
+    return f"{project_id}.{secret}", hash_token(secret)
 
 
 def apply_system_settings_enforcement(

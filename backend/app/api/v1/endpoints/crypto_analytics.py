@@ -3,14 +3,14 @@ from pydantic import AwareDatetime
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_400_403, RESP_403, RESP_404
+from app.api.v1.helpers.responses import RESP_400_403, RESP_403, RESP_404, RESP_413
 from app.core.constants import MAX_CRYPTO_HOTSPOT_PAGE, ScopeName
 from app.schemas.analytics import Bucket, GroupBy, HotspotEntry, HotspotResponse, Metric, TrendSeries
 from app.services.analytics.crypto_hotspots import CryptoHotspotService
 from app.services.analytics.crypto_trends import CryptoTrendService
 from app.services.analytics.scopes import ScopeResolver
 
-router = CustomAPIRouter(prefix="/analytics/crypto", tags=["crypto-analytics"])
+router = CustomAPIRouter(prefix="/analytics/crypto", tags=["crypto-analytics"], responses=RESP_413)
 
 
 @router.get("/hotspots", responses=RESP_403)

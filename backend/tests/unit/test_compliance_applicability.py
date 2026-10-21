@@ -118,7 +118,12 @@ def test_a_sizeless_rsa_key_material_leaves_the_verdict_to_the_rsa_algorithm():
 def _weak_rsa_finding(*, waived):
     weak = _asset(name="RSA", primitive=CryptoPrimitive.PKE, bom_ref="r2", key_size_bits=1024)
     (finding,) = crypto_findings_for_assets([weak], [_RSA_RULE], scanner="crypto_weak_key")
-    return finding | {"_id": f"s-{finding['id']}", "scan_id": weak.scan_id, "waived": waived}
+    return finding | {
+        "_id": f"s-{finding['id']}",
+        "finding_id": finding["id"],
+        "scan_id": weak.scan_id,
+        "waived": waived,
+    }
 
 
 def test_a_sizeless_rsa_key_withholds_a_waived_verdict():
@@ -197,7 +202,7 @@ _MD5_CONTROL = ControlDefinition(
 
 def test_evaluator_matches_finding_via_matched_rules():
     finding = {
-        "id": "f1",
+        "finding_id": "f1",
         "type": "crypto_weak_algorithm",
         "waived": False,
         "details": {
@@ -216,7 +221,7 @@ def test_evaluator_matches_finding_via_matched_rules():
 
 def test_evaluator_ignores_finding_when_no_rule_matches():
     finding = {
-        "id": "f2",
+        "finding_id": "f2",
         "type": "crypto_weak_algorithm",
         "waived": False,
         "details": {

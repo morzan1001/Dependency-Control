@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.core.constants import ADVISORY_ENRICHMENT_KEYS
 from app.core.cve import advisory_match
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
@@ -105,9 +106,11 @@ async def _stamp_advisories(
     scoped = [(waiver, waiver_criteria(waiver)) for waiver in waivers]
     waived: dict[str, str | None] = {}
     for doc in await finding_repo.find_advisory_state(scan_id, clause):
-        stored = (doc.get("details") or {}).get("vulnerabilities") or []
+        details = doc.get("details") or {}
+        stored = details.get("vulnerabilities") or []
         entries = [{**entry, "waived": False, "waiver_reason": None} for entry in stored]
-        record = {**doc, "waived": False, "details": {"vulnerabilities": entries}}
+        rollup = {key: details[key] for key in ADVISORY_ENRICHMENT_KEYS if key in details}
+        record = {**doc, "waived": False, "details": {**rollup, "vulnerabilities": entries}}
         for waiver, criteria in scoped:
             if record_matches(record, criteria) and waive_advisories(record, waiver):
                 counts[waiver.id] += 1
@@ -127,6 +130,12 @@ def _advisory_changes(doc: dict[str, Any], stored: list[dict[str, Any]], record:
             changes[f"details.vulnerabilities.{index}.waiver_reason"] = after["waiver_reason"]
     if record.get("severity") != doc.get("severity"):
         changes["severity"] = record["severity"]
+    stored_rollup, rolled_up = doc.get("details") or {}, record["details"]
+    changes |= {
+        f"details.{key}": rolled_up.get(key)
+        for key in ADVISORY_ENRICHMENT_KEYS
+        if rolled_up.get(key) != stored_rollup.get(key)
+    }
     return changes
 
 

@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.core.constants import REMEDIATION_SLA_DAYS
 from app.models.finding import FindingType, Severity
 from app.schemas.compliance import ControlResult, FrameworkEvaluation, ReportFramework
 from app.services.compliance.frameworks.base import (
@@ -10,12 +11,6 @@ from app.services.compliance.frameworks.base import (
     build_evaluation,
 )
 from app.services.recommendation.common import live_advisories
-
-SLA_DAYS: dict[Severity, int] = {
-    Severity.CRITICAL: 7,
-    Severity.HIGH: 30,
-    Severity.MEDIUM: 90,
-}
 
 
 def _control_title(severity: Severity, sla_days: int) -> str:
@@ -33,7 +28,7 @@ class CveRemediationSlaFramework:
         now = datetime.now(timezone.utc)
 
         controls: list[ControlResult] = []
-        for severity, sla_days in SLA_DAYS.items():
+        for severity, sla_days in REMEDIATION_SLA_DAYS.items():
             title = _control_title(severity, sla_days)
             overdue = [f for f in data.findings if _is_overdue(f, severity, sla_days, now)]
             status, evidence, status_reason = _classify(overdue, data.coverage)

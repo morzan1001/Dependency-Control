@@ -149,10 +149,9 @@ class TestProjectionSchemas:
     def test_scan_minimal(self):
         from app.schemas.projections import ScanMinimal
 
-        s = ScanMinimal(_id="s-1", pipeline_id=42, status="completed")
+        s = ScanMinimal(_id="s-1", pipeline_id=42)
         assert s.id == "s-1"
         assert s.pipeline_id == 42
-        assert s.status == "completed"
 
     def test_callgraph_minimal(self):
         from app.schemas.projections import CallgraphMinimal

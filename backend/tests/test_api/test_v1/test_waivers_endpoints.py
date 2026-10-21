@@ -223,6 +223,29 @@ class TestCreateWaiverValidatesFindingMatch:
 
         assert created.rule_id == "ruby_lang_weak-hash"
 
+    @pytest.mark.parametrize("scope", ["file", "rule"])
+    @pytest.mark.parametrize("sent_rule", [None, "unknown"], ids=["rule from the finding", "rule sent by the form"])
+    def test_a_widened_scope_on_a_finding_whose_scanner_named_no_rule_is_rejected(self, admin_user, scope, sent_rule):
+        """Every rule-less finding carries the same placeholder, so the waiver would cover all of them."""
+        from app.api.v1.endpoints.waivers import _MSG_SCOPE_NEEDS_RULE
+
+        db = self._db_with_head_scan()
+        db.findings._docs["ruleless"] = _stored_bearer_finding("BEARER-unknown-src/file.rb-12", "unknown", _HEAD_SCAN)
+
+        exc = _refused(
+            admin_user,
+            db,
+            project_id="proj-1",
+            finding_id="BEARER-unknown-src/file.rb-12",
+            finding_type="sast",
+            package_name="src/file.rb",
+            scope=scope,
+            rule_id=sent_rule,
+            reason="future",
+        )
+
+        assert (exc.status_code, exc.detail) == (422, _MSG_SCOPE_NEEDS_RULE)
+
     def test_file_scope_waiver_skips_match_check(self, admin_user):
         db = self._db_with_head_scan()
         db.findings._docs["elsewhere"] = _stored_bearer_finding("BEARER-rule_x-src/file.js-1", "rule_x", "other-scan")
@@ -259,7 +282,7 @@ class TestCreateWaiverValidatesFindingMatch:
         """finding_id is not unique per scan for license/eol, so an unscoped waiver would blanket every such finding."""
         exc = _refused(
             admin_user,
-            project_id=None,
+            project_id=_PROJECT,
             finding_id="LIC-GPL-2.0-only",
             finding_type="license",
             scope="finding",
@@ -276,14 +299,28 @@ class TestCreateWaiverValidatesFindingMatch:
 
     @pytest.mark.parametrize("finding_id", ["LIC-GPL-2.0-only", "EOL-python-3.8"])
     def test_an_unscoped_shared_id_is_rejected_without_its_type(self, admin_user, finding_id):
-        """The id names the type the caller left out, and a global waiver never reaches the head-build check."""
-        assert _refused(admin_user, project_id=None, finding_id=finding_id, reason="approved").status_code == 422
+        """The id names the type the caller left out."""
+        assert _refused(admin_user, project_id=_PROJECT, finding_id=finding_id, reason="approved").status_code == 422
+
+    @pytest.mark.parametrize(
+        "fields",
+        [
+            {"finding_id": "LIC-GPL-2.0-only", "finding_type": "license"},
+            {"finding_id": "LIC-GPL-2.0-only"},
+            {"finding_id": "EOL-python-3.8"},
+        ],
+        ids=["license", "license id alone", "eol id alone"],
+    )
+    def test_an_org_wide_license_or_eol_policy_needs_no_package(self, admin_user, fields):
+        stored = _create(admin_user, project_id=None, reason="accepted estate-wide", **fields).stored
+
+        assert (stored.project_id, stored.finding_id, stored.package_name) == (None, fields["finding_id"], None)
 
     def test_unknown_placeholder_does_not_count_as_a_package_scope(self, admin_user):
         """The waiver form sends 'Unknown' when it cannot resolve a package, which is no package scope."""
         exc = _refused(
             admin_user,
-            project_id=None,
+            project_id=_PROJECT,
             finding_id="LIC-GPL-2.0-only",
             finding_type="license",
             package_name="Unknown",
@@ -518,7 +555,7 @@ class TestUpdateWaiverRecalc:
                             waiver_in=WaiverUpdate(**update_kwargs),
                             background_tasks=bg_tasks,
                             current_user=admin_user,
-                            db=MagicMock(),
+                            db=FakeDatabase(),
                         )
                     )
         queued = [call.args[1] for call in mock_request.await_args_list]
@@ -535,6 +572,109 @@ class TestUpdateWaiverRecalc:
     def test_reason_only_change_triggers_recalc(self, admin_user):
         """Findings carry the reason of the waiver that covers them, so a new reason is restamped."""
         assert self._run_update(admin_user, {"reason": "Updated reason"}) == (["waiver-1"], [run_waiver_recalc])
+
+
+class TestWaiverEditsRestampTheHeadAtOnce:
+    """A queued change waits behind a running global recalc, so the head the project shows is restamped now."""
+
+    _LICENSE_ID = "LIC-GPL-3.0"
+
+    def _seed(self, *, waived: bool) -> tuple[FakeDatabase, Waiver]:
+        db = FakeDatabase()
+        waiver = Waiver(
+            project_id=_PROJECT,
+            finding_type="license",
+            finding_id=self._LICENSE_ID,
+            package_name="lib",
+            reason="approved by legal",
+            created_by="admin",
+        )
+
+        async def seed() -> None:
+            await db.projects.insert_one(
+                {"_id": _PROJECT, "name": "p", "default_branch": _BRANCH, "deleted_branches": []}
+            )
+            await db.scans.insert_one(
+                {
+                    "_id": _HEAD_SCAN,
+                    "project_id": _PROJECT,
+                    "branch": _BRANCH,
+                    "status": SCAN_STATUS_COMPLETED,
+                    "created_at": datetime.now(timezone.utc),
+                }
+            )
+            await db.findings.insert_one(
+                {
+                    "_id": "gpl",
+                    "scan_id": _HEAD_SCAN,
+                    "project_id": _PROJECT,
+                    "type": "license",
+                    "finding_id": self._LICENSE_ID,
+                    "component": "lib",
+                    "severity": "HIGH",
+                    "waived": waived,
+                    "waiver_reason": waiver.reason if waived else None,
+                }
+            )
+            await db.waivers.insert_one(waiver.model_dump(by_alias=True))
+
+        asyncio.run(seed())
+        return db, waiver
+
+    def test_deleting_a_project_waiver_lifts_its_flags_on_the_head_before_the_response(self, admin_user):
+        from app.api.v1.endpoints.waivers import delete_waiver
+
+        db, waiver = self._seed(waived=True)
+        background = BackgroundTasks()
+
+        asyncio.run(delete_waiver(waiver_id=waiver.id, background_tasks=background, current_user=admin_user, db=db))
+
+        finding = asyncio.run(db.findings.find_one({"_id": "gpl"}))
+        assert (finding["waived"], finding["waiver_reason"]) == (False, None)
+        assert [task.func for task in background.tasks] == [run_waiver_recalc]
+
+    def test_editing_a_project_waiver_restamps_the_head_and_records_its_outcome_there(self, admin_user):
+        from app.api.v1.endpoints.waivers import update_waiver
+        from app.schemas.waiver import WaiverUpdate
+
+        db, waiver = self._seed(waived=False)
+        background = BackgroundTasks()
+
+        with patch(f"{MODULE}.check_project_access", _project_access(db)):
+            asyncio.run(
+                update_waiver(
+                    waiver_id=waiver.id,
+                    waiver_in=WaiverUpdate(reason="re-approved by legal"),
+                    background_tasks=background,
+                    current_user=admin_user,
+                    db=db,
+                )
+            )
+
+        finding = asyncio.run(db.findings.find_one({"_id": "gpl"}))
+        assert (finding["waived"], finding["waiver_reason"]) == (True, "re-approved by legal")
+        stored = asyncio.run(db.waivers.find_one({"_id": waiver.id}))
+        assert (stored.get("last_eval_scan_id"), stored.get("last_match_count")) == (_HEAD_SCAN, 1)
+        assert [task.func for task in background.tasks] == [run_waiver_recalc]
+
+    def test_after_a_project_waiver_is_deleted_the_project_shows_its_heads_stats(self, admin_user):
+        """The dashboard and the project list read project.stats, which the queued recalc skips for a current head."""
+        from app.api.v1.endpoints.waivers import delete_waiver
+        from app.services.stats import recalculate_project_stats
+
+        db, waiver = self._seed(waived=False)
+        asyncio.run(recalculate_project_stats(_PROJECT, db))
+        assert asyncio.run(db.projects.find_one({"_id": _PROJECT}))["stats"]["high"] == 0
+
+        asyncio.run(
+            delete_waiver(waiver_id=waiver.id, background_tasks=BackgroundTasks(), current_user=admin_user, db=db)
+        )
+        asyncio.run(run_waiver_recalc(db))
+
+        head = asyncio.run(db.scans.find_one({"_id": _HEAD_SCAN}))
+        project = asyncio.run(db.projects.find_one({"_id": _PROJECT}))
+        assert head["stats"]["high"] == 1
+        assert project["stats"] == head["stats"]
 
 
 class TestListWaivers:
@@ -790,7 +930,7 @@ class TestDeleteWaiverPermissions:
                             waiver_id="waiver-1",
                             background_tasks=bg_tasks,
                             current_user=admin_user,
-                            db=MagicMock(),
+                            db=FakeDatabase(),
                         )
                     )
 

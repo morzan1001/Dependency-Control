@@ -113,7 +113,7 @@ class ScanManager:
         if release:
             # The row before the flag: a flag whose row is missing shows a release that is not there.
             await ReleaseRepository(self.db).record(
-                Release(project_id=str(self.project.id), scan_id=scan_id, **release)
+                Release(project_id=str(self.project.id), scan_id=scan_id, **release), data.commit_tag
             )
             update["$set"]["is_release"] = True
         return update

@@ -173,6 +173,12 @@ def _resolve_dotted(doc: dict, path: str):
     cur = doc.get(head)
     if cur is None:
         return None
+    index, _, after = rest.partition(".")
+    if isinstance(cur, list) and index.isdigit():
+        element = cur[int(index)] if int(index) < len(cur) else None
+        if not after:
+            return element
+        return _resolve_dotted(element, after) if isinstance(element, dict) else None
     if isinstance(cur, list):
         out: list = []
         for el in cur:
@@ -869,21 +875,20 @@ def _run_lookup(docs: list, spec: dict, database: Any) -> list:
     foreign_docs = list(database[spec["from"]]._docs.values())
     as_field = spec["as"]
     for doc in docs:
-        if "pipeline" in spec:
-            # "$$name" resolves as the path "$name", so the let-vars ride on each candidate under that key.
-            bound = {f"${var}": _eval_expr(doc, expr) for var, expr in (spec.get("let") or {}).items()}
-            candidates = [{**bound, **fd} for fd in _copy.deepcopy(foreign_docs)]
-            matched = _run_pipeline(candidates, spec["pipeline"], database)
-            doc[as_field] = [{k: v for k, v in m.items() if not k.startswith("$")} for m in matched]
-        else:
+        joined = foreign_docs
+        if "localField" in spec:
             local = _resolve_dotted(doc, spec["localField"])
             # MongoDB joins an array localField element-wise, and a scalar against an array foreignField too.
             wanted = local if isinstance(local, list) else [local]
-            doc[as_field] = [
-                _copy.deepcopy(fd)
-                for fd in foreign_docs
-                if _matches_any(_resolve_dotted(fd, spec["foreignField"]), wanted)
-            ]
+            joined = [fd for fd in foreign_docs if _matches_any(_resolve_dotted(fd, spec["foreignField"]), wanted)]
+        if "pipeline" in spec:
+            # "$$name" resolves as the path "$name", so the let-vars ride on each candidate under that key.
+            bound = {f"${var}": _eval_expr(doc, expr) for var, expr in (spec.get("let") or {}).items()}
+            candidates = [{**bound, **fd} for fd in _copy.deepcopy(joined)]
+            matched = _run_pipeline(candidates, spec["pipeline"], database)
+            doc[as_field] = [{k: v for k, v in m.items() if not k.startswith("$")} for m in matched]
+        else:
+            doc[as_field] = [_copy.deepcopy(fd) for fd in joined]
     return docs
 
 
@@ -1137,8 +1142,10 @@ def _drop_projected_path(node: Any, parts: list[str]) -> None:
 
 def _apply_projection(doc: dict | None, projection: dict | None) -> dict | None:
     """Trim a document the way the server does, so a too-narrow projection is visible in tests."""
-    if doc is None or not projection:
-        return doc
+    if doc is None:
+        return None
+    if not projection:
+        return _copy.deepcopy(doc)
     fields = {path: spec for path, spec in projection.items() if path != "_id"}
     # {"_id": 1} alone is an inclusion projection too, and keeps nothing but the key.
     if any(spec in (1, True) for spec in fields.values()) or (not fields and projection.get("_id") in (1, True)):

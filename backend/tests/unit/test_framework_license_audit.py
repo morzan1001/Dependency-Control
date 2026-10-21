@@ -25,7 +25,7 @@ async def test_strong_copyleft_violation_fails():
     policy = {"allow_strong_copyleft": False, "allow_network_copyleft": False}
     findings = [
         {
-            "_id": "f1",
+            "finding_id": "f1",
             "type": "license",
             "details": {"license": "GPL-3.0-only", "category": "strong_copyleft"},
             "waived": False,
@@ -42,7 +42,7 @@ async def test_allowed_category_is_not_applicable():
     policy = {"allow_strong_copyleft": True, "allow_network_copyleft": False}
     findings = [
         {
-            "_id": "f1",
+            "finding_id": "f1",
             "type": "license",
             "details": {"license": "GPL-3.0-only", "category": "strong_copyleft"},
             "waived": False,
@@ -59,7 +59,7 @@ async def test_network_copyleft_violation_fails():
     policy = {"allow_strong_copyleft": False, "allow_network_copyleft": False}
     findings = [
         {
-            "_id": "f1",
+            "finding_id": "f1",
             "type": "license",
             "details": {"license": "AGPL-3.0-only", "category": "network_copyleft"},
             "waived": False,
@@ -75,7 +75,7 @@ async def test_unknown_license_fails_identified_control():
     fw = LicenseAuditFramework()
     findings = [
         {
-            "_id": "f1",
+            "finding_id": "f1",
             "type": "license",
             "details": {"license": "UNKNOWN", "category": "unknown"},
             "waived": False,
@@ -93,14 +93,14 @@ async def test_waived_finding_produces_waived_control():
     policy = {"allow_strong_copyleft": False}
     findings = [
         {
-            "_id": "f1",
+            "finding_id": "f1",
             "type": "license",
             "details": {"license": "GPL-3.0-only", "category": "strong_copyleft"},
             "waived": True,
             "waiver_reason": "accepted risk",
         },
         {
-            "_id": "f2",
+            "finding_id": "f2",
             "type": "license",
             "details": {"license": "GPL-2.0-only", "category": "strong_copyleft"},
             "waived": True,
@@ -129,7 +129,7 @@ async def test_analyzer_output_reaches_the_identified_control():
 
     aggregator = ResultAggregator()
     normalize_license(aggregator, result, source="sbom.json")
-    findings = [f.model_dump() | {"_id": f.id} for f in aggregator.get_findings()]
+    findings = [f.model_dump() | {"finding_id": f.id} for f in aggregator.get_findings()]
 
     evaluation = await LicenseAuditFramework().evaluate(_eval_input(findings=findings, policy={}))
     ctrl = next(c for c in evaluation.controls if c.control_id == "LICENSE-AUDIT-LICENSE-IDENTIFIED")
@@ -153,7 +153,7 @@ async def _analyzer_statuses(policy: dict) -> dict[str, str]:
     result = await analyze_cyclonedx(LicenseAnalyzer(), _RESTRICTED_LICENSES, policy)
     aggregator = ResultAggregator()
     normalize_license(aggregator, result, source="sbom.json")
-    findings = [f.model_dump() | {"_id": f.id} for f in aggregator.get_findings()]
+    findings = [f.model_dump() | {"finding_id": f.id} for f in aggregator.get_findings()]
 
     evaluation = await LicenseAuditFramework().evaluate(_eval_input(findings=findings, policy=policy))
     return {c.control_id: c.status for c in evaluation.controls}

@@ -41,7 +41,7 @@ from app.db.mongodb import get_database
 from app.models.project import Project
 from app.models.system import SystemSettings
 from app.repositories.distributed_locks import DistributedLocksRepository, LockLost, new_lock_holder, run_holding_lock
-from app.repositories.scans import HAS_SBOM_MATCH, ScanRepository, is_usable_build
+from app.repositories.scans import HAS_SBOM_MATCH, HEAD_SCOPE_FIELDS, ScanRepository, is_usable_build
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.analysis.notifications import notify_analysis_failed
 from app.services.archive import reap_orphan_s3_objects, reap_stale_metadata
@@ -105,6 +105,23 @@ async def _reap_orphan_callgraphs(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE)
     cursor = db.callgraphs.find({"created_at": {"$lt": cutoff}, "scan_id": {"$ne": None}}, {"scan_id": 1})
     scan_ids = (callgraph["scan_id"] async for callgraph in cursor if callgraph.get("scan_id"))
     return sum([await _reap_batch(batch) async for batch in abatched(scan_ids, batch_size)])
+
+
+async def _reap_orphan_scans(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
+    """Finishes a project delete whose cascade broke off; the age window lets an ingest still writing a scan finish."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS)
+    scanned = await db.scans.distinct("project_id")
+    live = set(await db.projects.distinct("_id", {"_id": {"$in": scanned}}))
+    gone = [project_id for project_id in scanned if project_id not in live]
+    if not gone:
+        return 0
+    orphaned = {"project_id": {"$in": gone}, "created_at": {"$lt": cutoff}}
+    deleted = 0
+    while scan_ids := [scan["_id"] async for scan in db.scans.find(orphaned, {"_id": 1}).limit(batch_size)]:
+        deleted += await delete_scans_and_related_data(db, scan_ids)
+    if deleted:
+        logger.info(f"Reaped {deleted} orphan scan(s) of {len(gone)} deleted project(s)")
+    return deleted
 
 
 _RESCAN_PROJECT_PROJECTION = dict.fromkeys(
@@ -291,7 +308,7 @@ async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, la
 
 async def _project_heads(db: Any, project_ids: set[str]) -> set[str]:
     projects = await db.projects.find(
-        {"_id": {"$in": sorted(project_ids)}}, {"latest_scan_id": 1, "default_branch": 1, "deleted_branches": 1}
+        {"_id": {"$in": sorted(project_ids)}}, dict.fromkeys(HEAD_SCOPE_FIELDS, 1)
     ).to_list(None)
     return set((await ScanRepository(db).get_latest_active_scan_ids(projects)).values())
 
@@ -436,6 +453,7 @@ async def run_housekeeping(db: Any) -> None:
         ("Housekeeping: compliance report sweep", sweep_expired_compliance_reports),
         ("Stale archive metadata reaper", reap_stale_metadata),
         ("Orphan reaper", reap_orphan_s3_objects),
+        ("Scan orphan reaper", _reap_orphan_scans),
         ("Callgraph orphan reaper", _reap_orphan_callgraphs),
         ("GridFS orphan reaper", reap_orphan_gridfs_files),
     ):

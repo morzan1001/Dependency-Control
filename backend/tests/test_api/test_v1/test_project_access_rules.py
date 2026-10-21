@@ -117,6 +117,64 @@ class TestEffectiveRoleOnThePage:
         assert (member.role, member.effective_role) == ("viewer", "admin")
 
 
+def _count_reads(db, *collections: str) -> dict[str, int]:
+    reads = dict.fromkeys(collections, 0)
+    for name in collections:
+        collection = getattr(db, name)
+        for method in ("find", "find_one"):
+            original = getattr(collection, method)
+
+            def counting(*args, _original=original, _name=name, **kwargs):
+                reads[_name] += 1
+                return _original(*args, **kwargs)
+
+            setattr(collection, method, counting)
+    return reads
+
+
+_WITH_TEAM_MEMBER = (("u-team-admin", "admin"), ("u-team-member", "member"))
+
+
+class TestReadProjectAuthorisesOnTheLoadedProject:
+    @pytest.mark.asyncio
+    async def test_the_page_reads_the_project_and_its_teams_once(self):
+        db = await _db(team_members=_WITH_TEAM_MEMBER)
+        reads = _count_reads(db, "projects", "teams")
+
+        await projects.read_project(_PROJECT, _MEMBER_BY_TEAM, db)
+
+        assert reads == {"projects": 1, "teams": 1}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "user",
+        [
+            _MEMBER_BY_TEAM,
+            _user("u-direct-admin", Permissions.PROJECT_READ),
+            _user("u-outsider", Permissions.PROJECT_READ_ALL),
+            _user("u-outsider", Permissions.PROJECT_UPDATE),
+        ],
+        ids=["team member", "direct member", "reader of all projects", "write superuser"],
+    )
+    async def test_who_may_read_it(self, user):
+        assert (await projects.read_project(_PROJECT, user, await _db(team_members=_WITH_TEAM_MEMBER))).id == _PROJECT
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("project_id", "user", "status"),
+        [
+            (_PROJECT, _user("u-outsider", Permissions.PROJECT_READ), 403),
+            (_PROJECT, _user("u-direct-admin"), 403),
+            ("p-missing", _user("u-outsider", Permissions.PROJECT_READ_ALL), 404),
+        ],
+        ids=["outsider", "member without project read", "missing project"],
+    )
+    async def test_who_may_not(self, project_id, user, status):
+        with pytest.raises(HTTPException) as exc_info:
+            await projects.read_project(project_id, user, await _db())
+        assert exc_info.value.status_code == status
+
+
 class TestLastAdmin:
     @pytest.mark.asyncio
     async def test_a_write_superuser_may_remove_the_last_direct_admin(self):
@@ -208,6 +266,20 @@ class TestTeamMembersNotificationSettings:
         )
 
         assert await _sent_channels(db) == {}
+
+    @pytest.mark.asyncio
+    async def test_the_callers_role_is_derived_once(self):
+        db = await _db(team_members=_WITH_TEAM_MEMBER)
+        reads = _count_reads(db, "teams")
+
+        await projects.update_notification_settings(
+            _PROJECT,
+            ProjectNotificationSettings(notification_preferences={"analysis_completed": ["slack"]}),
+            _MEMBER_BY_TEAM,
+            db,
+        )
+
+        assert reads == {"teams": 1}
 
     @pytest.mark.asyncio
     async def test_a_team_members_override_reaches_the_notifier(self):

@@ -34,7 +34,7 @@ def _asset(name, primitive, **kw):
 
 def _persisted(assets):
     return [
-        finding | {"_id": finding["id"], "scan_id": "s1"}
+        finding | {"_id": finding["id"], "finding_id": finding["id"], "scan_id": "s1"}
         for finding in crypto_findings_for_assets(assets, load_seed_rules(), scanner="crypto_weak_algorithm")
     ]
 

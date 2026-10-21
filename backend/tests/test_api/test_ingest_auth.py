@@ -192,24 +192,24 @@ class TestIngestApiKey:
 
     def test_valid_api_key_returns_project(self):
         from app.api.deps import get_project_for_ingest
+        from app.repositories.api_keys import hash_token
 
         project_doc = {
             "_id": "proj-1",
             "name": "Test Project",
             "owner_id": "user-1",
-            "api_key_hash": "hashed-secret",
+            "api_key_hash": hash_token("my-secret"),
         }
         projects_coll = create_mock_collection(find_one=project_doc)
         db = create_mock_db({"projects": projects_coll})
 
-        with patch("app.api.deps.security.verify_password", return_value=True):
-            result = asyncio.run(
-                get_project_for_ingest(
-                    x_api_key="proj-1.my-secret",
-                    oidc_token=None,
-                    db=db,
-                )
+        result = asyncio.run(
+            get_project_for_ingest(
+                x_api_key="proj-1.my-secret",
+                oidc_token=None,
+                db=db,
             )
+        )
 
         assert result.name == "Test Project"
         assert result.id == "proj-1"

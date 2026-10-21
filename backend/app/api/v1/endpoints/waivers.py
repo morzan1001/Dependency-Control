@@ -26,10 +26,11 @@ from app.models.user import User
 from app.models.waiver import Waiver
 from app.repositories.base import and_filters
 from app.repositories.findings import FindingRepository
+from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository, non_expired_waiver_filter
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
-from app.services.normalizers.utils import FindingIdPrefix
+from app.services.normalizers.utils import UNKNOWN_RULE_ID, FindingIdPrefix
 from app.services.stats import request_waiver_recalc, restamp_single_scan, run_waiver_recalc
 from app.services.waivers.matching import finding_rule_id, waiver_query
 
@@ -64,7 +65,7 @@ async def _resolve_widened_rule(waiver_in: WaiverCreate, db: AsyncIOMotorDatabas
         raise HTTPException(status_code=422, detail=_MSG_SCOPE_NEEDS_LOCATION)
     if waiver_in.scope == WAIVER_SCOPE_FILE and not waiver_in.package_name:
         raise HTTPException(status_code=422, detail=_MSG_SCOPE_NEEDS_FILE)
-    if waiver_in.rule_id:
+    if waiver_in.rule_id and waiver_in.rule_id != UNKNOWN_RULE_ID:
         return
     finding = None
     if waiver_in.project_id and waiver_in.finding_id:
@@ -118,6 +119,13 @@ _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 _MSG_WAIVER_NOT_FOUND = "Waiver not found"
 
 
+async def _restamp_head(db: AsyncIOMotorDatabase, project_id: str, waiver_repo: WaiverRepository) -> None:
+    """A queued change waits behind a running global recalc, so the build the project shows is restamped now."""
+    project = await ProjectRepository(db).get_by_id(project_id)
+    if project and (head := await ScanRepository(db).get_latest_active_scan_id(project)):
+        await restamp_single_scan(db, project_id, head, waiver_repo)
+
+
 async def _with_creator_names(db: AsyncIOMotorDatabase, waivers: list[Waiver]) -> list[dict[str, Any]]:
     return await resolve_usernames(db, [WaiverResponse.model_validate(w).model_dump() for w in waivers], "created_by")
 
@@ -141,7 +149,9 @@ async def create_waiver(
     project = await _authorize_waiver_write(waiver_in.project_id, current_user, db)
 
     # Reject zombie and over-broad waivers early, before consuming a write and recalculating stats.
-    _reject_unscoped_broad_waiver(waiver_in)
+    # A global LIC-/EOL- waiver without a package is an estate-wide license or end-of-life policy.
+    if waiver_in.project_id:
+        _reject_unscoped_broad_waiver(waiver_in)
     scan_id = await _named_scan_id(waiver_in, db)
     if waiver_in.scope != WAIVER_SCOPE_FINDING:
         await _resolve_widened_rule(waiver_in, db)
@@ -277,6 +287,8 @@ async def update_waiver(
         raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
 
     await request_waiver_recalc(db, updated)
+    if updated.project_id:
+        await _restamp_head(db, updated.project_id, waiver_repo)
     background_tasks.add_task(run_waiver_recalc, db)
 
     return (await _with_creator_names(db, [updated]))[0]
@@ -305,4 +317,6 @@ async def delete_waiver(
     await waiver_repo.delete(waiver_id)
 
     await request_waiver_recalc(db, waiver)
+    if waiver.project_id:
+        await _restamp_head(db, waiver.project_id, waiver_repo)
     background_tasks.add_task(run_waiver_recalc, db)

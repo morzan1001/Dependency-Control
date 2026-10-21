@@ -13,6 +13,7 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
+from app.schemas.projections import ProjectWithScanId
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
@@ -25,10 +26,12 @@ _USER = User(id="u1", username="u1", email="u1@test.com", permissions=[])
     [
         ("status", "asc", [("status", 1), ("created_at", -1), ("_id", 1)]),
         ("status", "desc", [("status", -1), ("created_at", 1), ("_id", -1)]),
-        ("findings_count", "desc", [("findings_count", -1), ("created_at", -1), ("_id", 1)]),
+        ("findings_count", "desc", [("findings_count", -1), ("created_at", 1), ("_id", -1)]),
         ("pipeline_iid", "asc", [("pipeline_iid", 1), ("created_at", -1), ("_id", 1)]),
-        ("branch", "asc", [("branch", 1), ("created_at", -1)]),
-        ("created_at", "desc", [("created_at", -1)]),
+        ("branch", "asc", [("branch", 1), ("created_at", -1), ("_id", 1)]),
+        ("branch", "desc", [("branch", -1), ("created_at", 1), ("_id", -1)]),
+        ("created_at", "desc", [("created_at", -1), ("_id", 1)]),
+        ("created_at", "asc", [("created_at", 1), ("_id", -1)]),
     ],
 )
 async def test_the_scan_list_breaks_ties_on_an_indexed_key(sort_by, sort_order, expected):
@@ -76,10 +79,9 @@ async def test_a_paged_find_breaks_ties_on_the_id(method):
     ("sort_by", "sort_order", "expected"),
     [
         ("status", "asc", {"status": 1, "created_at": -1, "_id": 1}),
-        ("branch", "desc", {"branch": -1, "created_at": 1}),
+        ("branch", "desc", {"branch": -1, "created_at": 1, "_id": -1}),
         ("pipeline_iid", "asc", {"pipeline_iid": 1, "created_at": -1, "_id": 1}),
-        # created_at alone, so the {created_at: -1} index serves the sort and stops after the page.
-        ("created_at", "desc", {"created_at": -1}),
+        ("created_at", "desc", {"created_at": -1, "_id": 1}),
     ],
 )
 async def test_the_recent_scans_list_breaks_ties_on_an_indexed_key(sort_by, sort_order, expected):
@@ -99,7 +101,9 @@ async def test_the_recent_scans_list_covers_the_projects_analytics_resolves():
     aggregate = AsyncMock(return_value=[])
     reader = User(id="u1", username="u1", email="u1@test.com", permissions=[Permissions.PROJECT_READ])
     with (
-        patch("app.api.v1.endpoints.projects.get_user_project_ids", AsyncMock(return_value=["p2"])),
+        patch(
+            "app.api.v1.endpoints.projects.read_scope_projects", AsyncMock(return_value=[ProjectWithScanId(_id="p2")])
+        ),
         patch.object(ScanRepository, "aggregate", aggregate),
     ):
         await read_all_scans(reader, FakeDatabase(), sort_by="created_at", sort_order="desc")

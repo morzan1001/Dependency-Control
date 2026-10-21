@@ -5,6 +5,7 @@ from app.models.finding import Finding, FindingType
 from app.schemas.bearer import BearerFinding, BearerSourceLocation, bearer_entries
 from app.schemas.finding_details import LineSpan, SastScannerDetails
 from app.services.normalizers.utils import (
+    UNKNOWN_RULE_ID,
     FindingIdPrefix,
     build_finding_id,
     normalize_cwe_list,
@@ -46,7 +47,7 @@ def _build_opengrep_description(check_id: str, message: str) -> str:
 
 
 def _parse_opengrep_item(item: dict[str, Any]) -> Finding:
-    check_id = item.get("check_id") or "unknown-check"
+    check_id = item.get("check_id") or UNKNOWN_RULE_ID
     path = item.get("path") or "unknown"
 
     start_obj = item.get("start") or {}

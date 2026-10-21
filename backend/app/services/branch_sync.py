@@ -7,7 +7,7 @@ from typing import Any
 from app.core.log_utils import sanitize_for_log
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
-from app.repositories.scans import BRANCH_SCAN_FILTER, ScanRepository
+from app.repositories.scans import ScanRepository
 from app.services.github import GitHubService, split_repo_path
 from app.services.gitlab import GitLabService
 
@@ -37,11 +37,11 @@ async def _vcs_repo(project: dict[str, Any], db: Any) -> _VcsRepo | None:
     return None
 
 
-async def sync_project_branches(project: dict[str, Any], db: Any) -> bool:
-    """Leaves the project untouched when the VCS could not be asked or listed no branches."""
+async def sync_project_branches(project: dict[str, Any], db: Any) -> bool | None:
+    """None without a usable VCS instance, False when the VCS failed or listed no branches; both leave the project."""
     vcs = await _vcs_repo(project, db)
     if not vcs:
-        return False
+        return None
     list_branches, fetch_default_branch = vcs
     vcs_branches = await list_branches()
     if not vcs_branches:
@@ -51,8 +51,7 @@ async def sync_project_branches(project: dict[str, Any], db: Any) -> bool:
     vcs_set = set(vcs_branches)
     # The tag-build check has to fetch documents, so it runs only on the few branches the VCS lacks.
     candidates = [b for b in await db.scans.distinct("branch", {"project_id": project_id}) if b not in vcs_set]
-    tag_free = {"project_id": project_id, **BRANCH_SCAN_FILTER}
-    deleted = sorted([b for b in candidates if await db.scans.find_one({**tag_free, "branch": b}, {"_id": 1})])
+    deleted = sorted(await ScanRepository(db).branch_names(project_id, candidates))
 
     update_fields: dict[str, Any] = {"deleted_branches": deleted, "branches_checked_at": datetime.now(timezone.utc)}
     stored_default = project.get("default_branch")

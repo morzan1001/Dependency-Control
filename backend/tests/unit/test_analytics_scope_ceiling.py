@@ -68,3 +68,20 @@ async def test_a_super_user_scope_past_the_ceiling_is_refused(db, small_ceiling)
 
     with pytest.raises(ScopeTooLargeError):
         await _resolver(db, permissions=frozenset({Permissions.PROJECT_READ_ALL})).resolve(scope="user", scope_id=None)
+
+
+@pytest.mark.parametrize(
+    ("route", "method"),
+    [
+        ("/compliance/reports/{report_id}", "get"),
+        ("/compliance/reports/{report_id}/download", "get"),
+        ("/analytics/crypto/hotspots", "get"),
+        ("/analytics/crypto/pqc-migration", "get"),
+    ],
+)
+def test_the_scope_resolving_routes_document_the_refusal(route, method):
+    from app.main import app
+
+    operation = next(path[method] for name, path in app.openapi()["paths"].items() if name.endswith(route))
+
+    assert "413" in operation["responses"]

@@ -1,28 +1,28 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import Enum, StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.finding import FindingType, Severity
 
 
-class ReportStatus(str, Enum):
+class ReportStatus(StrEnum):
     PENDING = "pending"
     GENERATING = "generating"
     COMPLETED = "completed"
     FAILED = "failed"
 
 
-class ReportFormat(str, Enum):
+class ReportFormat(StrEnum):
     PDF = "pdf"
     CSV = "csv"
     JSON = "json"
     SARIF = "sarif"
 
 
-class ReportFramework(str, Enum):
+class ReportFramework(StrEnum):
     NIST_SP_800_131A = "nist-sp-800-131a"
     BSI_TR_02102 = "bsi-tr-02102"
     CNSA_2_0 = "cnsa-2.0"

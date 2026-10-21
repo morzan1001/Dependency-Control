@@ -167,6 +167,13 @@ class TestNormalizeOpengrep:
         self.agg.aggregate("opengrep", result)
         assert len(self.agg.findings) == 1
 
+    def test_a_result_without_a_check_id_takes_the_shared_rule_placeholder(self):
+        self.agg.aggregate("opengrep", self._opengrep_result([{"path": "app/views.py", "start": {"line": 3}}]))
+
+        (finding,) = self.agg.get_findings()
+        assert finding.details["sast_findings"][0]["id"] == "unknown"
+        assert finding.id == "OPENGREP-unknown-app/views.py-3"
+
     def test_empty_results_skipped(self):
         self.agg.aggregate("opengrep", {"results": []})
         assert len(self.agg.findings) == 0

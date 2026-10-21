@@ -14,6 +14,7 @@ _OTHER_SWEEPS = (
     "sweep_expired_compliance_reports",
     "reap_stale_metadata",
     "reap_orphan_s3_objects",
+    "_reap_orphan_scans",
     "_reap_orphan_callgraphs",
     "reap_orphan_gridfs_files",
 )

@@ -48,18 +48,11 @@ async def seeded(db):
 
 
 async def _page(db, pipeline):
-    [bucket] = await db.findings.aggregate(pipeline).to_list(None)
-    return bucket["metadata"], [list(row.items()) for row in bucket["data"]]
+    return [list(row.items()) for row in await db.findings.aggregate(pipeline).to_list(None)]
 
 
 def _joined_rows(stages: list[dict]) -> int:
-    rows = 0
-    for stage in stages:
-        if "$lookup" in stage:
-            rows += stage["nReturned"]
-        for branch in stage.get("$facet", {}).values():
-            rows += _joined_rows(branch)
-    return rows
+    return sum(stage["nReturned"] for stage in stages if "$lookup" in stage)
 
 
 @pytest.mark.live_mongo
@@ -85,16 +78,16 @@ async def test_joining_the_page_returns_what_joining_every_finding_returns(seede
         joined_first = _build_scan_findings_pipeline(
             {"scan_id": _SCAN}, sort_by=sort_by, sort_dir=sort_dir, skip=skip, limit=limit, direct_only=True
         )
-        metadata, rows = await _page(seeded, paged)
+        rows = await _page(seeded, paged)
         assert any(dict(row).get("purl") for row in rows)
-        assert (metadata, rows) == await _page(seeded, joined_first)
+        assert rows == await _page(seeded, joined_first)
 
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 async def test_a_source_type_sort_orders_by_the_joined_dependency(seeded):
     pipeline = _build_scan_findings_pipeline({"scan_id": _SCAN}, sort_by="source_type", sort_dir=-1, skip=0, limit=50)
-    _, rows = await _page(seeded, pipeline)
+    rows = await _page(seeded, pipeline)
     source_types = [dict(row).get("source_type", "") for row in rows]
     assert source_types == sorted(source_types, reverse=True)
     assert source_types[0] == "image"
@@ -107,9 +100,9 @@ async def test_the_severity_sort_lists_the_most_severe_finding_first(db):
     await db.findings.insert_many([{**_finding(i, f"lib{i}"), "severity": s} for i, s in enumerate(severities)])
 
     pipeline = _build_scan_findings_pipeline({"scan_id": _SCAN}, sort_by="severity", sort_dir=-1, skip=0, limit=50)
-    [bucket] = await db.findings.aggregate(pipeline).to_list(None)
+    rows = await db.findings.aggregate(pipeline).to_list(None)
 
-    assert [row["severity"] for row in bucket["data"]] == ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+    assert [row["severity"] for row in rows] == ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 
 
 @pytest.mark.live_mongo
@@ -120,10 +113,10 @@ async def test_components_sort_whatever_their_case(db, sort_by):
     await db.findings.insert_many([{**_finding(i, name), "severity": "HIGH"} for i, name in enumerate(names)])
 
     pipeline = _build_scan_findings_pipeline({"scan_id": _SCAN}, sort_by=sort_by, sort_dir=1, skip=0, limit=50)
-    [bucket] = await db.findings.aggregate(pipeline).to_list(None)
+    rows = await db.findings.aggregate(pipeline).to_list(None)
 
-    assert [row["component"] for row in bucket["data"]] == ["axios", "Élan", "élan", "Zlib"]
-    assert all("_folded" not in row for row in bucket["data"])
+    assert [row["component"] for row in rows] == ["axios", "Élan", "élan", "Zlib"]
+    assert all("_folded" not in row for row in rows)
 
 
 @pytest.mark.live_mongo
@@ -148,9 +141,9 @@ async def test_the_join_takes_the_dependency_row_the_findings_csv_takes(db, vari
     await db.findings.insert_one(_finding(1, "lib0"))
 
     pipeline = _build_scan_findings_pipeline({"scan_id": _SCAN}, sort_by="severity", sort_dir=-1, skip=0, limit=5)
-    [bucket] = await db.findings.aggregate(pipeline).to_list(None)
+    rows = await db.findings.aggregate(pipeline).to_list(None)
     [exported] = [row async for row in iter_findings_rows(db, [ExportedScan(_SCAN, "main", None, None)])]
 
     [expected] = [(direct, f"pkg:maven/org.example/lib0@1.0{q}") for _, direct, q in variants if q == taken]
     assert (exported["direct"], exported["purl"]) == expected
-    assert [(row.get("direct"), row.get("purl")) for row in bucket["data"]] == [expected]
+    assert [(row.get("direct"), row.get("purl")) for row in rows] == [expected]

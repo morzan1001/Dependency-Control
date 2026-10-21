@@ -62,7 +62,7 @@ from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.repositories.findings import KEV_FINDINGS_ONLY, VULNERABILITIES_ONLY, FindingRepository
 from app.repositories.projects import ProjectRepository
-from app.repositories.scans import ScanRepository
+from app.repositories.scans import HEAD_SCOPE_FIELDS, ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
 from app.repositories.waivers import non_expired_waiver_filter
@@ -189,9 +189,7 @@ _CVE_SAMPLE_NOTE = (
 _ACTIVE: dict[str, Any] = {"waived": {"$ne": True}}
 
 _TOP_RISKY = 3
-_PROJECT_ROW_PROJECTION = dict.fromkeys(
-    ("name", "team_ids", "last_scan_at", "created_at", "latest_scan_id", "default_branch", "deleted_branches"), 1
-)
+_PROJECT_ROW_PROJECTION = dict.fromkeys(("name", "team_ids", "last_scan_at", "created_at", *HEAD_SCOPE_FIELDS), 1)
 _DEPENDENCY_ROW_PROJECTION = {
     "_id": 0,
     **dict.fromkeys(("name", "version", "purl", "direct", "direct_inferred", "scope", "parent_components"), 1),

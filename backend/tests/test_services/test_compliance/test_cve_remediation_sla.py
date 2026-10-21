@@ -14,6 +14,7 @@ from tests.helpers.compliance import evaluation_input
 def _vuln(severity: Severity, days_ago: int, **kwargs) -> dict:
     return {
         "_id": kwargs.pop("_id", f"f-{severity.value}-{days_ago}"),
+        "finding_id": kwargs.pop("finding_id", f"lib-{severity.value}:{days_ago}"),
         "type": FindingType.VULNERABILITY.value,
         "severity": severity.value,
         "details": {"vulnerabilities": [{"id": "CVE-2021-44228", "severity": severity.value}]},

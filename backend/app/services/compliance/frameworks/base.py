@@ -1,5 +1,6 @@
 import functools
 import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -253,7 +254,8 @@ class SeedFramework:
 
 
 def extract_finding_id(finding: dict[str, Any]) -> str:
-    return str(finding.get("_id") or finding.get("id") or "")
+    # The record _id is minted per scan; the finding id is what an auditor can look up, and it stays across scans.
+    return str(finding["finding_id"])
 
 
 def _classify(
@@ -301,6 +303,14 @@ def build_residual_risks(results: list[ControlResult]) -> list[ResidualRisk]:
     ]
 
 
+def _findings_digest(findings: list[dict[str, Any]]) -> str:
+    # A waiver change or a re-analysis rewrites the findings under the same scan ids.
+    digest = hashlib.sha256()
+    for line in sorted(json.dumps(finding, sort_keys=True, default=str) for finding in findings):
+        digest.update(f"{line}\n".encode())
+    return digest.hexdigest()
+
+
 def _inputs_fingerprint(data: EvaluationInput, *extra: str) -> str:
     bits = "|".join(
         [
@@ -308,6 +318,7 @@ def _inputs_fingerprint(data: EvaluationInput, *extra: str) -> str:
             f"override={data.override_version}",
             f"iana={data.iana_catalog_version}",
             f"scans={','.join(sorted(data.scan_ids))}",
+            f"findings={_findings_digest(data.findings)}",
             *extra,
         ]
     )

@@ -11,6 +11,7 @@ class ProjectWithScanId(BaseModel):
     id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
     name: str = ""
     latest_scan_id: str | None = None
+    latest_scan_from_tag: bool = False
     deleted_branches: list[str] = Field(default_factory=list)
     default_branch: str | None = None
     active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
@@ -28,9 +29,7 @@ class ScanWithStats(BaseModel):
 class ScanMinimal(BaseModel):
     id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
     pipeline_id: int | None = None
-    is_rescan: bool | None = None
     original_scan_id: str | None = None
-    status: str | None = None
     reachability_pending: bool | None = None
     project_id: str | None = None
     branch: str | None = None

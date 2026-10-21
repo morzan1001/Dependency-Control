@@ -141,7 +141,8 @@ class TestHTTP422OnOutOfBoundsParams:
             ),
         ):
             mock_repo = MagicMock()
-            mock_repo.aggregate = AsyncMock(return_value=[{"data": [], "total": [{"count": 0}]}])
+            mock_repo.aggregate = AsyncMock(return_value=[])
+            mock_repo.count = AsyncMock(return_value=0)
             mock_repo_cls.return_value = mock_repo
             return test_client.get("/projects/scans/scan-1/findings", params={"limit": limit})
 

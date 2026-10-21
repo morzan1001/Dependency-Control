@@ -43,11 +43,12 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.releases import (
     RELEASES_LATEST_LOOKUP_KEY,
     RELEASES_LATEST_LOOKUP_NAME,
+    RELEASES_LATEST_SORT,
     RELEASES_UPSERT_KEY_FIELDS,
     RELEASES_UPSERT_KEY_NAME,
     ReleaseRepository,
 )
-from app.repositories.scans import RESTORED_SCAN_MATCH, TAG_BUILD_MATCH
+from app.repositories.scans import HAS_SBOM_MATCH, RESTORED_SCAN_MATCH, TAG_BUILD_MATCH
 from app.repositories.update_frequency import ScanUpdateDeltaRepository
 from app.repositories.users import UserRepository
 from app.repositories.waivers import WaiverRepository
@@ -199,8 +200,9 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     await create_team_indexes(database)
 
-    await scans.create_index([("created_at", pymongo.DESCENDING)])
-    await scans.create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
+    # The scan lists' date sort ends on the _id tiebreak, so same-millisecond scans keep their place across pages.
+    await scans.create_index(SCANS_TIP_SORT)
+    await scans.create_index([("project_id", pymongo.ASCENDING), *SCANS_TIP_SORT])
     await scans.create_index("sbom_refs.gridfs_id")
 
     await analysis_results.create_index([("scan_id", pymongo.ASCENDING), ("analyzer_name", pymongo.ASCENDING)])
@@ -248,7 +250,13 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await projects.create_index([("created_at", pymongo.DESCENDING)])
 
     await scans.create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
+    # A release mark finds its commit's newest build in one seek.
+    await scans.create_index([("project_id", pymongo.ASCENDING), ("commit_hash", pymongo.ASCENDING), *SCANS_TIP_SORT])
     await scans.create_index(SCANS_TIP_INDEX_KEY)
+    # The project scan list's pipeline and findings sorts page straight off these.
+    for sort_field in ("pipeline_iid", "findings_count"):
+        await scans.create_index([("project_id", pymongo.ASCENDING), (sort_field, pymongo.ASCENDING), *SCANS_TIP_SORT])
+    await scans.create_index([("project_id", pymongo.ASCENDING), ("branch", pymongo.ASCENDING), *SCANS_TIP_SORT])
     # _id last, so a newest-first read breaks same-millisecond ties like the delta ledger without a blocking sort.
     await scans.create_index(
         [
@@ -267,8 +275,20 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             *SCANS_TIP_SORT,
         ]
     )
+    # The head's SBOM tiers find nothing in one seek for a project whose scans carry no SBOM.
+    await scans.create_index(
+        [
+            ("project_id", pymongo.ASCENDING),
+            ("branch", pymongo.ASCENDING),
+            ("is_rescan", pymongo.ASCENDING),
+            *SCANS_TIP_SORT,
+        ],
+        name="scans_sbom_branch_tip",
+        partialFilterExpression=HAS_SBOM_MATCH,
+    )
     await scans.create_index([("status", pymongo.ASCENDING), ("analysis_started_at", pymongo.ASCENDING)])
-    await scans.create_index("original_scan_id")
+    # A lineage's history pages its rescans newest first straight off this key.
+    await scans.create_index([("original_scan_id", pymongo.ASCENDING), *SCANS_TIP_SORT])
     await scans.create_index("latest_rescan_id")
 
     await scans.create_index(
@@ -297,6 +317,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         unique=True,
     )  # The upsert key: without uniqueness two concurrent marks of one scan both insert.
     await releases.create_index("scan_id")
+    # Serves the release list across every environment.
+    await releases.create_index([("project_id", pymongo.ASCENDING), *RELEASES_LATEST_SORT])
 
     await findings.create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])
     await findings.create_index(FINDINGS_SCAN_TYPE_INDEX)
