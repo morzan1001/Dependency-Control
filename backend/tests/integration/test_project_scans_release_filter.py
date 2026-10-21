@@ -313,9 +313,11 @@ async def test_a_second_rescan_while_the_first_is_under_way_is_refused(client, d
     await _seed(db)
     first = await _rescan(client, editor_headers)
 
-    second = await _rescan(client, editor_headers, scan_id=first.json()["id"])
+    second = await _rescan(client, editor_headers)
 
+    assert first.status_code == 200, first.text
     assert second.status_code == 409, second.text
+    assert second.json()["detail"] == "A re-scan of this scan is already under way"
     assert await db.scans.count_documents({"is_rescan": True}) == 1
 
 
