@@ -379,7 +379,6 @@ async def vuln_details_by(
                 }
             },
         ],
-        allow_disk_use=True,
         hint=hint,
     )
     return {

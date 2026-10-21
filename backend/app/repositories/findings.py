@@ -207,7 +207,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
                 },
             ]
             # Unhinted, the planner races candidate plans on every persist, which took most of the lookup time in prod.
-            cursor = self.collection.aggregate(pipeline, hint=dict(FIRST_DETECTION_INDEX), allowDiskUse=True)
+            cursor = self.collection.aggregate(pipeline, hint=dict(FIRST_DETECTION_INDEX))
             earliest.update(
                 {
                     finding_identity(row["_id"]): first

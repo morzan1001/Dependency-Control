@@ -1636,7 +1636,7 @@ class FakeCollection:
         )
 
     def aggregate(self, pipeline: list, **_kwargs) -> _AsyncIter:
-        # ``allowDiskUse`` (and any other server-side option) is a no-op in-process.
+        # Server-side options such as hint and maxTimeMS are no-ops in-process.
         return _AsyncIter(_run_pipeline(_copy.deepcopy(list(self._docs.values())), pipeline, self._db))
 
 

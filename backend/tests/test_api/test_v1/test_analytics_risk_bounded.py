@@ -134,14 +134,13 @@ def _run_impact(
     limit: int = 20,
     enrich: Any = None,
     read: int = 0,
-) -> tuple[Any, list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[Any, list[dict[str, Any]]]:
     """``read`` picks the findings read returned: 0 ranks the counted groups, 1 fetches the candidates' advisories."""
     from app.api.v1.endpoints.analytics.risk import get_impact_analysis
 
     user = _admin_user()
     db = MagicMock()
     captured: list[list[dict[str, Any]]] = []
-    captured_kwargs: list[dict[str, Any]] = []
 
     async def _fake_get_user_projects(_u, _d):
         return projections(["proj-1"])
@@ -149,9 +148,8 @@ def _run_impact(
     async def _fake_get_projects_with_scans(_pids, _d, **_kw):
         return {"proj-1": "Project 1"}, ["scan-latest"]
 
-    async def _fake_aggregate(pipeline, **kwargs):
+    async def _fake_aggregate(pipeline, **_kwargs):
         captured.append(pipeline)
-        captured_kwargs.append(kwargs)
         return _answer(agg_results, pipeline)
 
     mock_finding_repo = MagicMock()
@@ -166,7 +164,7 @@ def _run_impact(
         response = asyncio.run(get_impact_analysis(current_user=user, db=db, limit=limit))
 
     assert len(captured) > read, "the findings read asked for never ran for /impact"
-    return response, captured[read], captured_kwargs[read]
+    return response, captured[read]
 
 
 async def _no_enrichment(_cves: list[str]) -> tuple[dict[str, Any], list[str]]:
@@ -180,13 +178,12 @@ def _run_hotspots(
     skip: int = 0,
     enrich: Any = _no_enrichment,
     type_rows: Any = None,
-) -> tuple[Any, list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[Any, list[dict[str, Any]]]:
     from app.api.v1.endpoints.analytics.risk import get_vulnerability_hotspots
 
     user = _admin_user()
     db = MagicMock()
     captured: list[list[dict[str, Any]]] = []
-    captured_kwargs: list[dict[str, Any]] = []
 
     async def _fake_get_user_projects(_u, _d):
         return projections(["proj-1"])
@@ -194,9 +191,8 @@ def _run_hotspots(
     async def _fake_get_projects_with_scans(_pids, _d, **_kw):
         return {"proj-1": "Project 1"}, ["scan-latest"]
 
-    async def _fake_finding_aggregate(pipeline, **kwargs):
+    async def _fake_finding_aggregate(pipeline, **_kwargs):
         captured.append(pipeline)
-        captured_kwargs.append(kwargs)
         return _answer(agg_results, pipeline)
 
     mock_finding_repo = MagicMock()
@@ -224,85 +220,75 @@ def _run_hotspots(
         )
 
     assert captured, "finding aggregate() was never called for /hotspots"
-    return response, captured[0], captured_kwargs[0]
+    return response, captured[0]
 
 
-def _advisory_read_of_impact() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _advisory_read_of_impact() -> list[dict[str, Any]]:
     group = {"_id": {"component": "lodash", "version": "4.17.11"}, "project_ids": ["proj-1"], "first_seen": None}
-    _, pipeline, kwargs = _run_impact(agg_results=[{**group, "details_list": [_LODASH_DETAILS]}], read=1)
-    return pipeline, kwargs
+    return _run_impact(agg_results=[{**group, "details_list": [_LODASH_DETAILS]}], read=1)[1]
 
 
 class TestImpactPipelineBounded:
     def test_the_ranking_read_hands_over_counts_not_advisories(self):
-        _, pipeline, _ = _run_impact(agg_results=[])
+        _, pipeline = _run_impact(agg_results=[])
         assert not any("details_list" in (stage.get("$group") or {}) for stage in pipeline)
 
     def test_no_full_details_push(self):
-        pipeline, _ = _advisory_read_of_impact()
+        pipeline = _advisory_read_of_impact()
         assert _details_is_slimmed_before_group(pipeline), (
             "details must be $project-slimmed to fix-version fields before $group"
         )
 
     @pytest.mark.parametrize("read", [0, 1])
     def test_severities_are_not_collected_as_a_raw_array(self, read):
-        pipeline = _advisory_read_of_impact()[0] if read else _run_impact(agg_results=[])[1]
+        pipeline = _advisory_read_of_impact() if read else _run_impact(agg_results=[])[1]
         collected = list(_iter_array_accumulators(pipeline))
         assert collected, "no array accumulator in the $group — the check below would inspect nothing"
         for _acc, expr in collected:
             assert expr != "$severity", "raw severity array must not be collected; use scalar counts"
 
     def test_details_carry_advisories_via_add_to_set(self):
-        pipeline, _ = _advisory_read_of_impact()
+        pipeline = _advisory_read_of_impact()
         group = _group_stage(pipeline)
         assert "details_list" in group, "expected details_list accumulator in $group"
         assert "$addToSet" in group["details_list"], "details_list must use $addToSet, not $push"
         assert "finding_ids" not in group, "finding_id is component:version, not a CVE; must not drive counts"
 
     def test_no_arbitrary_slice_on_enrichment_arrays(self):
-        pipeline, _ = _advisory_read_of_impact()
+        pipeline = _advisory_read_of_impact()
         sliced = _sliced_fields_after_group(pipeline)
         assert "details_list" not in sliced, "details_list must NOT be $slice-truncated (drops advisories)"
-
-    @pytest.mark.parametrize("read", [0, 1])
-    def test_allow_disk_use_threaded(self, read):
-        kwargs = _advisory_read_of_impact()[1] if read else _run_impact(agg_results=[])[2]
-        assert kwargs.get("allow_disk_use") is True, "allow_disk_use=True must be passed for /impact aggregation"
 
 
 class TestHotspotsPipelineBounded:
     def test_no_full_details_push(self):
-        _, pipeline, _ = _run_hotspots(agg_results=[])
+        _, pipeline = _run_hotspots(agg_results=[])
         assert _details_is_slimmed_before_group(pipeline), (
             "details must be $project-slimmed to fix-version fields before $group"
         )
 
     def test_severities_are_not_collected_as_a_raw_array(self):
-        _, pipeline, _ = _run_hotspots(agg_results=[])
+        _, pipeline = _run_hotspots(agg_results=[])
         collected = list(_iter_array_accumulators(pipeline))
         assert collected, "no array accumulator in the $group — the check below would inspect nothing"
         for _acc, expr in collected:
             assert expr != "$severity", "raw severity array must not be collected; use scalar counts"
 
     def test_counts_come_from_advisories(self):
-        _, pipeline, _ = _run_hotspots(agg_results=[])
+        _, pipeline = _run_hotspots(agg_results=[])
         _assert_counts_come_from_advisories(pipeline)
 
     def test_details_carry_advisories_via_add_to_set(self):
-        _, pipeline, _ = _run_hotspots(agg_results=[])
+        _, pipeline = _run_hotspots(agg_results=[])
         group = _group_stage(pipeline)
         assert "details_list" in group, "expected details_list accumulator in $group"
         assert "$addToSet" in group["details_list"], "details_list must use $addToSet, not $push"
         assert "finding_ids" not in group, "finding_id is component:version, not a CVE; must not drive counts"
 
     def test_no_arbitrary_slice_on_enrichment_arrays(self):
-        _, pipeline, _ = _run_hotspots(agg_results=[])
+        _, pipeline = _run_hotspots(agg_results=[])
         sliced = _sliced_fields_after_group(pipeline)
         assert "details_list" not in sliced, "details_list must NOT be $slice-truncated (drops advisories)"
-
-    def test_allow_disk_use_threaded(self):
-        _, _, kwargs = _run_hotspots(agg_results=[])
-        assert kwargs.get("allow_disk_use") is True, "allow_disk_use=True must be passed for /hotspots aggregation"
 
 
 _LODASH_DETAILS = {
@@ -346,7 +332,7 @@ class TestImpactResponseShape:
         }
 
     def test_response_fields_from_advisories(self):
-        response, _, _ = _run_impact(agg_results=[self._group_row()])
+        response, _ = _run_impact(agg_results=[self._group_row()])
         assert len(response) == 1
         item = response[0]
         assert item.component == "lodash"
@@ -371,7 +357,7 @@ class TestHotspotsResponseShape:
         }
 
     def test_response_fields_from_advisories(self):
-        response, _, _ = _run_hotspots(agg_results=[self._group_row()])
+        response, _ = _run_hotspots(agg_results=[self._group_row()])
         assert len(response) == 1
         item = response[0]
         assert item.component == "lodash"
@@ -500,7 +486,7 @@ class TestUnratedAdvisoriesWeigh:
             }
         ]
 
-        response, _, _ = _run_impact(agg_results=[*lows, unrated], limit=20)
+        response, _ = _run_impact(agg_results=[*lows, unrated], limit=20)
 
         top = response[0]
         assert (top.component, top.total_findings, top.findings_by_severity.unknown) == ("unrated", 1, 1)
@@ -524,30 +510,30 @@ def _limit_values_after_group(pipeline: list[dict[str, Any]]) -> list[int]:
 class TestHotspotsPostSortPagination:
     def test_epss_deep_page_is_not_capped_in_mongo(self):
         # skip=60/limit=20 needs the 80 highest-epss groups, ranked only in Python, so a Mongo cap drops rows.
-        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="epss", skip=60, limit=20)
+        _, pipeline = _run_hotspots(agg_results=[], sort_by="epss", skip=60, limit=20)
         assert _limit_values_after_group(pipeline) == []
 
     def test_risk_deep_page_is_not_capped_in_mongo(self):
-        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="risk", skip=60, limit=20)
+        _, pipeline = _run_hotspots(agg_results=[], sort_by="risk", skip=60, limit=20)
         assert _limit_values_after_group(pipeline) == []
 
     def test_epss_pipeline_has_no_premature_mongo_skip(self):
         # a Mongo $skip would drop rows in finding_count order before the Python epss re-rank
-        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="epss", skip=60, limit=20)
+        _, pipeline = _run_hotspots(agg_results=[], sort_by="epss", skip=60, limit=20)
         assert not any("$skip" in stage for stage in pipeline), (
             "post-sort pipeline must not $skip in Mongo; pagination is applied in Python after the epss/risk re-sort"
         )
 
     def test_finding_count_sort_paginates_in_mongo(self):
         # The counted read ranks the distinct CVEs in Mongo, so it orders and pages before any advisory is read.
-        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="finding_count", skip=40, limit=20)
+        _, pipeline = _run_hotspots(agg_results=[], sort_by="finding_count", skip=40, limit=20)
         assert any(stage.get("$sort", {}).get("cve_count") == -1 for stage in pipeline)
         assert any(stage.get("$skip") == 40 for stage in pipeline), "expected $skip in Mongo pipeline"
         assert any(stage.get("$limit") == 20 for stage in pipeline), "expected $limit in Mongo pipeline"
 
     def test_component_sort_paginates_in_mongo(self):
         # component is a stored field, so it can be globally ordered and paged in Mongo.
-        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="component", skip=40, limit=20)
+        _, pipeline = _run_hotspots(agg_results=[], sort_by="component", skip=40, limit=20)
         assert any(stage.get("$skip") == 40 for stage in pipeline), "expected $skip in Mongo pipeline"
         assert any(stage.get("$limit") == 20 for stage in pipeline), "expected $limit in Mongo pipeline"
 
@@ -576,7 +562,7 @@ class TestHotspotsBuildOnlyThePage:
             return {}, []
 
         with patch(f"{MODULE}._build_hotspot", side_effect=risk._build_hotspot) as build:
-            response, _, _ = _run_hotspots(
+            response, _ = _run_hotspots(
                 agg_results=TestHotspotsBuildOnlyThePage._groups(300), sort_by=sort_by, skip=20, enrich=_record
             )
         return response, enriched, build
@@ -608,22 +594,22 @@ _FIRST_SEEN = {"$min": {"$ifNull": ["$first_seen_at", "$scan_created_at"]}}
 
 class TestFirstSeenPrefersFirstSeenAt:
     def test_impact_first_seen_min_over_first_seen_at(self):
-        _, pipeline, _ = _run_impact(agg_results=[])
+        _, pipeline = _run_impact(agg_results=[])
         assert _group_stage(pipeline)["first_seen"] == _FIRST_SEEN
         assert {"first_seen_at", "scan_created_at"} <= _projected_fields_before_group(pipeline)
 
     def test_impact_pipeline_never_references_created_at(self):
-        _, pipeline, _ = _run_impact(agg_results=[])
+        _, pipeline = _run_impact(agg_results=[])
         assert "created_at" not in _projected_fields_before_group(pipeline)
         assert "$created_at" not in str(pipeline)
 
     def test_hotspots_first_seen_min_over_first_seen_at(self):
-        _, pipeline, _ = _run_hotspots(agg_results=[])
+        _, pipeline = _run_hotspots(agg_results=[])
         assert _group_stage(pipeline)["first_seen"] == _FIRST_SEEN
         assert {"first_seen_at", "scan_created_at"} <= _projected_fields_before_group(pipeline)
 
     def test_hotspots_pipeline_never_references_created_at(self):
-        _, pipeline, _ = _run_hotspots(agg_results=[])
+        _, pipeline = _run_hotspots(agg_results=[])
         assert "created_at" not in _projected_fields_before_group(pipeline)
         assert "$created_at" not in str(pipeline)
 
@@ -645,7 +631,7 @@ class TestFirstSeenPrefersFirstSeenAt:
             ],
             "affected_projects": 1,
         }
-        response, _, _ = _run_impact(agg_results=[row])
+        response, _ = _run_impact(agg_results=[row])
         item = response[0]
         assert item.days_known is not None and item.days_known >= 119
         assert any(r.startswith("overdue:") for r in item.priority_reasons)
@@ -663,7 +649,7 @@ class TestFirstSeenPrefersFirstSeenAt:
             "finding_ids": ["CVE-2021-1"],
             "details_list": [{"fixed_version": "4.17.21", "vulnerabilities": []}],
         }
-        response, _, _ = _run_hotspots(agg_results=[row])
+        response, _ = _run_hotspots(agg_results=[row])
         item = response[0]
         assert item.first_seen != ""
         assert item.days_known is not None and item.days_known >= 119
@@ -860,19 +846,19 @@ class TestImpactEndpointRanksByScoreNotBlastRadius:
         # With 24 broad groups a blast-radius cut in Mongo would never score the narrow critical, which ranks first.
         broad = [_impact_row(f"broad{i}", ap=50, low=1) for i in range(24)]  # pre 10, blast radius 50
         narrow = _impact_row("narrow-critical", ap=2, critical=5)  # pre 50*2 = 100
-        response, _, _ = _run_impact(agg_results=[*broad, narrow], limit=5)
+        response, _ = _run_impact(agg_results=[*broad, narrow], limit=5)
         names = [item.component for item in response]
         assert "narrow-critical" in names, "narrow critical must surface by fix_impact_score, not blast radius"
         assert response[0].component == "narrow-critical", "highest fix_impact_score must rank first"
 
     def test_response_capped_at_limit(self):
         rows = [_impact_row(f"c{i}", ap=i + 1, critical=1) for i in range(30)]
-        response, _, _ = _run_impact(agg_results=rows, limit=5)
+        response, _ = _run_impact(agg_results=rows, limit=5)
         assert len(response) == 5
 
     def test_pipeline_does_not_mongo_limit_at_user_limit(self):
         # A Mongo $limit at the page size caps by the blast-radius $sort before any scoring.
-        _, pipeline, _ = _run_impact(agg_results=[], limit=7)
+        _, pipeline = _run_impact(agg_results=[], limit=7)
         limits = [stage["$limit"] for stage in pipeline if "$limit" in stage]
         assert 7 not in limits, "Mongo must not $limit at the user limit; that caps by blast radius before scoring"
         assert all(lim >= 1000 for lim in limits), "any Mongo $limit must be a large safety cap, not a page size"
@@ -1024,21 +1010,21 @@ _MIXED_VULNS = [
 
 class TestDistinctVulnCount:
     def test_impact_total_findings_is_distinct_cves(self):
-        response, _, _ = _run_impact(agg_results=[_row_with_advisories("lodash", _MIXED_VULNS)])
+        response, _ = _run_impact(agg_results=[_row_with_advisories("lodash", _MIXED_VULNS)])
         item = response[0]
         assert item.total_findings == 3, "GHSA+CVE alias collapse; 3 distinct CVEs, not 4 rows"
         assert item.findings_by_severity.critical == 1
         assert item.findings_by_severity.high == 2
 
     def test_hotspots_finding_count_is_distinct_cves(self):
-        response, _, _ = _run_hotspots(agg_results=[_row_with_advisories("lodash", _MIXED_VULNS)])
+        response, _ = _run_hotspots(agg_results=[_row_with_advisories("lodash", _MIXED_VULNS)])
         item = response[0]
         assert item.finding_count == 3
         assert item.severity_breakdown.critical == 1
         assert item.severity_breakdown.high == 2
 
     def test_finding_count_reconciles_with_severity_breakdown(self):
-        response, _, _ = _run_hotspots(agg_results=[_row_with_advisories("lodash", _MIXED_VULNS)])
+        response, _ = _run_hotspots(agg_results=[_row_with_advisories("lodash", _MIXED_VULNS)])
         b = response[0].severity_breakdown
         assert response[0].finding_count == b.critical + b.high + b.medium + b.low
 
@@ -1063,22 +1049,22 @@ async def _feeds_down(_cves: list[str]) -> tuple[dict[str, Any], list[str]]:
 
 class TestThreatIntelOutage:
     def test_impact_rows_name_the_source_that_was_unavailable(self):
-        [row], _, _ = _run_impact(agg_results=_ONE_GROUP, enrich=_kev_down)
+        [row], _ = _run_impact(agg_results=_ONE_GROUP, enrich=_kev_down)
         assert row.threat_intel_unavailable == ["KEV"]
         assert row.max_epss_score == 0.9, "the source that answered still counts"
 
     def test_hotspots_name_the_source_that_was_unavailable(self):
-        [row], _, _ = _run_hotspots(agg_results=_ONE_GROUP, enrich=_kev_down)
+        [row], _ = _run_hotspots(agg_results=_ONE_GROUP, enrich=_kev_down)
         assert row.threat_intel_unavailable == ["KEV"]
 
     def test_a_failed_enrichment_names_both_sources(self):
-        [impact], _, _ = _run_impact(agg_results=_ONE_GROUP, enrich=_feeds_down)
-        [hotspot], _, _ = _run_hotspots(agg_results=_ONE_GROUP, enrich=_feeds_down)
+        [impact], _ = _run_impact(agg_results=_ONE_GROUP, enrich=_feeds_down)
+        [hotspot], _ = _run_hotspots(agg_results=_ONE_GROUP, enrich=_feeds_down)
         assert impact.threat_intel_unavailable == hotspot.threat_intel_unavailable == ["KEV", "EPSS"]
 
     def test_a_complete_enrichment_names_none(self):
-        [impact], _, _ = _run_impact(agg_results=_ONE_GROUP)
-        [hotspot], _, _ = _run_hotspots(agg_results=_ONE_GROUP)
+        [impact], _ = _run_impact(agg_results=_ONE_GROUP)
+        [hotspot], _ = _run_hotspots(agg_results=_ONE_GROUP)
         assert impact.threat_intel_unavailable == hotspot.threat_intel_unavailable == []
 
 

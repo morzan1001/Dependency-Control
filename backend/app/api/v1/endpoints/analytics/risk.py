@@ -172,7 +172,7 @@ async def _with_advisories(
         "component": {"$in": list({component for component, _ in keys})},
         "version": {"$in": list({version for _, version in keys})},
     }
-    rows = await repo.aggregate(_vulnerable_groups(match), allow_disk_use=True)
+    rows = await repo.aggregate(_vulnerable_groups(match))
     by_key = {(row["_id"]["component"], row["_id"].get("version")): row for row in rows}
     return [by_key[key] for key in keys if key in by_key]
 
@@ -221,7 +221,7 @@ async def _impact(
         {"$sort": {"pre_score": -1, "_id": 1}},
         {"$limit": ANALYTICS_MAX_QUERY_LIMIT},
     ]
-    counted = await repo.aggregate(pipeline, allow_disk_use=True)
+    counted = await repo.aggregate(pipeline)
     candidates = await _with_advisories(
         repo, scan_ids, select_impact_candidates([(group["pre_score"], group) for group in counted], limit)
     )
@@ -379,11 +379,11 @@ async def _hotspots(
     repo = FindingRepository(db)
     rank = _PYTHON_RANKS.get(sort_by)
     if rank:
-        groups = await repo.aggregate(_vulnerable_groups({"scan_id": {"$in": scan_ids}}), allow_disk_use=True)
+        groups = await repo.aggregate(_vulnerable_groups({"scan_id": {"$in": scan_ids}}))
     else:
         order = [(_MONGO_SORTS[sort_by], sort_direction), ("_id.component", 1), ("_id", 1)]
         page = [*case_insensitive_sort(order, {"_id.component"}), {"$skip": skip}, {"$limit": limit}]
-        counted = await repo.aggregate([*_counted_groups(scan_ids), *page], allow_disk_use=True)
+        counted = await repo.aggregate([*_counted_groups(scan_ids), *page])
         groups = await _with_advisories(repo, scan_ids, counted)
 
     # A component may be group-qualified while the inventory keeps the bare artifact name, so both spellings match.

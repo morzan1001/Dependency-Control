@@ -199,14 +199,10 @@ class BaseRepository[T: BaseModel]:
         self,
         pipeline: list[dict[str, Any]],
         limit: int | None = None,
-        allow_disk_use: bool = False,
         hint: dict[str, int] | None = None,
         collation: Collation | None = None,
     ) -> list[dict[str, Any]]:
-        """allow_disk_use lets mongod spill large $group/$sort sets to disk past the 100MB limit."""
         options: dict[str, Any] = {}
-        if allow_disk_use:
-            options["allowDiskUse"] = True
         if hint:
             options["hint"] = hint
         return await self.collection.aggregate(
