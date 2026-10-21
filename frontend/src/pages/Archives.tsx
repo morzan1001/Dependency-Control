@@ -129,18 +129,20 @@ export default function ArchivesPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <ArchiveFilterBar value={filter} onChange={updateFilter}>
-            <div>
-              <label htmlFor="admin-branch-filter" className="text-xs font-medium text-muted-foreground mb-1 block">Branch</label>
-              <Input
-                id="admin-branch-filter"
-                placeholder="Filter by branch..."
-                value={filter.branch}
-                onChange={(e) => updateFilter({ branch: e.target.value })}
-                className="w-48"
-              />
-            </div>
-          </ArchiveFilterBar>
+          {appConfig?.archive_enabled !== false && (
+            <ArchiveFilterBar value={filter} onChange={updateFilter}>
+              <div>
+                <label htmlFor="admin-branch-filter" className="text-xs font-medium text-muted-foreground mb-1 block">Branch</label>
+                <Input
+                  id="admin-branch-filter"
+                  placeholder="Filter by branch..."
+                  value={filter.branch}
+                  onChange={(e) => updateFilter({ branch: e.target.value })}
+                  className="w-48"
+                />
+              </div>
+            </ArchiveFilterBar>
+          )}
 
           {renderContent()}
         </CardContent>
