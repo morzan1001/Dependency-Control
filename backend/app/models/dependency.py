@@ -1,14 +1,11 @@
 from datetime import datetime, timezone
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from app.models.types import MongoDocument
 
 
-class Dependency(MongoDocument):
-    project_id: str = Field(..., description="Reference to the project")
-    scan_id: str = Field(..., description="Reference to the scan where this was found")
-
+class DependencyFields(BaseModel):
     name: str = Field(..., description="Package name")
     version: str = Field(..., description="Package version")
     purl: str | None = Field(None, description="Package URL (unique identifier)")
@@ -19,11 +16,6 @@ class Dependency(MongoDocument):
 
     license: str | None = Field(None, description="License expression or name")
     license_url: str | None = Field(None, description="URL to license text")
-    license_category: str | None = Field(None, description="License category the analysis copies from the license scan")
-    license_expression: str | None = Field(
-        None, description="SPDX expression the analysis copies from the license scan"
-    )
-    license_risks: list[str] | None = Field(None, description="License risks the analysis copies from the license scan")
 
     scope: str | None = Field(None, description="Dependency scope (e.g. runtime, dev, optional)")
     direct: bool = Field(False, description="True if direct dependency, False if transitive")
@@ -59,5 +51,16 @@ class Dependency(MongoDocument):
         default_factory=dict,
         description="Additional SBOM properties as key-value pairs",
     )
+
+
+class Dependency(MongoDocument, DependencyFields):
+    project_id: str = Field(..., description="Reference to the project")
+    scan_id: str = Field(..., description="Reference to the scan where this was found")
+
+    license_category: str | None = Field(None, description="License category the analysis copies from the license scan")
+    license_expression: str | None = Field(
+        None, description="SPDX expression the analysis copies from the license scan"
+    )
+    license_risks: list[str] | None = Field(None, description="License risks the analysis copies from the license scan")
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

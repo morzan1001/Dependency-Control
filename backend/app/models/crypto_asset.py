@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from enum import Enum
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from app.models.types import MongoDocument
 
@@ -31,10 +31,7 @@ class CryptoPrimitive(str, Enum):
     OTHER = "other"
 
 
-class CryptoAsset(MongoDocument):
-    project_id: str = Field(..., description="Reference to the project")
-    scan_id: str = Field(..., description="Reference to the scan where this was found")
-
+class CryptoAssetFields(BaseModel):
     bom_ref: str = Field(..., description="Stable bill-of-materials reference within a CBOM payload")
     name: str = Field(..., description="Crypto asset name (e.g. SHA-256, TLS, cert:CN=foo)")
     asset_type: CryptoAssetType = Field(
@@ -88,6 +85,12 @@ class CryptoAsset(MongoDocument):
     properties: dict[str, str] = Field(
         default_factory=dict, description="Passthrough of additional CycloneDX properties"
     )
+
+
+class CryptoAsset(MongoDocument, CryptoAssetFields):
+    project_id: str = Field(..., description="Reference to the project")
+    scan_id: str = Field(..., description="Reference to the scan where this was found")
+
     cbom_upload: bool = Field(
         False, description="Stored by a CBOM upload, which replaces the scan's earlier assets of the same CBOM"
     )

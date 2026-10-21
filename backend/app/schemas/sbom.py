@@ -2,6 +2,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from app.models.dependency import DependencyFields
 from app.schemas.cbom import ParsedCryptoAsset
 
 UNKNOWN_VERSION = "unknown"
@@ -18,43 +19,9 @@ class SBOMFormat(Enum):
     UNKNOWN = "unknown"
 
 
-class ParsedDependency(BaseModel):
-    name: str
-    version: str
-    purl: str | None = None
-    type: str = "unknown"
-
+class ParsedDependency(DependencyFields):
+    # An undeclared license parses as "", the value stored rows have always held for it.
     license: str = ""
-    license_url: str | None = None
-
-    scope: str | None = None
-    direct: bool = False
-    direct_inferred: bool = Field(
-        False,
-        description="True if 'direct' is a guess (no graph, ref absent from the graph, or fallback root resolution)",
-    )
-    parent_components: list[str] = Field(default_factory=list)
-
-    source_type: str | None = None
-    source_target: str | None = None
-    layer_digest: str | None = None
-    found_by: str | None = None
-    locations: list[str] = Field(default_factory=list)
-
-    cpes: list[str] = Field(default_factory=list)
-
-    description: str | None = None
-    author: str | None = None
-    publisher: str | None = None
-    group: str | None = None
-
-    homepage: str | None = None
-    repository_url: str | None = None
-    download_url: str | None = None
-
-    hashes: dict[str, str] = Field(default_factory=dict)
-
-    properties: dict[str, str] = Field(default_factory=dict)
 
 
 class ParsedSBOM(BaseModel):

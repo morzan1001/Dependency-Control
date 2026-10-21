@@ -1,15 +1,12 @@
 import re
 from fnmatch import fnmatchcase
 
-from app.models.crypto_asset import CryptoAsset
-from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES, ParsedCryptoAsset
-from app.models.crypto_asset import CryptoAssetType
+from app.models.crypto_asset import CryptoAssetFields, CryptoAssetType
+from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES
 from app.models.crypto_policy import CryptoRule
 
-AnyCryptoAsset = ParsedCryptoAsset | CryptoAsset
 
-
-def rule_matches(asset: AnyCryptoAsset, rule: CryptoRule) -> bool:
+def rule_matches(asset: CryptoAssetFields, rule: CryptoRule) -> bool:
     """True when the asset violates the rule."""
     if not asset_in_rule_scope(asset, rule):
         return False
@@ -23,7 +20,7 @@ def rule_matches(asset: AnyCryptoAsset, rule: CryptoRule) -> bool:
     return True
 
 
-def asset_in_rule_scope(asset: AnyCryptoAsset, rule: CryptoRule) -> bool:
+def asset_in_rule_scope(asset: CryptoAssetFields, rule: CryptoRule) -> bool:
     if not (rule.match_primitive or rule.match_name_patterns or rule.match_curves or rule.match_protocol_versions):
         return False
 
@@ -53,7 +50,7 @@ def asset_in_rule_scope(asset: AnyCryptoAsset, rule: CryptoRule) -> bool:
     return True
 
 
-def name_matches(asset: AnyCryptoAsset, patterns: list[str]) -> bool:
+def name_matches(asset: CryptoAssetFields, patterns: list[str]) -> bool:
     candidates = [asset.name]
     if asset.variant:
         candidates.append(asset.variant)
@@ -100,7 +97,7 @@ def family_tokens(name: str) -> set[str]:
     return tokens | {m.group(1) or m.group(2) for token in tokens if (m := _FAMILY_PREFIX.match(token))}
 
 
-def _protocol_version_matches(asset: AnyCryptoAsset, match_list: list[str]) -> bool:
+def _protocol_version_matches(asset: CryptoAssetFields, match_list: list[str]) -> bool:
     proto = (asset.protocol_type or "").lower()
     ver = (asset.version or "").lower()
     combined_variants = {
