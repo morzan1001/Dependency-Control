@@ -21,7 +21,7 @@ from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.auth import send_project_member_added_email
-from app.api.v1.helpers.findings import aggregate_stats_by_category, get_category_type_filter
+from app.api.v1.helpers.findings import FindingCategory, aggregate_stats_by_category, get_category_type_filter
 from app.api.v1.helpers.pagination import build_pagination_response
 from app.api.v1.helpers.projects import (
     apply_system_settings_enforcement,
@@ -994,7 +994,7 @@ def _build_scan_findings_match(
     scan_id: str,
     *,
     type: str | None = None,
-    category: str | None = None,
+    category: FindingCategory | None = None,
     severity: str | None = None,
     search: str | None = None,
     license_category: str | None = None,
@@ -1008,9 +1008,7 @@ def _build_scan_findings_match(
         query["type"] = type
 
     if category:
-        type_filter = get_category_type_filter(category)
-        if type_filter:
-            query["type"] = type_filter
+        query["type"] = get_category_type_filter(category)
 
     if severity:
         sev = severity.upper()
@@ -1181,7 +1179,7 @@ async def read_scan_findings(
     sort_by: str = "severity",
     sort_order: SortOrderQuery = "desc",
     type: str | None = None,
-    category: str | None = None,
+    category: FindingCategory | None = None,
     severity: str | None = None,
     search: str | None = None,
     license_category: str | None = None,

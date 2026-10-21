@@ -146,3 +146,16 @@ async def test_an_unknown_finding_is_not_found(client, db, database, owner_auth_
     resp = await client.get(f"/api/v1/projects/scans/{_SCAN}/findings/CVE-1999-0001", headers=owner_auth_headers_proj)
 
     assert (resp.status_code, resp.json()["detail"]) == (404, "Finding not found")
+
+
+@pytest.mark.parametrize("database", DATABASES)
+async def test_a_category_lists_only_its_own_finding_types(client, db, database, owner_auth_headers_proj):
+    await _seed_scan(db)
+    await db.findings.insert_many([_finding(1), _finding(2, type="secret")])
+    url = f"/api/v1/projects/scans/{_SCAN}/findings"
+
+    known = await client.get(url, params={"category": "secret"}, headers=owner_auth_headers_proj)
+    unknown = await client.get(url, params={"category": "secrets"}, headers=owner_auth_headers_proj)
+
+    assert [row["type"] for row in known.json()["items"]] == ["secret"]
+    assert unknown.status_code == 422

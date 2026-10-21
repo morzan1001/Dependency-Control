@@ -1,6 +1,10 @@
+from typing import Literal, get_args
+
 from app.models.finding import CRYPTO_FINDING_TYPES, FindingType
 
-TYPE_CATEGORY_MAP: dict[str, str] = {
+FindingCategory = Literal["security", "secret", "sast", "compliance", "quality", "crypto", "other"]
+
+TYPE_CATEGORY_MAP: dict[str, FindingCategory] = {
     "vulnerability": "security",
     "malware": "security",
     "secret": "secret",
@@ -18,26 +22,16 @@ TYPE_CATEGORY_MAP: dict[str, str] = {
 }
 
 
-def get_category_type_filter(category: str) -> dict[str, list[str]] | None:
-    types = [finding_type for finding_type, owner in TYPE_CATEGORY_MAP.items() if owner == category]
-    return {"$in": types} if types else None
+def get_category_type_filter(category: FindingCategory) -> dict[str, list[str]]:
+    return {"$in": [finding_type for finding_type, owner in TYPE_CATEGORY_MAP.items() if owner == category]}
 
 
-def get_category_for_type(finding_type: str) -> str:
+def get_category_for_type(finding_type: str) -> FindingCategory:
     return TYPE_CATEGORY_MAP.get(finding_type, "other")
 
 
 def aggregate_stats_by_category(type_counts: list) -> dict[str, int]:
-    stats = {
-        "security": 0,
-        "secret": 0,
-        "sast": 0,
-        "compliance": 0,
-        "quality": 0,
-        "crypto": 0,
-        "other": 0,
-    }
-
+    stats: dict[str, int] = dict.fromkeys(get_args(FindingCategory), 0)
     for item in type_counts:
         finding_type = item["_id"]
         count = item["count"]
