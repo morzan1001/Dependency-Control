@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { archiveFilters, NO_ARCHIVE_FILTER, useAdminArchives, type ArchiveFilterValue } from '@/hooks/queries/use-archives'
 import { useDebounce } from '@/hooks/use-debounce'
+import { useAppConfig } from '@/hooks/queries/use-system'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Pagination } from '@/components/ui/pagination'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -36,14 +37,20 @@ export default function ArchivesPage() {
     setPage(1)
   }
 
-  const { data, isLoading } = useAdminArchives(page, size, filters)
+  const { data: appConfig } = useAppConfig()
+  const archiveEnabled = appConfig?.archive_enabled === true
+  const { data, isLoading } = useAdminArchives(page, size, filters, archiveEnabled)
 
   const items = data?.items || []
   const totalPages = data?.pages || 1
   const namesakes = sharedNames(items.map((archive) => ({ id: archive.project_id, name: projectName(archive) })))
 
   const renderContent = () => {
-    if (isLoading) {
+    if (appConfig && !archiveEnabled) {
+      return <ArchiveEmptyState hint="Archive storage is not configured." />
+    }
+
+    if (!appConfig || isLoading) {
       return (
         <div className="space-y-2">
           {ARCHIVE_SKELETON_KEYS.map((skeletonId) => (
