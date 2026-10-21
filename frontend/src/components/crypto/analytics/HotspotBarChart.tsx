@@ -31,17 +31,22 @@ export function HotspotBarChart({ scope, scopeId, groupBy }: Readonly<Props>) {
   }));
 
   return (
-    <div style={{ width: "100%", height: 400 }}>
-      <ResponsiveContainer>
-        <BarChart data={chartData} margin={{ top: 20, right: 20, left: 20, bottom: 60 }}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" angle={-30} textAnchor="end" height={80} interval={0} tickFormatter={(name: string) => truncateLabel(name)} />
-          <YAxis />
-          <Tooltip />
-          <Bar dataKey="assets" fill="#6366f1" name="Assets" />
-          <Bar dataKey="findings" fill="#dc2626" name="Findings" />
-        </BarChart>
-      </ResponsiveContainer>
+    <div className="space-y-2">
+      {data.total > data.items.length && (
+        <p className="text-xs text-muted-foreground">{`Showing ${data.items.length} of ${data.total} hotspots`}</p>
+      )}
+      <div style={{ width: "100%", height: 400 }}>
+        <ResponsiveContainer>
+          <BarChart data={chartData} margin={{ top: 20, right: 20, left: 20, bottom: 60 }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" angle={-30} textAnchor="end" height={80} interval={0} tickFormatter={(name: string) => truncateLabel(name)} />
+            <YAxis />
+            <Tooltip />
+            <Bar dataKey="assets" fill="#6366f1" name="Assets" />
+            <Bar dataKey="findings" fill="#dc2626" name="Findings" />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
