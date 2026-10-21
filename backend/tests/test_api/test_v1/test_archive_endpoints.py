@@ -48,7 +48,7 @@ def _assert_501_without_s3(endpoint, **call_kwargs):
     ):
         asyncio.run(endpoint(**call_kwargs))
 
-    assert exc_info.value.status_code == 501
+    assert (exc_info.value.status_code, exc_info.value.detail) == (501, "Archive storage is not configured")
 
 
 def _assert_404_when_archive_missing(endpoint, *, metadata, **call_kwargs):
@@ -588,6 +588,11 @@ class TestUnpinScan:
 
 
 class TestListAllArchives:
+    def test_raises_501_when_s3_not_configured(self, admin_user):
+        from app.api.v1.endpoints.archives import list_all_archives
+
+        _assert_501_without_s3(list_all_archives, current_user=admin_user, db=MagicMock(), page=1, size=20)
+
     def test_returns_archives_with_project_names(self, admin_user):
         from app.api.v1.endpoints.archives import list_all_archives
 
