@@ -109,6 +109,23 @@ async def _reap_orphan_callgraphs(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE)
     return sum([await _reap_batch(batch) async for batch in abatched(scan_ids, batch_size)])
 
 
+async def _reap_orphan_scans(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
+    """Finishes a project delete whose cascade broke off; the age window lets an ingest still writing a scan finish."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS)
+    scanned = await db.scans.distinct("project_id")
+    live = set(await db.projects.distinct("_id", {"_id": {"$in": scanned}}))
+    gone = [project_id for project_id in scanned if project_id not in live]
+    if not gone:
+        return 0
+    orphaned = {"project_id": {"$in": gone}, "created_at": {"$lt": cutoff}}
+    deleted = 0
+    while scan_ids := [scan["_id"] async for scan in db.scans.find(orphaned, {"_id": 1}).limit(batch_size)]:
+        deleted += await delete_scans_and_related_data(db, scan_ids)
+    if deleted:
+        logger.info(f"Reaped {deleted} orphan scan(s) of {len(gone)} deleted project(s)")
+    return deleted
+
+
 _RESCAN_PROJECT_PROJECTION = dict.fromkeys(
     ("_id", "name", "default_branch", "deleted_branches", "rescan_enabled", "rescan_interval"), 1
 )
@@ -500,6 +517,7 @@ async def run_housekeeping() -> None:
         ("Housekeeping: policy audit retention", prune_old_audit_entries),
         ("Housekeeping: compliance report sweep", sweep_expired_compliance_reports),
         ("Orphan reaper", _reap_orphan_s3_objects),
+        ("Scan orphan reaper", _reap_orphan_scans),
         ("Callgraph orphan reaper", _reap_orphan_callgraphs),
         ("GridFS orphan reaper", reap_orphan_gridfs_files),
     ):

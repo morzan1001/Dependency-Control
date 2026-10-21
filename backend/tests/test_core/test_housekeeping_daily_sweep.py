@@ -11,6 +11,7 @@ _SWEEPS = {
     "prune_old_audit_entries": "Housekeeping: policy audit retention",
     "sweep_expired_compliance_reports": "Housekeeping: compliance report sweep",
     "_reap_orphan_s3_objects": "Orphan reaper",
+    "_reap_orphan_scans": "Scan orphan reaper",
     "_reap_orphan_callgraphs": "Callgraph orphan reaper",
     "reap_orphan_gridfs_files": "GridFS orphan reaper",
 }

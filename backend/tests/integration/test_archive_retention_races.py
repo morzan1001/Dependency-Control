@@ -238,6 +238,7 @@ async def test_every_housekeeping_pass_bids_for_retention(monkeypatch):
         "prune_old_audit_entries",
         "sweep_expired_compliance_reports",
         "_reap_orphan_s3_objects",
+        "_reap_orphan_scans",
         "_reap_orphan_callgraphs",
         "reap_orphan_gridfs_files",
         "sync_branch_status",
