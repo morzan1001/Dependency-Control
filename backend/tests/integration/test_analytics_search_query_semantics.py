@@ -838,15 +838,7 @@ async def test_the_page_read_keeps_every_field_a_result_row_shows(client, db, sc
     ]
 
 
-@pytest.mark.asyncio
-@pytest.mark.live_mongo
-@pytest.mark.parametrize(
-    ("param", "value", "fixed_version"),
-    [("has_fix", "true", "1.0.1"), ("has_fix", "false", None), ("in_kev", "false", None)],
-)
-async def test_the_kev_and_fix_filters_list_only_vulnerability_findings(
-    client, db, scanned, param, value, fixed_version
-):
+async def _insert_one_finding_of_each_kind(db, fixed_version: str | None) -> None:
     vulnerability = _vulnerability("frob-vuln")
     vulnerability["details"]["fixed_version"] = fixed_version
     outdated = {
@@ -858,8 +850,27 @@ async def test_the_kev_and_fix_filters_list_only_vulnerability_findings(
     }
     await db.findings.insert_many([vulnerability, outdated, _low_license()])
 
-    resp = await client.get(_VULN_SEARCH_PATH, params={"q": "frob", param: value}, headers=scanned)
 
+async def _listed_components(client, headers, **params) -> list[str]:
+    resp = await client.get(_VULN_SEARCH_PATH, params={"q": "frob", **params}, headers=headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert ([row["component"] for row in body["items"]], body["total"]) == (["frob-vuln"], 1)
+    assert body["total"] == len(body["items"])
+    return sorted(row["component"] for row in body["items"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(("value", "fixed_version"), [("true", "1.0.1"), ("false", None)])
+async def test_the_fix_filter_lists_only_vulnerability_findings(client, db, scanned, value, fixed_version):
+    await _insert_one_finding_of_each_kind(db, fixed_version)
+
+    assert await _listed_components(client, scanned, has_fix=value) == ["frob-vuln"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_kev_no_lists_every_finding_without_a_kev_mark(client, db, scanned):
+    await _insert_one_finding_of_each_kind(db, None)
+
+    assert await _listed_components(client, scanned, in_kev="false") == ["frob-old", "frob-vuln", "gpl-pkg"]
