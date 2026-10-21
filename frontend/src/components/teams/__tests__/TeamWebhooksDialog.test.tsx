@@ -27,4 +27,15 @@ describe("TeamWebhooksDialog", () => {
 
     expect(screen.getByRole("dialog")).toHaveClass("max-w-5xl");
   });
+
+  it("wraps a long unbroken team name inside the title, like the user dialogs", () => {
+    const longName = "T".repeat(300);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <TeamWebhooksDialog teamId="t-1" teamName={longName} isOpen onClose={vi.fn()} canCreate={false} canDelete={false} canUpdate={false} />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole("heading", { name: `Team Webhooks - ${longName}` })).toHaveClass("wrap-anywhere");
+  });
 });

@@ -86,7 +86,7 @@ export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMember
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Manage Members - {team?.name}</DialogTitle>
+            <DialogTitle className="wrap-anywhere">Manage Members - {team?.name}</DialogTitle>
             <DialogDescription>
               Manage team members and their roles.
             </DialogDescription>

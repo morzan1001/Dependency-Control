@@ -315,7 +315,7 @@ export function TeamBindingDialog({ team, isOpen, onClose }: Readonly<TeamBindin
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Team Binding</DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="wrap-anywhere">
             {bindingDescription(team?.name ?? '', activeProviders)}
           </DialogDescription>
         </DialogHeader>

@@ -454,3 +454,12 @@ describe("TeamBindingDialog", () => {
     expect(screen.queryByText(NOTHING_CONFIGURED)).not.toBeInTheDocument();
   });
 });
+
+describe("TeamBindingDialog long team name", () => {
+  it("wraps a long unbroken team name inside the description, like the user dialogs", async () => {
+    const longName = "T".repeat(300);
+    renderDialog({ ...team(), name: longName });
+
+    expect(await screen.findByText(new RegExp(`are assigned to ${longName} on their next scan`))).toHaveClass("wrap-anywhere");
+  });
+});

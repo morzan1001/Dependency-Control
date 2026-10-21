@@ -38,7 +38,7 @@ export function TeamWebhooksDialog({ teamId, teamName, isOpen, onClose, canCreat
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-5xl">
         <DialogHeader>
-          <DialogTitle>Team Webhooks - {teamName}</DialogTitle>
+          <DialogTitle className="wrap-anywhere">Team Webhooks - {teamName}</DialogTitle>
           <DialogDescription>
             Webhooks that receive notifications for all projects in this team.
           </DialogDescription>

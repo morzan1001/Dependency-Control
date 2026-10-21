@@ -136,3 +136,12 @@ describe("TeamMembersDialog sync-owned members", () => {
     expect(screen.getByRole("button", { name: "Remove Bob Example" })).toBeEnabled();
   });
 });
+
+describe("TeamMembersDialog long team name", () => {
+  it("wraps a long unbroken team name inside the title, like the user dialogs", () => {
+    const longName = "T".repeat(300);
+    renderDialog({ ...TEAM, name: longName });
+
+    expect(screen.getByRole("heading", { name: `Manage Members - ${longName}` })).toHaveClass("wrap-anywhere");
+  });
+});
