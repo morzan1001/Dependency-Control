@@ -6,7 +6,7 @@ from typing import Any
 
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
-from app.repositories.scans import BRANCH_SCAN_FILTER, ScanRepository
+from app.repositories.scans import ScanRepository
 from app.services.github import GitHubService, split_repo_path
 from app.services.gitlab import GitLabService
 
@@ -50,8 +50,7 @@ async def sync_project_branches(project: dict[str, Any], db: Any) -> bool | None
     vcs_set = set(vcs_branches)
     # The tag-build check has to fetch documents, so it runs only on the few branches the VCS lacks.
     candidates = [b for b in await db.scans.distinct("branch", {"project_id": project_id}) if b not in vcs_set]
-    tag_free = {"project_id": project_id, **BRANCH_SCAN_FILTER}
-    deleted = sorted([b for b in candidates if await db.scans.find_one({**tag_free, "branch": b}, {"_id": 1})])
+    deleted = sorted(await ScanRepository(db).branch_names(project_id, candidates))
 
     update_fields: dict[str, Any] = {"deleted_branches": deleted, "branches_checked_at": datetime.now(timezone.utc)}
     stored_default = project.get("default_branch")

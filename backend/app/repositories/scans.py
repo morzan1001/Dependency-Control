@@ -290,9 +290,15 @@ class ScanRepository:
             ]
         )
         last = {row["_id"]: row["last_scan_at"] for row in rows if isinstance(row["_id"], str) and row["_id"]}
-        branch_scans = {"project_id": project_id, **BRANCH_SCAN_FILTER}
-        found = await _bounded_gather(self.collection.find_one({**branch_scans, "branch": b}, {"_id": 1}) for b in last)
-        return {branch: at for (branch, at), hit in zip(last.items(), found, strict=True) if hit}
+        hits = await self.branch_names(project_id, last)
+        return {b: at for b, at in last.items() if b in hits}
+
+    async def branch_names(self, project_id: str, names: Iterable[str]) -> set[str]:
+        """The given names some scan carries as its branch rather than its tag."""
+        query = {"project_id": project_id, **BRANCH_SCAN_FILTER}
+        ordered = list(names)
+        found = await _bounded_gather(self.collection.find_one({**query, "branch": b}, {"_id": 1}) for b in ordered)
+        return {b for b, hit in zip(ordered, found, strict=True) if hit}
 
     async def branch_tips(
         self, project_id: str, deleted_branches: list[str] | None = None, since: datetime | None = None
