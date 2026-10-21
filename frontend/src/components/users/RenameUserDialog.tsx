@@ -1,6 +1,6 @@
 import { User } from '@/types/user';
 import { getErrorMessage } from '@/lib/utils';
-import { refusesUsername, useUpdateUser } from '@/hooks/queries/use-users';
+import { refusesUsername, usernameRefusalMessage, useUpdateUser } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -27,11 +27,9 @@ export function RenameUserDialog({ user, onOpenChange, onUserUpdated }: Readonly
   const nextUsername = username.trim();
 
   const updateUserMutation = useUpdateUser();
-  const usernameRefusal =
-    updateUserMutation.isError && refusesUsername(updateUserMutation.variables?.data, updateUserMutation.error)
-      ? getErrorMessage(updateUserMutation.error, { withField: false })
-      : null;
-  const usernameError = blankUsername ? 'Enter a username' : usernameRefusal;
+  const usernameError = blankUsername
+    ? 'Enter a username'
+    : usernameRefusalMessage(updateUserMutation, updateUserMutation.variables?.data);
 
   const handleSave = (e: React.SubmitEvent) => {
     e.preventDefault();

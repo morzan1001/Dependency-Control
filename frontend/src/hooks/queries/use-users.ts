@@ -16,6 +16,11 @@ export const refusesEmail = (error: unknown) => {
   return status === 400 || status === 404 || status === 422 || status === 501;
 };
 
+export const usernameRefusalMessage = (
+  mutation: { isError: boolean; error: unknown },
+  sent: UserUpdate | UserUpdateMe | undefined,
+) => (mutation.isError && refusesUsername(sent, mutation.error) ? getErrorMessage(mutation.error, { withField: false }) : null);
+
 export const emailRefusalMessage = (mutation: { isError: boolean; error: unknown }) =>
   mutation.isError && refusesEmail(mutation.error) ? getErrorMessage(mutation.error, { withField: false }) : null;
 

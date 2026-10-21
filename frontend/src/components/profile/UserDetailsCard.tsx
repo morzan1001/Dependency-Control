@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { userApi } from '@/api/users';
-import { emailRefusalMessage, refusesEmail, refusesUsername, useUpdateMe } from '@/hooks/queries/use-users';
+import { emailRefusalMessage, refusesEmail, refusesUsername, usernameRefusalMessage, useUpdateMe } from '@/hooks/queries/use-users';
 import { User, UserUpdateMe } from '@/types/user';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -92,11 +92,7 @@ export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDet
     }
   };
 
-  const usernameRefusal =
-    profileMutation.isError && refusesUsername(profileMutation.variables, profileMutation.error)
-      ? getErrorMessage(profileMutation.error, { withField: false })
-      : null;
-  const usernameError = blankUsername ? 'Enter a username' : usernameRefusal;
+  const usernameError = blankUsername ? 'Enter a username' : usernameRefusalMessage(profileMutation, profileMutation.variables);
   const emailError = blankEmail ? 'Enter an email address' : emailRefusalMessage(emailMutation);
   const pendingEmail = emailMutation.isSuccess ? emailMutation.data.pending_email : user?.pending_email;
 
