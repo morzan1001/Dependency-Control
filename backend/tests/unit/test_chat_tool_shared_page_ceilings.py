@@ -101,3 +101,26 @@ async def test_policy_audit_entries(seeded, admin_user):
         "list_policy_audit_entries", {"policy_scope": "system"}, "list_policy_audit_entries", seeded, admin_user
     )
     assert reached == _endpoint_ceiling(list_system_audit)
+
+
+# No larger than the smallest real plan item (~440 bytes) and asset (~880 bytes).
+_PLAN_ITEM = {"asset_bom_ref": "rsa", "notes": "x" * 400}
+_ASSET = {"bom_ref": "rsa", "detection_context": "x" * 840}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "page"),
+    [
+        ("generate_pqc_migration_plan", {"items": [_PLAN_ITEM] * 20, "summary": {"total_items": 137}}),
+        ("list_crypto_assets", {"items": [_ASSET] * 15, "items_total": 137}),
+    ],
+)
+async def test_a_cut_crypto_list_names_its_total_not_the_page(seeded, admin_user, tool, page):
+    """The smaller chat defaults must still tell the model how many rows there are."""
+    with patch(f"app.services.chat.tools.registry.{tool}", new=AsyncMock(return_value=page)):
+        answer = await ChatToolRegistry().execute_tool(tool, {"project_id": _PROJECT}, admin_user, seeded)
+
+    assert answer["_truncated"] is True
+    assert answer["_truncation_note"].startswith("Result truncated from 137 to ")
+    assert answer["items_total"] == 137

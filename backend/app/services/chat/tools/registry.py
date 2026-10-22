@@ -1648,11 +1648,9 @@ class ChatToolRegistry:
 
     async def _tool_generate_pqc_migration_plan(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        return await generate_pqc_migration_plan(
-            ctx.db,
-            project_id=project["_id"],
-            limit=ctx.args["limit"],
-        )
+        plan = await generate_pqc_migration_plan(ctx.db, project_id=project["_id"], limit=ctx.args["limit"])
+        # The result cap names a cut list's population by "<key>_total", not by the page it was handed.
+        return {**plan, "items_total": plan["summary"]["total_items"]}
 
     async def _tool_list_compliance_reports(self, ctx: _ToolContext) -> dict[str, Any]:
         project_id = ctx.args.get("project_id")
