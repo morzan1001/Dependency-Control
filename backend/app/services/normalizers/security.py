@@ -37,6 +37,7 @@ def normalize_malware(aggregator: "ResultAggregator", result: dict[str, Any], so
                 scanners=["os_malware"],
                 details=OsMalwareDetails(
                     info=malware_info,
+                    threats=threats,
                     reference=malware_info.get("reference"),
                     source="opensourcemalware",
                 ).model_dump(exclude_none=True),

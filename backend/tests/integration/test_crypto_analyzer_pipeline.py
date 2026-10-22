@@ -260,7 +260,7 @@ def test_a_rule_finding_carries_the_first_twenty_locations_and_the_total():
 
 
 @pytest.mark.parametrize("locations", [0, 3, 20])
-def test_a_rule_finding_listing_every_location_carries_no_separate_count(locations):
+def test_a_rule_finding_listing_every_location_carries_its_count_as_released(locations):
     asset = CryptoAsset(
         project_id="p",
         scan_id="s",
@@ -275,7 +275,7 @@ def test_a_rule_finding_listing_every_location_carries_no_separate_count(locatio
     (finding,) = crypto_findings_for_assets([asset], [rule], scanner="crypto_weak_algorithm")
 
     assert len(finding["found_in"]) == locations
-    assert "occurrence_count" not in finding["details"]
+    assert finding["details"]["occurrence_count"] == locations
 
 
 def test_every_crypto_finding_names_the_asset_it_flags():

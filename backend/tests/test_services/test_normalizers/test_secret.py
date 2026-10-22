@@ -359,7 +359,7 @@ class TestNormalizeTrufflehog:
         self.agg.aggregate("trufflehog", result)
         f = next(iter(self.agg.findings.values()))
         assert f.details["risk_score"] == 44.0
-        assert "adjusted_risk_score" not in f.details
+        assert f.details["adjusted_risk_score"] == 44.0
 
     def test_unverified_historical_secret_has_deprioritized_score(self):
         result = {
@@ -375,6 +375,7 @@ class TestNormalizeTrufflehog:
         self.agg.aggregate("trufflehog", result)
         f = next(iter(self.agg.findings.values()))
         assert f.details["risk_score"] == 16.0
+        assert f.details["adjusted_risk_score"] == 16.0
 
     def test_unverified_historical_secret_severity_is_low(self):
         """Every aggregation keys on severity, so the deprioritized bucket drops to LOW to leave the critical counts."""

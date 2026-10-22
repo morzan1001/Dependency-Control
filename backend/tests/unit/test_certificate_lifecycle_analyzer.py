@@ -721,6 +721,7 @@ async def test_self_signed_details_carry_no_duplicate_subject_and_issuer(db):
         "asset_type": "certificate",
         "subject_name": "CN=self",
         "issuer_name": "CN=self",
+        "occurrence_count": 0,
     }
 
 

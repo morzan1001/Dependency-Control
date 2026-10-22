@@ -51,6 +51,7 @@ def normalize_trufflehog(aggregator: "ResultAggregator", result: dict[str, Any],
         source_meta = _extract_source_metadata(finding.SourceMetadata)
         in_current_tree = finding.DcInCurrentTree
         verified = finding.Verified
+        risk_score = calculate_secret_risk_score(verified, in_current_tree)
 
         secret_details = SecretDetails(
             detector=detector,
@@ -62,7 +63,8 @@ def normalize_trufflehog(aggregator: "ResultAggregator", result: dict[str, Any],
             commit_timestamp=source_meta["commit_timestamp"],
             line=source_meta["line"],
             in_current_tree=in_current_tree,
-            risk_score=calculate_secret_risk_score(verified, in_current_tree),
+            risk_score=risk_score,
+            adjusted_risk_score=risk_score,
         ).model_dump(exclude_none=True)
 
         aggregator.add_finding(
