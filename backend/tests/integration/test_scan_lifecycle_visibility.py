@@ -185,6 +185,68 @@ async def test_w12_error_shaped_external_result_marks_scan_completed_with_errors
     assert scan["failed_analyzers"] == ["trufflehog"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_an_unreadable_external_entry_keeps_the_rest_and_marks_scan_completed_with_errors(db, _stored_sboms):
+    def entry(line: int, metadata: dict) -> dict:
+        return {
+            "check_id": "rule",
+            "path": "app.py",
+            "start": {"line": line, "col": 1},
+            "end": {"line": line, "col": 9},
+            "extra": {"severity": "ERROR", "message": "m", "metadata": metadata},
+        }
+
+    await _seed_project(db)
+    scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
+    await db.analysis_results.insert_one(
+        {
+            "_id": "res-1",
+            "scan_id": scan_id,
+            "analyzer_name": "opengrep",
+            "result": {"results": [entry(1, {"impact": ["HIGH"]}), entry(2, {})]},
+        }
+    )
+
+    assert (
+        await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], [], worker_id=_WORKER)
+        == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    )
+
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert (scan["status"], scan["failed_analyzers"]) == (SCAN_STATUS_COMPLETED_WITH_ERRORS, ["opengrep"])
+    finding_ids = {d["finding_id"] async for d in db.findings.find({"scan_id": scan_id})}
+    assert finding_ids == {"OPENGREP-rule-app.py-2", "SCAN-ERROR-opengrep"}
+
+
+class _GrypeWithAnUnreadableMatch(_GrypeVulnAnalyzer):
+    async def analyze(self, sbom, settings=None, *, parsed_components):
+        result = await super().analyze(sbom, settings, parsed_components=parsed_components)
+        return {"matches": [*result["matches"], {"vulnerability": {"id": "CVE-X"}, "artifact": "requests"}]}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_an_unreadable_analyzer_entry_marks_the_analyzer_partial_with_a_single_scan_error(
+    db, _stored_sboms, monkeypatch
+):
+    serve_analyzer(monkeypatch, "grype", _GrypeWithAnUnreadableMatch())
+    await _seed_project(db)
+    scan_id = await _seed_scan(db, [sbom_ref(_FILE_ID_A)])
+
+    assert (
+        await analyse_scan(db, scan_id, [sbom_ref(_FILE_ID_A)], ["grype"], worker_id=_WORKER)
+        == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    )
+
+    assert (await db.scans.find_one({"_id": scan_id}))["failed_analyzers"] == ["grype"]
+    [warning] = [d async for d in db.findings.find({"scan_id": scan_id, "finding_id": "SCAN-ERROR-grype"})]
+    assert [e["message"] for e in warning["details"]["errors"]] == [
+        "Scanner 'grype' returned partial results: skipped 1 unreadable entry"
+    ]
+    assert await db.findings.count_documents({"scan_id": scan_id, "type": "vulnerability"}) == 1
+
+
 def test_enrichment_post_processor_failures_do_not_flip_the_status():
     outcomes = [
         AnalyzerOutcome("grype", OutcomeStatus.FAILED),

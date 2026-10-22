@@ -224,6 +224,13 @@ def _account(ctx: _RunContext, aggregator: ResultAggregator, outcome: AnalyzerOu
     return outcome
 
 
+def _partial_if_skipped(aggregator: ResultAggregator, outcome: AnalyzerOutcome) -> AnalyzerOutcome:
+    """Skipped entries already added their SCAN-ERROR, so only the status turns partial."""
+    if outcome.status is OutcomeStatus.SUCCESS and outcome.name in aggregator.skipped_analyzers:
+        return replace(outcome, status=OutcomeStatus.PARTIAL, reason="skipped unreadable entries")
+    return outcome
+
+
 async def process_analyzer(
     ctx: _RunContext, aggregator: ResultAggregator, analyzer_name: str, sbom: AnalyzerInput
 ) -> AnalyzerOutcome:
@@ -236,7 +243,7 @@ async def process_analyzer(
         await _keep_result(ctx, aggregator, analyzer_name, result, sbom.source, row_source=sbom.label)
 
     outcome = await run_analyzer(analyzer_name, sbom, ctx.settings_for(analyzer_name), keep)
-    return _account(ctx, aggregator, outcome)
+    return _partial_if_skipped(aggregator, _account(ctx, aggregator, outcome))
 
 
 def _evaluate_crypto(
@@ -561,7 +568,7 @@ async def _aggregate_external_results(
             aggregator.aggregate(analyzer_name, result)
             # Error-shaped rows aggregate into a SCAN-ERROR finding without raising.
             status = OutcomeStatus.FAILED if is_error_result(result) else OutcomeStatus.SUCCESS
-            outcomes.append(AnalyzerOutcome(analyzer_name, status))
+            outcomes.append(_partial_if_skipped(aggregator, AnalyzerOutcome(analyzer_name, status)))
         except Exception as exc:
             logger.warning(
                 "_aggregate_external_results: skipping malformed result for analyzer=%s scan=%s: %s",

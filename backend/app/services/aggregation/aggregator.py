@@ -187,6 +187,7 @@ class ResultAggregator:
         self.findings: dict[str, Finding] = {}
         self._unfolded: set[str] = set()
         self._dependency_enrichments: dict[CopyKey, DependencyEnrichment] = {}
+        self.skipped_analyzers: set[str] = set()
 
     def _get_or_create_enrichment(self, name: str, version: str, purl: str | None = None) -> DependencyEnrichment:
         """Keyed by canonical purl: qualifier variants merge, same-named packages of different ecosystems stay apart."""
@@ -313,6 +314,7 @@ class ResultAggregator:
     def add_skipped_entries(self, analyzer_name: str, errors: list[Exception], source: str | None) -> None:
         if not errors:
             return
+        self.skipped_analyzers.add(analyzer_name)
         message = f"skipped {len(errors)} unreadable {'entry' if len(errors) == 1 else 'entries'}"
         logger.warning("%s: %s, first: %s", analyzer_name, message, errors[0])
         self.add_scan_error(analyzer_name, message, partial=True, error_details=str(errors[0]), source=source)
