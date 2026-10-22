@@ -133,6 +133,15 @@ class TestApplyLiveThreatIntel:
         assert advisory["risk_score"] == calculate_risk_score(7.5, 0.42, True, False)
         assert RecommendationType.KNOWN_EXPLOIT in {r.type for r in detect_known_exploits([f], enrichments)}
 
+    def test_an_epss_outage_counts_only_the_kev_cve_of_a_bundled_advisory(self):
+        f = _finding([{"id": "CVE-2024-0001", "aliases": ["CVE-2024-0002"]}])
+        live = {"CVE-2024-0001": _live("CVE-2024-0001", in_kev=True), "CVE-2024-0002": _live("CVE-2024-0002")}
+
+        enrichments, _ = _refresh([f], live, ["EPSS"])
+
+        [card] = [r for r in detect_known_exploits([f], enrichments) if r.type == RecommendationType.KNOWN_EXPLOIT]
+        assert (card.impact["kev_count"], card.action["cves"]) == (1, ["CVE-2024-0001"])
+
     def test_an_epss_outage_leaves_an_advisory_outside_kev_as_stored(self):
         stored = {"epss_score": 0.42, "risk_score": 55.0}
         f = _finding([{"id": "CVE-1", "resolved_cve": "CVE-1", **stored}])

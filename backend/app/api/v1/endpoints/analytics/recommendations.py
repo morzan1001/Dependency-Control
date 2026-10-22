@@ -136,7 +136,7 @@ async def _apply_live_threat_intel(
                 stored_epss = {key: advisory.get(key) for key in ("epss_score", "epss_percentile", "epss_date")}
                 matched = {cve: e.model_copy(update=stored_epss) for cve, e in matched.items()}
             apply_enrichments({"vulnerabilities": [advisory]}, matched)
-    return (live if unavailable else enrichments), unavailable
+    return enrichments, unavailable
 
 
 async def _dependency_window(
