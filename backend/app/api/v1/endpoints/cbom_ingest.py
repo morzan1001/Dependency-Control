@@ -64,13 +64,11 @@ async def ingest_cbom(
     ):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "CBOM components could not be read as cryptographic assets")
     project_id = str(project.id)
-    serial = payload.cbom.get("serialNumber")
-    source = str(serial) if serial else sbom_name(payload.cbom)
 
     await manager.refuse_while_restoring(scan_id)
     try:
         await ScanRepository(db).touch(scan_id)
-        summary = await _store_crypto_assets(db, project_id, scan_id, assets, source)
+        summary = await _store_crypto_assets(db, project_id, scan_id, assets, _cbom_source(payload))
     except Exception as exc:
         logger.exception("cbom_ingest failed for scan %s: %s", scan_id, exc)
         cbom_ingests_total.labels(status="error").inc()
@@ -108,6 +106,27 @@ async def ingest_cbom(
         assets_received=len(assets),
         assets_stored=int(summary["total"]),
     )
+
+
+def _cbom_source(payload: CBOMIngest) -> str | None:
+    """A retried job regenerates its CBOM under a new serialNumber; its job name, tools and target stay."""
+    cbom = payload.cbom
+    if not payload.job_name:
+        serial = cbom.get("serialNumber")
+        return str(serial) if serial else sbom_name(cbom)
+    metadata = cbom.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    tools = metadata.get("tools")
+    # CycloneDX 1.5 nests the tools under "components"; 1.4 lists them directly.
+    tools = tools.get("components") if isinstance(tools, dict) else tools
+    tool_names = (
+        sorted({str(t["name"]) for t in tools if isinstance(t, dict) and t.get("name")})
+        if isinstance(tools, list)
+        else []
+    )
+    target = metadata.get("component")
+    target_name = target.get("name") if isinstance(target, dict) else None
+    return "\n".join([payload.job_name, *tool_names, str(target_name or "")])
 
 
 async def _store_crypto_assets(
