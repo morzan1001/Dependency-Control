@@ -269,7 +269,7 @@ class RecommendationsResponse(BaseModel):
     findings_total: int = 0
     dependencies_read: int = 0
     dependencies_total: int = 0
-    # Live KEV/EPSS sources that could not be read; the advice then rests on the scores stored at scan time.
+    # Live KEV/EPSS sources that could not be read; the advice then rests on what the scan stored for them.
     threat_intel_unavailable: list[str] = []
 
 
