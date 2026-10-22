@@ -340,27 +340,27 @@ class TestCreateInstance:
                     )
 
     @pytest.mark.parametrize("jwks", [None, {"keys": []}], ids=["unreachable", "no-keys"])
-    def test_an_oidc_only_instance_whose_issuer_serves_no_signing_keys_is_refused(self, admin_user, jwks):
-        """OIDC is all such an instance serves, and every token from its issuer would fail validation."""
+    def test_an_oidc_only_instance_is_created_without_fetchable_signing_keys(self, admin_user, jwks):
+        """1.9.59 created it; the Test button reports the missing JWKS."""
         from app.api.v1.endpoints.gitlab_instances import create_instance
 
-        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False, create=None)
+        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
+        mock_repo.create = AsyncMock(side_effect=lambda inst: inst)
         service = _make_gitlab_service_mock(MagicMock(status_code=200), jwks=jwks)
 
         with (
             patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo),
             patch(f"{MODULE}.GitLabService", return_value=service),
-            pytest.raises(HTTPException) as exc_info,
         ):
-            asyncio.run(
+            result = asyncio.run(
                 create_instance(
                     instance_data=self._make_create_data(access_token=None), db=MagicMock(), current_user=admin_user
                 )
             )
 
-        assert exc_info.value.status_code == 400
-        assert exc_info.value.detail == "OIDC endpoint unreachable or returned no signing keys. Verify the issuer URL."
-        mock_repo.create.assert_not_called()
+        assert result.name == "New GL"
+        mock_repo.create.assert_called_once()
+        service.get_version.assert_not_called()
 
     @pytest.mark.parametrize("jwks", [None, {"keys": []}], ids=["unreachable", "no-keys"])
     def test_an_instance_whose_token_works_is_created_without_fetchable_signing_keys(self, admin_user, jwks):
@@ -382,26 +382,6 @@ class TestCreateInstance:
         assert result.name == "New GL"
         mock_repo.create.assert_called_once()
         service.get_version.assert_awaited_once()
-
-    def test_an_oidc_only_instance_is_created_once_its_issuer_serves_keys(self, admin_user):
-        from app.api.v1.endpoints.gitlab_instances import create_instance
-
-        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
-        mock_repo.create = AsyncMock(side_effect=lambda inst: inst)
-        service = _make_gitlab_service_mock(MagicMock(status_code=401))
-
-        with (
-            patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo),
-            patch(f"{MODULE}.GitLabService", return_value=service),
-        ):
-            asyncio.run(
-                create_instance(
-                    instance_data=self._make_create_data(access_token=None), db=MagicMock(), current_user=admin_user
-                )
-            )
-
-        mock_repo.create.assert_called_once()
-        service.get_version.assert_not_called()
 
     def test_success_creates_and_returns_instance(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import create_instance

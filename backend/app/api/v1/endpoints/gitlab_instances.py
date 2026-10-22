@@ -20,7 +20,6 @@ from app.api.v1.helpers.vcs_instances import (
     delete_guarded,
     get_or_404,
     list_page,
-    require_signing_keys,
     signing_key_check,
 )
 from app.core.constants import TEAM_SOURCE_GITLAB
@@ -74,18 +73,15 @@ async def create_instance(
     db: DatabaseDep,
     current_user: deps.SystemManagerDep,
 ) -> GitLabInstanceResponse:
-    """Create a new GitLab instance after validating uniqueness and its token, or a token-less one's signing keys."""
+    """Create a new GitLab instance after validating uniqueness and a configured token."""
     instance_repo = GitLabInstanceRepository(db)
 
     await assert_unique(instance_repo, _LABEL, url=instance_data.url, name=instance_data.name)
 
     new_instance = GitLabInstance(**instance_data.model_dump(), created_by=str(current_user.id))
-    gitlab_service = GitLabService(new_instance)
-    if not new_instance.access_token:
-        await require_signing_keys(gitlab_service)
-    else:
+    if new_instance.access_token:
         try:
-            response = await gitlab_service.get_version()
+            response = await GitLabService(new_instance).get_version()
         except (httpx.HTTPError, httpx.InvalidURL) as e:
             logger.warning("Connection test failed for %s: %s", instance_data.url, e)
             raise HTTPException(
