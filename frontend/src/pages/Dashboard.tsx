@@ -137,7 +137,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-7">
         <Card className="lg:col-span-4">
             <CardHeader>
             <CardTitle>Top 5 Riskiest Projects</CardTitle>
@@ -277,7 +277,7 @@ export default function Dashboard() {
                                     className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
                                     onClick={() => navigate(`/projects/${project.id}`)}
                                 >
-                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 font-medium">{project.name}</td>
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 font-medium wrap-anywhere">{project.name}</td>
                                     <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 overflow-hidden"><OwningTeamsCell teams={project.teams} /></td>
                                     <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.last_scan_at ? formatDate(project.last_scan_at) : 'Never'}</td>
                                     <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-severity-critical font-bold">{project.stats?.critical || 0}</td>

@@ -247,7 +247,7 @@ function ComparisonSummaryCards({ data, measuredCount }: Readonly<{ data: Compar
   const namesakes = sharedNames(data.projects.map((project) => ({ id: project.project_id, name: project.project_name })))
 
   return (
-    <div className="grid gap-4 md:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium">Avg Updates/Month</CardTitle>
@@ -482,7 +482,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                       NO_VALUE
                     )}
                   </TableCell>
-                  <TableCell className="text-muted-foreground"><OwningTeamsCell teams={project.teams} /></TableCell>
+                  <TableCell className="max-w-[160px] text-muted-foreground"><OwningTeamsCell teams={project.teams} /></TableCell>
                   {project.data_status === 'ready' || project.data_status === 'partial' ? (
                     <MeasuredCells project={project} />
                   ) : (

@@ -265,19 +265,19 @@ describe("RecommendationCard action sections", () => {
   const classesOf = (element: Element) => new Set(element.className.split(" "));
 
   it.each([
-    [{ type: "update_dependency", package: "lodash", current_version: "1", target_version: "2" }, "Recommended Action", "bg-muted rounded-lg p-3 font-mono text-sm"],
-    [{ type: "update_base_image", current_image: "node:18" }, "Base Image", "bg-muted rounded-lg p-3 text-sm space-y-2"],
-    [{ type: "update_transitive", package: "lodash", target_version: "2" }, "How to Fix", "bg-muted rounded-lg p-3 text-sm space-y-2"],
-    [{ type: "fix_code", files: ["a.py"] }, "Code Security Issues", "bg-muted rounded-lg p-3 text-sm space-y-2"],
-    [{ type: "deduplicate_versions", packages: [{ name: "lodash", versions: ["1", "2"] }] }, "Version Fragmentation", "bg-muted rounded-lg p-3 text-sm space-y-3 max-h-[300px] overflow-y-auto"],
-    [{ type: "upgrade_outdated", packages: [{ name: "express", current_version: "4.17.1", latest_version: "4.21.2" }] }, "Outdated Packages", "bg-muted rounded-lg p-3 text-sm space-y-2 max-h-[300px] overflow-y-auto"],
-    [{ type: "investigate_regression", suggestion: "Look" }, "Regression Details", "bg-muted rounded-lg p-3 text-sm space-y-2"],
-    [{ type: "address_recurring", cves: [] }, "Recurring Issues", "bg-muted rounded-lg p-3 text-sm space-y-2"],
-    [{ type: "reduce_chain_depth", deepest_chains: [{ package: "a", depth: 9 }] }, "Deep Dependency Chains", "bg-muted rounded-lg p-3 text-sm space-y-2"],
-    [{ type: "consolidate_packages", duplicates: [{ category: "http", found: ["a", "b"], suggestion: "pick one" }] }, "Duplicate Functionality", "bg-muted rounded-lg p-3 text-sm space-y-3"],
-    [{ type: "fix_cross_project_vuln", cves: [] }, "Cross-Project Vulnerabilities", "bg-muted rounded-lg p-3 text-sm space-y-2"],
-    [{ type: "prioritize_projects", priority_projects: [{ name: "p", id: "p", critical: 1, high: 2 }] }, "Priority Projects", "bg-muted rounded-lg p-3 text-sm space-y-2"],
-    [{ type: "standardize_versions", packages: [{ name: "lodash", versions: ["1", "2"] }] }, "Version Standardization Across Projects", "bg-muted rounded-lg p-3 text-sm space-y-3"],
+    [{ type: "update_dependency", package: "lodash", current_version: "1", target_version: "2" }, "Recommended Action", "bg-muted rounded-lg p-3 wrap-anywhere font-mono text-sm"],
+    [{ type: "update_base_image", current_image: "node:18" }, "Base Image", "bg-muted rounded-lg p-3 wrap-anywhere text-sm space-y-2"],
+    [{ type: "update_transitive", package: "lodash", target_version: "2" }, "How to Fix", "bg-muted rounded-lg p-3 wrap-anywhere text-sm space-y-2"],
+    [{ type: "fix_code", files: ["a.py"] }, "Code Security Issues", "bg-muted rounded-lg p-3 wrap-anywhere text-sm space-y-2"],
+    [{ type: "deduplicate_versions", packages: [{ name: "lodash", versions: ["1", "2"] }] }, "Version Fragmentation", "bg-muted rounded-lg p-3 wrap-anywhere text-sm space-y-3 max-h-[300px] overflow-y-auto"],
+    [{ type: "upgrade_outdated", packages: [{ name: "express", current_version: "4.17.1", latest_version: "4.21.2" }] }, "Outdated Packages", "bg-muted rounded-lg p-3 wrap-anywhere text-sm space-y-2 max-h-[300px] overflow-y-auto"],
+    [{ type: "investigate_regression", suggestion: "Look" }, "Regression Details", "bg-muted rounded-lg p-3 wrap-anywhere text-sm space-y-2"],
+    [{ type: "address_recurring", cves: [] }, "Recurring Issues", "bg-muted rounded-lg p-3 wrap-anywhere text-sm space-y-2"],
+    [{ type: "reduce_chain_depth", deepest_chains: [{ package: "a", depth: 9 }] }, "Deep Dependency Chains", "bg-muted rounded-lg p-3 wrap-anywhere text-sm space-y-2"],
+    [{ type: "consolidate_packages", duplicates: [{ category: "http", found: ["a", "b"], suggestion: "pick one" }] }, "Duplicate Functionality", "bg-muted rounded-lg p-3 wrap-anywhere text-sm space-y-3"],
+    [{ type: "fix_cross_project_vuln", cves: [] }, "Cross-Project Vulnerabilities", "bg-muted rounded-lg p-3 wrap-anywhere text-sm space-y-2"],
+    [{ type: "prioritize_projects", priority_projects: [{ name: "p", id: "p", critical: 1, high: 2 }] }, "Priority Projects", "bg-muted rounded-lg p-3 wrap-anywhere text-sm space-y-2"],
+    [{ type: "standardize_versions", packages: [{ name: "lodash", versions: ["1", "2"] }] }, "Version Standardization Across Projects", "bg-muted rounded-lg p-3 wrap-anywhere text-sm space-y-3"],
   ] as [RecommendationAction, string, string][])("boxes the %o action under its heading", (action, title, boxClasses) => {
     renderExpanded(makeRecommendation(action));
 

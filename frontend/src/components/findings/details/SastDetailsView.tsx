@@ -118,7 +118,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
          <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
                 <DetailSection label="Rule ID" compact>
-                    <code className="font-mono text-sm bg-background px-2 py-0.5 rounded">{localRuleId}</code>
+                    <code className="font-mono text-sm bg-background px-2 py-0.5 rounded break-all">{localRuleId}</code>
                 </DetailSection>
                 <DetailSection label="Scanner" compact>
                      <div className="flex flex-wrap gap-1">

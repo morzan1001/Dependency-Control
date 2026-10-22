@@ -149,7 +149,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
               )}
             </div>
             
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
               <div className="space-y-2">
                 <Label htmlFor="dependency-search-version">Version</Label>
                 <Input

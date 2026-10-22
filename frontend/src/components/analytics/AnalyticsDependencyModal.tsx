@@ -452,7 +452,7 @@ export function AnalyticsDependencyModal({
         <DialogHeader>
           <DialogTitle className="flex items-center justify-center gap-2 sm:justify-start">
             <Package className="h-5 w-5" />
-            {component}
+            <span className="min-w-0 wrap-anywhere">{component}</span>
             {version && <Badge variant="outline">{version}</Badge>}
           </DialogTitle>
           <DialogDescription>

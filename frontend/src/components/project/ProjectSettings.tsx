@@ -690,7 +690,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                         label="Rotate Key"
                         pendingLabel="Rotating..."
                         icon={<RefreshCw className="mr-2 h-4 w-4" />}
-                        confirmation={<>Are you sure you want to rotate the API key of <strong>{project.name}</strong>? The current key stops working at once, so every pipeline that still sends it fails until it gets the new one.</>}
+                        confirmation={<>Are you sure you want to rotate the API key of <strong className="wrap-anywhere">{project.name}</strong>? The current key stops working at once, so every pipeline that still sends it fails until it gets the new one.</>}
                         dialog={rotateDialog}
                         isPending={rotateKeyMutation.isPending}
                         onConfirm={() => rotateKeyMutation.mutate()}
@@ -704,7 +704,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                         label="Delete Project"
                         pendingLabel="Deleting..."
                         icon={<Trash2 className="mr-2 h-4 w-4" />}
-                        confirmation={<>Are you sure you want to delete this project? This action cannot be undone and will permanently remove all scans, findings, and settings associated with <strong>{project.name}</strong>.</>}
+                        confirmation={<>Are you sure you want to delete this project? This action cannot be undone and will permanently remove all scans, findings, and settings associated with <strong className="wrap-anywhere">{project.name}</strong>.</>}
                         dialog={deleteDialog}
                         isPending={deleteProjectMutation.isPending}
                         onConfirm={() => deleteProjectMutation.mutate()}

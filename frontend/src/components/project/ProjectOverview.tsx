@@ -167,7 +167,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
               ? 'A release is one build, so the branch picker is off while its numbers are shown.'
               : 'Findings exist on every branch, so the blocks below show one branch at a time.'}
           </p>
-          <Tabs value={activeBranch} onValueChange={setPickedBranch}>
+          <Tabs value={activeBranch} onValueChange={setPickedBranch} className="min-w-0">
             <TabsList>
               {branchNames.map(branch => (
                 <TabsTrigger
@@ -271,10 +271,10 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
 
       {stats.secret_priority && <SecretPriorityCard counts={stats.secret_priority} />}
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-7">
         <Card className="lg:col-span-4">
           <CardHeader className="flex flex-row items-center justify-between">
-            <div>
+            <div className="min-w-0 wrap-anywhere">
                 <CardTitle>Vulnerability Trends</CardTitle>
                 <CardDescription>
                     {selectedBranches.length > 0 ? `Showing trends for: ${selectedBranches.join(', ')}` : 'Select branches to view trends'}

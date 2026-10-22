@@ -127,7 +127,7 @@ export function NewReportDialog({
             </p>
           </div>
           {needsScopeId && (
-            <div className="grid gap-2">
+            <div className="grid grid-cols-1 gap-2">
               <Label htmlFor={scopeIdField.id}>{scope === "project" ? "Project" : "Team"}</Label>
               {typesScopeId && (
                 <Input {...scopeIdField} value={scopeId} onChange={(e) => pickScopeId(e.target.value.trim())} placeholder={scope === "project" ? "Project ID" : "Team ID"} />
