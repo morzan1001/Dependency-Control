@@ -46,4 +46,12 @@ describe("CweBadgeList", () => {
     expect(screen.getByText("CWE-79").closest("a")).toHaveAttribute("href", "https://cwe.mitre.org/data/definitions/79.html");
     expect(screen.getByText("CWE-89").closest("a")).toHaveAttribute("href", "https://cwe.mitre.org/data/definitions/89.html");
   });
+
+  it("shows NVD's non-numeric markers as plain text without a MITRE link", () => {
+    render(<CweBadgeList ids={["NVD-CWE-noinfo", "79", "NVD-CWE-Other"]} />);
+
+    expect(screen.getByText("NVD-CWE-noinfo").closest("a")).toBeNull();
+    expect(screen.getByText("NVD-CWE-Other").closest("a")).toBeNull();
+    expect(screen.getByText("CWE-79").closest("a")).toHaveAttribute("href", "https://cwe.mitre.org/data/definitions/79.html");
+  });
 });

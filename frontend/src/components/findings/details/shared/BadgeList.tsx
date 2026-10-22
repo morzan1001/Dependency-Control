@@ -6,7 +6,7 @@ interface BadgeListProps {
     readonly items: string[]
     readonly variant?: "default" | "secondary" | "destructive" | "outline"
     readonly icon?: LucideIcon
-    readonly buildUrl?: (item: string) => string
+    readonly buildUrl?: (item: string) => string | undefined
     readonly formatLabel?: (item: string) => string
     readonly badgeClassName?: string
 }
@@ -25,8 +25,9 @@ export function BadgeList({
         <div className="flex flex-wrap gap-2">
             {items.map((item) => {
                 const label = formatLabel ? formatLabel(item) : item
-                if (buildUrl) {
-                    return <AdvisoryLink key={item} id={item} href={buildUrl(item)} variant={variant} label={label} icon={Icon} className={badgeClassName} />
+                const href = buildUrl?.(item)
+                if (href) {
+                    return <AdvisoryLink key={item} id={item} href={href} variant={variant} label={label} icon={Icon} className={badgeClassName} />
                 }
                 return (
                     <Badge key={item} variant={variant} className={badgeClassName}>
@@ -39,6 +40,8 @@ export function BadgeList({
     )
 }
 
+const isCweNumber = (cwe: string) => /^\d+$/.test(cwe)
+
 // Stored Trivy advisories may still carry the CWE- prefix the other scanners never write.
 export function CweBadgeList({ ids }: Readonly<{ ids: string[] }>) {
     return (
@@ -46,8 +49,8 @@ export function CweBadgeList({ ids }: Readonly<{ ids: string[] }>) {
             items={ids.map((id) => id.replace(/^CWE-/i, ""))}
             variant="outline"
             icon={AlertTriangle}
-            formatLabel={(cwe) => `CWE-${cwe}`}
-            buildUrl={(cwe) => `https://cwe.mitre.org/data/definitions/${cwe}.html`}
+            formatLabel={(cwe) => (isCweNumber(cwe) ? `CWE-${cwe}` : cwe)}
+            buildUrl={(cwe) => (isCweNumber(cwe) ? `https://cwe.mitre.org/data/definitions/${cwe}.html` : undefined)}
         />
     )
 }

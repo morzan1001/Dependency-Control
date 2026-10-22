@@ -44,6 +44,9 @@ def normalize_cwe_list(cwe: str | list[str] | None) -> list[str]:
             match = cwe_pattern.search(item)
             if match:
                 result.append(match.group(1))
+            elif item.startswith("NVD-CWE-"):
+                # NVD's markers for "no info" and "other" carry no number but are part of the advisory.
+                result.append(item)
 
     return result
 
