@@ -517,7 +517,11 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     for finding in aggregator.get_findings():
         if finding.type == FindingType.SYSTEM_WARNING:
             # A normalizer's skipped entries: reported per analyzer here, as a finding it would read as a defect.
-            _record_errored(report, finding.scanners[0], finding.description)
+            for error in finding.details["errors"]:
+                # The part after add_scan_error's "Scanner '<name>' returned partial results: " prefix.
+                skipped = error["message"].partition(": ")[2]
+                reason = f"{error['source']}: {_PARTIAL_COVERAGE.format(reason=skipped)}"
+                _record_errored(report, finding.scanners[0], reason)
             continue
         record = finding.model_dump()
         # Findings are addressed by ``finding_id`` everywhere the scan-backed API exposes them.

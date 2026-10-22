@@ -25,6 +25,7 @@ _TYPE_LICENSE = "license"
 _TYPE_VULNERABILITY = "vulnerability"
 _TYPE_SYSTEM_WARNING = "system_warning"
 _PARTIAL_COVERAGE = "partial coverage"
+_ONE_SKIPPED_ENTRY = "skipped 1 unreadable entry"
 _COMPONENTS_NOT_SCANNED = "{count} component(s) were not scanned"
 _RECORDS_NOT_FETCHED = "{count} vulnerability record(s) could not be fetched"
 _SKIPPED_COMPONENTS = 7
@@ -427,11 +428,28 @@ async def test_an_entry_only_the_normalizer_cannot_read_is_reported_and_the_rest
 
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    assert response.analyzers.errored == {
-        "opengrep": ["Scanner 'opengrep' returned partial results: skipped 1 unreadable entry"]
-    }
+    assert response.analyzers.errored == {"opengrep": [f"posted:opengrep: {_PARTIAL_COVERAGE}: {_ONE_SKIPPED_ENTRY}"]}
     assert "opengrep" not in response.analyzers.ran
     assert [f["type"] for f in response.findings] == ["sast"]
+
+
+@pytest.mark.asyncio
+async def test_each_input_that_skipped_an_entry_is_reported_on_its_own(monkeypatch):
+    class _GrypeWithAnUnreadableMatch:
+        async def analyze(self, sbom, settings=None, *, parsed_components):
+            return {"matches": [{"vulnerability": {"id": _PARTIAL_CVE}, "artifact": "requests"}]}
+
+    serve_analyzer(monkeypatch, "grype", _GrypeWithAnUnreadableMatch())
+    request = AdhocAnalyzeRequest(sboms=[_UNNAMED_SBOM, _UNNAMED_SBOM], analyzers=["grype"], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.errored == {
+        "grype": [
+            f"{_FIRST_SBOM_SOURCE}: {_PARTIAL_COVERAGE}: {_ONE_SKIPPED_ENTRY}",
+            f"{_SECOND_SBOM_SOURCE}: {_PARTIAL_COVERAGE}: {_ONE_SKIPPED_ENTRY}",
+        ]
+    }
 
 
 @pytest.mark.asyncio
