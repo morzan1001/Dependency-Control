@@ -1,13 +1,23 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 
-from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS, SCAN_STATUS_FAILED
+from app.core.constants import (
+    SCAN_STATUS_COMPLETED,
+    SCAN_STATUS_COMPLETED_WITH_ERRORS,
+    SCAN_STATUS_FAILED,
+    SCAN_TYPE_CBOM,
+)
 from app.core.init_db import create_indexes
 from app.models.dependency import Dependency
+from app.models.finding import CRYPTO_FINDING_TYPES
 from app.models.project import Scan
+from app.repositories.crypto_asset import CryptoAssetRepository
+from app.services.cbom_parser import parse_cbom
+from app.services.crypto_policy.seeder import seed_crypto_policies
 from tests.helpers.analyzers import analyse_scan, serve_analyzer
 from tests.helpers.sboms import sbom_ref, store_sbom, unreadable_downloads
 
@@ -234,6 +244,44 @@ async def test_a_failed_rescan_keeps_the_findings_of_its_readable_sbom_and_the_c
     scan = await db.scans.find_one({"_id": scan_id})
     assert (scan["error"], scan["findings_count"]) == ("SBOM could not be loaded or parsed for analysis", 2)
     assert await _finding_types(db, scan_id) == ["secret", "vulnerability"]
+    assert await _dependency_docs(db, scan_id) == []
+
+
+_MD5 = {
+    "type": "cryptographic-asset",
+    "bom-ref": "algo-md5",
+    "name": "MD5",
+    "cryptoProperties": {"assetType": "algorithm", "algorithmProperties": {"primitive": "hash"}},
+}
+
+
+async def _upload_cbom_to_original(db) -> None:
+    assets = parse_cbom({"bomFormat": "CycloneDX", "specVersion": "1.6", "components": [_MD5]})
+    await CryptoAssetRepository(db).store_parsed(
+        _PROJECT_ID, _ORIGINAL_SCAN_ID, assets, cbom_upload=True, created_at=datetime.now(timezone.utc)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("crypto_source", ["embedded-in-readable-sbom", "carried-cbom-upload"])
+async def test_a_failed_rescan_with_an_unreadable_sbom_keeps_its_crypto_findings(
+    db, _second_file_unreadable, crypto_source
+):
+    await seed_crypto_policies(db)
+    embedded = crypto_source == "embedded-in-readable-sbom"
+    await _store_sboms(db, {**_SBOM_A, "components": [*_SBOM_A["components"], _MD5]} if embedded else _SBOM_A, _SBOM_B)
+    refs = [sbom_ref(_FILE_ID_A), sbom_ref(_FILE_ID_B)]
+    await db.scans.insert_one({"_id": _ORIGINAL_SCAN_ID, "project_id": _PROJECT_ID, "status": "completed"})
+    if not embedded:
+        await _upload_cbom_to_original(db)
+    scan_id = await _seed_rescan(db, refs)
+    if not embedded:
+        await db.scans.update_one({"_id": scan_id}, {"$set": {"scan_type": SCAN_TYPE_CBOM}})
+
+    assert await analyse_scan(db, scan_id, refs, [], worker_id=_WORKER) == SCAN_STATUS_FAILED
+
+    crypto = [f async for f in db.findings.find({"scan_id": scan_id, "type": {"$in": list(CRYPTO_FINDING_TYPES)}})]
+    assert [(f["type"], f["details"]["asset_name"]) for f in crypto] == [("crypto_weak_algorithm", "MD5")]
     assert await _dependency_docs(db, scan_id) == []
 
 
