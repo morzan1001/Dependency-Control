@@ -260,6 +260,15 @@ async def test_only_the_newest_cbom_upload_counts_and_a_feature_branch_upload_no
 
 
 @pytest.mark.asyncio
+async def test_a_cbom_upload_counts_on_the_fallback_line_the_head_timeline_walks(db):
+    await _project(db, default_branch="main")
+    await _scan(db, "build", _START + 1 * _DAY, branch="develop", findings=1, sbom_refs=_SBOM_REFS)
+    await _cbom_upload(db, "cbom", _START + 3 * _DAY, branch="develop", pipeline_id=77, findings=2)
+
+    assert await _series(db) == _days(1, 1, 3, 3, 3, 3, first=_START + 1 * _DAY)
+
+
+@pytest.mark.asyncio
 async def test_unique_algorithms_take_a_cbom_uploads_assets_with_the_head_builds(db):
     await _project(db)
     await _scan(db, "build", _START + 1 * _DAY, sbom_refs=_SBOM_REFS)

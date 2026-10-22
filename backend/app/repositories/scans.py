@@ -541,9 +541,9 @@ class ScanRepository:
         """Per project, (from when, scan_id) of each analysis heading it; the last entry up to a moment heads then."""
         scopes = {project_id: scope for project_id, scope in map(_head_scope, projects) if project_id}
         histories = await bounded_gather(
-            self._head_builds_between(project_id, scope, since, until) for project_id, scope in scopes.items()
+            self._head_line(project_id, scope, since, until) for project_id, scope in scopes.items()
         )
-        builds = {project_id: docs for project_id, docs in zip(scopes, histories, strict=True) if docs}
+        builds = {project_id: docs for project_id, (_, docs) in zip(scopes, histories, strict=True) if docs}
         rescans: dict[str, list[dict[str, Any]]] = {}
         if build_ids := [doc["_id"] for docs in builds.values() for doc in docs]:
             cursor = self.collection.find(
@@ -573,21 +573,10 @@ class ScanRepository:
     async def cbom_upload_timelines(
         self, projects: Sequence[Any], since: datetime, until: datetime
     ) -> dict[str, list[tuple[datetime, str]]]:
-        """Per project, (from when, scan_id) of the CBOM-only uploads its head timeline skips: on its head branch or manual."""
+        """Per project, (from when, scan_id) of the CBOM-only uploads its head timeline skips: on its head line or manual."""
         scopes = {project_id: scope for project_id, scope in map(_head_scope, projects) if project_id}
         histories = await bounded_gather(
-            self._builds_between(
-                {
-                    "project_id": project_id,
-                    "scan_type": SCAN_TYPE_CBOM,
-                    "sbom_refs.0": {"$exists": False},
-                    **USABLE_BUILD_MATCH,
-                    "$or": [_head_lines(scope)[0], {"pipeline_id": None}],
-                },
-                since,
-                until,
-            )
-            for project_id, scope in scopes.items()
+            self._cbom_uploads_between(project_id, scope, since, until) for project_id, scope in scopes.items()
         )
         return {
             project_id: [(doc["created_at"], doc["_id"]) for doc in docs]
@@ -595,14 +584,29 @@ class ScanRepository:
             if docs
         }
 
-    async def _head_builds_between(
+    async def _cbom_uploads_between(
         self, project_id: str, scope: _HeadScope, since: datetime, until: datetime
     ) -> list[dict[str, Any]]:
-        for line in _head_lines(scope):
+        line, _ = await self._head_line(project_id, scope, since, until)
+        match = {
+            "project_id": project_id,
+            "scan_type": SCAN_TYPE_CBOM,
+            "sbom_refs.0": {"$exists": False},
+            **USABLE_BUILD_MATCH,
+            "$or": [line, {"pipeline_id": None}],
+        }
+        return await self._builds_between(match, since, until)
+
+    async def _head_line(
+        self, project_id: str, scope: _HeadScope, since: datetime, until: datetime
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """The first head line with a build, and its builds; a project without any keeps its first line."""
+        lines = _head_lines(scope)
+        for line in lines:
             for tier in _BUILD_TIERS:
                 if builds := await self._builds_between({"project_id": project_id, **line, **tier}, since, until):
-                    return builds
-        return []
+                    return line, builds
+        return lines[0], []
 
     async def _builds_between(self, match: dict[str, Any], since: datetime, until: datetime) -> list[dict[str, Any]]:
         """From the build current at ``since``, oldest first; a same-millisecond run ends on its lowest _id."""
