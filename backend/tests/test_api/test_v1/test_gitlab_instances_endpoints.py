@@ -616,17 +616,43 @@ class TestTestConnection:
         service.get_version.assert_not_called()
 
     @pytest.mark.parametrize("jwks", [None, {"keys": []}], ids=["unreachable", "no-keys"])
-    def test_an_issuer_without_signing_keys_fails_however_good_the_token(self, admin_user, jwks):
+    def test_an_oidc_only_instance_whose_issuer_serves_no_signing_keys_fails(self, admin_user, jwks):
+        service = _make_gitlab_service_mock(MagicMock(status_code=401), jwks=jwks)
+
+        result = self._test(admin_user, make_gitlab_instance(id="inst-1", access_token=None), service)
+
+        assert result.success is False
+        assert result.message == "JWKS endpoint unreachable or returned no signing keys"
+        service.get_version.assert_not_called()
+
+    @pytest.mark.parametrize("jwks", [None, {"keys": []}], ids=["unreachable", "no-keys"])
+    def test_a_working_token_passes_with_the_missing_signing_keys_as_a_warning(self, admin_user, jwks):
+        """The token still serves MR decoration and branch and team sync, as the 1.9.59 test reported."""
         response = MagicMock(status_code=200)
         response.json.return_value = {"version": "16.5.0"}
         service = _make_gitlab_service_mock(response, jwks=jwks)
 
         result = self._test(admin_user, make_gitlab_instance(id="inst-1", access_token="glpat-tok"), service)
 
+        assert result.success is True
+        assert result.gitlab_version == "16.5.0"
+        assert result.message.startswith("Warning: JWKS endpoint unreachable or returned no signing keys")
+        assert "The access token authenticates. Token reads 1 group(s)." in result.message
+        service._api_get.assert_awaited_once_with("/groups", params={"per_page": 1})
+
+    @pytest.mark.parametrize("jwks", [None, {"keys": []}], ids=["unreachable", "no-keys"])
+    def test_a_failing_group_probe_still_names_the_missing_signing_keys(self, admin_user, jwks):
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"version": "16.5.0"}
+        service = _make_gitlab_service_mock(response, groups=None, jwks=jwks)
+
+        result = self._test(admin_user, make_gitlab_instance(id="inst-1", access_token="glpat-tok"), service)
+
         assert result.success is False
-        assert result.message == "JWKS endpoint unreachable or returned no signing keys"
-        service.get_version.assert_not_called()
-        service._api_get.assert_not_called()
+        assert result.gitlab_version == "16.5.0"
+        assert result.message.startswith("Warning: JWKS endpoint unreachable or returned no signing keys")
+        assert "read_api" in result.message
+        assert "OIDC endpoint reachable" not in result.message
 
     def test_success_returns_version(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import test_connection

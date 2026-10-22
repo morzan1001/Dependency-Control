@@ -168,9 +168,7 @@ def _test_result(
     )
 
 
-async def _probe_group_access(
-    gitlab_service: GitLabService, instance: GitLabInstance, version: str | None
-) -> GitLabInstanceTestConnectionResponse | str:
+async def _probe_group_access(gitlab_service: GitLabService) -> tuple[bool, str]:
     """The token's visible groups are all team sync can resolve, so one that reads none must fail the test."""
     response = await gitlab_service._api_get("/groups", params={"per_page": 1})
     try:
@@ -178,30 +176,19 @@ async def _probe_group_access(
     except ValueError:
         groups = None
     if response is None or not isinstance(groups, list):
-        return _test_result(
-            instance,
-            success=False,
-            version=version,
-            message=(
-                "OIDC endpoint reachable, but the token could not list groups. Team sync resolves a "
-                "project's group through this listing, so it needs a token with the read_api or api "
-                "scope. Until then no repository on this instance gets a team."
-            ),
+        return False, (
+            "The token could not list groups. Team sync resolves a project's group through this listing, so it "
+            "needs a token with the read_api or api scope. Until then no repository on this instance gets a team."
         )
     if not groups:
-        return _test_result(
-            instance,
-            success=False,
-            version=version,
-            message=(
-                "OIDC endpoint reachable, but the token belongs to no group. GitLab scopes the group "
-                "listing to the token's own memberships, so team sync needs an identity that is a "
-                "member of the groups DependencyControl covers, or an administrator token."
-            ),
+        return False, (
+            "The token belongs to no group. GitLab scopes the group listing to the token's own memberships, so "
+            "team sync needs an identity that is a member of the groups DependencyControl covers, or an "
+            "administrator token."
         )
     # GitLab withholds the total past 10,000 rows.
     total = response.headers.get("x-total")
-    return f" Token reads {total} group(s)." if total else " Token reads at least one group."
+    return True, f"Token reads {total} group(s)." if total else "Token reads at least one group."
 
 
 @router.post("/{instance_id}/test-connection", responses=RESP_AUTH_404)
@@ -217,27 +204,27 @@ async def test_connection(
     gitlab_service = GitLabService(instance)
 
     try:
-        ok, message = await signing_key_check(gitlab_service)
-        if not ok:
-            return _test_result(instance, success=False, message=message)
-        version = None
-        if instance.access_token:
-            response = await gitlab_service.get_version()
-            if response.status_code != 200:
-                return _test_result(
-                    instance,
-                    success=False,
-                    message=f"OIDC endpoint reachable, but the GitLab API returned HTTP {response.status_code} "
-                    "for the access token",
-                )
-            version = response.json().get("version")
-            message += " The access token authenticates."
+        jwks_ok, message = await signing_key_check(gitlab_service)
+        if not instance.access_token:
+            return _test_result(instance, success=jwks_ok, message=message)
+        if not jwks_ok:
+            # The token still serves MR decoration and branch and team sync without the keys.
+            message = f"Warning: {message}, so OIDC job tokens from this instance fail validation."
+        response = await gitlab_service.get_version()
+        if response.status_code != 200:
+            return _test_result(
+                instance,
+                success=False,
+                message=f"{message} The GitLab API returned HTTP {response.status_code} for the access token.",
+            )
+        version = response.json().get("version")
+        message += " The access token authenticates."
         # Only a team-syncing instance needs group access; a pure-ingest one would fail a good setup.
         if instance.sync_teams:
-            probe = await _probe_group_access(gitlab_service, instance, version)
-            if isinstance(probe, GitLabInstanceTestConnectionResponse):
-                return probe
-            message += probe
+            groups_ok, groups_message = await _probe_group_access(gitlab_service)
+            message += f" {groups_message}"
+            if not groups_ok:
+                return _test_result(instance, success=False, message=message, version=version)
 
         return _test_result(instance, success=True, message=message, version=version)
     except Exception as e:
