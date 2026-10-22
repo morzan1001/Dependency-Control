@@ -1,3 +1,11 @@
+# Release 1.9.60
+
+## 📦 Build & CI
+
+- chore(release): 1.9.60 keeps long project, package and branch names inside their dialogs, cards and tables, so the Manage Permissions button stays visible (#0)
+
+
+
 # Release 1.9.59
 
 ## 📦 Build & CI
