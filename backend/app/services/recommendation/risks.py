@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
-from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
+from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES, max_severity
 from app.core.cve import counted_cves
 from app.models.finding import PACKAGE_FINDING_TYPES
 from app.schemas.recommendation import (
@@ -245,9 +245,7 @@ def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, r
 
 
 def _vuln_risk_severity(severity: Counter[str], kev: int) -> str:
-    if severity["CRITICAL"] or kev:
-        return "CRITICAL"
-    return next((level for level in ("HIGH", "MEDIUM") if severity[level]), "LOW")
+    return "CRITICAL" if kev else max_severity(*(level for level, n in severity.items() if n))
 
 
 def _toxic_risk_factors(pkg: _PackageRisks) -> tuple[list[dict[str, str]], int]:
