@@ -117,7 +117,7 @@ class CryptoTrendService:
             projects = await read_scope_projects(self.db, query)
         scan_repo = ScanRepository(self.db)
         timelines = await scan_repo.head_timelines(projects, range_start, range_end)
-        # CBOMs mostly arrive as uploads of their own, which no head timeline picks.
+        # A CBOM-only upload heads only where no SBOM scan does, so most stay off the head timeline.
         uploads = await scan_repo.cbom_upload_timelines(projects, range_start, range_end)
         starts = _bucket_starts(range_start, range_end, bucket)
         # A project counts in every bucket with its head analysis at the bucket's end, until its next scan.
