@@ -150,11 +150,8 @@ def _graph_entries(value: Any, field: str) -> list[dict[str, Any]]:
     return value
 
 
-def _string_endpoints(result: ParsedSBOM, *endpoints: Any) -> bool:
-    if all(isinstance(endpoint, str) for endpoint in endpoints):
-        return True
-    result.skipped_relationships += 1
-    return False
+def _string_endpoints(*endpoints: Any) -> bool:
+    return all(isinstance(endpoint, str) for endpoint in endpoints)
 
 
 def _graph_id(value: Any) -> str | None:
@@ -468,7 +465,7 @@ class SBOMParser:
             ref, depends_on = entry.get("ref"), entry.get("dependsOn") or []
             if not isinstance(depends_on, list):
                 raise ValueError("dependencies entries need a list dependsOn")
-            if not all(isinstance(endpoint, str) for endpoint in (ref, *depends_on)):
+            if not _string_endpoints(ref, *depends_on):
                 raise ValueError("dependencies entries need string endpoints")
             forward.setdefault(ref, []).extend(depends_on)
         return forward
@@ -876,7 +873,10 @@ class SBOMParser:
             parent, child, rel_type = rel.get("parent"), rel.get("child"), rel.get("type")
             if rel_type not in ("depends-on", "dependency-of", "contains"):
                 continue
-            if not _string_endpoints(result, parent, child) or parent not in node_ids or child not in node_ids:
+            if not _string_endpoints(parent, child):
+                result.skipped_relationships += 1
+                continue
+            if parent not in node_ids or child not in node_ids:
                 continue
             if rel_type == "depends-on":
                 forward.setdefault(parent, []).append(child)
@@ -1054,7 +1054,8 @@ class SBOMParser:
             if rel_type not in ("DEPENDS_ON", "DEPENDENCY_OF", "DESCRIBES", "DOCUMENT_DESCRIBES", "CONTAINS"):
                 continue
             element, related = rel.get("spdxElementId"), rel.get("relatedSpdxElement")
-            if not _string_endpoints(result, element, related):
+            if not _string_endpoints(element, related):
+                result.skipped_relationships += 1
                 continue
             if rel_type == "DEPENDS_ON":
                 forward.setdefault(element, []).append(related)
