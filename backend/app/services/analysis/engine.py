@@ -395,11 +395,13 @@ async def _process_sbom(
     if parsed_sbom is not None and parsed_sbom.skipped_relationships:
         skipped = SKIPPED_RELATIONSHIPS.format(count=parsed_sbom.skipped_relationships)
         aggregator.add_scan_error("system", f"{sbom.label}: {skipped}", partial=True, source=sbom.source)
+        # Not through _account, which would add the SCAN-ERROR above a second time.
+        outcomes.append(AnalyzerOutcome("system", OutcomeStatus.PARTIAL, skipped))
     if parsed_sbom is not None and parsed_sbom.crypto_assets:
         try:
             await _persist_embedded_crypto_assets(parsed_sbom, ctx.project_id, ctx.scan_id, ctx.db)
         except Exception as e:
-            outcomes = _crypto_analyzers_failed(ctx, aggregator, e)
+            outcomes.extend(_crypto_analyzers_failed(ctx, aggregator, e))
     names = _resolve_effective_analyzers(ctx.active_analyzers, parsed_sbom, sbom.components)
     tasks = [process_analyzer(ctx, aggregator, name, sbom) for name in names if name in analyzer_factories]
     return [*outcomes, *await asyncio.gather(*tasks)]

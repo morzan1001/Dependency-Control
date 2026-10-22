@@ -132,7 +132,10 @@ async def test_a_re_analysis_keeps_the_rows_its_analyzers_wrote_and_purges_the_d
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_an_sbom_with_one_malformed_relationship_is_analysed_and_reports_the_skip(db, notified, monkeypatch):
+async def test_an_sbom_with_one_malformed_relationship_is_analysed_and_reports_the_skip_as_partial(
+    db, notified, monkeypatch
+):
+    """A skipped scanner entry ends the scan completed with errors, so a skipped relationship does too."""
     monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", AsyncIOMotorGridFSBucket)
     await create_indexes(db)
     sbom = json.loads((Path(__file__).parents[1] / "fixtures/sbom/mono.syft.json").read_text())
@@ -142,8 +145,11 @@ async def test_an_sbom_with_one_malformed_relationship_is_analysed_and_reports_t
     scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True))
 
-    assert await analyse_scan(db, scan.id, [ref], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+    assert await analyse_scan(db, scan.id, [ref], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
+    stored = await db.scans.find_one({"_id": scan.id})
+    assert stored["failed_analyzers"] == ["system"]
+    assert stored["error"] == "analyzers failed or returned partial results: system"
     assert await db.dependencies.count_documents({"scan_id": scan.id}) == readable
     [warning] = [f async for f in db.findings.find({"scan_id": scan.id, "type": "system_warning"})]
     assert warning["description"] == (
