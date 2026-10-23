@@ -1,3 +1,337 @@
+# Upgrade notes
+
+These notes cover the upgrade from 1.9.59 or 1.9.60, which changed only the UI and left the backend, its indexes, settings and data as 1.9.59 had them, so both take the same steps. Run mongosh commands in-pod on the primary against the application database. Run Python snippets in a backend pod from the directory where `app` imports, first as a dry run (`kubectl exec -i <backend-pod> -- python - < job.py`), then with `env APPLY=1` in front of `python`.
+
+## Before the rollout (gate): build the new indexes
+
+Startup declares 18 new indexes. Every findings persist hints the newest-copy index, so persists fail while it is missing, and a pod that finds any of them missing builds it in-line during startup, which over every finding or dependency of a large installation misses the startup probe. Build them first, with exactly these names, keys, filters and collation; anything else conflicts with the startup declaration. The two `findings` indexes go into one `createIndexes` command, so the collection is read once: mongosh's `createIndexes` helper takes one options object for all keys and cannot give them their own names and filter.
+
+```js
+db.runCommand({ createIndexes: "findings", indexes: [
+  { key: { project_id: 1, type: 1, finding_id: 1, created_at: -1 }, name: "project_id_1_type_1_finding_id_1_created_at_-1" },
+  { key: { scan_id: 1, severity: 1 }, name: "findings_kev_scan_severity", partialFilterExpression: { "details.vulnerabilities.in_kev": true } },
+] })
+db.dependencies.createIndex({ scan_id: 1, type: 1 })
+db.scans.createIndexes([
+  { created_at: -1, _id: 1 }, { project_id: 1, created_at: -1, _id: 1 }, { project_id: 1, branch: 1, created_at: -1, _id: 1 },
+  { project_id: 1, branch: 1, created_at: -1, _id: -1 }, { original_scan_id: 1, created_at: -1, _id: 1 },
+  { project_id: 1, commit_hash: 1, created_at: -1, _id: 1 }, { project_id: 1, pipeline_iid: 1, created_at: -1, _id: 1 },
+  { project_id: 1, findings_count: 1, created_at: -1, _id: 1 },
+])
+db.scans.createIndex({ project_id: 1, branch: 1, is_rescan: 1, created_at: -1, _id: 1 }, { name: "scans_sbom_branch_tip", partialFilterExpression: { "sbom_refs.0": { $exists: true } } })
+db.scans.createIndex({ restored_at: 1 }, { name: "scans_restored", partialFilterExpression: { restored_at: { $type: "date" } } })
+db.archive_metadata.createIndexes([{ archived_at: -1, _id: 1 }, { project_id: 1, branch: 1, archived_at: -1, _id: 1 }])
+db.releases.createIndex({ project_id: 1, released_at: -1, _id: 1 })
+db.crypto_assets.createIndex({ scan_id: 1 })
+db.dependency_enrichments.createIndex({ name: 1, _id: -1 }, { name: "dependency_enrichments_name_ci", collation: { locale: "en", strength: 2 } })
+```
+
+On a large installation (about 19 million findings and as many dependencies) this adds about 0.6 GiB per member: the newest-copy index about 340 MiB, `findings_kev_scan_severity` 1 to 6 MiB, `dependencies` `scan_id_1_type_1` 150 to 310 MiB, and the scans, archive, release, crypto and enrichment indexes about 50 MiB together. The `findings` and `dependencies` builds each read their whole collection once. Start the rollout once this prints no `MISSING` line and `builds running: 0`:
+
+```js
+const built = {
+  findings: ["project_id_1_type_1_finding_id_1_created_at_-1", "findings_kev_scan_severity"],
+  dependencies: ["scan_id_1_type_1"],
+  scans: ["created_at_-1__id_1", "project_id_1_created_at_-1__id_1", "project_id_1_branch_1_created_at_-1__id_1", "project_id_1_branch_1_created_at_-1__id_-1",
+    "original_scan_id_1_created_at_-1__id_1", "project_id_1_commit_hash_1_created_at_-1__id_1", "project_id_1_pipeline_iid_1_created_at_-1__id_1",
+    "project_id_1_findings_count_1_created_at_-1__id_1", "scans_sbom_branch_tip", "scans_restored"],
+  archive_metadata: ["archived_at_-1__id_1", "project_id_1_branch_1_archived_at_-1__id_1"],
+  releases: ["project_id_1_released_at_-1__id_1"],
+  crypto_assets: ["scan_id_1"],
+  dependency_enrichments: ["dependency_enrichments_name_ci"],
+}
+for (const [coll, names] of Object.entries(built)) {
+  const present = new Set(db.getCollection(coll).getIndexes().map((i) => i.name))
+  names.filter((n) => !present.has(n)).forEach((n) => print(`MISSING ${coll}.${n}`))
+}
+print(`builds running: ${db.currentOp({ "command.createIndexes": { $exists: true } }).inprog.length}`)
+```
+
+## Before the rollout (gate): every project's stats carry a risk score
+
+The dashboard reads each project's stored `stats.risk_score` and no longer derives a score from the severity counts when it is missing, so a project whose stats predate the stored score would rank with 0. A project's stats are a copy of its head scan's, which every head sync (every 6 hours, and on a default-branch change or restamp) writes again, so the score goes onto the scans too. This prints how many projects and scans lack one (the scans count reads the whole collection); if either count is above 0, run it again with `const apply = true`, which stores the score the old fallback computed, and once more, which must print 0 for both:
+
+```js
+const apply = false
+const unscored = { stats: { $type: "object" }, "stats.risk_score": null }
+print(`projects whose stats lack a risk score: ${db.projects.countDocuments(unscored)}`)
+print(`scans whose stats lack a risk score: ${db.scans.countDocuments(unscored)}`)
+if (apply) {
+  const weighted = { $add: [{ $multiply: [{ $ifNull: ["$stats.critical", 0] }, 20] }, { $multiply: [{ $ifNull: ["$stats.high", 0] }, 4] },
+    { $multiply: [{ $ifNull: ["$stats.medium", 0] }, 1] }, { $multiply: [{ $ifNull: ["$stats.low", 0] }, 0.25] }] }
+  const score = { $round: [{ $divide: [{ $multiply: [100, weighted] }, { $add: [weighted, 250] }] }, 1] }
+  print(`projects scored: ${db.projects.updateMany(unscored, [{ $set: { "stats.risk_score": score } }]).modifiedCount}`)
+  print(`scans scored: ${db.scans.updateMany(unscored, [{ $set: { "stats.risk_score": score } }]).modifiedCount}`)
+}
+```
+
+## Before the rollout (read-only)
+
+- The daily housekeeping sweep now finishes project deletes whose cascade broke off: it deletes the scans of projects that no longer exist, with their findings, dependencies and results, once they are 24 hours old. This counts what its first run deletes:
+
+  ```js
+  const live = new Set(db.projects.distinct("_id"))
+  const gone = db.scans.distinct("project_id").filter((p) => !live.has(p))
+  print(`orphan scans: ${db.scans.countDocuments({ project_id: { $in: gone }, created_at: { $lt: new Date(Date.now() - 864e5) } })} of ${gone.length} deleted projects`)
+  ```
+
+- Projects stored without `active_analyzers` now run the default analyzers, which the API and the UI already showed for them, instead of none: `db.projects.countDocuments({ active_analyzers: { $exists: false } })`.
+- Mails, their subjects and newly set-up authenticator entries carry the stored Instance Name; while it is blank or still the default "Dependency Control", they carry `PROJECT_NAME` as before: `db.system_settings.findOne({ _id: "current" }, { _id: 0, instance_name: 1 })`.
+- `db.crypto_policies.findOne({ scope: "system" }, { _id: 0, seed_version: 1 })` must show a `seed_version` (3 since 1.9.59), which every release since 1.9.42 stamps at its first start. This release's seeder no longer reads the audit history, which only a policy without one needed. Without one, the installation never ran 1.9.42 or later: start 1.9.59 or 1.9.60 once first, or a system policy that a person reverted before 1.9.42 is replaced by the seed rules.
+
+## After the rollout: fill the risk score of advisories stored before 1.9.42
+
+The recommendations (their critical-hotspot and toxic-dependency cards included) read each advisory's own `risk_score`, which only advisories analysed since 1.9.42 carry; older ones fall back to a severity score until their project is scanned again, and the waiver roll-up below leaves them out. This stores on every advisory without one a score computed as the enrichment does from the advisory's stored CVSS score (or severity), EPSS and KEV marks, and changes nothing else. Those marks are already folded over the advisory's CVEs, so for an advisory that folds several CVEs the score can exceed what the next analysis stores, until that rescan. It reads the vulnerability findings scan by scan through `scan_id_1_type_1` and fetches every one of them once (the advisory filter is not indexed), so run it off-peak. Run it before the restamp below; a second run reports `advisories=0`, and an advisory whose stored values cannot be scored is listed under `skipped` with its finding and left as it is:
+
+```python
+import os
+
+from pymongo import MongoClient, UpdateOne
+
+from app.core.config import settings
+from app.core.constants import CVSS_SEVERITY_SCORES, FINDINGS_SCAN_TYPE_INDEX
+from app.services.enrichment.scoring import calculate_risk_score
+
+APPLY = os.environ.get("APPLY") == "1"
+FIELDS = ("id", "cvss_score", "severity", "epss_score", "in_kev", "kev_ransomware_use", "risk_score")
+
+
+def advisory_risk(v):
+    cvss = v.get("cvss_score")
+    if cvss is None:
+        cvss = CVSS_SEVERITY_SCORES.get(v.get("severity") or "UNKNOWN")
+    return calculate_risk_score(cvss, v.get("epss_score"), bool(v.get("in_kev")), bool(v.get("kev_ransomware_use")))
+
+
+db = MongoClient(settings.MONGODB_URL, readPreference="primary")[settings.DATABASE_NAME]
+scan_ids = [scan["_id"] for scan in db.scans.find({}, {"_id": 1})]
+projection = {f"details.vulnerabilities.{field}": 1 for field in FIELDS}
+ops, matched, filled, written, skipped = [], 0, 0, 0, []
+for start in range(0, len(scan_ids), 500):
+    query = {
+        "scan_id": {"$in": scan_ids[start : start + 500]},
+        "type": "vulnerability",
+        "details.vulnerabilities": {"$elemMatch": {"risk_score": None}},
+    }
+    for finding in db.findings.find(query, projection).hint(list(FINDINGS_SCAN_TYPE_INDEX.items())):
+        matched += 1
+        vulns = finding["details"]["vulnerabilities"]
+        sets = {}
+        for i, v in enumerate(vulns):
+            if v.get("risk_score") is not None:
+                continue
+            try:
+                sets[f"details.vulnerabilities.{i}.risk_score"] = advisory_risk(v)
+            except (TypeError, ValueError) as exc:
+                skipped.append((finding["_id"], v.get("id"), repr(exc)))
+        filled += len(sets)
+        if APPLY and sets:
+            ops.append(UpdateOne({"_id": finding["_id"], "details.vulnerabilities": {"$size": len(vulns)}}, {"$set": sets}))
+            if len(ops) == 1000:
+                written += db.findings.bulk_write(ops, ordered=False).modified_count
+                ops = []
+if ops:
+    written += db.findings.bulk_write(ops, ordered=False).modified_count
+print(f"apply={APPLY} findings={matched} advisories={filled} written={written} skipped={len(skipped)} {skipped[:5]}")
+```
+
+## After the rollout: restamp the projects with a per-CVE waiver
+
+A per-CVE waiver now takes the waived advisory's KEV, EPSS and risk score off the finding's roll-up, as it already did for the severity, and restores them when the waiver goes. Findings stamped before this release keep the waived advisory's values until their scan is restamped, and the upgrade changes no waiver fingerprint, so nothing restamps them by itself. Run this once every pod runs this release and the risk score fill above is done. It selects the projects an active per-CVE waiver reaches (every project when one of them is global), clears their scans' waiver fingerprint and queues one project-scoped restamp per project; the dry run only prints the counts:
+
+```js
+const apply = false
+const now = new Date()
+const active = { vulnerability_id: { $nin: [null, ""] }, $or: [{ expiration_date: null }, { expiration_date: { $gt: now } }] }
+const pids = db.waivers.countDocuments({ ...active, project_id: null }) ? db.projects.distinct("_id") : db.waivers.distinct("project_id", active)
+const stamped = { project_id: { $in: pids }, waiver_fingerprint: { $exists: true } }
+print(`projects: ${pids.length}, stamped scans: ${db.scans.countDocuments(stamped)}`)
+if (apply) {
+  db.scans.updateMany(stamped, { $unset: { waiver_fingerprint: "" } })
+  pids.forEach((pid) => db.waiver_recalc.insertOne({ waiver: { _id: "restamp-" + pid, project_id: pid, reason: "post-deploy restamp", created_by: "operator" } }))
+  print(`queued: ${pids.length}`)
+}
+```
+
+Follow it with `db.waiver_recalc.countDocuments({ waiver: { $exists: true } })`; the restamp is done at 0. As in 1.9.42, head, the branch tips built in the last 30 days and the released builds are restamped; older scans keep the old roll-up until they are analysed again.
+
+## After the rollout: re-derive the update-frequency deltas of versions packaging cannot parse
+
+A version change that packaging cannot parse is now ordered by the version key the rest of the app sorts with: a lower version is a downgrade and an equal one no change. Only a higher one, and a moved commit-hash pin, stay `unknown`, which counts as an update. The project view applies this at once; the ledger comparison reads stored deltas, which keep the old counts until they are re-derived. Run this once every pod runs this release, off-peak, as `kubectl exec -i <backend-pod> -- env DAYS=365 python - < rederive.py` and then with `APPLY=1` added. It reads `scan_update_deltas` without an index and needs `UPDATE_FREQUENCY_ROLLUP_ENABLED=true`, the default. A delta whose scan is no longer a completed build (failed, back in analysis or turned into a rescan) is dropped and its successors re-derived, as the writer and the reconcile do, and counts under `not written`. A second run lists again the deltas that still count a newer unparseable version or a moved pin, and changes none of them:
+
+```python
+import asyncio
+import os
+from datetime import datetime, timedelta, timezone
+
+from app.core.config import settings
+from app.db.mongodb import create_client
+from app.services.update_frequency_rollup import record_scan_update_delta
+
+APPLY = os.environ.get("APPLY") == "1"
+DAYS = int(os.environ.get("DAYS", "365"))
+
+
+async def main() -> None:
+    client = create_client(settings.MONGODB_URL)
+    db = client[settings.DATABASE_NAME]
+    since = datetime.now(timezone.utc) - timedelta(days=DAYS)
+    query = {"updates.unknown": {"$gt": 0}, "scan_created_at": {"$gte": since}}
+    before = {
+        doc["_id"]: doc.get("updates")
+        async for doc in db.scan_update_deltas.find(query, {"updates": 1}).sort([("scan_created_at", 1), ("_id", 1)])
+    }
+    print(f"days={DAYS} apply={APPLY}: {len(before)} deltas count a version change packaging cannot parse")
+    if APPLY:
+        changed = failed = 0
+        for scan_id, updates in before.items():
+            if not await record_scan_update_delta(db, scan_id):
+                failed += 1
+                continue
+            after = await db.scan_update_deltas.find_one({"_id": scan_id}, {"updates": 1})
+            changed += (after or {}).get("updates") != updates
+        print(f"re-derived {len(before) - failed}, changed {changed}, not written {failed}")
+    client.close()
+
+
+asyncio.run(main())
+```
+
+## After the rollout: hide, then drop, the indexes this release no longer declares
+
+Startup no longer creates `findings` `project_id_1_finding_id_1_created_at_-1` (10.7 MiB per member on a large installation) and `type_1_scan_created_at_1` (253.5 MiB), nor `scans` `created_at_-1`, `original_scan_id_1`, `pipeline_id_1`, `project_id_1_branch_1_created_at_-1` and `project_id_1_created_at_-1` (6 MiB together). The new indexes serve their reads, and nothing reads `pipeline_id_1`. They stay until removed. Hide them once every pod runs this release, since 1.9.59 and 1.9.60 pods hint the first one on every persist that stores vulnerability findings, and drop them after a few days that include your busiest reporting time; `step = "unhide"` undoes a hide without a rebuild.
+
+`type_1_scan_created_at_1` serves reports outside the app that read `findings` by `type` and `scan_created_at` without naming a scan, such as Metabase questions that count EPSS or KEV over every retained copy. Rewrite those first and leave the index out of the list until then; hidden, it turns them into collection scans over every finding.
+
+```js
+const step = "hide"
+const drops = {
+  findings: ["project_id_1_finding_id_1_created_at_-1", "type_1_scan_created_at_1"],
+  scans: ["created_at_-1", "original_scan_id_1", "pipeline_id_1", "project_id_1_branch_1_created_at_-1", "project_id_1_created_at_-1"],
+}
+if (!["hide", "drop", "unhide"].includes(step)) throw new Error(`unknown step ${step}`)
+for (const [coll, names] of Object.entries(drops)) {
+  const present = new Set(db.getCollection(coll).getIndexes().map((i) => i.name))
+  for (const name of names) {
+    if (!present.has(name)) { print(`absent ${coll}.${name}`); continue }
+    if (step === "drop") db.getCollection(coll).dropIndex(name)
+    else db.runCommand({ collMod: coll, index: { name, hidden: step === "hide" } })
+    print(`${step} ${coll}.${name}`)
+  }
+}
+```
+
+Afterwards this keep check, which replaces the one in the 1.9.57 notes, must print only `keep check done`. It reports `type_1_scan_created_at_1` as EXTRA while that index is visible, and the indexes of the 1.9.57 step if that step has not run:
+
+```js
+const keep = {
+  findings: ["scan_id_1_severity_1_type_1_finding_id_1", "scan_id_1_waived_1", "scan_id_1_type_1", "scan_id_1_component_1_version_1", "project_id_1_component_1_type_1_finding_id_1_version_1_first_seen_at_1_scan_created_at_1", "project_id_1_type_1_finding_id_1_created_at_-1", "findings_kev_scan_severity"],
+  dependencies: ["scan_id_1_name_1_version_1_purl_1", "scan_id_1_version_1", "scan_id_1_direct_1", "scan_id_1_purl_1", "scan_id_1_type_1"],
+}
+for (const [coll, names] of Object.entries(keep)) {
+  const indexes = db.getCollection(coll).getIndexes()
+  const present = new Set(indexes.map((i) => i.name))
+  names.filter((n) => !present.has(n)).forEach((n) => print(`MISSING ${coll}.${n}`))
+  indexes.filter((i) => i.hidden && names.includes(i.name)).forEach((i) => print(`HIDDEN ${coll}.${i.name}`))
+  indexes.filter((i) => !i.hidden && i.name !== "_id_" && !names.includes(i.name)).forEach((i) => print(`EXTRA ${coll}.${i.name}`))
+}
+print("keep check done")
+```
+
+## After the rollout
+
+- Where the nightly update-frequency reconcile is enabled (`UPDATE_FREQUENCY_RECONCILE_ENABLED` / `backend.env.updateFrequencyReconcileEnabled`, off by default), its first run re-derives every error delta of a usable scan in its 90-day window, within the 500 repairs a night it shares with the other repair kinds, and counts them under `update_frequency_reconcile_drift_total{kind="error"}`. `db.scan_update_deltas.countDocuments({ error: { $nin: [null, ""] }, scan_created_at: { $gte: new Date(Date.now() - 90 * 864e5) } })` estimates the batch.
+- Project API keys are stored as a SHA-256 digest from now on; each argon2 key is rewritten the first time it is used, and `db.projects.countDocuments({ api_key_hash: /^\$argon2/ })` shows how many are left.
+- Scanner 1.3.3 ships with this backend, and both pipeline examples pin it. Switch pipelines after the deploy, with the hash from `/api/v1/scripts/scanner.sh/hash?v=1.3.3`.
+- A rescan that was in flight across the deploy can list its SAST, secret or IaC results twice; its next rescan clears this.
+- The 1.9.42 snippet that gives stuck rescans their reachability now imports `run_pending_reachability_for_scan` from `app.services.stats`.
+
+## After the rollout (optional): reopen the scans the retry ceiling failed
+
+A scan that keeps receiving new input past the retry ceiling now stays pending, and the stale-scan loop analyses it once its results stop arriving. 1.9.59 and 1.9.60 failed such scans with "Analysis failed after N retry attempts: new input kept arriving or an SBOM failed to load". This reopens the ones failed in the last 30 days; widen `since` to reach older ones. Each reopened scan is announced again when its analysis finishes (notifications, webhooks, merge request comments), and each pod queues up to `WORKER_COUNT` of them every 10 seconds while its queue holds fewer jobs than workers:
+
+```js
+const apply = false
+const since = new Date(Date.now() - 30 * 864e5)
+const ceiling = { status: "failed", completed_at: { $gte: since }, error: { $regex: "^Analysis failed after \\d+ retry attempts: new input kept arriving or an SBOM failed to load$" } }
+print(`scans to reopen: ${db.scans.countDocuments(ceiling)}`)
+if (apply) print(`reopened: ${db.scans.updateMany(ceiling, { $set: { status: "pending", retry_count: 0, stuck_retry_count: 0 } }).modifiedCount}`)
+```
+
+## After the rollout (optional): remove dead leftovers
+
+Nothing in this release reads or writes the `username`, `inherited_from` and `effective_role` keys stored on project members; every read derives them afresh. Rewrite external reports that read them first. The update reads the whole `projects` collection, so run it in a quiet hour; the dry run prints the count:
+
+```js
+const apply = false
+const filter = { $or: [{ "members.username": { $exists: true } }, { "members.inherited_from": { $exists: true } }, { "members.effective_role": { $exists: true } }] }
+const n = db.projects.countDocuments(filter)
+if (apply && n) print(`projects: cleaned ${db.projects.updateMany(filter, { $unset: { "members.$[].username": "", "members.$[].inherited_from": "", "members.$[].effective_role": "" } }).modifiedCount}`)
+else print(`projects: ${n} to clean`)
+```
+
+## Rolling back to 1.9.60 or 1.9.59
+
+- While any of the seven indexes is hidden, run the loop with `const step = "unhide"` before rolling back. The startup of both releases declares all seven, and `createIndexes` refuses a hidden index of the same name (`IndexOptionsConflict`, code 85), so their pods never start.
+- After the drop, either release builds all seven during startup. Two of them, `type_1_scan_created_at_1` and the partial `project_id_1_finding_id_1_created_at_-1`, read every finding, and its pods are restarted before the builds finish. Build them first, and roll back once `db.currentOp({ "command.createIndexes": { $exists: true } }).inprog` is empty:
+
+  ```js
+  db.runCommand({ createIndexes: "findings", indexes: [
+    { key: { type: 1, scan_created_at: 1 }, name: "type_1_scan_created_at_1" },
+    { key: { project_id: 1, finding_id: 1, created_at: -1 }, name: "project_id_1_finding_id_1_created_at_-1", partialFilterExpression: { type: "vulnerability" } },
+  ] })
+  db.scans.createIndexes([{ created_at: -1 }, { original_scan_id: 1 }, { pipeline_id: 1 }, { project_id: 1, branch: 1, created_at: -1 }, { project_id: 1, created_at: -1 }])
+  ```
+
+- The new indexes can stay: both releases start with them (their scan lists even use them).
+- Project API keys that this release issued, rotated or verified are stored as a SHA-256 digest, which neither release can read, so their ingest answers them with a server error. `db.projects.countDocuments({ api_key_hash: { $type: "string", $not: /^\$argon2/ } })` counts them; rotate these keys after the rollback. Pipelines that authenticate by OIDC are not affected.
+- If a `keyPrefix` was set to share the archive bucket with other writers or Dependency Control instances, do not run either release against that bucket: its daily orphan reaper lists the whole bucket and deletes every object older than 24 hours that its own archive metadata does not name, which cannot be undone. Before rolling back, point the rolled-back backend at a bucket of its own or turn archiving off (no S3 settings).
+- Before rolling back, remove `LOG_LEVEL`, `WORKER_SHUTDOWN_TIMEOUT_SECONDS` and `S3_KEY_PREFIX` from any `.env` file the backend reads: the settings of both releases refuse a `.env` key they do not read, and the backend does not start. Environment variables, as Helm and compose set them, are not affected.
+- Everything else this release writes stays readable by both, which ignore the new fields and `job_name`: pipelines started after the rollback behave as before, where the last job of a scanner replaces the others; a retried job of a pipeline that ran on 1.9.61 keeps its 1.9.61 result next to the new one.
+
+## Helm
+
+- `archiving.s3.keyPrefix` (`S3_KEY_PREFIX`, empty by default) puts new archive bundles under a prefix, for a bucket shared with other writers or Dependency Control instances, and the orphan reaper deletes only archive bundles under it. Bundles archived before keep their keys and stay restorable through their metadata, but the reaper no longer cleans orphans among them.
+- `WORKER_SHUTDOWN_TIMEOUT_SECONDS` follows `backend.terminationGracePeriodSeconds` minus 5, which is 25 with the default 30, so a longer grace period gives running scans longer to finish on shutdown.
+- `backend.env.maxPodUptimeSeconds: 0` now disables the scheduled restart, and an unset key renders 43200, the app's own default, instead of 86400. Set the key to keep another uptime.
+- `backend.env.logLevel` now takes effect; a values file that sets `DEBUG` gets debug logs, the database driver's, httpcore's and botocore's included (httpx's own logs stay at WARNING). A value Python's logging does not know logs at INFO, as 1.9.59 and 1.9.60 always did, with a warning at startup.
+- The bundled Grafana dashboard plots the housekeeping archive results from `archive_operations_total`, already archived scans included, shows the housekeeping archive failures by reason in a new panel below the batch results, and its worker panel plots the busy workers (`worker_busy_count`) next to the active workers and the queue size.
+
+## Behaviour changes
+
+- Scanner 1.3.3 sends `job_name`, taken from `DEP_CONTROL_JOB_NAME`, else GitLab's `CI_JOB_NAME`. The ingest keeps the results of parallel jobs of one scanner (TruffleHog, OpenGrep, KICS, Bearer) apart by it, and a retried job replaces only its own result; uploads without it behave as before, where the last job replaces the others. A CBOM upload is keyed by it together with the CBOM's tools and target component; without it, by the tools and target component, or by the serialNumber when the CBOM names neither. GitHub Actions sets no name the scanner reads, so give each parallel or matrix job its own `DEP_CONTROL_JOB_NAME`, and set it on CBOM jobs too.
+- Hotspots rank by risk by default, so packages with many low CVEs no longer lead. An impact row counts as overdue, and gets the age boost, once it has been known for the remediation SLA of its most severe live CVE (critical 7, high 30, medium 90 days; low and below have none). The reason names the SLA and comes right after the ransomware, CISA deadline and KEV reasons, so the impact cards show it. During a KEV or EPSS outage, impact and hotspots keep the live data that answered; recommendations keep the scan-time data while KEV is down and apply the live KEV marks over the EPSS stored at scan time while only EPSS is down; all three say so (`threat_intel_unavailable`, additive).
+- Recommendations: the shared-CVE and shared-package cards on a project's recommendations list only that project's items ("of this project"), and `cross_project_issues` counts only those. The Fixable and No Fix tiles count vulnerability findings and add up to the total, a new Crypto Issues tile counts the crypto findings other than key management, and the summary card now says when the advice covers only part of a scan's findings (from the existing `findings_total`). Same-named packages of two ecosystems are listed apart and labelled with their type ("lodash (npm)"), and bundled CVEs are named by their own KEV and EPSS marks.
+- Version cards: version standardization and the version-fragmentation card's "Pin to" recommend the newest version in use that has no known vulnerability; when every version in use is vulnerable they name none (the fragmentation card's `suggestion` is null) and say "No version in use is free of known vulnerabilities". Fragmentation advice names npm/yarn/pnpm, Maven/Gradle and pip commands for those ecosystems, and no commands for others (which were shown the npm commands before). The version-inconsistency card lists a package only when the compared projects hold different sets of its versions, so projects that hold the same versions, nested copies included, are no longer flagged.
+- Recommendation cards: the toxic-dependency card labels its vulnerability factor with the package's worst live severity, CRITICAL when an advisory is in KEV (it read MEDIUM for anything below high), and an EOL package's card first names the supported release to upgrade to. The poorly-maintained card counts only advisories without a fix, the weak-key card quotes the smallest key, and an undated end of life carries no date suffix.
+- Findings: OpenGrep's crypto-misuse findings (`crypto_key_management`) move from the scan's Crypto tab to its SAST tab: they open in the SAST view, count in the SAST Issues tile and count under `sast`, so `?category=crypto` on the scan findings, the `crypto` count of the scan stats and the Crypto slice of the scan chart no longer include them; the crypto analytics still count them. A system warning shows every scanner failure. `GET /projects/scans/{scan_id}/findings/{finding_id}` reads one finding, narrowed by `component` and `version` where an id is shared. An unknown `?category=` on the scan findings answers 422 instead of every finding.
+- Finding details: another hit with the same identity in the same file is kept as an additional location of the first one (SAST, IaC, secrets, crypto key management, `details.additional_locations`), and an IaC finding shows its search key. New Trivy advisories store `cwe_ids` as bare numbers like SAST and IaC (`79`, not `CWE-79`), and reports that match the prefix need to accept both. Trivy's non-numeric CWE markers (`NVD-CWE-noinfo`, `NVD-CWE-Other`) are stored as they are. A secret's `adjusted_risk_score` keeps its value from 1.9.59 and 1.9.60, which `risk_score` now equals.
+- Search and inventory: vulnerability search labels results that are not vulnerabilities; "KEV: yes" keeps only vulnerabilities, and the fix filter, either value, leaves out outdated findings, whose fixed version is only the latest release. Asked to sort by project name, both searches sort by the name instead of the project id. Inventory versions sort by the value of their numbers (9 before 10), the inventory pages carry `size` and `pages`, and the findings CSV titles a partly waived finding by a live CVE and lists the waived ones in a new last column, `waived_cves`.
+- Waivers: editing or deleting a project waiver restamps the project's head at once and copies its stats onto the project, and marking a build released restamps it. A global LIC- or EOL- waiver without a package is accepted, and a lapsing waiver moves only onto a finding no other waiver holds, else it is recorded dormant as `shadowed`.
+- Crypto: DESede and DES-EDE3 count as 3DES only, RSASSA, RSAES and RSA-KEM names as RSA, a bare EC name such as "EC P-256" matches a rule pattern `EC` (EC-DSA and EC-DH still read as ECDSA and ECDH only), and Kyber, Dilithium, Falcon and SPHINCS hybrids count as post-quantum. The CBOM parser reads CycloneDX 1.7 `algorithmFamily` and identity evidence. The CBOMs of one pipeline run add up. An upload that names its `job_name` (scanner 1.3.3 sends it) replaces the earlier upload of the same job, CBOM tools and target component, so a retried job's regenerated CBOM replaces its first one despite a new serialNumber. An upload without `job_name` replaces the earlier upload with the same CBOM tools and target component, so a retried job's regenerated CBOM replaces its first one as in 1.9.59 and 1.9.60, while CBOMs of different target components add up. A CBOM that names neither is keyed by its serialNumber, so a regenerated one adds up with the first upload; upload it with scanner 1.3.3, which sends `job_name` (set `DEP_CONTROL_JOB_NAME` where the CI sets no job name), to have it replace. `assets_stored`, the webhook totals and the notification count that upload's assets.
+- Crypto hotspots: totals count every group ("Showing N of M hotspots" on the table, heatmap, treemap and Top-N chart), and the heatmap shows the 30 projects most entries share. The response names those columns in `heatmap_project_ids`, each hotspot's `project_count` counts its projects, and the response's `projects_total` counts the projects across the items (all three additive). Trends count each project's head analysis per bucket together with its newest CBOM-only upload (a manual one, or a pipeline's on the branches the head is picked from), and "Last seen" moves with rescans.
+- PQC plan: it dates DSA as overdue since 2023-02-03 and moves DH from the 2035 to the 2030 deadline that RSA, ECDSA, EdDSA and ECDH already have (mappings version 2, which changes cached plans and compliance fingerprints once), scores an algorithm as exposed as the certificate or key that names it, so an item can reach "migrate now", and counts occurrences: `asset_count` keeps its name and the column reads "Occurrences". PQC compliance controls name the occurrences and their projects.
+- Update frequency: counts that run over commits say so in the API schema and the tab ("Too few commits", "avg. between N commits"); a window that reaches past the retention period divides the rate by the days retention keeps (`retention_days`, additive, with a notice); a primary branch with fewer than two commits in the window is reported as insufficient data without being walked; where the nightly reconcile is enabled (`UPDATE_FREQUENCY_RECONCILE_ENABLED` / `backend.env.updateFrequencyReconcileEnabled`, off by default), it retries error deltas within the 500 repairs a night it shares with the other repair kinds.
+- Licences: the licence check exempts only what an exception covers in the alternative it chose, a licence listed both bare and with an exception keeps the bare terms, and past the 64-combination bound the licences every alternative requires still reach the conflict check; an expression it cannot parse raises one undeterminable-licence finding instead of being classified by its first licence, and the network-copyleft advice names its licence.
+- SBOM parsing: Trivy's rustbinary, dotnet-core and uv root packages and a Maven project's own modules are skipped as the project, a Trivy lock-file node without a dependency graph reports its packages as derived direct, an SPDX 2.2 image is recognised by its oci or docker purl, and a purl-less Maven package without a group gets a generic purl and the generic type in the inventory. A CycloneDX npm component without a purl is named with its scope (`@angular/core`, not `core`) from its next analysis on, so waivers that name the bare package need the scoped name. A Syft or SPDX dependency edge with a non-string endpoint is skipped instead of inventing a root; the scan completes with errors ("N dependency relationship(s) skipped in K of M SBOMs") and gets a system warning that names the SBOM and the number of skipped relationships (an ad-hoc run lists it among the input's defects); a CycloneDX `dependencies` entry like that still fails the SBOM, as before. SBOM hash algorithms whose names, without hyphens, are not plain letters and digits (such as a `$`-key), and CBOM property names starting with `$`, are no longer stored.
+- Versions and advisories: an RPM counts as a distribution rebuild only when its vendor is a distribution's, so vendor RPMs get the normal severity and upgrade advice. Version ordering treats pre and preview like rc, ranks an apk `-r` revision below a version suffix and orders Go pseudo-versions by their timestamp. Grype findings take CVSS and description only from the NVD record of their own CVE, so a score or text borrowed from another CVE changes on re-analysis.
+- Ingest routes: `/ingest/bearer` stores a report with an unreadable entry instead of answering 500 after storing it, and an entry without a rule id stays a `BEARER-unknown-…` finding. An unreadable OpenGrep or Bearer entry no longer fails the whole result, and an unreadable Trivy, Grype or OSV entry no longer disappears silently: the readable entries stay findings, the scan gets the system warning "Scanner '<name>' returned partial results: skipped N unreadable entries" and completes with errors, and ad-hoc runs list the input as partial coverage under `analyzers.errored`. `/ingest/opengrep`, `/ingest/kics` and `/ingest/trufflehog` still refuse an upload (422) when an entry fails their schema, as before. The findings ingest response's `findings_count` leaves the scanner-error warning out, as the stats already did. OpenGrep, and KICS queries posted to the ad-hoc analysis, accept a single reference string. A callgraph `format` other than `auto`, `madge` or `generic` gets a 422 listing them, a `generic` one without imports, calls or analysed modules a 400, and every callgraph upload re-runs the lineage's newest run. Generic imports and calls and the analysed-module lists skip relative specifiers (`./utils`, Python `.utils`), so `modules_detected` and the reachability inputs no longer count first-party files. As in 1.9.59 and 1.9.60, scanners 1.3.1 and older never reach the callgraph upload, since their project lookup fails; use 1.3.2 or newer for reachability.
+- Enrichment: `ENRICHMENT_MAX_RETRIES` now counts retries for KEV, EPSS and GHSA, as OSV counts its own fixed 3 retries, so the default of 3 means 4 tries. A rate limit that outlasts the longest backoff is not retried, a GitHub 403 that names a rate limit holds GHSA lookups for a minute, a failed GHSA lookup marks the run partial ("GHSA unavailable"), and a failed KEV refresh keeps the last catalog and retries once a minute. OSV scores CVSS v2 vectors and matches crates.io and SwiftURL entries. The EPSS/KEV results' high-risk card cuts at 56 instead of 70, which a score reaches without KEV, and ships the cut-off as `high_risk_threshold` (results stored before show 70). Their KEV row of an advisory that bundles several CVEs names the CVE that is in KEV instead of the advisory's first CVE.
+- Analyzers: maintainer risk reads mixed-case and shorthand GitHub repositories and judges activity by the default branch's last commit ("Last activity: …"). A malicious verdict with an unknown severity is CRITICAL. Hash verification leaves components from another source unverified instead of flagging them. Typosquatting flags one replaced or swapped letter in popular names of five letters or more and judges a family sibling only on the part after the shared prefix. A secret's `risk_score` depends on verification and the file tree (44 verified, 16 only in history, 40 otherwise).
+- Analysis: a re-analysis whose SBOMs cannot be used keeps the earlier analysis; any other such scan ends FAILED as before and still stores what it could read (the findings of its readable SBOMs, the CI scanner results and the crypto findings, but no dependencies). The crypto analyzers report failed when their assets could not be stored or carried over, and an SBOM that lists only crypto assets skips the vulnerability scanners. A build's failing rescans announce each error once, and a build keeps its newest rescan runs whatever their status. The scheduled rescan rescans head's own tip build, or nothing when that carries no SBOM. An ad-hoc run's EPSS/KEV and reachability summaries count only the vulnerabilities the global waivers leave live, so a waived CVE no longer shows in `kev_matches` or `reachable_total`. Ad-hoc runs send the installation's GitHub token with the GHSA lookups, warm the shared caches of public advisory ids, and their HTML report shows each vulnerability's fixed version and lists live findings first.
+- Archive and housekeeping: an upload to a scan that a restore is writing waits up to 10 seconds for the restore and answers 409 only if it still runs (scanner.sh fails such a job, so re-run it once the restore is done); an upload to what a crashed restore left behind rolls that leftover back and is stored. A restore answers 409 while another one runs or the scan exists, 404 when its archive is gone and 500 otherwise, writes only rows of the requested scan and project, and a scan that a rescan was created from is no longer archived. Archive counts leave out waived findings and scanner errors. The bucket is created only when S3 reports it missing, so a 403 or a connection error shows in the startup warning. A GridFS file that is already gone is skipped with a warning. Retention, the daily sweep, branch sync, the waiver recalculation and the reconcile check each run in their own loop.
+- Compliance reports: CSV reports start with Framework, Generated, Scope, Fingerprint and Coverage lines, after a Disclaimer line where the framework has one, are written as UTF-8 with a byte-order mark, and escape cells a spreadsheet would run as formulas. SARIF reports a waived control as a suppressed result carrying the waiver reasons, lists the evidence in the result properties and carries the app version as `semanticVersion`. Evidence names findings by their finding id, the fingerprint covers the findings a verdict rests on, and the New Report dialog offers only the teams the report gate admits.
+- Notifications: mails, their subjects and the authenticator entry of a new 2FA setup name the instance by its Instance Name (Settings > General); while it is blank or still the default "Dependency Control", they keep the `PROJECT_NAME` setting; existing authenticator entries keep working. A scan notification that completed with errors says so ("Completed with errors (grype): results may be incomplete."), and each `scan.completed` payload carries a `revision`, 1 for the first announcement and one more each time a late result announces the scan again (additive). Team announcements need a team (400), an unknown channel answers 422, a commit-hash version is listed as uncomparable and refused as an advisory's maximum version (422), and golang advisory rules reach `pkg:go` modules.
+- Slack, Mattermost and VCS: a failed Slack install returns to the settings page with a reason, a refused Slack token refresh is retried once a minute, and Mattermost remembers each recipient's DM channel. GitLab decorates the merge request of a merged-results or merge-train pipeline, at one more API call for a commit that names no merge request; GitHub follows a renamed organisation of a bound team. GitLab instances are created as in 1.9.59 and 1.9.60: without an access token unchecked, with one checked through the token. The GitLab Test checks the signing keys (JWKS) first: a token-less instance passes on them instead of failing for its missing token, and fails when they cannot be fetched. With a token, the Test still checks the token and group access and returns the GitLab version when the JWKS cannot be fetched. Its message then starts with "Warning: JWKS endpoint unreachable or returned no signing keys, so OIDC job tokens from this instance fail validation." and it passes when the token checks pass. A passing Test reads "OIDC endpoint reachable. Found N signing key(s).", followed by "The access token authenticates." when a token is set. A GitHub refusal tells an expired or revoked token from a missing scope or a spent budget, and the GitLab group picker caches each listing for a minute.
+- Users and teams: the API key list shows live keys before revoked ones; sending a pending invitation again restarts its seven days; the teams list is no longer cut at 1000; members a team sync owns cannot be edited in the members dialog and say where to change them; a deleted user's project notification overrides go with their memberships; the user update routes (profile, email, password, 2FA and migration) answer `notification_preferences: {}` instead of null for an account that stored none, as `GET /users/me` does.
+- API: `GET /health/cache` needs `system:manage`. With chat disabled, a signed-in caller gets 403 "Chat feature is currently disabled" before any permission check. `GET /ingest/config` reports the retention housekeeping applies: the global value under the global mode, and 0 when nothing would be deleted. Aggregations stop on the server after 29 seconds (`MaxTimeMSExpired`; an API request answers 500), one second before the 30-second socket timeout that ended them before, so mongod no longer keeps working on a read the client has given up; a missing GridFS file answers at once (404 for raw downloads, 410 for reports). The policy audit routes answer "Version N not found" for an unknown version.
+- Projects and releases: `PUT /projects/{project_id}` answers 422 naming any key the update does not accept, instead of ignoring it: typos, the retired `license_policy`, `enforce_notification_settings` (set it through `PUT /projects/{project_id}/notifications`) and the read-only fields of a GET body, so send only the fields you change. A project's branch sync answers 409 when no usable VCS instance is bound (502 stays for an unreachable one). An unversioned release mark keeps the version recorded before; the commit tag names only a first mark.
+- API schemas and ids: the five auth message schemas are one OpenAPI `StatusMessage`, and `Project` and `ProjectMember` are named `ProjectDetail` and `ProjectMemberView` (fields unchanged). New users, teams, waivers, webhooks, releases and most other records get time-ordered 24-character hex ids instead of UUIDs (projects created in the UI or API and scans created by an ingest keep UUIDs; rescans and projects auto-created by a GitLab or GitHub CI ingest get the new hex ids), and new finding rows are keyed `<scan_id>:<hash>`. Existing ids stay valid, so clients and reports that check for the UUID format need to accept both.
+- Chat and MCP: tool results are compact JSON. `top_risky_projects` and `get_hotspots` rank by head-build `risk_score`, which the rows carry; `search_findings` returns the worst matches first; a sampled tier reads "holds more than N findings"; ranked reads stop after 29 seconds; past the scope ceiling, chat refuses with the analytics' scope-too-large text, which names the ceiling. `find_component_usage` counts up to 1000 and flags more with `matches_total_capped`, `get_stale_findings` refuses an unknown `severity_min` and accepts NEGLIGIBLE, INFO and UNKNOWN, the remediation plan labels a step direct or transitive by the finding's installed version, the crypto policy tool lists compact rule rows with one rule in full by `rule_id`, report and policy history lists are bounded with totals, project and scan rows carry their ids, and `list_crypto_assets` returns 15 assets instead of 100 and the PQC plan 20 items instead of 500 by default (a larger limit can still be asked for). Both answers name the full count in `items_total` (additive for the PQC plan), and so does the result cap's truncation note.
+- Image and settings: the backend image sets `MOTOR_MAX_WORKERS=50`, which sizes Motor's thread pool to the connection pool (50) instead of five threads per node CPU, so it rises on nodes with fewer than 10 CPUs and falls on larger ones, for every deployment that runs the image, compose included. `CACHE_DEFAULT_TTL_HOURS` is gone: an environment variable or `.env` entry of that name is ignored, and a `.env` key the backend does not read no longer stops it from starting.
+- Metrics and logs: `archive_operations_total` counts an already archived scan as `skipped` and an escaped error as an `unknown` failure, and `archive_housekeeping_batch_total` and `archive_housekeeping_scans_processed_total` count as before. `worker_active_count` still reports the started workers per pod, and the new `worker_busy_count` the workers busy with a job; `db_connections_active` counts open pool connections summed over pods (expect at least 5 per pod), and the HTTP metrics label unknown methods `OTHER`. `update_frequency_reconcile_drift_total` gains `outcome="failed"` and `kind="error"`, and the reconcile warnings name the kinds by those labels ("resolved 0 missing, 0 stale, 1 error, …"), so saved searches on the old words need updating. A failed database, archive or cache statistics update logs the ERROR "Database statistics failed: …" (or "Archive statistics", "Cache statistics") with its traceback instead of the WARNING "Failed to update database statistics metrics: …", so saved searches on that text need updating too.
+- UI: validation toasts name the refused field ("name: Field required") and keep one line per refusal, while errors shown under their field stay as they were. Long branch, package, project, rule, team and user names stay inside their tables, cards and dialogs (team cards and dialogs, project overview cards and trend legend, archives, update frequency, impact and hotspot tables, recommendation cards, dependency dialog, user details, project members, SAST details), and the recommendation cards' version and project badges keep their width next to a long name; a token-less CI/CD instance of either provider shows "No Token"; the EPSS/KEV high-risk card colours its scores on the hotspot table's risk scale; the scan delta shows a licence move as "from → to"; CWE badges link to MITRE, and NVD's non-numeric markers show without a link; the Archives page says when archive storage is not configured instead of showing a server error; and the impact cards count one project and one finding in the singular.
+
 # Release 1.9.60
 
 ## 📦 Build & CI
