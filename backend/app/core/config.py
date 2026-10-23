@@ -81,7 +81,8 @@ class Settings(BaseSettings):
     # Off until the backfill has run, or the nightly reconcile becomes a backfill stuck at its per-night cap.
     UPDATE_FREQUENCY_RECONCILE_ENABLED: bool = False
 
-    model_config = SettingsConfigDict(case_sensitive=True, env_file=".env")
+    # A .env key no field reads, such as a dropped setting, must not stop the backend from starting.
+    model_config = SettingsConfigDict(case_sensitive=True, env_file=".env", extra="ignore")
 
 
 settings = Settings()

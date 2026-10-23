@@ -194,6 +194,14 @@ class TestSettingsConfig:
         config = Settings.model_config
         assert config.get("case_sensitive") is True
 
+    def test_a_dotenv_file_that_still_sets_a_dropped_setting_loads(self, tmp_path):
+        from app.core.config import Settings
+
+        dotenv = tmp_path / ".env"
+        dotenv.write_text("SECRET_KEY=s3cret\nCACHE_DEFAULT_TTL_HOURS=24\nWORKER_COUNT=5\n")
+
+        assert Settings(_env_file=dotenv).WORKER_COUNT == 5
+
 
 class TestSystemSettingsConfig:
     def test_empty_analyzers_list_persists(self):
