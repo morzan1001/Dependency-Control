@@ -360,8 +360,8 @@ class TestAnalyzeCrossProjectPatternsPrioritizeProjects:
                     _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
                     _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
                 ],
-                0,
-                id="only-the-listed-projects",
+                1,
+                id="exactly-three-projects",
             ),
             pytest.param(
                 [
@@ -371,8 +371,8 @@ class TestAnalyzeCrossProjectPatternsPrioritizeProjects:
                     _project(project_id="p4", project_name="App4", total_critical=1, total_high=0),
                     _project(project_id="p5", project_name="App5", total_critical=1, total_high=0),
                 ],
-                0,
-                id="the-last-listed-project-does-not-stand-out",
+                1,
+                id="a-listed-project-level-with-the-rest",
             ),
             pytest.param(
                 [

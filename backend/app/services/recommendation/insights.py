@@ -1,5 +1,4 @@
 from collections import defaultdict
-from statistics import median
 from typing import Any
 
 from app.core.constants import CROSS_PROJECT_MIN_OCCURRENCES, max_severity
@@ -289,14 +288,10 @@ def _weighted_findings(project: dict[str, Any]) -> int:
 
 
 def _most_affected_projects_card(projects: list[dict[str, Any]]) -> Recommendation | None:
-    # The card claims its projects stand out, so it needs others to stand out from.
-    if len(projects) <= _TOP_PROJECTS:
+    if len(projects) < _TOP_PROJECTS:
         return None
-    ranked = sorted(projects, key=_weighted_findings, reverse=True)
-    top_problematic, rest = ranked[:_TOP_PROJECTS], ranked[_TOP_PROJECTS:]
+    top_problematic = sorted(projects, key=_weighted_findings, reverse=True)[:_TOP_PROJECTS]
     if not any(p["total_critical"] > _TOP_PROJECT_CRITICAL_GATE for p in top_problematic):
-        return None
-    if _weighted_findings(top_problematic[-1]) <= median(map(_weighted_findings, rest)):
         return None
 
     return recommend(
