@@ -151,7 +151,7 @@ async def test_a_vulnerability_finding_over_16_mib_is_stored_with_slim_advisorie
     stored = await db.findings.find_one({"_id": record["_id"]})
     entries = stored["details"]["vulnerabilities"]
     assert persisted == 1
-    assert _partial_run_reasons([], 0, 0, 1, persisted, 1) == []
+    assert _partial_run_reasons([], 0, 0, [], 1, persisted, 1) == []
     assert [e["id"] for e in entries] == cves
     assert all(e["severity"] == advisory["severity"] and e["fixed_version"] == "0.23.0" for e in entries)
     assert not [e for e in entries if {"description", "references", "details"} & e.keys()]

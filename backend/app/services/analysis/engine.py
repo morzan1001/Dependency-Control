@@ -395,8 +395,6 @@ async def _process_sbom(
     if parsed_sbom is not None and parsed_sbom.skipped_relationships:
         skipped = SKIPPED_RELATIONSHIPS.format(count=parsed_sbom.skipped_relationships)
         aggregator.add_scan_error("system", f"{sbom.label}: {skipped}", partial=True, source=sbom.source)
-        # Not through _account, which would add the SCAN-ERROR above a second time.
-        outcomes.append(AnalyzerOutcome("system", OutcomeStatus.PARTIAL, skipped))
     if parsed_sbom is not None and parsed_sbom.crypto_assets:
         try:
             await _persist_embedded_crypto_assets(parsed_sbom, ctx.project_id, ctx.scan_id, ctx.db)
@@ -812,6 +810,7 @@ def _partial_run_reasons(
     failed_analyzers: list[str],
     sbom_load_failures: int,
     sbom_parse_failures: int,
+    skipped_relationships: list[int],
     sboms_expected: int,
     persisted_findings_count: int,
     total_findings_count: int,
@@ -824,6 +823,11 @@ def _partial_run_reasons(
     if sbom_parse_failures:
         reasons.append(
             f"{sbom_parse_failures} of {sboms_expected} SBOMs failed to parse; dependency inventory left unchanged"
+        )
+    if skipped_relationships:
+        reasons.append(
+            f"{sum(skipped_relationships)} dependency relationship(s) skipped in "
+            f"{len(skipped_relationships)} of {sboms_expected} SBOMs"
         )
     if persisted_findings_count < total_findings_count:
         reasons.append(f"only {persisted_findings_count} of {total_findings_count} findings were persisted")
@@ -940,6 +944,7 @@ async def run_analysis(
 
     payload, sbom_load_failures, outcomes = await _analyse_sboms(ctx, fs, stored_ids, aggregator)
     sbom_parse_failures = payload.count(None) - sbom_load_failures
+    skipped_relationships = [p.skipped_relationships for p in payload if p is not None and p.skipped_relationships]
 
     # A rescan has no stored inventory to fall back on, so a partial payload would leave it without one.
     sboms_unusable = (scan_doc.is_rescan and sbom_load_failures + sbom_parse_failures > 0) or (
@@ -1004,6 +1009,7 @@ async def run_analysis(
         failed_analyzers,
         sbom_load_failures,
         sbom_parse_failures,
+        skipped_relationships,
         len(stored_ids),
         persisted_findings_count,
         total_findings_count,
