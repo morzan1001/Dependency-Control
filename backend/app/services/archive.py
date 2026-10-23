@@ -41,7 +41,6 @@ from app.core.metrics import (
     archive_housekeeping_scans_processed_total,
     archive_operation_duration_seconds,
     archive_operations_total,
-    archive_orphan_objects_reaped_total,
     count_archive_failure,
 )
 from app.core.s3 import (
@@ -901,7 +900,6 @@ async def _reap_orphan_page(db: Any, page: list[dict[str, Any]], bundle_key: re.
         try:
             await delete_object(key)
             deleted += 1
-            archive_orphan_objects_reaped_total.inc()
             archive_housekeeping_scans_processed_total.labels(status="orphan_reaped").inc()
             logger.info("Reaped orphan S3 object: %s", key)
         except Exception as e:

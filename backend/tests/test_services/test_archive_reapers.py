@@ -76,10 +76,9 @@ async def test_reap_orphan_s3_objects_deletes_only_old_unknown_bundles(monkeypat
 
 @pytest.mark.asyncio
 async def test_each_reaped_orphan_bundle_is_counted_as_one(monkeypatch):
-    def counted() -> tuple[float, float]:
+    def counted() -> float:
         return (
-            REGISTRY.get_sample_value("archive_orphan_objects_reaped_total") or 0.0,
-            REGISTRY.get_sample_value("archive_housekeeping_scans_processed_total", {"status": "orphan_reaped"}) or 0.0,
+            REGISTRY.get_sample_value("archive_housekeeping_scans_processed_total", {"status": "orphan_reaped"}) or 0.0
         )
 
     before = counted()
@@ -90,7 +89,7 @@ async def test_each_reaped_orphan_bundle_is_counted_as_one(monkeypatch):
         [("p1/scan-a-1700000000.bundle", _OLD), ("p1/scan-b-1700000000.bundle", _OLD)],
     )
 
-    assert [after - start for after, start in zip(counted(), before, strict=True)] == [reaped, reaped] == [2, 2]
+    assert counted() - before == reaped == 2
 
 
 @pytest.mark.asyncio

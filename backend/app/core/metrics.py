@@ -344,11 +344,6 @@ archive_stored_bytes_total = Gauge(
     "Total compressed bytes stored across all archives in S3",
 )
 
-archive_orphan_objects_reaped_total = Counter(
-    "archive_orphan_objects_reaped_total",
-    "Archive bundles in S3 that no archive metadata names, deleted by the orphan reaper.",
-)
-
 archive_housekeeping_batch_total = Counter(
     "archive_housekeeping_batch_total",
     "Housekeeping archive batches by outcome.",
