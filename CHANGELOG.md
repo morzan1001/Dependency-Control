@@ -1,3 +1,38 @@
+# Release 1.9.61
+
+## 🐛 Fixes
+
+- fix(crypto): say on the hotspot treemap when the page cuts hotspots, like the table and heatmap (#0)
+- fix(analyzers): colour the high-risk card's scores on the risk scale the hotspot table uses (#0)
+- fix(crypto): give each heatmap cut note its own line without a closing period, like the other three hotspot views (#0)
+- fix(findings): show a scanner failure's description once, in its banner, like the other self-describing views (#0)
+- fix(teams): keep a long team name and description inside the team card (#0)
+- fix(archives): say archive storage is not configured instead of asking the server and toasting its 501 (#0)
+- fix(teams): let a team card shrink to the phone layout's single column, like a project card (#0)
+
+## 🧪 Tests
+
+- test(init-db): admit the scan/type dependencies index to the declared set (analytics-28, R1-S14-P1) (#0)
+- test(init-db): pin waived as the last key of the per-severity findings index (analytics-29, R1-S14-P5) (#0)
+- test(analytics): pin that a waived advisory's fix never raises the listed fix version (final-12, POOL-140) (#0)
+- test(models): hold CryptoPolicy to the inherited MongoDocument id (final-18, R1-S13-C31) (#0)
+- test(releases): read the two release rows' ids as generated ObjectIds (final-24, R1-S13-R3P1) (#0)
+- test(aggregation): the Maven scorecard fixtures carry Maven purls (final-49, POOL-349) (#0)
+- test(eol): compute the severity test's dates when it runs, not at collection (final-50, POOL-286) (#0)
+- test(maintainer-risk): a scoped npm name reaches the registry with its slash encoded (final-51, POOL-272) (#0)
+- test(github): the team API's cache fixture extends the shared fake_cache (final-53, POOL-260) (#0)
+- test(license): pin AND-over-OR precedence and whitespace-only input in the expression parser (final-54, POOL-376) (#0)
+- test(sbom): name the per-format directness test after what it asserts (final-55, POOL-319) (#0)
+- test(sbom): a CycloneDX component hash beats a distribution hash of the same algorithm (final-56, POOL-310) (#0)
+- test(chat): drop the tool-definition check that compared TOOL_DEFINITIONS with itself (final-57, R1-S27-R2C3) (#0)
+- test(teams): render the long-name team card through renderCard (#0)
+
+## 📦 Build & CI
+
+- chore(release): 1.9.61 ranks hotspots by risk, measures overdue against the remediation SLA, brands mails with the instance name, keeps parallel scanner jobs apart with scanner 1.3.3, serves the scan, archive and release lists and the findings persist from new indexes and fixes several hundred audit findings across the backend and the UI (#0)
+
+
+
 # Upgrade notes
 
 These notes cover the upgrade from 1.9.59 or 1.9.60, which changed only the UI and left the backend, its indexes, settings and data as 1.9.59 had them, so both take the same steps. Run mongosh commands in-pod on the primary against the application database. Run Python snippets in a backend pod from the directory where `app` imports, first as a dry run (`kubectl exec -i <backend-pod> -- python - < job.py`), then with `env APPLY=1` in front of `python`.
