@@ -80,8 +80,10 @@ class SystemSettings(SystemSettingsFields):
 
     @property
     def brand(self) -> str:
-        """What mails and authenticator apps call this instance; a blank Instance Name falls back to PROJECT_NAME."""
-        return self.instance_name.strip() or settings.PROJECT_NAME
+        """What mails and authenticator apps call this instance; an unedited or blank Instance Name yields PROJECT_NAME."""
+        name = self.instance_name.strip()
+        unedited = name == SystemSettingsFields.model_fields["instance_name"].default
+        return name if name and not unedited else settings.PROJECT_NAME
 
     @property
     def email_configured(self) -> bool:

@@ -7,6 +7,7 @@ import pytest
 import qrcode
 
 from app.api.v1.endpoints import users
+from app.core.config import settings
 from app.models.user import User
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -37,10 +38,7 @@ async def test_the_qr_code_is_rendered_off_the_event_loop():
     assert base64.b64decode(result["qr_code"]).startswith(b"\x89PNG")
 
 
-@pytest.mark.asyncio
-async def test_the_authenticator_entry_is_issued_by_the_instance_name():
-    db = FakeDatabase()
-    await db.system_settings.insert_one({"_id": "current", "instance_name": "Acme Deps"})
+async def _issued_uri(db: FakeDatabase) -> str:
     encoded = []
     real_make = qrcode.make
 
@@ -52,5 +50,26 @@ async def test_the_authenticator_entry_is_issued_by_the_instance_name():
         await _setup(db)
 
     [uri] = encoded
+    return uri
+
+
+@pytest.mark.asyncio
+async def test_the_authenticator_entry_is_issued_by_the_instance_name():
+    db = FakeDatabase()
+    await db.system_settings.insert_one({"_id": "current", "instance_name": "Acme Deps"})
+
+    uri = await _issued_uri(db)
+
     assert parse_qs(urlparse(uri).query)["issuer"] == ["Acme Deps"]
     assert urlparse(uri).path == "/Acme%20Deps:alice%40corp.example"
+
+
+@pytest.mark.asyncio
+async def test_the_authenticator_entry_is_issued_by_the_deployment_name_while_the_instance_name_keeps_its_default(
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "PROJECT_NAME", "ACME Security")
+
+    uri = await _issued_uri(FakeDatabase())
+
+    assert parse_qs(urlparse(uri).query)["issuer"] == ["ACME Security"]

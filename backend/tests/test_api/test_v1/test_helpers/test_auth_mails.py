@@ -59,3 +59,18 @@ def test_a_blank_instance_name_falls_back_to_the_deployment_name(instance_name):
 
     assert mail["subject"] == f"Invitation to join {settings.PROJECT_NAME}"
     assert f"<h1>{settings.PROJECT_NAME}</h1>" in mail["html_message"]
+
+
+def test_the_deployment_name_brands_the_mails_while_the_instance_name_keeps_its_default(monkeypatch):
+    monkeypatch.setattr(settings, "PROJECT_NAME", "ACME Security")
+
+    mail = _queued("invitation", SystemSettings().instance_name)
+
+    assert mail["subject"] == "Invitation to join ACME Security"
+    assert "<h1>ACME Security</h1>" in mail["html_message"]
+
+
+def test_an_edited_instance_name_brands_the_mails_over_the_deployment_name(monkeypatch):
+    monkeypatch.setattr(settings, "PROJECT_NAME", "ACME Security")
+
+    assert _queued("invitation", _BRAND)["subject"] == f"Invitation to join {_BRAND}"
