@@ -27,7 +27,7 @@ export function Recommendations() {
             <ProjectCombobox
               value={selectedProjectId}
               onValueChange={setSelectedProjectId}
-              className="w-[350px]"
+              className="w-full sm:w-[350px]"
             />
           </div>
         </CardContent>

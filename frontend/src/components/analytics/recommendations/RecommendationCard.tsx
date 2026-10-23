@@ -69,7 +69,7 @@ function ActionSection({ icon: Icon, iconClassName, title, bodyClassName = 'spac
         <Icon className={cn("h-4 w-4", iconClassName)} />
         {title}
       </h5>
-      <div className={cn("bg-muted rounded-lg p-3 text-sm", bodyClassName)}>
+      <div className={cn("bg-muted rounded-lg p-3 text-sm wrap-anywhere", bodyClassName)}>
         {children}
       </div>
       {footer}

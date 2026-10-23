@@ -98,7 +98,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
         {!isLoading && results && results.length > 0 && (
           <div className="space-y-4">
             <ThreatIntelNote sources={results.flatMap((r) => r.threat_intel_unavailable ?? [])} />
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               {results.slice(0, 3).map((r, index) => {
                 let borderClass = 'border-yellow-500 border-2'
                 if (index === 0) borderClass = 'border-red-500 border-2'

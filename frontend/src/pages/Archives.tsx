@@ -86,7 +86,7 @@ export default function ArchivesPage() {
                   <div className="flex min-w-0 items-center gap-2">
                     <Link
                       to={`/projects/${archive.project_id}`}
-                      className="truncate text-sm font-medium text-primary hover:underline"
+                      className="wrap-anywhere text-sm font-medium text-primary hover:underline"
                     >
                       {projectName(archive)}
                     </Link>
