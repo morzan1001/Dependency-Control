@@ -20,7 +20,6 @@ from app.core.metrics import cbom_ingests_total
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.cbom import CBOMIngest, ParsedCryptoAsset
-from app.services.analysis.runner import sbom_name
 from app.services.cbom_parser import flatten_cyclonedx_components, parse_cbom
 from app.services.notifications.service import safe_notify_project_event
 from app.services.scan_manager import ScanManager
@@ -111,14 +110,14 @@ async def ingest_cbom(
 def _cbom_source(payload: CBOMIngest) -> str | None:
     """A retried job regenerates its CBOM under a new serialNumber; its job name, tools and target stay."""
     cbom = payload.cbom
-    if not payload.job_name:
-        serial = cbom.get("serialNumber")
-        return str(serial) if serial else sbom_name(cbom)
     metadata = cbom.get("metadata")
     metadata = metadata if isinstance(metadata, dict) else {}
     tools = metadata.get("tools")
-    # CycloneDX 1.5 nests the tools under "components"; 1.4 lists them directly.
-    tools = tools.get("components") if isinstance(tools, dict) else tools
+    # CycloneDX 1.5+ groups the tools into "components" and "services"; 1.4 lists them directly.
+    if isinstance(tools, dict):
+        tools = [
+            tool for group in ("components", "services") if isinstance(tools.get(group), list) for tool in tools[group]
+        ]
     tool_names = (
         sorted({str(t["name"]) for t in tools if isinstance(t, dict) and t.get("name")})
         if isinstance(tools, list)
@@ -126,7 +125,10 @@ def _cbom_source(payload: CBOMIngest) -> str | None:
     )
     target = metadata.get("component")
     target_name = target.get("name") if isinstance(target, dict) else None
-    return "\n".join([payload.job_name, *tool_names, str(target_name or "")])
+    if not (payload.job_name or tool_names or target_name):
+        serial = cbom.get("serialNumber")
+        return str(serial) if serial else None
+    return "\n".join([payload.job_name or "", *tool_names, str(target_name or "")])
 
 
 async def _store_crypto_assets(

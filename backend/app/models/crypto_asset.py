@@ -97,6 +97,6 @@ class CryptoAsset(MongoDocument, CreatedAtModel, CryptoAssetFields):
     )
     cbom_source: str | None = Field(
         None,
-        description="The upload's CI job name with the CBOM's tools and target, else the CBOM's serialNumber, "
-        "else its metadata.component name",
+        description="The upload's CI job name with the CBOM's tools and target component, "
+        "else the CBOM's serialNumber when it names none of them",
     )

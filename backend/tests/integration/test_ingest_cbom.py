@@ -360,6 +360,78 @@ async def test_cboms_of_different_jobs_or_targets_add_up(client, db, api_key_hea
     assert sorted(a["bom_ref"] for a in stored) == sorted(kept)
 
 
+_TOOLS_1_6 = _load("cbomkit_theia_run_a.json")["metadata"]["tools"]
+
+
+def _old_scanner_cbom(fixture: str, serial: str, metadata: dict) -> dict:
+    return {**_load(fixture), "serialNumber": f"urn:uuid:{serial}", "metadata": metadata}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"tools": _TOOLS_1_6},
+        {"tools": _TOOLS_1_5},
+        {"tools": _TOOLS_1_4},
+        {"component": {"name": "shop"}},
+        {"tools": _TOOLS_1_6, "component": {"name": "shop"}},
+    ],
+    ids=[
+        "cyclonedx-1.6-tool-services",
+        "cyclonedx-1.5-tools",
+        "cyclonedx-1.4-tools",
+        "target-only",
+        "tools-and-target",
+    ],
+)
+async def test_a_retried_cbom_without_a_job_name_replaces_the_first_despite_a_new_serial_number(
+    client, db, api_key_headers, metadata
+):
+    pipeline = {"pipeline_id": 21, "commit_hash": "abc123", "branch": "main"}
+    first = _old_scanner_cbom("legacy_crypto_mixed.json", "first-run", metadata)
+    await client.post("/api/v1/ingest/cbom", json={**pipeline, "cbom": first}, headers=api_key_headers)
+
+    retry_cbom = _old_scanner_cbom("modern_crypto.json", "retried-run", metadata)
+    retry = await client.post("/api/v1/ingest/cbom", json={**pipeline, "cbom": retry_cbom}, headers=api_key_headers)
+
+    assert retry.status_code == 202, retry.text
+    stored = await db.crypto_assets.find({"scan_id": retry.json()["scan_id"]}).to_list(None)
+    assert sorted(a["bom_ref"] for a in stored) == sorted(content_ref(c) for c in retry_cbom["components"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_cboms_of_different_targets_without_a_job_name_add_up(client, db, api_key_headers):
+    pipeline = {"pipeline_id": 22, "commit_hash": "abc123", "branch": "main"}
+    service = _old_scanner_cbom(
+        "legacy_crypto_mixed.json", "service", {"tools": _TOOLS_1_6, "component": {"name": "shop"}}
+    )
+    library = _old_scanner_cbom(
+        "modern_crypto.json", "library", {"tools": _TOOLS_1_6, "component": {"name": "library"}}
+    )
+    await client.post("/api/v1/ingest/cbom", json={**pipeline, "cbom": service}, headers=api_key_headers)
+    second = await client.post("/api/v1/ingest/cbom", json={**pipeline, "cbom": library}, headers=api_key_headers)
+
+    stored = await db.crypto_assets.find({"scan_id": second.json()["scan_id"]}).to_list(None)
+    kept = [content_ref(c) for c in (*service["components"], *library["components"])]
+    assert sorted(a["bom_ref"] for a in stored) == sorted(kept)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_manual_upload_of_a_cbomkit_theia_cbom_is_stored(client, db, api_key_headers):
+    from app.services.cbom_parser import parse_cbom
+
+    cbom = _load("cbomkit_theia_run_a.json")
+    resp = await client.post("/api/v1/ingest/cbom", json={"cbom": cbom}, headers=api_key_headers)
+
+    assert resp.status_code == 202, resp.text
+    stored = await db.crypto_assets.count_documents({"scan_id": resp.json()["scan_id"]})
+    assert stored == resp.json()["assets_stored"] == len({a.bom_ref for a in parse_cbom(cbom)})
+
+
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_an_earlier_upload_finishing_last_keeps_the_later_uploads_assets(db):
