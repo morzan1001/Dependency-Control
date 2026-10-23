@@ -1,3 +1,11 @@
+# Release 1.9.62
+
+## 📦 Build & CI
+
+- chore(release): 1.9.62 puts the analytics release switch on the title row with the coverage caption in the shared notice, and keeps select chevrons at full size with long values cut by an ellipsis (#0)
+
+
+
 # Release 1.9.61
 
 ## 🐛 Fixes
