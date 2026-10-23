@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter, useSearchParams } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -200,3 +200,14 @@ describe('Analytics compliance reports', () => {
   })
 })
 
+describe('Analytics page header', () => {
+  // Projects and Global Waivers keep their page-wide controls on the title row; the analytics switch follows them.
+  it('keeps the release switch on the title row, apart from the tabs', () => {
+    renderPage()
+
+    const titleRow = screen.getByRole('heading', { name: 'Analytics' }).parentElement?.parentElement as HTMLElement
+
+    expect(within(titleRow).getByLabelText(SCOPE_LABEL)).toBeInTheDocument()
+    expect(within(titleRow).queryByRole('tablist')).not.toBeInTheDocument()
+  })
+})

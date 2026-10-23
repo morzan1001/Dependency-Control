@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
-import { AnalyticsScopeControl } from '../AnalyticsScopeControl'
+import { AnalyticsScopeNotes, AnalyticsScopeSelect } from '../AnalyticsScopeControl'
 import { formatDate } from '@/lib/utils'
 import type { AnalyticsScope } from '@/types/analytics'
 
@@ -42,11 +42,10 @@ function renderControl(
   mockUseAnalyticsScope.mockReturnValue({ data: scope })
   const onChange = vi.fn()
   render(
-    <AnalyticsScopeControl
-      releaseEnvironment={releaseEnvironment}
-      onChange={onChange}
-      headOnlyTab={headOnlyTab}
-    />,
+    <>
+      <AnalyticsScopeSelect releaseEnvironment={releaseEnvironment} onChange={onChange} headOnlyTab={headOnlyTab} />
+      <AnalyticsScopeNotes releaseEnvironment={releaseEnvironment} headOnlyTab={headOnlyTab} />
+    </>,
   )
   return { onChange }
 }
@@ -182,5 +181,25 @@ describe('AnalyticsScopeControl as-of caption', () => {
     renderControl(undefined)
 
     expect(screen.queryByText(AS_OF_PATTERN)).not.toBeInTheDocument()
+  })
+})
+
+describe('AnalyticsScopeNotes', () => {
+  afterEach(() => vi.clearAllMocks())
+
+  it('shows the coverage caption in the blue notice box', () => {
+    renderControl(base)
+
+    expect(screen.getByText(/contributed no scan/)).toHaveClass('border-blue-400', 'bg-blue-50')
+  })
+
+  it('renders nothing when there is nothing to say', () => {
+    mockUseAnalyticsScope.mockReturnValue({
+      data: { ...base, projects_without_release: NONE_MISSING, oldest_analysis_at: NO_SCAN_RESOLVED },
+    })
+
+    const { container } = render(<AnalyticsScopeNotes releaseEnvironment={HEAD_MODE} />)
+
+    expect(container).toBeEmptyDOMElement()
   })
 })

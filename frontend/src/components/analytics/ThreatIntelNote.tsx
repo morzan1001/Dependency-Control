@@ -1,17 +1,17 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
-export function Notice({ children, className }: Readonly<{ children: ReactNode; className?: string }>) {
-  return (
-    <div
-      className={cn(
-        'rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200',
-        className,
-      )}
-    >
-      {children}
-    </div>
-  )
+const NOTICE_TONES = {
+  warning: 'border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+  info: 'border-blue-400 bg-blue-50 text-blue-900 dark:bg-blue-950 dark:text-blue-200',
+}
+
+export function Notice({
+  children,
+  className,
+  tone = 'warning',
+}: Readonly<{ children: ReactNode; className?: string; tone?: keyof typeof NOTICE_TONES }>) {
+  return <div className={cn('rounded border p-2 text-xs', NOTICE_TONES[tone], className)}>{children}</div>
 }
 
 interface ThreatIntelNoteProps {

@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AnalyticsSummaryCards, SeverityDistribution, DependencyTypesChart } from '@/components/analytics/AnalyticsSummary'
-import { AnalyticsScopeControl } from '@/components/analytics/AnalyticsScopeControl'
+import { AnalyticsScopeNotes, AnalyticsScopeSelect } from '@/components/analytics/AnalyticsScopeControl'
 import { AnalyticsModeContext } from '@/context/analytics-mode'
 import { DependencyStats } from '@/components/analytics/DependencyStats'
 import { DependencyTree } from '@/components/analytics/DependencyTree'
@@ -81,19 +81,22 @@ export default function AnalyticsPage() {
   return (
     <AnalyticsModeContext.Provider value={scopeEnvironment}>
       <div className="space-y-8">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Analytics</h2>
-          <p className="text-muted-foreground">
-            Analyze dependencies and vulnerabilities across all your projects.
-          </p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-3xl font-bold tracking-tight">Analytics</h2>
+            <p className="text-muted-foreground">
+              Analyze dependencies and vulnerabilities across all your projects.
+            </p>
+          </div>
+          <AnalyticsScopeSelect
+            releaseEnvironment={scopeEnvironment}
+            onChange={setReleaseEnvironment}
+            headOnlyTab={headOnlyTab}
+          />
         </div>
 
         {/* Above the tabs and outside the summary gate, whose permission not every tab implies, so every tab keeps the caption. */}
-        <AnalyticsScopeControl
-          releaseEnvironment={scopeEnvironment}
-          onChange={setReleaseEnvironment}
-          headOnlyTab={headOnlyTab}
-        />
+        <AnalyticsScopeNotes releaseEnvironment={scopeEnvironment} headOnlyTab={headOnlyTab} />
 
         {canViewSummary && <AnalyticsSummaryCards />}
 
