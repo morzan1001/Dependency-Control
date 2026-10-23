@@ -123,9 +123,8 @@ async def _load_scan(db: Any, scan_id: str) -> _ScanRef | None:
 
 async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[str] | None]:
     deps = await load_scan_deps(DependencyRepository(db), scan.scan_id)
-    # An SBOM-less scan is never a predecessor and never folded, so a comparison or outdated set of it would go unread.
-    outdated, failed = await _load_outdated(db, scan.scan_id) if deps else (None, set())
-    prev, prev_deps = await _resolve_predecessor(db, scan) if deps else (None, {})
+    outdated, failed = await _load_outdated(db, scan.scan_id)
+    prev, prev_deps = await _resolve_predecessor(db, scan)
     if prev is None:
         diff = _Diff()
     else:
