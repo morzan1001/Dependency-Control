@@ -341,7 +341,7 @@ class TestCreateInstance:
 
     @pytest.mark.parametrize("jwks", [None, {"keys": []}], ids=["unreachable", "no-keys"])
     def test_an_oidc_only_instance_is_created_without_fetchable_signing_keys(self, admin_user, jwks):
-        """1.9.59 created it; the Test button reports the missing JWKS."""
+        """The Test button reports the missing JWKS."""
         from app.api.v1.endpoints.gitlab_instances import create_instance
 
         mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
@@ -607,7 +607,7 @@ class TestTestConnection:
 
     @pytest.mark.parametrize("jwks", [None, {"keys": []}], ids=["unreachable", "no-keys"])
     def test_a_working_token_passes_with_the_missing_signing_keys_as_a_warning(self, admin_user, jwks):
-        """The token still serves MR decoration and branch and team sync, as the 1.9.59 test reported."""
+        """The token still serves MR decoration and branch and team sync."""
         response = MagicMock(status_code=200)
         response.json.return_value = {"version": "16.5.0"}
         service = _make_gitlab_service_mock(response, jwks=jwks)

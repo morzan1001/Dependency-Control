@@ -260,7 +260,7 @@ def test_a_rule_finding_carries_the_first_twenty_locations_and_the_total():
 
 
 @pytest.mark.parametrize("locations", [0, 3, 20])
-def test_a_rule_finding_listing_every_location_carries_its_count_as_released(locations):
+def test_a_rule_finding_listing_every_location_carries_its_count(locations):
     asset = CryptoAsset(
         project_id="p",
         scan_id="s",
