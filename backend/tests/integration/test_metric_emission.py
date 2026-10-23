@@ -106,7 +106,7 @@ async def test_the_queue_gauge_follows_the_queue(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_the_active_worker_gauge_counts_the_workers_busy_with_a_job(monkeypatch):
+async def test_the_busy_worker_gauge_counts_the_workers_busy_with_a_job_and_the_active_one_the_pool(monkeypatch):
     db = FakeDatabase()
     await db.projects.insert_one({"_id": "proj-1", "active_analyzers": []})
     await db.scans.insert_one({"_id": "scan-1", "project_id": "proj-1", "status": "pending", "sbom_refs": []})
@@ -123,16 +123,17 @@ async def test_the_active_worker_gauge_counts_the_workers_busy_with_a_job(monkey
     manager = AnalysisWorkerManager(num_workers=3)
     await manager.start()
     try:
-        assert _sample("worker_active_count") == 0
+        assert (_sample("worker_busy_count"), _sample("worker_active_count")) == (0, 3)
         await manager.add_job("scan-1")
         await asyncio.wait_for(started.wait(), timeout=5)
-        assert _sample("worker_active_count") == 1
+        assert (_sample("worker_busy_count"), _sample("worker_active_count")) == (1, 3)
         release.set()
         await asyncio.wait_for(manager.queue.join(), timeout=5)
-        assert _sample("worker_active_count") == 0
+        assert (_sample("worker_busy_count"), _sample("worker_active_count")) == (0, 3)
     finally:
         release.set()
         await manager.stop()
+    assert _sample("worker_active_count") == 0
 
 
 @pytest.mark.asyncio

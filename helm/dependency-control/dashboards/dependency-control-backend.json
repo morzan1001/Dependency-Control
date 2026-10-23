@@ -1710,12 +1710,17 @@
           "refId": "A"
         },
         {
-          "expr": "sum(worker_active_count{job=~\".*dependency-control-backend.*\"})",
+          "expr": "sum(worker_busy_count{job=~\".*dependency-control-backend.*\"})",
           "legendFormat": "Busy Workers",
           "refId": "B"
+        },
+        {
+          "expr": "sum(worker_active_count{job=~\".*dependency-control-backend.*\"})",
+          "legendFormat": "Active Workers",
+          "refId": "C"
         }
       ],
-      "title": "Worker Queue & Busy Workers",
+      "title": "Worker Queue, Active & Busy Workers",
       "type": "timeseries"
     },
     {

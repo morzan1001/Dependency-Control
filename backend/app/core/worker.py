@@ -24,6 +24,7 @@ from app.core.constants import (
 from app.core.housekeeping import background_loops
 from app.core.metrics import (
     worker_active_count,
+    worker_busy_count,
     worker_job_duration_seconds,
     worker_jobs_processed_total,
     worker_queue_size,
@@ -130,6 +131,8 @@ class AnalysisWorkerManager:
             task = asyncio.create_task(self.worker(f"worker-{i}"))
             self.workers.append(task)
 
+        worker_active_count.set(self.num_workers)
+
         self.background_tasks = [asyncio.create_task(loop) for loop in background_loops(self)]
         logger.info("Housekeeping loops started.")
 
@@ -144,13 +147,13 @@ class AnalysisWorkerManager:
     def _track_scan(self, scan_id: str) -> None:
         self._active_scans.add(scan_id)
         self._no_active_scans.clear()
-        worker_active_count.set(len(self._active_scans))
+        worker_busy_count.set(len(self._active_scans))
 
     def _untrack_scan(self, scan_id: str) -> None:
         self._active_scans.discard(scan_id)
         if not self._active_scans:
             self._no_active_scans.set()
-        worker_active_count.set(len(self._active_scans))
+        worker_busy_count.set(len(self._active_scans))
 
     async def _await_active_scans(self) -> None:
         if not self._active_scans:
@@ -192,6 +195,7 @@ class AnalysisWorkerManager:
         if self.workers:
             await asyncio.gather(*self.workers, return_exceptions=True)
 
+        worker_active_count.set(0)
         worker_queue_size.set(0)
 
         logger.info("Graceful shutdown complete.")
