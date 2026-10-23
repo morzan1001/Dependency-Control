@@ -476,8 +476,11 @@ class TestDuplicatePackagesCompareEveryPackage:
         [duplicate] = rec.action["duplicates"]
         assert (duplicate["category"], duplicate["found"]) == ("Testing Assertion", ["chai", "expect"])
 
-    def test_jests_expect_beside_the_node_assert_polyfill_is_not_flagged(self):
-        assert analyze_duplicate_packages([_dep("jest"), _dep("expect"), _dep("assert")]) == []
+    def test_jests_expect_beside_the_node_assert_polyfill_is_flagged(self):
+        [rec] = analyze_duplicate_packages([_dep("jest"), _dep("expect"), _dep("assert")])
+
+        [duplicate] = rec.action["duplicates"]
+        assert (duplicate["category"], duplicate["found"]) == ("Testing Assertion", ["expect", "assert"])
 
     def test_two_assertion_libraries_are_flagged(self):
         [rec] = analyze_duplicate_packages([_dep("chai"), _dep("should")])
