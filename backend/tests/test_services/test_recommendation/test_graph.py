@@ -470,10 +470,14 @@ class TestDuplicatePackagesCompareEveryPackage:
 
         assert rec.action["duplicates"][0]["found"] == ["axios", "got"]
 
-    def test_jest_and_node_assertion_helpers_are_not_rival_assertion_libraries(self):
-        deps = [_dep("chai"), _dep("expect"), _dep("assert")]
+    def test_jests_expect_beside_chai_is_flagged(self):
+        [rec] = analyze_duplicate_packages([_dep("jest"), _dep("expect"), _dep("chai")])
 
-        assert analyze_duplicate_packages(deps) == []
+        [duplicate] = rec.action["duplicates"]
+        assert (duplicate["category"], duplicate["found"]) == ("Testing Assertion", ["chai", "expect"])
+
+    def test_jests_expect_beside_the_node_assert_polyfill_is_not_flagged(self):
+        assert analyze_duplicate_packages([_dep("jest"), _dep("expect"), _dep("assert")]) == []
 
     def test_two_assertion_libraries_are_flagged(self):
         [rec] = analyze_duplicate_packages([_dep("chai"), _dep("should")])
