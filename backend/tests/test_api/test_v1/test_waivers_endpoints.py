@@ -225,14 +225,16 @@ class TestCreateWaiverValidatesFindingMatch:
 
     @pytest.mark.parametrize("scope", ["file", "rule"])
     @pytest.mark.parametrize("sent_rule", [None, "unknown"], ids=["rule from the finding", "rule sent by the form"])
-    def test_a_widened_scope_on_a_finding_whose_scanner_named_no_rule_is_rejected(self, admin_user, scope, sent_rule):
-        """Every rule-less finding carries the same placeholder, so the waiver would cover all of them."""
-        from app.api.v1.endpoints.waivers import _MSG_SCOPE_NEEDS_RULE
+    def test_a_widened_scope_on_a_finding_whose_scanner_named_no_rule_widens_to_the_placeholder(
+        self, admin_user, scope, sent_rule
+    ):
+        from app.services.waivers.matching import record_matches, waiver_criteria
 
         db = self._db_with_head_scan()
-        db.findings._docs["ruleless"] = _stored_bearer_finding("BEARER-unknown-src/file.rb-12", "unknown", _HEAD_SCAN)
+        ruleless = _stored_bearer_finding("BEARER-unknown-src/file.rb-12", "unknown", _HEAD_SCAN)
+        db.findings._docs["ruleless"] = ruleless
 
-        exc = _refused(
+        created = _create(
             admin_user,
             db,
             project_id="proj-1",
@@ -242,9 +244,13 @@ class TestCreateWaiverValidatesFindingMatch:
             scope=scope,
             rule_id=sent_rule,
             reason="future",
-        )
+        ).stored
 
-        assert (exc.status_code, exc.detail) == (422, _MSG_SCOPE_NEEDS_RULE)
+        criteria = waiver_criteria(created)
+        assert (created.rule_id, record_matches({**ruleless, "component": "src/file.rb"}, criteria)) == (
+            "unknown",
+            True,
+        )
 
     def test_file_scope_waiver_skips_match_check(self, admin_user):
         db = self._db_with_head_scan()

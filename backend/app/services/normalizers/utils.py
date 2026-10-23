@@ -61,7 +61,6 @@ def safe_get(
     return value if value is not None else default
 
 
-# Rule id of a finding whose scanner named none; every such finding shares it, so it names no rule to widen to.
 UNKNOWN_RULE_ID = "unknown"
 
 
