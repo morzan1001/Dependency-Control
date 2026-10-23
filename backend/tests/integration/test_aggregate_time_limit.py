@@ -1,4 +1,4 @@
-"""mongod aborts a runaway aggregate before the client socket times out, as the driver would resend the read."""
+"""mongod aborts a runaway aggregate just before the client socket times out, as the driver would resend the read."""
 
 import pytest
 
@@ -18,4 +18,5 @@ async def test_a_materialised_aggregate_carries_a_time_limit_below_the_socket_ti
     _, entries = await profiled(db, repo.aggregate([{"$match": {}}]))
 
     sent = [e["command"].get("maxTimeMS") for e in entries if "aggregate" in e.get("command", {})]
-    assert (sent, DEFAULT_MAX_TIME_MS < DEFAULT_SOCKET_TIMEOUT_MS) == ([DEFAULT_MAX_TIME_MS], True)
+    assert sent == [DEFAULT_MAX_TIME_MS]
+    assert DEFAULT_SOCKET_TIMEOUT_MS - 1000 <= DEFAULT_MAX_TIME_MS < DEFAULT_SOCKET_TIMEOUT_MS
