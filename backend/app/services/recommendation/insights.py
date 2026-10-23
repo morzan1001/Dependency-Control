@@ -283,14 +283,12 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
     )
 
 
-def _weighted_findings(project: dict[str, Any]) -> int:
-    return int(project["total_critical"] * _CRITICAL_RANK_WEIGHT + project["total_high"])
-
-
 def _most_affected_projects_card(projects: list[dict[str, Any]]) -> Recommendation | None:
     if len(projects) < _TOP_PROJECTS:
         return None
-    top_problematic = sorted(projects, key=_weighted_findings, reverse=True)[:_TOP_PROJECTS]
+    top_problematic = sorted(
+        projects, key=lambda p: p["total_critical"] * _CRITICAL_RANK_WEIGHT + p["total_high"], reverse=True
+    )[:_TOP_PROJECTS]
     if not any(p["total_critical"] > _TOP_PROJECT_CRITICAL_GATE for p in top_problematic):
         return None
 
