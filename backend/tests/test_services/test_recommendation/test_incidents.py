@@ -562,6 +562,15 @@ class TestIncidentCardsNameTheCvesLiveEnrichmentMarks:
         assert card.action["cves"] == [self._SECOND]
         assert card.impact["max_epss"] == 0.9
 
+    def test_the_epss_card_leaves_out_a_cve_the_live_feed_has_no_score_for(self):
+        cards = self._cards(
+            self._bundled(epss_score=0.9),
+            {self._FIRST: self._live(self._FIRST, epss_score=0.9), self._SECOND: self._live(self._SECOND)},
+        )
+        card = cards[RecommendationType.ACTIVELY_EXPLOITED]
+        assert card.action["cves"] == [self._FIRST]
+        assert card.impact["high_epss_count"] == 1
+
     def test_a_document_flag_alone_raises_no_card(self):
         finding = _vuln("log4j-core")
         finding["details"]["kev_ransomware_use"] = True

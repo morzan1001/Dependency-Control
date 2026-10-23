@@ -236,20 +236,18 @@ def display_vulnerability_id(details: Any) -> str | None:
 
 def cve_signals(
     advisories: Iterable[dict[str, Any]], threat_intel: Mapping[str, VulnerabilityEnrichment]
-) -> Iterator[tuple[str, bool, bool, float]]:
-    """(cve, in_kev, ransomware_use, epss_score) per CVE of each advisory."""
+) -> Iterator[tuple[str, bool, bool, float | None]]:
+    """(cve, in_kev, ransomware_use, epss_score) per CVE of each advisory; None when the live feed has no score."""
     for advisory in advisories:
         cves = counted_cves(advisory)
         for cve in cves:
             # A bundle's stored marks are any one CVE's; a single CVE keeps its own, which a KEV outage cannot clear.
             live = threat_intel.get(cve) if len(cves) > 1 else None
-            stored_epss = advisory.get("epss_score") or 0.0
             if live is not None:
-                epss = live.epss_score if live.epss_score is not None else stored_epss
-                yield cve, live.in_kev, live.kev_ransomware_use, epss
+                yield cve, live.in_kev, live.kev_ransomware_use, live.epss_score
             else:
                 in_kev, ransomware = advisory.get(DETAILS_KEY_IN_KEV), advisory.get(DETAILS_KEY_KEV_RANSOMWARE)
-                yield cve, bool(in_kev), bool(ransomware), stored_epss
+                yield cve, bool(in_kev), bool(ransomware), advisory.get("epss_score") or 0.0
 
 
 def cve_severities(advisories: Iterable[dict[str, Any]]) -> dict[str, str | None]:

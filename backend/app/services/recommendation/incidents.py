@@ -39,8 +39,8 @@ def _exploited_cves(
             ransomware.add(cve)
         elif in_kev:
             kev.add(cve)
-        elif epss_score >= EPSS_VERY_HIGH_THRESHOLD:
-            epss[cve] = max(epss_score, epss.get(cve, 0.0))
+        elif (score := epss_score or 0.0) >= EPSS_VERY_HIGH_THRESHOLD:
+            epss[cve] = max(score, epss.get(cve, 0.0))
     return ransomware, kev, epss
 
 

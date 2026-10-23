@@ -210,11 +210,13 @@ def _marked_cves(
     kev: dict[str, None] = {}
     high_epss: dict[str, None] = {}
     for v in vulns:
-        for cve, in_kev, _ransomware, epss_score in cve_signals(v.advisories, threat_intel):
-            if in_kev:
-                kev[cve] = None
-            if epss_score >= EPSS_HIGH_THRESHOLD:
-                high_epss[cve] = None
+        for a in v.advisories:
+            for cve, in_kev, _ransomware, epss_score in cve_signals([a], threat_intel):
+                if in_kev:
+                    kev[cve] = None
+                # An EPSS outage leaves live entries unscored, so the advisory's stored score stands in.
+                if ((a.get("epss_score") or 0.0) if epss_score is None else epss_score) >= EPSS_HIGH_THRESHOLD:
+                    high_epss[cve] = None
     return list(kev), list(high_epss)
 
 
