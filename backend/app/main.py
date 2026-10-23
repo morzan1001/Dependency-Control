@@ -49,12 +49,15 @@ from app.db.mongodb import close_mongo_connection, connect_to_mongo
 from app.repositories.users import IdentityTakenError
 from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError
 
+_log_level = logging.getLevelNamesMapping().get(settings.LOG_LEVEL.upper())
 logging.basicConfig(
-    level=settings.LOG_LEVEL.upper(),
+    level=_log_level or logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
 logger = logging.getLogger(__name__)
+if _log_level is None:
+    logger.warning("LOG_LEVEL %r is not a logging level; logging at INFO", settings.LOG_LEVEL)
 
 
 @asynccontextmanager

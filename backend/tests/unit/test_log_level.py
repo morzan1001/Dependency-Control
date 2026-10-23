@@ -25,6 +25,9 @@ def _root_level(configured: str | None) -> str:
     return started.stdout.split()[-1]
 
 
-@pytest.mark.parametrize(("configured", "level"), [(None, "INFO"), ("debug", "DEBUG"), ("WARNING", "WARNING")])
+@pytest.mark.parametrize(
+    ("configured", "level"),
+    [(None, "INFO"), ("debug", "DEBUG"), ("WARNING", "WARNING"), ("trace", "INFO"), ("", "INFO")],
+)
 def test_the_app_logs_at_the_level_the_chart_configures(configured, level):
     assert _root_level(configured) == level
