@@ -451,7 +451,7 @@ export function AnalyticsDependencyModal({
       <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-center gap-2 sm:justify-start">
-            <Package className="h-5 w-5" />
+            <Package className="h-5 w-5 shrink-0" />
             <span className="min-w-0 wrap-anywhere">{component}</span>
             {version && <Badge variant="outline">{version}</Badge>}
           </DialogTitle>

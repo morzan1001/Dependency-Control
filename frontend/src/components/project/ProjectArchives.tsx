@@ -98,8 +98,8 @@ export function ArchiveSummaryCells({ archive }: Readonly<{ archive: ArchiveList
     <>
       <TableCell>
         <div className="flex items-center gap-1.5">
-          <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="font-mono text-sm">{archive.branch || '-'}</span>
+          <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="font-mono text-sm wrap-anywhere">{archive.branch || '-'}</span>
         </div>
       </TableCell>
       <TableCell>

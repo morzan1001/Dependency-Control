@@ -220,7 +220,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
 
             {findingDesc && (
                 <DetailSection label="Description & Remediation">
-                    <div className="bg-muted/30 p-4 rounded-lg border">
+                    <div className="bg-muted/30 p-4 rounded-lg border wrap-anywhere">
                         <ReactMarkdown components={markdownComponents}>
                             {findingDesc}
                         </ReactMarkdown>

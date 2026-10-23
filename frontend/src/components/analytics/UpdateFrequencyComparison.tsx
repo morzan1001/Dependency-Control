@@ -445,7 +445,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                   <TableCell className="text-muted-foreground">
                     {isMeasured(project) ? offset + idx + 1 : NO_VALUE}
                   </TableCell>
-                  <TableCell className="font-medium">
+                  <TableCell className="font-medium wrap-anywhere">
                     <span className="inline-flex flex-wrap items-center gap-2">
                       {project.project_name}
                       {namesakes.has(project.project_name) && (
@@ -474,8 +474,8 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {project.branch ? (
-                      <span className="inline-flex items-center gap-1 font-mono text-xs">
-                        <GitBranch className="h-3 w-3" />
+                      <span className="inline-flex items-center gap-1 font-mono text-xs wrap-anywhere">
+                        <GitBranch className="h-3 w-3 shrink-0" />
                         {project.branch}
                       </span>
                     ) : (

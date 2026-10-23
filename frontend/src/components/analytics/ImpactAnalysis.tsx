@@ -122,7 +122,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                     <h4 className="font-medium truncate" title={r.component}>
                       {r.component}
                     </h4>
-                    <p className="text-sm text-muted-foreground">{r.version}</p>
+                    <p className="text-sm text-muted-foreground truncate" title={r.version}>{r.version}</p>
                     <div className="flex items-center gap-2 mt-2 text-sm">
                       <span>{r.affected_projects} project{r.affected_projects === 1 ? '' : 's'}</span>
                       <span>•</span>
@@ -221,8 +221,8 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                   >
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <AlertTriangle className="h-4 w-4 text-destructive" />
-                        <span className="font-medium">{r.component}</span>
+                        <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
+                        <span className="font-medium wrap-anywhere">{r.component}</span>
                       </div>
                     </TableCell>
                     <TableCell>

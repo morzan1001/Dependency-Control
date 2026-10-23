@@ -191,7 +191,7 @@ export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersPr
               <TableRow key={member.user_id}>
                 <TableCell>
                   <div className="flex flex-col">
-                    <span className="font-medium">{member.username || 'Unknown'}</span>
+                    <span className="font-medium wrap-anywhere">{member.username || 'Unknown'}</span>
                     <span className="text-xs text-muted-foreground">{member.user_id}</span>
                   </div>
                 </TableCell>

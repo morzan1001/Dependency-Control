@@ -468,8 +468,8 @@ export function UpdateFrequency() {
         <>
           {data.branch && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <GitBranch className="h-4 w-4" />
-              <span>
+              <GitBranch className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 wrap-anywhere">
                 Branch <span className="font-medium text-foreground">{data.branch}</span>
                 {data.dominant_ecosystem && ` · ${data.dominant_ecosystem}`}
               </span>

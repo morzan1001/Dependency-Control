@@ -275,7 +275,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                         <span className="font-medium">{pkg.name}</span>
                         {pkg.type && <Badge variant="secondary" className="ml-2 text-xs">{pkg.type}</Badge>}
                       </div>
-                      <Badge variant="secondary" className="text-xs">
+                      <Badge variant="secondary" className="shrink-0 text-xs">
                         {pkg.version_count || pkg.versions?.length || 0} versions
                       </Badge>
                     </div>
@@ -413,7 +413,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                         {pkg.type && <Badge variant="secondary" className="ml-2 text-xs">{pkg.type}</Badge>}
                       </div>
                       {pkg.project_count && (
-                        <Badge variant="secondary" className="text-xs">
+                        <Badge variant="secondary" className="shrink-0 text-xs">
                           {pkg.project_count} projects
                         </Badge>
                       )}
@@ -463,7 +463,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                 </h5>
                 <div className="flex flex-wrap gap-1">
                   {recommendation.affected_components.map((comp) => (
-                    <Badge key={comp} variant="secondary">
+                    <Badge key={comp} variant="secondary" className="wrap-anywhere">
                       {comp}
                     </Badge>
                   ))}

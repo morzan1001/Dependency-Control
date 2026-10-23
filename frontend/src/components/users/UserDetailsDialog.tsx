@@ -338,7 +338,7 @@ export function UserDetailsDialog({ user, open, onOpenChange, onUserUpdated }: R
                             to="/teams"
                             className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 transition-colors"
                           >
-                            <span>{team.name}</span>
+                            <span className="truncate">{team.name}</span>
                           </Link>
                         </li>
                       ))}
