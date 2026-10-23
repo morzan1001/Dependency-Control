@@ -38,6 +38,7 @@ from app.core.log_utils import sanitize_for_log
 from app.core.metrics import (
     ArchiveFailureReason,
     archive_bundle_compressed_bytes,
+    archive_housekeeping_scans_processed_total,
     archive_operation_duration_seconds,
     archive_operations_total,
     archive_orphan_objects_reaped_total,
@@ -899,6 +900,7 @@ async def _reap_orphan_page(db: Any, page: list[dict[str, Any]], bundle_key: re.
             await delete_object(key)
             deleted += 1
             archive_orphan_objects_reaped_total.inc()
+            archive_housekeeping_scans_processed_total.labels(status="orphan_reaped").inc()
             logger.info("Reaped orphan S3 object: %s", key)
         except Exception as e:
             logger.warning("Failed to delete orphan %s: %s", key, e)

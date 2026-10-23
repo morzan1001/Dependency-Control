@@ -344,6 +344,18 @@ archive_orphan_objects_reaped_total = Counter(
     "Archive bundles in S3 that no archive metadata names, deleted by the orphan reaper.",
 )
 
+archive_housekeeping_batch_total = Counter(
+    "archive_housekeeping_batch_total",
+    "Housekeeping archive batches by outcome.",
+    ["status"],  # success|partial_failure
+)
+
+archive_housekeeping_scans_processed_total = Counter(
+    "archive_housekeeping_scans_processed_total",
+    "Scans processed by housekeeping by outcome.",
+    ["status"],  # archived|failed|orphan_reaped
+)
+
 external_api_requests_total = Counter(
     "external_api_requests_total",
     "Total external API requests by service",

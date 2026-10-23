@@ -34,7 +34,12 @@ from app.core.constants import (
     SETTINGS_MODE_PROJECT,
 )
 from app.core.log_utils import sanitize_for_log
-from app.core.metrics import update_archive_stats, update_db_stats
+from app.core.metrics import (
+    archive_housekeeping_batch_total,
+    archive_housekeeping_scans_processed_total,
+    update_archive_stats,
+    update_db_stats,
+)
 from app.core.s3 import is_archive_enabled
 from app.db.mongodb import get_database
 from app.models.project import Project
@@ -250,6 +255,7 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) ->
             metadata = None
         if not metadata:
             failed_ids.append(scan_id)
+        archive_housekeeping_scans_processed_total.labels(status="archived" if metadata else "failed").inc()
 
     if failed_ids:
         logger.warning(
@@ -258,6 +264,9 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str) ->
             len(failed_ids),
             ", ".join(failed_ids[:_LOGGED_FAILED_IDS]),
         )
+        archive_housekeeping_batch_total.labels(status="partial_failure").inc()
+    else:
+        archive_housekeeping_batch_total.labels(status="success").inc()
 
     archived = {"$in": scan_ids, "$nin": failed_ids}
     # A scan written to since its archive began holds data its bundle lacks.

@@ -282,3 +282,30 @@ async def test_a_rescan_run_counts_the_rescan_and_its_aggregation_time(db, monke
     assert await analyse_scan(db, scan.id, [], [], worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert moved() == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_a_housekeeping_archive_batch_counts_each_scan_and_the_batch_outcome(db, monkeypatch):
+    from app.core import housekeeping
+    from app.services import archive
+
+    async def _archive(_db, scan_id):
+        if scan_id == "raises":
+            raise RuntimeError("bucket unreachable")
+        return {"scan_id": scan_id} if scan_id == "archived" else None
+
+    monkeypatch.setattr(archive, "archive_scan", _archive)
+    monkeypatch.setattr(housekeeping, "_delete_expirable", AsyncMock(return_value=0))
+    moved = _deltas(
+        [
+            ("archive_housekeeping_scans_processed_total", {"status": "archived"}),
+            ("archive_housekeeping_scans_processed_total", {"status": "failed"}),
+            ("archive_housekeeping_batch_total", {"status": "success"}),
+            ("archive_housekeeping_batch_total", {"status": "partial_failure"}),
+        ]
+    )
+
+    await housekeeping._archive_scans_and_delete(db, ["archived", "missing", "raises"], "retention")
+    await housekeeping._archive_scans_and_delete(db, ["archived"], "retention")
+
+    assert moved() == [2, 2, 1, 1]
