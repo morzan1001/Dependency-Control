@@ -140,6 +140,7 @@ async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[
         commit_hash=scan.commit_hash,
         prev_scan_id=prev["_id"] if prev else None,
         prev_created_at=prev["scan_created_at"] if prev else None,
+        is_baseline=prev is None,
         dep_count=len(deps),
         updates=diff.to_counts(),
         outdated_count=len(outdated) if outdated is not None else None,
@@ -221,7 +222,9 @@ async def _persist(db: Any, delta: ScanUpdateDelta, outdated: set[str] | None) -
         # A recomputation that finds no analysis must not leave the earlier set behind.
         await ScanOutdatedSetRepository(db).delete(delta.id)
         return
-    await ScanOutdatedSetRepository(db).save(ScanOutdatedSet(id=delta.id, names=sorted(outdated)))
+    await ScanOutdatedSetRepository(db).save(
+        ScanOutdatedSet(id=delta.id, names=sorted(outdated), n=len(outdated), scan_created_at=delta.scan_created_at)
+    )
 
 
 async def _save_error_delta(db: Any, scan: _ScanRef, error: str) -> None:

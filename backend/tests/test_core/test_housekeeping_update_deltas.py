@@ -25,7 +25,7 @@ def _severed_metric() -> float:
 async def _seed(db: FakeDatabase, scan_id: str) -> None:
     await db.scans.insert_one({"_id": scan_id, "project_id": PROJECT, "status": "completed", "sbom_refs": []})
     await db.scan_update_deltas.insert_one({"_id": scan_id, "project_id": PROJECT, "branch": BRANCH, "dep_count": 3})
-    await db.scan_outdated_sets.insert_one({"_id": scan_id, "names": ["flask"]})
+    await db.scan_outdated_sets.insert_one({"_id": scan_id, "names": ["flask"], "n": 1})
 
 
 async def _seed_chain(db: FakeDatabase, versions: dict[str, str]) -> None:

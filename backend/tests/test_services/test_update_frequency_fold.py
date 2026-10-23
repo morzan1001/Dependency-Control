@@ -61,6 +61,7 @@ def _delta(
         "commit_hash": commit_hash if commit_hash is not None else f"c-{scan_id}",
         "prev_scan_id": None,
         "prev_created_at": None,
+        "is_baseline": True,
         "dep_count": dep_count,
         "updates": {
             "patch": patch,
@@ -84,6 +85,7 @@ def _chain(deltas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for delta in deltas:
         delta["prev_scan_id"] = prev["_id"] if prev else None
         delta["prev_created_at"] = prev["scan_created_at"] if prev else None
+        delta["is_baseline"] = prev is None
         if delta["dep_count"] > 0 and not delta["error"]:
             prev = delta
     return deltas

@@ -317,8 +317,8 @@ class TestNamesByScan:
     @pytest.mark.asyncio
     async def test_scans_without_a_stored_set_are_absent_rather_than_empty(self):
         db = FakeDatabase()
-        await db.scan_outdated_sets.insert_one({"_id": "s1", "names": ["flask", "requests"]})
-        await db.scan_outdated_sets.insert_one({"_id": "s2", "names": []})
+        await db.scan_outdated_sets.insert_one({"_id": "s1", "names": ["flask", "requests"], "n": 2})
+        await db.scan_outdated_sets.insert_one({"_id": "s2", "names": [], "n": 0})
 
         names = await ScanOutdatedSetRepository(db).names_by_scan(["s1", "s2", "s3"])
 

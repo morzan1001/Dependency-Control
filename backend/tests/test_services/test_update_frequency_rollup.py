@@ -105,7 +105,7 @@ class TestBaseline:
 
         doc = await _delta(db, "s1")
         assert doc is not None
-        assert "is_baseline" not in doc
+        assert doc["is_baseline"] is True
         assert doc["prev_scan_id"] is None
         assert doc["prev_created_at"] is None
         assert doc["dep_count"] == 2
@@ -130,7 +130,10 @@ class TestBaseline:
 
         outdated_set = await db.scan_outdated_sets.find_one({"_id": "s1"})
         assert outdated_set is not None
-        assert outdated_set == {"_id": "s1", "names": ["flask", "requests"]}
+        assert outdated_set["names"] == ["flask", "requests"]
+        assert outdated_set["n"] == 2
+        assert outdated_set["scan_created_at"] == _at(0)
+        assert outdated_set["schema_version"] == 1
 
     @pytest.mark.asyncio
     async def test_scan_without_dependencies_is_recorded_with_zero_deps(self):
@@ -198,6 +201,7 @@ class TestDiff:
 
         doc = await _delta(db, "s2")
         assert doc is not None
+        assert doc["is_baseline"] is False
         assert doc["prev_scan_id"] == "s1"
         assert doc["prev_created_at"] == _at(0)
         assert doc["updates"] == {"patch": 1, "minor": 1, "major": 1, "unknown": 0, "downgrade": 0}
@@ -395,6 +399,7 @@ class TestProjectSeparation:
 
         doc = await _delta(db, "b1")
         assert doc is not None
+        assert doc["is_baseline"] is True
         assert doc["prev_scan_id"] is None
         assert _counted(doc) == 0
 
@@ -430,7 +435,7 @@ class TestSameTimestamp:
         second = await _delta(db, "s2")
         assert first is not None
         assert second is not None
-        assert first["prev_scan_id"] is None
+        assert first["is_baseline"] is True
         assert second["prev_scan_id"] == "s1"
         assert second["updates"]["major"] == 1
 
@@ -511,7 +516,7 @@ class TestPredecessorSelection:
 
         doc = await _delta(db, "s2")
         assert doc is not None
-        assert doc["prev_scan_id"] is None
+        assert doc["is_baseline"] is True
         assert _counted(doc) == 0
 
     @pytest.mark.asyncio
