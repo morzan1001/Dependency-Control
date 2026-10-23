@@ -614,6 +614,32 @@ def test_the_update_card_names_each_cve_of_a_bundle_the_live_threat_intel_marks(
     assert (card.action["high_epss_cves"], card.action["high_epss_cves_total"]) == (["CVE-2023-0001"], 1)
 
 
+def test_during_an_epss_outage_the_update_card_names_a_bundles_cves_by_its_stored_epss():
+    from app.schemas.enrichment import VulnerabilityEnrichment
+
+    finding = _make_vuln_finding(component="openssl-libs", version="1.0.2k")
+    finding["details"]["vulnerabilities"] = [
+        {
+            "id": "ALAS2-2023-2001",
+            "aliases": ["CVE-2023-0001", "CVE-2023-0002"],
+            "severity": "HIGH",
+            "fixed_version": "1.0.2k-26",
+            "epss_score": 0.4,
+        }
+    ]
+    row = _make_dependency("openssl-libs", "1.0.2k")
+    threat_intel = {
+        cve: VulnerabilityEnrichment(cve=cve, risk_score=10.0) for cve in ("CVE-2023-0001", "CVE-2023-0002")
+    }
+
+    result = generate_recommendations(
+        findings=[finding], dependencies=[row], join_dependencies=[row], threat_intel=threat_intel
+    )
+
+    [card] = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+    assert card.action["high_epss_cves"] == ["CVE-2023-0001", "CVE-2023-0002"]
+
+
 _OUTDATED_ROWS = [_make_dependency("requests", "2.28.0"), _make_dependency("flask", "2.0.0")]
 
 
