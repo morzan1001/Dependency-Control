@@ -50,7 +50,10 @@ class WebhookRepository(BaseRepository[Webhook]):
     async def record_success(self, webhook: Webhook, now: datetime) -> None:
         await self.collection.update_one(
             _delivered_with(webhook),
-            {"$set": {"last_triggered_at": now, "consecutive_failures": 0, "circuit_breaker_until": None}},
+            {
+                "$set": {"last_triggered_at": now, "consecutive_failures": 0, "circuit_breaker_until": None},
+                "$inc": {"total_deliveries": 1},
+            },
         )
 
     async def record_failure(
@@ -59,7 +62,7 @@ class WebhookRepository(BaseRepository[Webhook]):
         """Only the failure that opened the circuit gets the document back."""
         await self.collection.update_one(
             _delivered_with(webhook),
-            {"$set": {"last_failure_at": now}, "$inc": {"consecutive_failures": 1}},
+            {"$set": {"last_failure_at": now}, "$inc": {"consecutive_failures": 1, "total_failures": 1}},
         )
         opened: dict[str, Any] | None = await self.collection.find_one_and_update(
             {**_delivered_with(webhook), "consecutive_failures": {"$gte": threshold}, **_circuit_closed(now)},

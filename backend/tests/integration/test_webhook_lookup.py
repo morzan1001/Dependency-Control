@@ -56,6 +56,7 @@ async def test_the_fifth_consecutive_failure_opens_the_circuit_once_and_a_succes
     assert opened["circuit_breaker_until"] > datetime.now(timezone.utc)
     assert kept["circuit_breaker_until"] == opened["circuit_breaker_until"]
     assert (closed["consecutive_failures"], closed["circuit_breaker_until"]) == (0, None)
+    assert (closed["total_failures"], closed["total_deliveries"]) == (6, 1)
 
 
 async def test_deliveries_sent_before_an_update_leave_the_state_of_the_new_settings_alone(

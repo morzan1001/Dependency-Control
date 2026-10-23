@@ -16,6 +16,8 @@ class ArchiveMetadata(MongoDocument):
     branch: str | None = None
     commit_hash: str | None = None
     scan_created_at: datetime | None = None
+    scan_completed_at: datetime | None = None
+    scan_status: str | None = None
 
     compressed_size_bytes: int | None = None
 

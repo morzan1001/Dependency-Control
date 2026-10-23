@@ -144,6 +144,20 @@ async def test_archive_scan_uploads_and_inserts_metadata(archive_env):
 
 
 @pytest.mark.asyncio
+async def test_archive_metadata_stores_the_scans_completion_time_and_status(archive_env):
+    db = _make_mock_db(scan_doc=_make_scan_doc())
+
+    with _patch_repos()() as (RepoCls, _):
+        await archive_scan(db, "scan-1")
+
+    stored = RepoCls.return_value.create.await_args.args[0].model_dump(by_alias=True)
+    assert (stored["scan_completed_at"], stored["scan_status"]) == (
+        datetime(2025, 1, 1, 1, 0, tzinfo=timezone.utc),
+        "completed",
+    )
+
+
+@pytest.mark.asyncio
 async def test_archive_scan_stores_the_bundle_under_its_own_content_type(archive_env):
     db = _make_mock_db(scan_doc=_make_scan_doc())
 
