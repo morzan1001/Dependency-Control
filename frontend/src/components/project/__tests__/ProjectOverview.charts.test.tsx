@@ -100,6 +100,17 @@ describe('ProjectOverview trend legend', () => {
 
     expect(await legendOf('Vulnerability Trends')).toEqual(['main', 'develop'])
   })
+
+  it('shortens a long branch name as the branch chart does, so it stays inside the card', async () => {
+    branchTips.current = [{ branch: LONG_BRANCH, scan_count: 1, tip: { ...SCAN, id: 's-long', branch: LONG_BRANCH } }]
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ProjectOverview projectId="p1" selectedBranches={['main', LONG_BRANCH]} />
+      </QueryClientProvider>,
+    )
+
+    expect(await legendOf('Vulnerability Trends')).toEqual(['main', '…21-checkout-redesign'])
+  })
 })
 
 describe('ProjectOverview branch chart', () => {

@@ -184,7 +184,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
           </Tabs>
         </div>
       )}
-      <div className={`grid gap-4 md:grid-cols-2 ${showReleaseTile ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
+      <div className={`grid grid-cols-1 gap-4 md:grid-cols-2 ${showReleaseTile ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
         {showReleaseTile && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -234,7 +234,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-severity-critical">{stats.critical ?? 0}</div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground wrap-anywhere">
               {headlineSource ? `${headlineSource} — click to view findings` : 'Click to view findings'}
             </p>
           </CardContent>
@@ -251,7 +251,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-severity-high">{stats.high ?? 0}</div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground wrap-anywhere">
               {headlineSource ? `${headlineSource} — click to view findings` : 'Click to view findings'}
             </p>
           </CardContent>
@@ -293,7 +293,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
                     contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
                     itemStyle={{ color: 'hsl(var(--foreground))' }}
                   />
-                  <Legend itemSorter={bySeriesOrder(selectedBranches)} />
+                  <Legend itemSorter={bySeriesOrder(selectedBranches)} formatter={(name: string) => truncateLabel(name)} />
                   {selectedBranches.map((branch, index) => (
                       <Line 
                           key={branch}
