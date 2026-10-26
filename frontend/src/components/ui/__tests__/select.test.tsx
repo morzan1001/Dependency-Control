@@ -64,10 +64,11 @@ describe('SelectContent with an entry wider than the screen', () => {
     return screen.getByRole('option')
   }
 
+  // Never narrower than its trigger, which a wide form field can make wider than 24rem.
   it('caps the list at the space left on screen', () => {
     openLongList()
 
-    expect(screen.getByRole('listbox')).toHaveClass('max-w-[min(var(--radix-select-content-available-width),24rem)]')
+    expect(screen.getByRole('listbox')).toHaveClass('max-w-[max(var(--radix-select-trigger-width),min(var(--radix-select-content-available-width),24rem))]')
   })
 
   it('cuts a long entry with an ellipsis and keeps the full text as its tooltip', () => {
