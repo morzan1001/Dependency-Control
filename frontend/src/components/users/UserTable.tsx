@@ -95,17 +95,19 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                 className={onSelectUser && "cursor-pointer"}
                 onClick={onSelectUser && (() => onSelectUser(user))}
               >
-                <TableCell className="font-medium">
-                  <div className="flex items-center gap-2">
-                    {user.username}
+                <TableCell className="max-w-[240px] font-medium">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate" title={user.username}>{user.username}</span>
                     {user.auth_provider && user.auth_provider !== 'local' && (
-                      <span className="inline-flex items-center rounded-full bg-blue-100 dark:bg-blue-900/30 px-2.5 py-0.5 text-xs font-medium text-blue-800 dark:text-blue-200 capitalize">
+                      <span className="inline-flex shrink-0 items-center rounded-full bg-blue-100 dark:bg-blue-900/30 px-2.5 py-0.5 text-xs font-medium text-blue-800 dark:text-blue-200 capitalize">
                         {user.auth_provider}
                       </span>
                     )}
                   </div>
                 </TableCell>
-                <TableCell>{user.email}</TableCell>
+                <TableCell className="max-w-[240px]">
+                  <span className="block truncate" title={user.email}>{user.email}</span>
+                </TableCell>
                 <TableCell>
                   <UserStatusBadge user={user} />
                 </TableCell>

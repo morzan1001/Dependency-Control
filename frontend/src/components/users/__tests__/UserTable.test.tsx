@@ -77,3 +77,18 @@ describe('UserTable permissions', () => {
     }
   })
 })
+
+describe('UserTable long names', () => {
+  // A long name without spaces pushed Email, Status and the actions off-screen.
+  it('cuts a long username and email with an ellipsis and keeps the full text as a tooltip', () => {
+    const longName = 'a'.repeat(300)
+    const longEmail = `${'b'.repeat(200)}@corp.com`
+    const user = { id: 'u1', username: longName, email: longEmail, is_active: true, status: 'active', permissions: [], totp_enabled: false } as User
+    render(<UserTable users={[user]} page={0} limit={20} onPageChange={vi.fn()} />)
+
+    expect(screen.getByText(longName)).toHaveClass('truncate')
+    expect(screen.getByText(longName)).toHaveAttribute('title', longName)
+    expect(screen.getByText(longEmail)).toHaveClass('truncate')
+    expect(screen.getByText(longEmail)).toHaveAttribute('title', longEmail)
+  })
+})
