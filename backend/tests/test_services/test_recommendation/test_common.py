@@ -19,6 +19,7 @@ from app.services.recommendation.common import (
     live_cves,
     name_some,
     newest_clean_version_finder,
+    package_label,
     recommend,
     severity_impact,
     sort_key,
@@ -539,3 +540,18 @@ class TestLabelByKeywords:
 
     def test_unmatched_label_is_returned_unchanged(self):
         assert label_by_keywords("Active Debug Code", self._TABLE) == "Active Debug Code"
+
+
+class TestPackageLabel:
+    # Package identities name a Maven package group/artifact; the cards name it like every other view.
+    def test_names_a_maven_package_by_its_artifact(self):
+        assert (
+            package_label({"name": "com.fasterxml.jackson.core/jackson-databind", "type": "maven"})
+            == "jackson-databind (maven)"
+        )
+
+    def test_keeps_an_npm_scope(self):
+        assert package_label({"name": "@angular/core", "type": "npm"}) == "@angular/core (npm)"
+
+    def test_leaves_out_a_missing_type(self):
+        assert package_label({"name": "lodash", "type": ""}) == "lodash"

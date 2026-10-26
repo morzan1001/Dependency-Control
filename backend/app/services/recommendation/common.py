@@ -134,7 +134,9 @@ def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
 
 
 def package_label(package: dict[str, Any]) -> str:
-    return f"{package['name']} ({package['type']})" if package["type"] else package["name"]
+    # Package identities name a Maven package group/artifact; every other view shows the artifact alone.
+    name = package["name"].rsplit("/", 1)[-1] if package["type"] == "maven" else package["name"]
+    return f"{name} ({package['type']})" if package["type"] else name
 
 
 def dependency_label(dep: ModelOrDict) -> str:

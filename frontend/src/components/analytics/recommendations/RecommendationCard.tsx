@@ -49,12 +49,12 @@ const SEVERITY_CHIPS = [
   ['low', 'Low'],
 ] as const
 
-/** Files the recommendation covers beyond the ones listed; the action's own list is already a sample. */
 // Package identities name a Maven package group/artifact; every other view shows the artifact alone.
 function packageLabel(pkg: { name: string; type?: string }): string {
   return pkg.type === 'maven' ? (pkg.name.split('/').pop() ?? pkg.name) : pkg.name
 }
 
+/** Files the recommendation covers beyond the ones listed; the action's own list is already a sample. */
 function filesBeyond(action: RecommendationAction): number {
   const listed = action.files?.length ?? 0
   return Math.max(action.files_total ?? listed, listed) - Math.min(listed, FILES_LISTED)
