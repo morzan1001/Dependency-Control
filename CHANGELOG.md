@@ -1,3 +1,11 @@
+# Release 1.9.63
+
+## 📦 Build & CI
+
+- chore(release): 1.9.63 keeps select lists, long names and long versions inside their screens, names Maven packages by artifact, words both version cards alike, drops empty version fields from finding details and aligns three pages with the rest (#0)
+
+
+
 # Release 1.9.62
 
 ## 📦 Build & CI
