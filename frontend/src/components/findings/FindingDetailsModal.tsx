@@ -117,6 +117,7 @@ const DETAIL_VIEWS: Partial<Record<FindingType, (props: DetailsViewProps) => Rea
 // Their views show the text themselves (per advisory or rule, or in the failure banner), so a Description section would repeat it.
 const OWN_DESCRIPTION_TYPES = new Set<string>(['vulnerability', 'sast', 'iac', 'crypto_key_management', 'system_warning'])
 const NO_PACKAGE_VERSION_TYPES = new Set<string>(['system_warning', 'sast', 'iac', 'secret', 'crypto_key_management'])
+const FIX_VERSION_TYPES = new Set<string>(['vulnerability', 'outdated', 'eol'])
 
 interface FindingDetailsModalProps {
     finding: Finding
@@ -203,7 +204,7 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                                         <p className="font-medium wrap-anywhere">{finding.version}</p>
                                     </DetailSection>
                                 )}
-                                {(finding.details?.fixed_version || !NO_PACKAGE_VERSION_TYPES.has(finding.type)) && (
+                                {(finding.details?.fixed_version || FIX_VERSION_TYPES.has(finding.type)) && (
                                     <DetailSection label="Fixed Version" compact>
                                         {finding.details?.fixed_version ? (
                                             <p className="font-medium text-success wrap-anywhere">{finding.details.fixed_version}</p>

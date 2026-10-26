@@ -642,6 +642,20 @@ describe("FindingDetailsModal version fields", () => {
     expect(screen.getByText("Fixed Version")).toBeInTheDocument();
   });
 
+  // A licence or quality finding names a package version but has nothing to upgrade to.
+  it.each<Finding["type"]>(["license", "quality"])("shows Version but no Fixed Version for a %s finding", (type) => {
+    renderModal(finding({ type, details: {} }));
+
+    expect(screen.getByText("Version")).toBeInTheDocument();
+    expect(screen.queryByText("Fixed Version")).not.toBeInTheDocument();
+  });
+
+  it.each<Finding["type"]>(["outdated", "eol"])("keeps Fixed Version for an %s finding", (type) => {
+    renderModal(finding({ type, details: {} }));
+
+    expect(screen.getByText("Fixed Version")).toBeInTheDocument();
+  });
+
   it("keeps a version a code finding does carry", () => {
     renderModal(finding({ type: "sast", version: "1.2.3" }));
 
