@@ -50,6 +50,11 @@ const SEVERITY_CHIPS = [
 ] as const
 
 /** Files the recommendation covers beyond the ones listed; the action's own list is already a sample. */
+// Package identities name a Maven package group/artifact; every other view shows the artifact alone.
+function packageLabel(pkg: { name: string; type?: string }): string {
+  return pkg.type === 'maven' ? (pkg.name.split('/').pop() ?? pkg.name) : pkg.name
+}
+
 function filesBeyond(action: RecommendationAction): number {
   const listed = action.files?.length ?? 0
   return Math.max(action.files_total ?? listed, listed) - Math.min(listed, FILES_LISTED)
@@ -409,7 +414,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                   <div key={`${pkg.type}:${pkg.name}`} className="border-b last:border-0 pb-2 last:pb-0">
                     <div className="flex items-center justify-between">
                       <div>
-                        <span className="font-medium">{pkg.name}</span>
+                        <span className="font-medium" title={pkg.name}>{packageLabel(pkg)}</span>
                         {pkg.type && <Badge variant="secondary" className="ml-2 text-xs">{pkg.type}</Badge>}
                       </div>
                       {pkg.project_count && (
@@ -422,8 +427,8 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                       Versions in use: <span className="font-mono">{pkg.versions?.join(', ') || 'unknown'}</span>
                     </div>
                     {pkg.suggestion && (
-                      <div className="text-xs text-success mt-1">
-                        Recommended: <span className="font-mono">{pkg.suggestion}</span>
+                      <div className="text-success text-xs mt-1">
+                        → Pin to {pkg.suggestion}
                       </div>
                     )}
                     {pkg.suggestion === null && NO_CLEAN_VERSION}

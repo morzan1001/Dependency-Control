@@ -429,9 +429,22 @@ describe('RecommendationCard version standardization', () => {
       ],
     }))
 
-    expect(screen.getAllByText(/^Recommended:/)).toHaveLength(1)
-    expect(screen.getByText('4.17.15', { selector: '.font-mono' })).toBeInTheDocument()
+    expect(screen.getAllByText(/Pin to/).map((el) => el.textContent)).toEqual(['→ Pin to 4.17.15'])
     expect(screen.getByText('No version in use is free of known vulnerabilities')).toBeInTheDocument()
+  })
+
+  // The fragmentation card and every other view name a Maven package by its artifact.
+  it('names a Maven package by its artifact and keeps the group in the tooltip', () => {
+    renderExpanded(makeRecommendation({
+      type: 'standardize_versions',
+      packages: [
+        { name: 'com.fasterxml.jackson.core/jackson-databind', type: 'maven', versions: ['2.17.2', '2.15.0'], suggestion: '2.17.2', project_count: 2 },
+        { name: '@angular/core', type: 'npm', versions: ['17.3.0', '16.2.0'], suggestion: '17.3.0', project_count: 2 },
+      ],
+    }))
+
+    expect(screen.getByText('jackson-databind')).toHaveAttribute('title', 'com.fasterxml.jackson.core/jackson-databind')
+    expect(screen.getByText('@angular/core')).toBeInTheDocument()
   })
 })
 
