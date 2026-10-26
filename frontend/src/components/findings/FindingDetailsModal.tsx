@@ -116,6 +116,7 @@ const DETAIL_VIEWS: Partial<Record<FindingType, (props: DetailsViewProps) => Rea
 
 // Their views show the text themselves (per advisory or rule, or in the failure banner), so a Description section would repeat it.
 const OWN_DESCRIPTION_TYPES = new Set<string>(['vulnerability', 'sast', 'iac', 'crypto_key_management', 'system_warning'])
+const NO_PACKAGE_VERSION_TYPES = new Set<string>(['system_warning', 'sast', 'iac', 'secret', 'crypto_key_management'])
 
 interface FindingDetailsModalProps {
     finding: Finding
@@ -197,18 +198,22 @@ export function FindingDetailsModal({ finding, onClose, projectId, scanId, scanC
                                 <DetailSection label="Component" compact>
                                     <p className="font-medium wrap-anywhere">{finding.component || 'Unknown'}</p>
                                 </DetailSection>
-                                <DetailSection label="Version" compact>
-                                    <p className="font-medium wrap-anywhere">{finding.version}</p>
-                                </DetailSection>
-                                <DetailSection label="Fixed Version" compact>
-                                    {finding.details?.fixed_version ? (
-                                        <p className="font-medium text-success wrap-anywhere">{finding.details.fixed_version}</p>
-                                    ) : (
-                                        <p className="text-muted-foreground">
-                                            {finding.details?.vulnerabilities?.some((v) => v.fixed_version) ? 'Varies by advisory' : 'No known fix'}
-                                        </p>
-                                    )}
-                                </DetailSection>
+                                {(finding.version || !NO_PACKAGE_VERSION_TYPES.has(finding.type)) && (
+                                    <DetailSection label="Version" compact>
+                                        <p className="font-medium wrap-anywhere">{finding.version}</p>
+                                    </DetailSection>
+                                )}
+                                {(finding.details?.fixed_version || !NO_PACKAGE_VERSION_TYPES.has(finding.type)) && (
+                                    <DetailSection label="Fixed Version" compact>
+                                        {finding.details?.fixed_version ? (
+                                            <p className="font-medium text-success wrap-anywhere">{finding.details.fixed_version}</p>
+                                        ) : (
+                                            <p className="text-muted-foreground">
+                                                {finding.details?.vulnerabilities?.some((v) => v.fixed_version) ? 'Varies by advisory' : 'No known fix'}
+                                            </p>
+                                        )}
+                                    </DetailSection>
+                                )}
                                 <DetailSection label="ID" compact>
                                     <p className="font-mono text-sm break-all">{finding.id}</p>
                                 </DetailSection>

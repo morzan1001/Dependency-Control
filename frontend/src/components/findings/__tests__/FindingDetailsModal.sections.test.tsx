@@ -625,3 +625,26 @@ describe("FindingDetailsModal advisory description", () => {
     expect(screen.getByRole("list")).toHaveClass("list-disc");
   });
 });
+
+describe("FindingDetailsModal version fields", () => {
+  // A scanner failure, a code finding or a secret has no package version, so the empty Version and "No known fix" said nothing.
+  it.each<Finding["type"]>(["system_warning", "sast", "iac", "secret", "crypto_key_management"])("leaves out Version and Fixed Version for a %s finding", (type) => {
+    renderModal(finding({ type, component: "scanner", version: "", details: {} }));
+
+    expect(screen.queryByText("Version")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fixed Version")).not.toBeInTheDocument();
+  });
+
+  it("keeps both for a vulnerability", () => {
+    renderModal(finding({}));
+
+    expect(screen.getByText("Version")).toBeInTheDocument();
+    expect(screen.getByText("Fixed Version")).toBeInTheDocument();
+  });
+
+  it("keeps a version a code finding does carry", () => {
+    renderModal(finding({ type: "sast", version: "1.2.3" }));
+
+    expect(screen.getByText("1.2.3")).toBeInTheDocument();
+  });
+});
