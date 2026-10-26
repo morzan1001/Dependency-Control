@@ -12,7 +12,7 @@ describe('VersionBadge', () => {
 
     const text = screen.getByText(DIGEST)
     expect(text).toHaveClass('truncate')
-    expect(text.parentElement).toHaveClass('max-w-[160px]')
+    expect(text.parentElement).toHaveClass('min-w-0', 'max-w-[160px]')
     expect(text.parentElement).toHaveAttribute('title', DIGEST)
   })
 
