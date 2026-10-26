@@ -4,6 +4,7 @@ import { ImpactAnalysisResult } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
+import { VersionBadge } from '@/components/findings/VersionBadge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Progress } from '@/components/ui/progress'
 import { AlertTriangle, TrendingUp, Zap, Shield, CheckCircle, XCircle, Lock, Calendar, Target, CircleAlert, Globe, Clock } from 'lucide-react'
@@ -226,7 +227,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline">{r.version}</Badge>
+                      <VersionBadge version={r.version} />
                     </TableCell>
                     <TableCell className="text-center font-medium">
                       {r.affected_projects}

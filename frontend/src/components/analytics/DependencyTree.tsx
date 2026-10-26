@@ -3,6 +3,7 @@ import { useDependencyTree } from '@/hooks/queries/use-analytics'
 import { DependencyTreeNode } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { VersionBadge } from '@/components/findings/VersionBadge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { ProjectCombobox } from '@/components/ui/project-combobox'
@@ -84,7 +85,7 @@ function DependencyNode({ node, nodeById, ancestorIds, level, onSelect, hideChil
 
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-medium wrap-anywhere">{node.name}</span>
-            <Badge variant="outline" className="text-xs">{node.version}</Badge>
+            <VersionBadge version={node.version} />
             {node.direct && (
               <Tooltip>
                 <TooltipTrigger asChild>

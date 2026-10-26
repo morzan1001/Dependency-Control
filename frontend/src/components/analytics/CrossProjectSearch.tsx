@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { VirtualRows } from '@/components/ui/virtual-rows'
 import { Badge } from '@/components/ui/badge'
+import { VersionBadge } from '@/components/findings/VersionBadge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -289,7 +290,7 @@ export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSear
                           </div>
                         </div>
                         <div role="cell" className="w-[120px] px-4 py-2 truncate">
-                          <Badge variant="outline" className="truncate max-w-full">{result.version}</Badge>
+                          <VersionBadge version={result.version} className="max-w-full" />
                         </div>
                         <div role="cell" className="w-[100px] px-4 py-2">
                           <Badge variant="secondary" className="truncate">{result.type}</Badge>
