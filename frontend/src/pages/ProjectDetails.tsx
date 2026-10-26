@@ -82,7 +82,7 @@ export default function ProjectDetails() {
 
   if (isLoadingProject) {
     return (
-      <div className="container mx-auto py-6 space-y-6">
+      <div className="space-y-6">
         <div className="flex items-center gap-4">
           <Skeleton className="h-10 w-10 rounded-full" />
           <div className="space-y-2">
@@ -105,7 +105,7 @@ export default function ProjectDetails() {
   }
 
   return (
-    <div className="container mx-auto py-10 space-y-8">
+    <div className="space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4 min-w-0">
           <Button variant="ghost" size="icon" asChild className="shrink-0">

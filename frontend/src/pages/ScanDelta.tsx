@@ -39,7 +39,7 @@ export default function ScanDelta() {
 
   if (!id || !from || !to || from === to) {
     return (
-      <div className="container mx-auto py-10">
+      <div>
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-12">
             <p className="font-medium">Invalid scan comparison</p>
@@ -71,7 +71,7 @@ export default function ScanDelta() {
   }
 
   return (
-    <div className="container mx-auto space-y-6 py-10">
+    <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" asChild>
           <Link to={`/projects/${id}`}><ArrowLeft className="h-4 w-4" /></Link>
