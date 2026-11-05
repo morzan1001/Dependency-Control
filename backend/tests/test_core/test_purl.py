@@ -150,6 +150,16 @@ class TestParsedPURLProperties:
             pytest.param("pkg:golang/github.com/gin-gonic/gin@1.0", "go", "go", id="golang"),
             pytest.param("pkg:composer/laravel/framework@10.0", "packagist", None, id="composer_not_on_deps_dev"),
             pytest.param("pkg:hex/phoenix@1.7.0", "hex", None, id="hex_not_on_deps_dev"),
+            pytest.param("pkg:npm/lodash@4.17.21", "npm", "npm", id="npm_name"),
+            pytest.param("pkg:npm/%40types/node@20.0.0", "npm", "npm", id="npm_encoded_scope"),
+            pytest.param("pkg:npm/@types/node@20.0.0", "npm", "npm", id="npm_unencoded_scope"),
+            pytest.param("pkg:npm/%40babel%2Fcore@7.24.0", "npm", "npm", id="npm_encoded_scope_slash"),
+            pytest.param("pkg:npm/dom-helpers/addClass", None, None, id="npm_nested_package_json"),
+            pytest.param("pkg:npm/foo%2Fbar@1.0.0", None, None, id="npm_encoded_nested_path"),
+            pytest.param("pkg:npm/%40ecs-console/modules%2Fmessages@1.0.0", None, None, id="npm_workspace_folder"),
+            pytest.param(
+                "pkg:npm/@ecs-console/modules/messages@1.0.0", None, None, id="npm_unencoded_workspace_folder"
+            ),
         ],
     )
     def test_deps_dev_system_names_only_systems_deps_dev_serves(self, purl, ecosystem, deps_dev_system):
