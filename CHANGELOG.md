@@ -1,3 +1,11 @@
+# Release 1.9.64
+
+## 📦 Build & CI
+
+- chore(release): 1.9.64 finds OS vulnerabilities in RHEL images, skips registry lookups for npm subpaths and updates 28 frontend dependencies (#0)
+
+
+
 # Release 1.9.63
 
 ## 📦 Build & CI
