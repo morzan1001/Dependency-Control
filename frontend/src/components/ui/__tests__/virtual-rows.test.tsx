@@ -17,7 +17,7 @@ const ROWS: Row[] = Array.from({ length: 100 }, (_, i) => ({
 
 function renderRows(): HTMLElement {
   const main = document.createElement('main')
-  Object.defineProperty(main, 'offsetHeight', { value: 800, configurable: true })
+  Object.defineProperty(main, 'clientHeight', { value: 800, configurable: true })
   Object.defineProperty(main, 'scrollTop', { value: 0, writable: true, configurable: true })
   document.body.appendChild(main)
   const list = { rows: ROWS, hasMore: false, nextPageFailed: false, retry: vi.fn(), loadMore: vi.fn(), observeEnd: vi.fn() }
