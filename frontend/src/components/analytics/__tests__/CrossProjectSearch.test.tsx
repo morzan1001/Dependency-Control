@@ -104,7 +104,7 @@ describe("CrossProjectSearch later page error", () => {
     vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
 
     const main = document.createElement("main");
-    Object.defineProperty(main, "offsetHeight", { value: 800, configurable: true });
+    Object.defineProperty(main, "clientHeight", { value: 800, configurable: true });
     document.body.appendChild(main);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -195,7 +195,7 @@ describe("CrossProjectSearch on a narrow screen", () => {
     });
     vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
     const main = document.createElement("main");
-    Object.defineProperty(main, "offsetHeight", { value: 800, configurable: true });
+    Object.defineProperty(main, "clientHeight", { value: 800, configurable: true });
     document.body.appendChild(main);
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -225,7 +225,7 @@ describe("CrossProjectSearch on a narrow screen", () => {
     vi.mocked(analyticsApi.getDependencyTypes).mockResolvedValue([]);
     const onSelectResult = vi.fn();
     const main = document.createElement("main");
-    Object.defineProperty(main, "offsetHeight", { value: 800, configurable: true });
+    Object.defineProperty(main, "clientHeight", { value: 800, configurable: true });
     document.body.appendChild(main);
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -307,7 +307,7 @@ describe("CrossProjectSearch namesakes", () => {
       teams: [{ id: `t-${id}`, name: id === "p-retail" ? "Retail" : "Payments" }],
     }));
     const main = document.createElement("main");
-    Object.defineProperty(main, "offsetHeight", { value: 800, configurable: true });
+    Object.defineProperty(main, "clientHeight", { value: 800, configurable: true });
     document.body.appendChild(main);
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
