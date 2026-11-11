@@ -30,12 +30,15 @@ class ParsedPURL(NamedTuple):
 
     @property
     def registry_system(self) -> str | None:
-        """Ecosystem label of the purl type, whether or not deps.dev serves it."""
+        """Ecosystem label of a purl naming a registry package, whether or not deps.dev serves it."""
+        # An npm package is "name" or "@scope/name"; Syft also reports nested package.json and workspace paths.
+        if self.type == "npm" and self.full_name.count("/") > (1 if self.full_name.startswith("@") else 0):
+            return None
         return PURL_TYPE_TO_SYSTEM.get(self.type)
 
     @property
     def deps_dev_system(self) -> str | None:
-        system = PURL_TYPE_TO_SYSTEM.get(self.type)
+        system = self.registry_system
         return system if system in _DEPS_DEV_SYSTEMS else None
 
     @property

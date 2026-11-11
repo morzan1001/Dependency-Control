@@ -230,6 +230,21 @@ class TestAnalyze:
         assert issue["maintainer_info"]["days_since_release"] == 800
         assert f"{NPM_REGISTRY_URL}/{registry_name}" not in [str(request.url) for request in requests]
 
+    @pytest.mark.asyncio
+    async def test_a_nested_package_json_inside_an_npm_package_is_not_looked_up(self, fake_cache, monkeypatch):
+        requests = _serve(monkeypatch, fake_cache, {f"{NPM_REGISTRY_URL}/dom-helpers%2FaddClass/latest": 405})
+        component = {
+            "type": "library",
+            "name": "dom-helpers/addClass",
+            "version": "unknown",
+            "purl": "pkg:npm/dom-helpers/addClass",
+        }
+
+        result = await analyze_cyclonedx(MaintainerRiskAnalyzer(), [component])
+
+        assert result == {"maintainer_issues": []}
+        assert requests == []
+
     @pytest.mark.parametrize(
         "repository",
         ["github:../repositories", "github:acme/..", "https://github.com/acme?per_page=100/lib", "acme/..", "../acme"],

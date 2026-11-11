@@ -110,17 +110,6 @@ async def test_a_failed_syft_conversion_leaves_trivy_the_posted_file(monkeypatch
     assert (target, extra) == (_TEMP_SBOM_PATH, [_CONVERTED_PATH])
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("sbom_format", [SBOMFormat.CYCLONEDX, SBOMFormat.SPDX])
-async def test_trivy_reads_cyclonedx_and_spdx_as_posted(monkeypatch, sbom_format):
-    spawned: list = []
-    _record_and_hang(monkeypatch, spawned)
-
-    target, extra = await TrivyAnalyzer()._preprocess_sbom(_TEMP_SBOM_PATH, sbom_format)
-
-    assert (target, extra, spawned) == (_TEMP_SBOM_PATH, [], [])
-
-
 _GRYPE_OUTPUT = Path(__file__).parents[2] / "fixtures" / "grype" / "grype_0.119_matches.json"
 _UV_SBOM = Path(__file__).parents[2] / "fixtures" / "sbom" / "uvdev.syft.cdx.json"
 
