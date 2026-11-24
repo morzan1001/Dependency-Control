@@ -1,4 +1,4 @@
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 ENV PYTHONUNBUFFERED=1
 # Motor otherwise sizes its thread pool by the node's CPUs; past the connection pool size (50) threads only queue.
